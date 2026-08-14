@@ -1109,6 +1109,18 @@ footer.site .legal {
 .appbar h1 {
   font-size: 1.5rem;
 }
+/* Auf schmalen Geräten haben Titel und Knöpfe nebeneinander keinen Platz – der Titel würde sonst
+   nach drei Buchstaben abgeschnitten. */
+@media (max-width: 640px) {
+  .appbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+  }
+  .appbar h1 {
+    font-size: 1.3rem;
+  }
+}
 
 .tabs {
   display: flex;
