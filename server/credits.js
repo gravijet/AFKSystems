@@ -38,19 +38,40 @@ export function hourlyRate(user) {
 
 /**
  * Ein Abrechnungsschritt. `usage` ist eine Map user_id -> Anzahl laufender Bots.
- * Abgerechnet wird anteilig für `minutes` Minuten. Zurück kommen die Nutzer, deren Guthaben
- * aufgebraucht ist – deren Bots stoppt der Aufrufer.
+ *
+ * Gerechnet wird minutengenau, gebucht aber erst, wenn ein ganzer Milli-Credit zusammengekommen
+ * ist: bei 7 mcr je Stunde kostet eine Bot-Minute 0,117 mcr, und ein Mindestbetrag von 1 mcr je
+ * Minute wäre das Achtfache des Tarifs. Der Rest bleibt als Übertrag stehen (im Arbeitsspeicher;
+ * bei einem Neustart geht damit weniger als ein Milli-Credit verloren – zugunsten des Nutzers).
+ *
+ * Zurück kommen die Nutzer, deren Guthaben aufgebraucht ist – deren Bots stoppt der Aufrufer.
  */
+const carry = new Map();
+
 export function meterTick(usage, minutes = 1) {
   const empty = [];
   for (const [userId, bots] of usage) {
     if (!bots) continue;
     const user = readUser.get(userId);
     if (!user) continue;
-    const cost = Math.max(1, Math.round((hourlyRate(user) * bots * minutes) / 60));
-    const after = user.credits_mcr - cost;
-    move(userId, -cost, 'usage', `${bots} Bot(s), ${minutes} min`);
+
+    const exact = (hourlyRate(user) * bots * minutes) / 60 + (carry.get(userId) || 0);
+    const due = Math.floor(exact);
+    carry.set(userId, exact - due);
+
+    if (due <= 0) {
+      // Nichts zu buchen, aber ein leeres Konto muss trotzdem auffallen.
+      if (user.credits_mcr <= 0) empty.push({ userId, balance: user.credits_mcr, bots });
+      continue;
+    }
+
+    const after = user.credits_mcr - due;
+    move(userId, -due, 'usage', `${bots} Bot(s)`);
     if (after <= 0) empty.push({ userId, balance: after, bots });
+  }
+  // Wer nichts mehr laufen hat, braucht auch keinen Übertrag mehr.
+  for (const userId of carry.keys()) {
+    if (!usage.has(userId)) carry.delete(userId);
   }
   return empty;
 }
