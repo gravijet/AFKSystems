@@ -1,0 +1,220 @@
+// Microsoft-Anmeldung über den Gerätecode.
+//
+// Das Panel kennt weder Passwort noch Token: es startet `afk --login`, liest Code und Adresse aus
+// der Standardfehlerausgabe des Clients und zeigt beides an. Der Client legt die Anmeldung danach
+// selbst unter <nutzerverzeichnis>/afksystems/accounts/<name>.json ab – dasselbe Format, das er
+// beim Start wieder einliest.
+
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { userDir } from './config.js';
+import { db, audit } from './db.js';
+import * as binaries from './binaries.js';
+import { token, HttpError } from './util.js';
+
+const ANSI = /\x1b\[[0-9;]*m/g;
+const TIMEOUT_MS = 15 * 60 * 1000;
+
+/** Laufende Anmeldungen: id -> Zustand. */
+const pending = new Map();
+
+export function begin(user) {
+  const { command, leading } = binaries.command({ runtime: 'rust', movement: 0, mc_version: null });
+  const home = userDir(user.id);
+  const id = token(12);
+
+  const entry = {
+    id,
+    userId: user.id,
+    status: 'starting', // starting | code | done | error
+    verification_uri: null,
+    user_code: null,
+    account: null,
+    error: null,
+    started: Date.now(),
+    lines: [],
+  };
+  pending.set(id, entry);
+
+  const proc = spawn(command, [...leading, '--login'], {
+    cwd: home,
+    env: { ...process.env, XDG_CONFIG_HOME: home, HOME: home, TERM: 'dumb' },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  entry.proc = proc;
+
+  let out = '';
+  let err = '';
+
+  proc.stdout.on('data', (chunk) => {
+    out += chunk.toString('utf8');
+  });
+
+  proc.stderr.on('data', (chunk) => {
+    err += chunk.toString('utf8');
+    const lines = err.split('\n');
+    err = lines.pop();
+    for (const raw of lines) {
+      const line = raw.replace(ANSI, '').trim();
+      if (!line) continue;
+      entry.lines.push(line);
+      const uri = /Öffne im Browser:\s*(\S+)/.exec(line);
+      if (uri) entry.verification_uri = uri[1];
+      const code = /Gib diesen Code ein:\s*(\S+)/.exec(line);
+      if (code) {
+        entry.user_code = code[1];
+        entry.status = 'code';
+      }
+      const failed = /^Login fehlgeschlagen:\s*(.*)$/.exec(line);
+      if (failed) {
+        entry.status = 'error';
+        entry.error = failed[1];
+      }
+    }
+  });
+
+  proc.on('error', (error) => {
+    entry.status = 'error';
+    entry.error = error.message;
+  });
+
+  proc.on('exit', (code) => {
+    // Auf der Standardausgabe steht bei Erfolg genau eine Zeile: der Kontoname.
+    const name = out.replace(ANSI, '').trim().split('\n').pop()?.trim();
+    if (code === 0 && name) {
+      try {
+        entry.account = saveAccount(user.id, name);
+        entry.status = 'done';
+      } catch (error) {
+        entry.status = 'error';
+        entry.error = error.message;
+      }
+    } else if (entry.status !== 'error') {
+      entry.status = 'error';
+      entry.error = entry.error || `Anmeldung abgebrochen (Code ${code}).`;
+    }
+    // Ergebnis noch kurz vorhalten, damit das Panel es abholen kann.
+    setTimeout(() => pending.delete(id), 60_000).unref();
+  });
+
+  setTimeout(() => {
+    if (entry.status === 'starting' || entry.status === 'code') {
+      entry.status = 'error';
+      entry.error = 'Zeit abgelaufen – bitte neu starten.';
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        /* schon beendet */
+      }
+    }
+  }, TIMEOUT_MS).unref();
+
+  return publicState(entry);
+}
+
+/** Kontoeintrag anlegen oder auffrischen, nachdem der Client die Datei geschrieben hat. */
+function saveAccount(userId, name) {
+  const file = path.join(userDir(userId), 'afksystems', 'accounts', `${name}.json`);
+  if (!fs.existsSync(file)) throw new Error(`Der Client hat keine Kontodatei für "${name}" abgelegt.`);
+
+  let uuid = null;
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    uuid = data?.minecraftProfile?.id || null;
+  } catch {
+    /* Kontodatei bleibt trotzdem gültig, nur ohne UUID im Panel */
+  }
+
+  const existing = db
+    .prepare('SELECT * FROM mc_accounts WHERE user_id = ? AND name = ?')
+    .get(userId, name);
+  if (existing) {
+    db.prepare("UPDATE mc_accounts SET status = 'ok', last_error = NULL, uuid = ? WHERE id = ?").run(
+      uuid,
+      existing.id
+    );
+    audit(userId, 'account-refresh', { name });
+    return db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(existing.id);
+  }
+
+  const info = db
+    .prepare(
+      `INSERT INTO mc_accounts (user_id, name, kind, uuid, status, created_at)
+       VALUES (?, ?, 'microsoft', ?, 'ok', ?)`
+    )
+    .run(userId, name, uuid, Date.now());
+  audit(userId, 'account-add', { name });
+  return db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(info.lastInsertRowid);
+}
+
+export function status(id, user) {
+  const entry = pending.get(id);
+  if (!entry) throw new HttpError(404, 'Diese Anmeldung ist abgelaufen.');
+  if (entry.userId !== user.id) throw new HttpError(403, 'Keine Berechtigung.');
+  return publicState(entry);
+}
+
+export function cancel(id, user) {
+  const entry = pending.get(id);
+  if (!entry || entry.userId !== user.id) return;
+  try {
+    entry.proc?.kill('SIGKILL');
+  } catch {
+    /* schon beendet */
+  }
+  pending.delete(id);
+}
+
+function publicState(entry) {
+  return {
+    id: entry.id,
+    status: entry.status,
+    verification_uri: entry.verification_uri,
+    user_code: entry.user_code,
+    error: entry.error,
+    account: entry.account ? { id: entry.account.id, name: entry.account.name } : null,
+    waited: Date.now() - entry.started,
+  };
+}
+
+/** Konto samt Anmeldedatei entfernen. */
+export function removeAccount(user, accountId) {
+  const account = db
+    .prepare('SELECT * FROM mc_accounts WHERE id = ? AND user_id = ?')
+    .get(accountId, user.id);
+  if (!account) throw new HttpError(404, 'Konto gibt es nicht.');
+  const file = path.join(userDir(user.id), 'afksystems', 'accounts', `${account.name}.json`);
+  try {
+    fs.unlinkSync(file);
+  } catch {
+    /* Datei war schon weg */
+  }
+  db.prepare('DELETE FROM mc_accounts WHERE id = ?').run(accountId);
+  audit(user.id, 'account-remove', { name: account.name });
+  return account;
+}
+
+/**
+ * Kontodateien und Datenbank abgleichen. Fängt den Fall ab, dass jemand direkt auf dem Server
+ * eine Anmeldung abgelegt oder gelöscht hat.
+ */
+export function reconcile(userId) {
+  const dir = path.join(userDir(userId), 'afksystems', 'accounts');
+  const files = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5))
+    : [];
+  const rows = db.prepare('SELECT * FROM mc_accounts WHERE user_id = ?').all(userId);
+
+  for (const name of files) {
+    if (!rows.some((row) => row.name === name)) saveAccount(userId, name);
+  }
+  for (const row of rows) {
+    if (row.kind === 'microsoft' && !files.includes(row.name)) {
+      db.prepare("UPDATE mc_accounts SET status = 'error', last_error = ? WHERE id = ?").run(
+        'Anmeldung fehlt – bitte neu verbinden.',
+        row.id
+      );
+    }
+  }
+}

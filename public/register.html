@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Konto anlegen – AFKSystems</title>
+    <meta name="robots" content="noindex" />
+    <link rel="icon" href="/assets/img/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/css/app.css" />
+    <script>
+      const t = localStorage.getItem('afk-theme');
+      if (t && t !== 'system') document.documentElement.setAttribute('data-theme', t);
+    </script>
+  </head>
+  <body>
+    <main class="auth">
+      <div class="box">
+        <a class="brand" href="/" style="justify-content: center; margin-bottom: 1.5rem">
+          <img class="logo" src="/assets/img/logo.svg" alt="" />AFKSystems
+        </a>
+        <div class="card">
+          <h1 style="font-size: 1.35rem">Konto anlegen</h1>
+          <p class="small muted" style="margin-top: 0.35rem" id="bonus">
+            Kostenlos. Zahlungsdaten brauchst du erst, wenn du Guthaben nachlädst.
+          </p>
+          <form id="form" class="stack" style="margin-top: 1.5rem">
+            <div class="field">
+              <label for="username">Benutzername</label>
+              <input
+                id="username"
+                name="username"
+                type="text"
+                autocomplete="username"
+                required
+                minlength="3"
+                maxlength="24"
+              />
+              <span class="hint">3–24 Zeichen: Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich.</span>
+            </div>
+            <div class="field">
+              <label for="email">E-Mail</label>
+              <input id="email" name="email" type="email" autocomplete="email" required />
+            </div>
+            <div class="field">
+              <label for="password">Passwort</label>
+              <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="new-password"
+                required
+                minlength="8"
+              />
+              <span class="hint">Mindestens 8 Zeichen.</span>
+            </div>
+            <button class="btn btn-primary btn-block" type="submit">Konto anlegen</button>
+            <p id="error" class="small hide" style="color: var(--bad)"></p>
+          </form>
+        </div>
+        <p class="small muted center" style="margin-top: 1rem">
+          Schon ein Konto? <a href="/login.html" style="color: var(--primary)">Anmelden</a>
+        </p>
+      </div>
+    </main>
+    <script type="module">
+      import { api, $, credits } from '/assets/js/ui.js';
+
+      api('/meta')
+        .then((meta) => {
+          if (!meta.registration_open) {
+            $('#form').innerHTML =
+              '<p class="small">Die Registrierung ist gerade geschlossen. Frag den Betreiber nach einer Einladung.</p>';
+            return;
+          }
+          if (meta.signup_bonus_mcr > 0) {
+            $('#bonus').textContent = `Kostenlos – und ${credits(meta.signup_bonus_mcr)} Credits Startguthaben sind schon drauf.`;
+          }
+        })
+        .catch(() => {});
+
+      const form = $('#form');
+      const error = $('#error');
+      form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        error.classList.add('hide');
+        const button = form.querySelector('button');
+        button.disabled = true;
+        button.textContent = 'Wird angelegt ...';
+        try {
+          await api('/auth/register', {
+            method: 'POST',
+            body: {
+              username: $('#username').value,
+              email: $('#email').value,
+              password: $('#password').value,
+            },
+          });
+          location.href = '/app/';
+        } catch (problem) {
+          error.textContent = problem.message;
+          error.classList.remove('hide');
+          button.disabled = false;
+          button.textContent = 'Konto anlegen';
+        }
+      });
+    </script>
+  </body>
+</html>

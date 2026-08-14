@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dashboard – AFKSystems</title>
+    <meta name="robots" content="noindex" />
+    <meta name="theme-color" content="#206cfe" />
+    <link rel="icon" href="/assets/img/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/css/app.css" />
+    <script>
+      const t = localStorage.getItem('afk-theme');
+      if (t && t !== 'system') document.documentElement.setAttribute('data-theme', t);
+    </script>
+  </head>
+  <body>
+    <div class="app">
+      <aside class="side" id="side"></aside>
+      <main class="main" id="main">
+        <div class="empty"><h3>Wird geladen …</h3></div>
+      </main>
+    </div>
+    <div id="side-backdrop" class="hide" style="position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,.5)"></div>
+    <script type="module" src="/assets/js/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Datenschutz – AFKSystems</title>
+    <link rel="icon" href="/assets/img/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/css/app.css" />
+    <script>
+      const t = localStorage.getItem('afk-theme');
+      if (t && t !== 'system') document.documentElement.setAttribute('data-theme', t);
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="page">
+        <nav class="main">
+          <a class="brand" href="/"><img class="logo" src="/assets/img/logo.svg" alt="" />AFKSystems</a>
+          <a class="btn btn-sm" href="/">Zurück zur Startseite</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page" style="max-width: 46rem; padding-block: 3rem 5rem">
+      <h1>Datenschutz</h1>
+      <p class="lead" style="margin-top: 1rem">
+        Was dieses Panel technisch speichert, steht unten – vollständig und nachprüfbar im Quelltext.
+        Die rechtlichen Angaben (Verantwortlicher, Rechtsgrundlagen, Betroffenenrechte, Auftragsverarbeiter)
+        muss der Betreiber ergänzen.
+      </p>
+
+      <div class="note warn" style="margin: 1.5rem 0">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+          <path d="M12 9v4" /><path d="M12 17h.01" />
+        </svg>
+        <div>
+          <strong>Rechtsteil noch offen.</strong> Die technische Beschreibung stimmt; die juristischen
+          Pflichtangaben stehen noch nicht drin. Zu ergänzen in
+          <span class="mono">public/datenschutz.html</span>.
+        </div>
+      </div>
+
+      <section class="card" style="margin-bottom: 1.25rem">
+        <h3>Was gespeichert wird</h3>
+        <ul class="stack muted light" style="margin-top: 0.75rem; padding-left: 1.1rem">
+          <li>Kontodaten: E-Mail, Benutzername, Passwort als scrypt-Hash (nie im Klartext).</li>
+          <li>Sitzungen: ein zufälliges Token, Zeitpunkt, IP-Adresse und Browserkennung.</li>
+          <li>Guthabenbewegungen: jede Gutschrift und jede Abbuchung mit Zeitpunkt und Grund.</li>
+          <li>Serverprofile: Adresse, Version, Einstellungen, Macros und Wiederholungen.</li>
+          <li>
+            Minecraft-Konten: der Anmelde-Token, den der Client von Microsoft erhält, als Datei im
+            Verzeichnis deines Kontos auf dem Server. Dein Microsoft-Passwort wird nie übertragen und
+            nie gespeichert.
+          </li>
+          <li>
+            Chat: die letzten Zeilen je Bot im Arbeitsspeicher (Anzahl selbst einstellbar) sowie ein
+            Verlauf als Datei auf dem Server.
+          </li>
+          <li>Ereignisprotokoll: Anmeldungen, Kontoänderungen, Guthabenbuchungen.</li>
+        </ul>
+      </section>
+
+      <section class="card" style="margin-bottom: 1.25rem">
+        <h3>Was nach außen geht</h3>
+        <ul class="stack muted light" style="margin-top: 0.75rem; padding-left: 1.1rem">
+          <li>Microsoft: für die Anmeldung deines Minecraft-Kontos (Gerätecode-Verfahren).</li>
+          <li>Die Minecraft-Server, denen deine Bots beitreten – mit deiner Spielidentität.</li>
+          <li>minotar.net: nur zum Anzeigen der Skin-Köpfe im Dashboard.</li>
+          <li>GitHub: der Server lädt von dort die Client-Dateien (ohne Nutzerdaten).</li>
+          <li>Discord: nur, wenn du selbst einen Webhook hinterlegst.</li>
+          <li>Der Zahlungsdienst, sofern du damit Guthaben auflädst.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h3>Löschen</h3>
+        <p class="muted light" style="margin-top: 0.75rem">
+          Ein Minecraft-Konto lässt sich im Dashboard entfernen; dabei wird die Anmeldedatei auf dem
+          Server gelöscht. Für die Löschung des gesamten Kontos genügt eine Nachricht an den Betreiber.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>

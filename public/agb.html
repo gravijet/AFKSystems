@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Nutzungsbedingungen – AFKSystems</title>
+    <link rel="icon" href="/assets/img/logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/css/app.css" />
+    <script>
+      const t = localStorage.getItem('afk-theme');
+      if (t && t !== 'system') document.documentElement.setAttribute('data-theme', t);
+    </script>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="page">
+        <nav class="main">
+          <a class="brand" href="/"><img class="logo" src="/assets/img/logo.svg" alt="" />AFKSystems</a>
+          <a class="btn btn-sm" href="/">Zurück zur Startseite</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="page" style="max-width: 46rem; padding-block: 3rem 5rem">
+      <h1>Nutzungsbedingungen</h1>
+
+      <div class="note warn" style="margin: 1.5rem 0">
+        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+          <path d="M12 9v4" /><path d="M12 17h.01" />
+        </svg>
+        <div>
+          <strong>Entwurf, rechtlich ungeprüft.</strong> Die Punkte unten beschreiben, wie das Panel
+          tatsächlich arbeitet – als Grundlage für Bedingungen, die der Betreiber prüfen lassen sollte.
+          Zu ergänzen in <span class="mono">public/agb.html</span>.
+        </div>
+      </div>
+
+      <section class="card" style="margin-bottom: 1.25rem">
+        <h3>Was der Dienst tut</h3>
+        <p class="muted light" style="margin-top: 0.75rem">
+          AFKSystems hält Minecraft-Konten auf Servern verbunden, die der Nutzer selbst angibt, und
+          steuert diese Verbindung über eine Weboberfläche. Es werden weder Minecraft-Konten noch
+          Spielinhalte verkauft.
+        </p>
+      </section>
+
+      <section class="card" style="margin-bottom: 1.25rem">
+        <h3>Guthaben</h3>
+        <ul class="stack muted light" style="margin-top: 0.75rem; padding-left: 1.1rem">
+          <li>Es gibt kein Abonnement. Guthaben wird im Voraus aufgeladen.</li>
+          <li>Abgerechnet wird minütlich je laufendem Bot zum angezeigten Stundensatz.</li>
+          <li>Ein gestoppter Bot kostet nichts.</li>
+          <li>Ist das Guthaben aufgebraucht, werden laufende Bots gestoppt. Es entstehen keine Schulden.</li>
+          <li>Wartet ein Bot auf eine neue Microsoft-Anmeldung, wird er nicht abgerechnet.</li>
+        </ul>
+      </section>
+
+      <section class="card" style="margin-bottom: 1.25rem">
+        <h3>Pflichten des Nutzers</h3>
+        <ul class="stack muted light" style="margin-top: 0.75rem; padding-left: 1.1rem">
+          <li>
+            Ob ein AFK-Bot erlaubt ist, bestimmt der jeweilige Minecraft-Server. Die Regeln dort zu
+            prüfen und einzuhalten, ist Sache des Nutzers.
+          </li>
+          <li>Es dürfen nur eigene Minecraft-Konten verbunden werden.</li>
+          <li>Keine Nutzung für Angriffe, Spam gegen Dritte oder rechtswidrige Zwecke.</li>
+        </ul>
+      </section>
+
+      <section class="card">
+        <h3>Grenzen des Dienstes</h3>
+        <p class="muted light" style="margin-top: 0.75rem">
+          Für Sperren, Verluste oder Strafen auf fremden Minecraft-Servern wird keine Haftung
+          übernommen. Ein Anspruch auf ununterbrochene Verfügbarkeit besteht nicht; Wartungen und
+          Ausfälle sind möglich.
+        </p>
+      </section>
+    </main>
+  </body>
+</html>
