@@ -1,0 +1,21 @@
+{
+  "name": "afksystems-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Webpanel für AFKSystems – Minecraft-AFK-Bots im Browser, bezahlt mit Guthaben.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "client:update": "node server/binaries.js --update",
+    "admin:credits": "node scripts/credits.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}

@@ -1,0 +1,55 @@
+# systemd-Unit für das Panel.
+#
+#   sudo cp deploy/afksystems.service /etc/systemd/system/afksystems.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now afksystems
+#   journalctl -u afksystems -f
+#
+# Der Dienst startet beim Hochfahren alle Bots wieder, die zuletzt laufen sollten.
+
+[Unit]
+Description=AFKSystems Webpanel
+Documentation=https://afksystems.de
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=afksystems
+Group=afksystems
+WorkingDirectory=/opt/afksystems
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/afksystems/.env
+ExecStart=/usr/bin/node server/index.js
+
+# Beim Stoppen bekommen die Client-Prozesse ihre Chance, sich sauber abzumelden.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+Restart=always
+RestartSec=5
+
+# Ein Bot je Konto ist ein eigener Prozess – die Grenzen entsprechend großzügig.
+LimitNOFILE=65535
+TasksMax=4096
+
+# Absicherung: Der Dienst braucht nur sein eigenes Verzeichnis und Netz.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/afksystems/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=afksystems
+
+[Install]
+WantedBy=multi-user.target
