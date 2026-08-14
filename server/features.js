@@ -176,8 +176,8 @@ export const FEATURES = [
     key: 'world-change',
     group: 'Automatik',
     title: 'Befehle bei Weltwechsel',
-    status: 'missing',
-    text: 'Der Client unterscheidet den Wechsel zwischen Unterservern bewusst nicht vom laufenden Betrieb und meldet ihn nicht nach außen.',
+    status: 'ready',
+    text: 'Wechselt ein Bot auf einen Unterserver, meldet der Client das – das Panel hängt daran ein eigenes Macro, etwa um sich neu einzuloggen oder zurück in die richtige Welt zu wechseln.',
   },
   {
     key: 'credits',

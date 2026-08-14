@@ -160,7 +160,7 @@ const migrations = [
         id         INTEGER PRIMARY KEY,
         profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
         name       TEXT NOT NULL,
-        event      TEXT NOT NULL DEFAULT 'join',   -- join | timer | chat | death | disconnect
+        event      TEXT NOT NULL DEFAULT 'join',   -- join | timer | chat | world | death | disconnect
         config     TEXT NOT NULL DEFAULT '{}',     -- JSON je Auslöser
         actions    TEXT NOT NULL DEFAULT '[]',     -- JSON: Schrittliste
         accounts   TEXT NOT NULL DEFAULT '[]',     -- JSON: Konto-IDs, leer = alle

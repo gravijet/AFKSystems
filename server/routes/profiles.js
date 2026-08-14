@@ -469,7 +469,7 @@ router.post(
     const profile = ownedProfile(req);
     const body = req.body || {};
     const name = requireString(body.name, 'Name', { max: 60 });
-    const event = ['join', 'timer', 'chat', 'death', 'disconnect'].includes(body.event) ? body.event : 'join';
+    const event = ['join', 'timer', 'chat', 'world', 'death', 'disconnect'].includes(body.event) ? body.event : 'join';
     const actions = cleanActions(body.actions);
     const info = db
       .prepare(
@@ -507,7 +507,7 @@ router.patch(
     }
     if (body.event !== undefined) {
       set.push('event = ?');
-      values.push(['join', 'timer', 'chat', 'death', 'disconnect'].includes(body.event) ? body.event : 'join');
+      values.push(['join', 'timer', 'chat', 'world', 'death', 'disconnect'].includes(body.event) ? body.event : 'join');
     }
     if (body.config !== undefined) {
       set.push('config = ?');

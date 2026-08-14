@@ -66,6 +66,11 @@ export const EVENTS = [
       { key: 'regex', label: 'oder regulärer Ausdruck', type: 'text' },
     ],
   },
+  {
+    type: 'world',
+    label: 'Bei Weltwechsel (Unterserver)',
+    config: [],
+  },
   { type: 'death', label: 'Bei Tod', config: [] },
   { type: 'disconnect', label: 'Bei Verbindungsabbruch', config: [] },
 ];
@@ -233,6 +238,14 @@ class MacroEngine {
       }
       if (hit) this.run(bot, macro, { line });
     }
+  }
+
+  /**
+   * Wechsel auf einen Unterserver. Anders als beim Beitritt schickt der Client hier nichts von
+   * selbst – die Befehle kommen also immer aus dem Panel, auch die einfachen.
+   */
+  onWorldChange(bot) {
+    for (const macro of this.macrosFor(bot, 'world')) this.run(bot, macro);
   }
 
   onDeath(bot) {

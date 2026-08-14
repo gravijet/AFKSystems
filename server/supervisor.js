@@ -27,6 +27,9 @@ const PATTERNS = [
   { re: /^Getrennt: (.*)$/, kind: 'disconnected' },
   { re: /^Reconnect-Versuch (\d+) in (\d+) s/, kind: 'reconnecting' },
   { re: /^Gestorben – respawne automatisch\.$/, kind: 'death' },
+  // Der Wechsel auf einen Unterserver (Velocity/BungeeCord) ist kein neuer Beitritt – der Client
+  // sagt es aber an, und genau daran hängt das Panel die Weltwechsel-Macros.
+  { re: /^Unterserver gewechselt/, kind: 'worldchange' },
   { re: /^Befehl: (.*)$/, kind: 'command' },
   { re: /^Melde Konto '(.+)' an \.\.\.$/, kind: 'auth' },
   { re: /^Login fehlgeschlagen: (.*)$/, kind: 'authfail' },
@@ -259,6 +262,10 @@ class Bot extends EventEmitter {
         break;
       case 'death':
         this.supervisor.macros.onDeath(this);
+        break;
+      case 'worldchange':
+        this.setState('online', 'Unterserver gewechselt');
+        this.supervisor.macros.onWorldChange(this);
         break;
       case 'authfail':
         this.lastError = hit.match[1];
