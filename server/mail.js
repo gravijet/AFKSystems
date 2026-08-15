@@ -514,7 +514,10 @@ export async function sendTo(user, kind, vars = {}, { force = false } = {}) {
 
   const lang = langOf(user);
   const shape = template[lang];
-  const values = { ...vars, base: `${config.publicUrl}/${lang}`, name: user.username };
+  // Die Werte des Aufrufers stehen **hinten**: `name` ist in der Anrede der Benutzername, in
+  // einer Nachricht über einen Serverplatz aber dessen Name. Andersherum stand in jeder
+  // Verlängerungsmail der Kontoname statt des Servers.
+  const values = { base: `${config.publicUrl}/${lang}`, name: user.username, ...vars };
   const lines = shape.lines(values).filter(Boolean);
   const action = shape.action ? shape.action(values) : null;
 

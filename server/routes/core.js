@@ -17,7 +17,7 @@ import { supervisor } from '../supervisor.js';
 import * as billing from '../billing.js';
 import { setLangCookie } from '../pages.js';
 import { bridge } from '../bridge.js';
-import { wrap, requireString, requireInt, bad, notFound, HttpError } from '../util.js';
+import { wrap, requireInt, bad, notFound, HttpError } from '../util.js';
 
 export const router = express.Router();
 
