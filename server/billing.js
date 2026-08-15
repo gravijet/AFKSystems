@@ -28,7 +28,7 @@ const insertLedger = db.prepare(
 /** Guthaben ändern (positiv = gutschreiben, negativ = abbuchen). Gibt den neuen Stand zurück. */
 export const move = db.transaction((userId, delta, kind, note, ref = null) => {
   const user = readUser.get(userId);
-  if (!user) throw notFound('Benutzer gibt es nicht.');
+  if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
   const balance = user.credits + Math.round(delta);
   updateBalance.run(balance, userId);
   insertLedger.run(userId, Math.round(delta), balance, kind, note || null, ref, Date.now());
@@ -311,7 +311,7 @@ export function createTopup({ userId, provider, amountCent, credits, reference =
 
 export const settleTopup = db.transaction((topupId, note = '') => {
   const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
-  if (!topup) throw notFound('Aufladung gibt es nicht.');
+  if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
   if (topup.status === 'paid') return topup;
   db.prepare('UPDATE topups SET status = ?, paid_at = ? WHERE id = ?').run('paid', Date.now(), topupId);
   move(

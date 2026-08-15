@@ -4,7 +4,7 @@ import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
-import { config, paths } from './config.js';
+import { assetVersion, config, paths } from './config.js';
 import { db, getSetting } from './db.js';
 import * as auth from './auth.js';
 import { supervisor } from './supervisor.js';
@@ -66,13 +66,44 @@ function cookieParser(req, res, next) {
 
 // ---------------------------------------------------------------- Statische Dateien
 
+const assetsDir = path.join(paths.public, 'assets');
+
+/**
+ * Adressen mit Fingerabdruck: /assets/v/<version>/css/app.css
+ *
+ * Stimmt der Fingerabdruck mit dieser Fassung überein, darf die Datei ein Jahr liegen bleiben –
+ * sie kann sich unter dieser Adresse nicht mehr ändern. Passt er nicht (jemand hat eine alte Seite
+ * offen, während wir neu ausgerollt haben), liefern wir die aktuelle Datei aus, aber nur mit einer
+ * Minute Haltbarkeit.
+ */
+app.use(
+  '/assets/v',
+  (req, res, next) => {
+    const match = /^\/([A-Za-z0-9_-]{1,64})(\/.+)$/.exec(req.url);
+    if (!match) return next();
+    req.url = match[2];
+    res.locals.assetCurrent = match[1] === assetVersion;
+    next();
+  },
+  express.static(assetsDir, {
+    index: false,
+    setHeaders(res) {
+      res.setHeader(
+        'Cache-Control',
+        res.locals.assetCurrent ? 'public, max-age=31536000, immutable' : 'public, max-age=60'
+      );
+    },
+  })
+);
+
+// Adressen ohne Fingerabdruck. Die stehen nur noch in Seiten, die vor dem Deployment geladen
+// wurden, und in alten Lesezeichen: kurz halten, damit so etwas höchstens Minuten nachhängt.
 app.use(
   '/assets',
-  express.static(path.join(paths.public, 'assets'), {
-    maxAge: '7d',
-    setHeaders(res, file) {
-      // Die Sprachdatei wird auch vom Server gelesen; sie darf nicht ewig hängen bleiben.
-      if (file.endsWith('i18n.js')) res.setHeader('Cache-Control', 'public, max-age=300');
+  express.static(assetsDir, {
+    index: false,
+    setHeaders(res) {
+      res.setHeader('Cache-Control', 'public, max-age=300');
     },
   })
 );

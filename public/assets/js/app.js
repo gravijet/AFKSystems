@@ -6,6 +6,10 @@
 
 import { api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, $, fail, toast } from './ui.js';
 
+// Relativ zur eigenen Adresse: unter /assets/v/<version>/js/app.js kommt so von selbst die Adresse
+// mit demselben Fingerabdruck heraus. Siehe assetVersion in server/config.js.
+const LOGO = new URL('../img/logo.svg', import.meta.url).pathname;
+
 export const state = {
   me: null,
   meta: null,
@@ -243,7 +247,7 @@ export function drawSide() {
 
   $('#side').innerHTML = `
     <a class="brand" href="/${lang}" style="padding:.35rem .65rem">
-      <img class="logo" src="/assets/img/logo.svg" alt="" />AFKSystems
+      <img class="logo" src="${LOGO}" alt="" />AFKSystems
     </a>
 
     <nav class="nav">
