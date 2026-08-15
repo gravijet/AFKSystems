@@ -16,6 +16,11 @@ Description=AFKSystems Discord-Bot
 Documentation=https://afksystems.de
 After=network-online.target afksystems.service
 Wants=network-online.target
+# Discord sperrt einen Token, der zu oft hintereinander eine Verbindung aufbaut. Startet der
+# Dienst also dauernd neu, ist es besser, er hört auf – im Protokoll steht dann, warum.
+# (Diese beiden Schlüssel gehören in [Unit]; in [Service] ignoriert systemd sie stillschweigend.)
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -28,10 +33,6 @@ ExecStart=/usr/bin/node index.js
 
 Restart=always
 RestartSec=10
-# Discord sperrt einen Token, der zu oft hintereinander eine Verbindung aufbaut. Startet der
-# Dienst also dauernd neu, ist es besser, er hört auf – im Protokoll steht dann, warum.
-StartLimitIntervalSec=300
-StartLimitBurst=10
 
 NoNewPrivileges=true
 PrivateTmp=true
