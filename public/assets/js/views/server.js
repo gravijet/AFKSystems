@@ -425,7 +425,7 @@ async function tabChat(root, profile) {
               )
               .join('')}
           </div>
-          <div class="console" id="chat" style="height:min(52vh,32rem);border-radius:0;box-shadow:none"></div>
+          <div class="console" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}" style="height:min(52vh,32rem);border-radius:0;box-shadow:none"></div>
           <div class="row" style="padding:.75rem 1.1rem;gap:.5rem">
             <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))}"
               autocomplete="off" aria-label="${escapeHtml(tr('tab.chat'))}">
@@ -1075,7 +1075,7 @@ async function editMacro(profile, macro) {
 
       ${
         event === 'timer'
-          ? `<div class="field"><label for="interval">Sekunden</label>
+          ? `<div class="field"><label for="interval">${escapeHtml(tr('srv.intervalSec'))}</label>
               <input id="interval" type="number" min="5" max="86400"
                 value="${macro?.config?.interval_sec ?? 300}"></div>`
           : ''
@@ -1084,7 +1084,10 @@ async function editMacro(profile, macro) {
         event === 'chat'
           ? `<div class="field"><label for="contains">${escapeHtml(tr('srv.chatContains'))}</label>
               <input id="contains" value="${escapeHtml(macro?.config?.contains || '')}">
-              <span class="hint">{line}</span></div>`
+              <span class="hint">${escapeHtml(tr('srv.chatContainsHint'))}</span></div>
+             <div class="field"><label for="regex">${escapeHtml(tr('srv.chatRegex'))}</label>
+              <input id="regex" value="${escapeHtml(macro?.config?.regex || '')}">
+              <span class="hint">${escapeHtml(tr('srv.chatRegexHint'))}</span></div>`
           : ''
       }
 
@@ -1223,7 +1226,12 @@ async function editMacro(profile, macro) {
     const event = $('#event', dialog).value;
     const config = {};
     if (event === 'timer') config.interval_sec = Number($('#interval', dialog).value);
-    if (event === 'chat') config.contains = $('#contains', dialog).value;
+    if (event === 'chat') {
+      // Beide Felder mitschicken, sonst verschwindet beim Speichern still, was gerade nicht
+      // im Formular stand.
+      config.contains = $('#contains', dialog).value.trim();
+      config.regex = $('#regex', dialog).value.trim();
+    }
     const accountValue = $('#accounts', dialog).value;
 
     const body = {
@@ -1266,7 +1274,7 @@ async function tabPlan(root, profile) {
         <div class="v" style="font-size:1.5rem">${escapeHtml(profile.plan.name)}</div>
         <div class="s">${
           profile.plan.free_slot
-            ? escapeHtml(tr('pricing.forever'))
+            ? escapeHtml(tr('common.forever'))
             : `${credits(profile.plan.price_credits)} / ${state.meta.month_days} ${escapeHtml(tr('common.days'))}`
         }</div></div>
       <div class="stat"><div class="k">${escapeHtml(tr('common.status'))}</div>
@@ -1443,7 +1451,7 @@ async function tabSettings(root, profile) {
 
       <section class="panel">
         <header><h3>${escapeHtml(tr('tab.movement'))}</h3>
-          ${plan.premium ? '' : `<span class="pill missing">${escapeHtml(tr('features.legend.premium'))}</span>`}
+          ${plan.premium ? '' : `<span class="pill missing">${escapeHtml(tr('common.paidSlot'))}</span>`}
         </header>
         <div class="body stack">
           <label class="check"><input type="checkbox" id="movement" ${profile.movement ? 'checked' : ''}
@@ -1461,7 +1469,7 @@ async function tabSettings(root, profile) {
       <section class="panel">
         <header><h3>${escapeHtml(tr('srv.network'))}</h3></header>
         <div class="body stack">
-          <div class="field"><label for="fake_host">${escapeHtml(tr('pricing.fakehost'))}</label>
+          <div class="field"><label for="fake_host">${escapeHtml(tr('srv.fakehost'))}</label>
             <input id="fake_host" value="${escapeHtml(profile.fake_host || '')}"
               ${plan.fakehost ? '' : 'disabled'} placeholder="hub.example.net">
             <span class="hint">${escapeHtml(tr('srv.fakehostHint'))}</span></div>
@@ -1564,7 +1572,7 @@ const logPanel = (height = '12rem') => `
   <section class="panel" style="margin-top:1.25rem">
     <header><h3>${escapeHtml(tr('srv.answers'))}</h3></header>
     <div class="body" style="padding:0">
-      <div class="console" id="cmd-log" style="height:${height};border-radius:0;box-shadow:none"></div>
+      <div class="console" id="cmd-log" data-empty="${escapeHtml(tr('srv.logEmpty'))}" style="height:${height};border-radius:0;box-shadow:none"></div>
     </div>
   </section>`;
 

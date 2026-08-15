@@ -46,6 +46,9 @@ const PATTERNS = [
 /** So lange darf ein Bot auf eine neue Microsoft-Anmeldung warten, bevor er aufgibt. */
 const AUTH_WAIT_MS = 10 * 60 * 1000;
 
+/** Ab dieser Größe wird das Protokoll eines Bots umgelegt (siehe Bot#rotateLog). */
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
+
 function classify(line) {
   for (const pattern of PATTERNS) {
     const match = pattern.re.exec(line);
@@ -460,13 +463,40 @@ class Bot extends EventEmitter {
     );
   }
 
+  /**
+   * Die Datei umlegen, bevor sie zu groß wird.
+   *
+   * Ein Bot auf einem gesprächigen Server schreibt jede Chatzeile mit. Ohne diese Bremse wuchs die
+   * Datei unbegrenzt weiter – bei mehreren Bots über Wochen bis die Platte voll war. Es bleiben
+   * immer die laufende Datei und eine vorherige.
+   */
+  rotateLog(bytes) {
+    if (this.logBytes === undefined) {
+      try {
+        this.logBytes = fs.statSync(this.logFile).size;
+      } catch {
+        this.logBytes = 0;
+      }
+    }
+    this.logBytes += bytes;
+    if (this.logBytes <= LOG_MAX_BYTES) return;
+    try {
+      fs.renameSync(this.logFile, `${this.logFile}.1`);
+    } catch {
+      /* Datei ist gerade nicht da – dann fängt sie eben neu an. */
+    }
+    this.logBytes = bytes;
+  }
+
   push(type, text) {
     const entry = { t: Date.now(), type, text };
     this.chat.push(entry);
     const limit = this.chatLimit;
     if (this.chat.length > limit) this.chat.splice(0, this.chat.length - limit);
     if (type === 'chat' || type === 'error') {
-      fs.appendFile(this.logFile, `${new Date(entry.t).toISOString()} ${type} ${text}\n`, () => {});
+      const record = `${new Date(entry.t).toISOString()} ${type} ${text}\n`;
+      this.rotateLog(Buffer.byteLength(record));
+      fs.appendFile(this.logFile, record, () => {});
     }
     this.supervisor.emit('bot-line', { userId: this.userId, key: this.key, entry });
   }

@@ -430,21 +430,28 @@ router.post(
   wrap((req, res) => {
     const profile = ownedProfile(req);
     const plan = billing.planOf(profile);
-    const ids = Array.isArray(req.body?.accounts) ? req.body.accounts : [req.body?.account_id];
-    const count = db
-      .prepare('SELECT COUNT(*) AS n FROM profile_accounts WHERE profile_id = ?')
-      .get(profile.id).n;
-    if (count + ids.length > plan.max_accounts) {
+    const wanted = Array.isArray(req.body?.accounts) ? req.body.accounts : [req.body?.account_id];
+    // Jedes Konto gehört einmal geprüft und einmal gezählt. Doppelte Einträge in der Anfrage und
+    // solche, die schon auf dem Platz sitzen, haben vorher gegen das Tariflimit gezählt – damit
+    // ließ sich ein voller Serverplatz melden, obwohl noch Platz war.
+    const accounts = [...new Set(wanted.map((raw) => ownedAccount(req, raw).id))];
+    const existing = new Set(
+      db
+        .prepare('SELECT account_id FROM profile_accounts WHERE profile_id = ?')
+        .all(profile.id)
+        .map((row) => row.account_id)
+    );
+    const fresh = accounts.filter((id) => !existing.has(id));
+    if (existing.size + fresh.length > plan.max_accounts) {
       throw new HttpError(402, `Der Tarif erlaubt ${plan.max_accounts} Konto/Konten auf diesem Server.`, {
         en: `This plan allows ${plan.max_accounts} account(s) on this server.`,
       });
     }
-    for (const raw of ids) {
-      const account = ownedAccount(req, raw);
+    for (const accountId of fresh) {
       db.prepare(
         `INSERT INTO profile_accounts (profile_id, account_id, note, ordinal)
          VALUES (?, ?, ?, 0) ON CONFLICT(profile_id, account_id) DO NOTHING`
-      ).run(profile.id, account.id, req.body?.note || null);
+      ).run(profile.id, accountId, req.body?.note || null);
     }
     res.json({ profile: profileView(profile, langOf(req)) });
   })
@@ -702,6 +709,48 @@ function cleanActions(input, caps) {
   });
 }
 
+/**
+ * Die Einstellungen eines Auslösers prüfen.
+ *
+ * Vorher wanderte hier alles ungeprüft in die Datenbank. Der reguläre Ausdruck eines Chat-Auslösers
+ * wird später gegen **jede** Chatzeile gehalten – ein Muster wie `(a+)+b` hätte damit nicht nur den
+ * eigenen Bot, sondern den ganzen Dienst zum Stehen gebracht, weil Node einen Faden hat.
+ */
+function cleanConfig(input, event) {
+  const raw = input && typeof input === 'object' ? input : {};
+  const config = {};
+  if (event === 'timer') {
+    config.interval_sec = requireInt(raw.interval_sec ?? 300, 'Intervall', { min: 5, max: 86_400 });
+  }
+  if (event === 'chat') {
+    if (raw.contains) config.contains = requireString(raw.contains, 'Chatzeile enthält', { max: 200 });
+    if (raw.regex) {
+      const pattern = requireString(raw.regex, 'Regulärer Ausdruck', { max: 200 });
+      // Ein Quantor, der auf einer Gruppe mit Quantor sitzt, ist der Klassiker für Muster, an
+      // denen sich die Suche festfrisst. Der Rest der Sprache bleibt erlaubt.
+      if (/[+*}]\s*\)\s*[+*{]/.test(pattern) || /\(\?R|\\\d{2,}/.test(pattern)) {
+        throw bad('Dieser reguläre Ausdruck ist zu aufwendig. Nimm „enthält Text“.', {
+          en: 'That regular expression is too expensive. Use “contains text” instead.',
+        });
+      }
+      try {
+        new RegExp(pattern, 'i');
+      } catch {
+        throw bad('Das ist kein gültiger regulärer Ausdruck.', {
+          en: 'That is not a valid regular expression.',
+        });
+      }
+      config.regex = pattern;
+    }
+    if (!config.contains && !config.regex) {
+      throw bad('Ein Chat-Auslöser braucht einen Text oder einen regulären Ausdruck.', {
+        en: 'A chat trigger needs a text or a regular expression.',
+      });
+    }
+  }
+  return config;
+}
+
 router.get(
   '/:id/macros',
   wrap((req, res) => {
@@ -737,7 +786,7 @@ router.post(
         profile.id,
         name,
         event,
-        JSON.stringify(body.config || {}),
+        JSON.stringify(cleanConfig(body.config, event)),
         JSON.stringify(actions),
         JSON.stringify((body.accounts || []).map(Number)),
         body.enabled === false ? 0 : 1,
@@ -758,17 +807,25 @@ router.patch(
     const body = req.body || {};
     const set = [];
     const values = [];
+    // Die Einstellungen hängen am Auslöser: wird nur einer von beiden geschickt, gilt der
+    // gespeicherte Rest.
+    const event = body.event !== undefined
+      ? EVENT_TYPES.includes(body.event)
+        ? body.event
+        : 'join'
+      : macro.event;
     if (body.name !== undefined) {
       set.push('name = ?');
       values.push(requireString(body.name, 'Name', { max: 60 }));
     }
     if (body.event !== undefined) {
       set.push('event = ?');
-      values.push(EVENT_TYPES.includes(body.event) ? body.event : 'join');
+      values.push(event);
     }
-    if (body.config !== undefined) {
+    if (body.config !== undefined || body.event !== undefined) {
+      const raw = body.config !== undefined ? body.config : JSON.parse(macro.config || '{}');
       set.push('config = ?');
-      values.push(JSON.stringify(body.config || {}));
+      values.push(JSON.stringify(cleanConfig(raw, event)));
     }
     if (body.actions !== undefined) {
       set.push('actions = ?');

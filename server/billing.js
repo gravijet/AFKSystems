@@ -237,14 +237,21 @@ export function renewDue(now = Date.now()) {
   return { renewed, suspended };
 }
 
-/** Wer läuft demnächst ab und hat zu wenig Guthaben? Grundlage für die Warnungen. */
+/**
+ * Wer läuft demnächst ab und hat zu wenig Guthaben? Grundlage für die Warnungen.
+ *
+ * Das Guthaben gehört mit in die Bedingung: ohne sie kam hier jeder Platz heraus, der demnächst
+ * fällig ist, und der Nutzer bekam stündlich eine Nachricht darüber, dass alles in Ordnung ist.
+ */
 export function expiringSoon(days = 3) {
   const until = Date.now() + days * 86_400_000;
   return db
     .prepare(
       `SELECT p.id, p.name, p.user_id, p.paid_until, p.renew, pl.price_credits, u.credits
          FROM profiles p JOIN plans pl ON pl.id = p.plan_id JOIN users u ON u.id = p.user_id
-        WHERE pl.free_slot = 0 AND p.suspended = 0 AND p.paid_until BETWEEN ? AND ?`
+        WHERE pl.free_slot = 0 AND p.suspended = 0 AND p.renew = 1
+          AND p.paid_until BETWEEN ? AND ?
+          AND u.credits < pl.price_credits`
     )
     .all(Date.now(), until);
 }
@@ -340,14 +347,17 @@ export function spendByMonth(userId, months = 6) {
   const rows = db
     .prepare("SELECT created_at, delta FROM ledger WHERE user_id = ? AND kind = 'plan' AND delta < 0")
     .all(userId);
+  // Beide Seiten in Ortszeit rechnen. Über toISOString() gingen die Körbe in jeder Zeitzone
+  // östlich von UTC um einen Monat daneben: der 1. um 00:00 Uhr in Berlin ist dort noch der
+  // Vormonat, 22:00 Uhr.
+  const key = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
   const buckets = new Map();
   const now = new Date();
   for (let i = months - 1; i >= 0; i--) {
-    const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
-    buckets.set(date.toISOString().slice(0, 7), 0);
+    buckets.set(key(new Date(now.getFullYear(), now.getMonth() - i, 1)), 0);
   }
   for (const row of rows) {
-    const month = new Date(row.created_at).toISOString().slice(0, 7);
+    const month = key(new Date(row.created_at));
     if (buckets.has(month)) buckets.set(month, buckets.get(month) - row.delta);
   }
   return [...buckets].map(([month, credits]) => ({ month, credits }));

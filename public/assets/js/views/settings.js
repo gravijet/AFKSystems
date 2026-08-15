@@ -150,7 +150,7 @@ export async function render(root) {
     // Der Server schickt die Nachricht – der Browser darf den Webhook nicht direkt ansprechen.
     try {
       await api('/me/discord-test', { method: 'POST' });
-      ok(tr('srv.saved'));
+      ok(tr('set.webhookSent'));
     } catch (error) {
       fail(error);
     }
@@ -175,7 +175,16 @@ export async function render(root) {
 
   $('#logout-all').addEventListener('click', async () => {
     if (!(await confirmDialog(tr('set.logoutAllAsk')))) return;
-    await api('/auth/logout', { method: 'POST' });
+    // Erst alle anderen Sitzungen, dann die eigene. Vorher wurde nur die eigene beendet – der
+    // Knopf heißt aber "auf allen Geräten abmelden", und genau darauf verlässt sich, wer ihn
+    // drückt, weil ihm ein fremdes Gerät nicht mehr geheuer ist.
+    try {
+      await api('/me/sessions', { method: 'DELETE' });
+    } catch (error) {
+      fail(error);
+      return;
+    }
+    await api('/auth/logout', { method: 'POST' }).catch(() => {});
     location.href = url('/login');
   });
 }

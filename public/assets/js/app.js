@@ -320,14 +320,18 @@ export function toggleSide(open) {
 }
 $('#side-backdrop').addEventListener('click', () => toggleSide(false));
 document.addEventListener('click', (event) => {
-  if (event.target.closest('.side a')) toggleSide(false);
+  // Der Knopf wird bei jeder Ansicht neu gezeichnet – deshalb hier einmal für alle. Ob er
+  // überhaupt zu sehen ist, entscheidet allein die Breite, und das gehört ins CSS: sonst bliebe
+  // er nach dem Verkleinern des Fensters verschwunden und die Seitenleiste unerreichbar.
+  if (event.target.closest('.side-toggle')) toggleSide(true);
+  else if (event.target.closest('.side a')) toggleSide(false);
 });
 
 /** Kopfzeile einer Ansicht – enthält auf dem Handy den Knopf für die Seitenleiste. */
 export function appbar(title, actionsHtml = '', subtitle = '') {
   return `<div class="appbar">
     <div class="row" style="min-width:0">
-      <button class="btn btn-ghost btn-sm" id="side-toggle" style="display:none" aria-label="${escapeHtml(
+      <button class="btn btn-ghost btn-sm side-toggle" type="button" aria-label="${escapeHtml(
         tr('nav.menu')
       )}">${icon('menu')}</button>
       <div style="min-width:0">
@@ -354,9 +358,16 @@ const VIEWS = {
 };
 
 let drawing = false;
+let redrawWanted = false;
 
 export async function draw() {
-  if (drawing) return;
+  // Während gezeichnet wird, kommt kein zweiter Durchlauf dazwischen – aber der Wunsch wird
+  // gemerkt. Ohne das ging ein Klick verloren, der während des Ladens einer Ansicht kam: die
+  // Adresse stand auf der neuen Seite, zu sehen war noch die alte.
+  if (drawing) {
+    redrawWanted = true;
+    return;
+  }
   drawing = true;
   state.route = parseRoute();
   state.onLive = null;
@@ -371,10 +382,9 @@ export async function draw() {
   } finally {
     drawing = false;
     banner();
-    const toggle = $('#side-toggle');
-    if (toggle && window.innerWidth < 1000) {
-      toggle.style.display = '';
-      toggle.addEventListener('click', () => toggleSide(true));
+    if (redrawWanted) {
+      redrawWanted = false;
+      draw();
     }
   }
 }

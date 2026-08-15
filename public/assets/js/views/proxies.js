@@ -3,7 +3,7 @@
 // Angelegt und zugeteilt werden sie vom Betreiber – hinter jedem steckt eine echte Adresse.
 // Deshalb gibt es hier keinen Selbstbedienungsknopf, sondern den Weg über ein Ticket.
 
-import { api, icon, escapeHtml, datetime, tr, $, fail } from '../ui.js';
+import { api, icon, escapeHtml, datetime, tr, $ } from '../ui.js';
 import { state, appbar, go } from '../app.js';
 
 export async function render(root) {
@@ -33,7 +33,7 @@ export async function render(root) {
             data.supported
               ? ''
               : `<div class="note warn">${icon('alert')}<div>${escapeHtml(
-                  tr('features.legend.missing')
+                  tr('px.unsupported')
                 )}</div></div>`
           }
           <button class="btn btn-primary" id="request">${icon('ticket')} ${escapeHtml(tr('px.request'))}</button>
@@ -47,7 +47,8 @@ export async function render(root) {
           ${
             data.proxies.length
               ? `<div class="table-wrap"><table class="table">
-                  <thead><tr><th>${escapeHtml(tr('common.name'))}</th><th>Typ</th><th>Host</th><th></th></tr></thead>
+                  <thead><tr><th>${escapeHtml(tr('common.name'))}</th><th>${escapeHtml(tr('px.kind'))}</th>
+                    <th>${escapeHtml(tr('px.host'))}</th><th></th></tr></thead>
                   <tbody>${data.proxies
                     .map(
                       (proxy) => `<tr>

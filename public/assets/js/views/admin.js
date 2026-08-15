@@ -197,7 +197,7 @@ async function users(root) {
       <select id="filter" style="max-width:12rem">
         ${[
           ['all', tr('common.all')],
-          ['paying', tr('features.legend.premium')],
+          ['paying', tr('adm.paying')],
           ['admins', tr('set.role.admin')],
           ['blocked', tr('adm.block')],
           ['unverified', tr('auth.verify.title')],
@@ -298,7 +298,7 @@ async function userDetail(root, id) {
 
     <div class="grid four" style="margin-bottom:1.5rem">
       ${stat(tr('bill.balance'), credits(user.credits), euro(user.credits))}
-      ${stat(tr('bill.monthly'), credits(data.monthly_cost), data.paying ? tr('features.legend.premium') : '–')}
+      ${stat(tr('bill.monthly'), credits(data.monthly_cost), data.paying ? tr('adm.paying') : '–')}
       ${stat(tr('adm.profiles'), data.profiles.length, `${data.accounts.length} ${tr('ov.accounts')}`)}
       ${stat(tr('adm.tickets'), data.tickets.length, `${data.proxies.length} ${tr('px.title')}`)}
     </div>
@@ -306,7 +306,7 @@ async function userDetail(root, id) {
     <div class="row wrap" style="margin-bottom:1.5rem">
       <button class="btn btn-sm" id="edit">${icon('settings')} ${escapeHtml(tr('common.edit'))}</button>
       <button class="btn btn-sm" id="password">${escapeHtml(tr('adm.setPassword'))}</button>
-      <button class="btn btn-sm" id="premium">${escapeHtml(tr('features.legend.premium'))}</button>
+      <button class="btn btn-sm" id="premium">${escapeHtml(tr('adm.premium'))}</button>
       <button class="btn btn-sm" id="block">${escapeHtml(user.blocked ? tr('adm.unblock') : tr('adm.block'))}</button>
       <button class="btn btn-sm" id="role">${escapeHtml(
         user.role === 'admin' ? tr('adm.revokeAdmin') : tr('adm.makeAdmin')
@@ -392,7 +392,7 @@ async function userDetail(root, id) {
         </div>
         ${
           user.premium_until
-            ? `<p class="small muted">${escapeHtml(tr('features.legend.premium'))}: ${date(
+            ? `<p class="small muted">${escapeHtml(tr('adm.premium'))}: ${date(
                 user.premium_until
               )}</p>`
             : ''
@@ -448,7 +448,7 @@ async function userDetail(root, id) {
   });
 
   $('#premium').addEventListener('click', async () => {
-    const answer = await formDialog(tr('features.legend.premium'), [
+    const answer = await formDialog(tr('adm.premium'), [
       { key: 'premium_days', label: tr('common.days'), type: 'number', min: 0, max: 3650, value: 30 },
     ]);
     if (answer) patch({ premium_days: Number(answer.premium_days) });
@@ -977,7 +977,7 @@ async function ticketDetail(root, id) {
         <h2 style="font-size:1.3rem">${escapeHtml(ticket.subject)}</h2>
         <p class="small muted">${escapeHtml(tr(`tk.status.${ticket.status}`))} ·
           <a href="#/admin/users/${ticket.user_id}">${escapeHtml(data.user?.username || '')}</a>
-          ${data.paying ? `<span class="pill primary">${escapeHtml(tr('features.legend.premium'))}</span>` : ''}
+          ${data.paying ? `<span class="pill primary">${escapeHtml(tr('adm.paying'))}</span>` : ''}
         </p>
       </div>
       <div class="row wrap">

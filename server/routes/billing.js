@@ -116,7 +116,9 @@ router.post(
     }
 
     if (provider === 'transfer' || provider === 'paypal') {
-      const reference = `AFK-${req.user.id}-${token(4).toUpperCase().slice(0, 6)}`;
+      // Nur Ziffern und Großbuchstaben: base64url bringt "-" und "_" mit, und die kommen im
+      // Verwendungszweck einer Überweisung nicht überall heil an.
+      const reference = `AFK-${req.user.id}-${token(8).replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 6)}`;
       const topup = billing.createTopup({
         userId: req.user.id,
         provider,
@@ -189,24 +191,34 @@ async function stripeCheckout(user, chosen, topup, lang) {
  */
 export const stripeWebhook = wrap(async (req, res) => {
   if (!config.stripeSecret) return res.status(404).end();
+  // Ohne Signaturschlüssel wird hier nichts angenommen. Vorher war die Prüfung optional – wer die
+  // Adresse kannte, konnte sich damit jede offene Aufladung selbst gutschreiben lassen.
+  if (!config.stripeWebhookSecret) {
+    console.warn('[stripe] Webhook abgelehnt: STRIPE_WEBHOOK_SECRET fehlt.');
+    return res.status(503).json({ error: 'Webhook ist nicht eingerichtet.' });
+  }
   const signature = req.headers['stripe-signature'];
   const raw = req.body; // rohe Bytes, siehe index.js
 
-  if (config.stripeWebhookSecret) {
-    const { createHmac, timingSafeEqual } = await import('node:crypto');
-    const parts = Object.fromEntries(
-      String(signature || '')
-        .split(',')
-        .map((part) => part.split('='))
-    );
-    const expected = createHmac('sha256', config.stripeWebhookSecret)
-      .update(`${parts.t}.${raw}`)
-      .digest('hex');
-    const given = Buffer.from(String(parts.v1 || ''), 'utf8');
-    const mine = Buffer.from(expected, 'utf8');
-    if (given.length !== mine.length || !timingSafeEqual(given, mine)) {
-      return res.status(400).json({ error: 'Signatur stimmt nicht.' });
-    }
+  const { createHmac, timingSafeEqual } = await import('node:crypto');
+  const parts = Object.fromEntries(
+    String(signature || '')
+      .split(',')
+      .map((part) => part.split('='))
+  );
+  // Alte Signaturen nicht mehr annehmen, sonst ließe sich ein einmal mitgelesener Aufruf
+  // beliebig oft wiederholen.
+  const age = Math.abs(Date.now() / 1000 - Number(parts.t));
+  if (!Number.isFinite(age) || age > 300) {
+    return res.status(400).json({ error: 'Signatur ist zu alt.' });
+  }
+  const expected = createHmac('sha256', config.stripeWebhookSecret)
+    .update(`${parts.t}.${raw}`)
+    .digest('hex');
+  const given = Buffer.from(String(parts.v1 || ''), 'utf8');
+  const mine = Buffer.from(expected, 'utf8');
+  if (given.length !== mine.length || !timingSafeEqual(given, mine)) {
+    return res.status(400).json({ error: 'Signatur stimmt nicht.' });
   }
 
   let event;
