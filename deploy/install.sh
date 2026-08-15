@@ -50,11 +50,31 @@ chown -R "$DIENST:$DIENST" "$ZIEL"
 
 echo "== systemd =="
 install -m 0644 "$QUELLE/deploy/afksystems.service" /etc/systemd/system/$DIENST.service
+install -m 0644 "$QUELLE/deploy/afksystems-bot.service" /etc/systemd/system/$DIENST-bot.service
 systemctl daemon-reload
 systemctl enable "$DIENST"
 systemctl restart "$DIENST"
 sleep 3
 systemctl --no-pager --lines=10 status "$DIENST" || true
+
+echo "== Discord-Bot =="
+# Der Bot ist ein eigener Dienst. Er wird nur angefasst, wenn seine .env schon ausgefüllt ist –
+# sonst liefe er in eine Schleife aus Neustarts, und die Einrichtung steht in docs/discord-bot.md.
+if [ -f "$ZIEL/bot/.env" ] && grep -q '^PANEL_SECRET=.\+' "$ZIEL/bot/.env"; then
+  ( cd "$ZIEL/bot" && sudo -u "$DIENST" -H npm ci --omit=dev 2>/dev/null || npm ci --omit=dev )
+  chown -R "$DIENST:$DIENST" "$ZIEL/bot"
+  chmod 600 "$ZIEL/bot/.env"
+  systemctl enable "$DIENST-bot"
+  systemctl restart "$DIENST-bot"
+  echo "Bot neu gestartet."
+else
+  [ -f "$ZIEL/bot/.env" ] || cp "$QUELLE/bot/.env.example" "$ZIEL/bot/.env"
+  chown "$DIENST:$DIENST" "$ZIEL/bot/.env"
+  chmod 600 "$ZIEL/bot/.env"
+  echo "Bot noch nicht eingerichtet – $ZIEL/bot/.env ausfüllen, dann:"
+  echo "  systemctl enable --now $DIENST-bot"
+  echo "  (Anleitung: docs/discord-bot.md)"
+fi
 
 echo "== nginx =="
 if [ -d /etc/nginx/sites-available ]; then

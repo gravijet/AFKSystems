@@ -8,7 +8,7 @@ import { api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, $, fail, to
 
 // Relativ zur eigenen Adresse: unter /assets/v/<version>/js/app.js kommt so von selbst die Adresse
 // mit demselben Fingerabdruck heraus. Siehe assetVersion in server/config.js.
-const LOGO = new URL('../img/logo.svg', import.meta.url).pathname;
+const LOGO = new URL('../img/logo-128.webp', import.meta.url).pathname;
 
 export const state = {
   me: null,
@@ -129,6 +129,25 @@ function connect() {
       state.onLive?.({ type: 'line', key: message.key, entry: message.entry });
       return;
     }
+    if (message.type === 'view') {
+      // Anzeigetafel, Spielerliste oder Menü eines Bots. Sie hängen am Bot-Zustand, nicht am Chat.
+      const bot = state.bots.get(message.key) || {};
+      state.bots.set(message.key, {
+        ...bot,
+        views: { ...(bot.views || {}), [message.kind]: message.view },
+      });
+      state.onLive?.({ type: 'view', key: message.key, kind: message.kind, view: message.view });
+      return;
+    }
+    if (message.type === 'ticket') {
+      // Der Support-Chat läuft live – die Ticket-Ansicht hängt sich hier ein.
+      state.onLive?.({ type: 'ticket', event: message.event, message });
+      if (message.event === 'message' && state.route.name !== 'tickets' && state.stats) {
+        state.stats.tickets_unread = (state.stats.tickets_unread || 0) + 1;
+        drawSide();
+      }
+      return;
+    }
     if (message.type === 'state') {
       state.bots.set(message.key, { ...state.bots.get(message.key), ...message.state });
       // Zähler in der Seitenleiste stimmen sonst nicht mehr.
@@ -197,18 +216,26 @@ const NAV = [
  * fehlt sie (schlanker Client auf dem Gratis-Platz), wird der Reiter gar nicht erst angeboten.
  */
 export const TABS = [
+  // Verbinden und Chat sind ein Reiter. Getrennt hieß das: starten, wechseln, mitlesen, wechseln,
+  // stoppen – und das für jeden Handgriff. Wer einen Bot startet, will sehen, was er sagt.
   { key: 'connect', label: 'tab.connect' },
-  { key: 'chat', label: 'tab.chat' },
   { key: 'movement', label: 'tab.movement', need: 'movement' },
   { key: 'board', label: 'tab.board', need: 'board' },
   { key: 'menu', label: 'tab.menu', need: 'menu' },
   { key: 'macros', label: 'tab.macros' },
   { key: 'proxies', label: 'tab.proxies', need: 'proxy' },
   { key: 'plan', label: 'tab.plan' },
+  { key: 'addons', label: 'ad.title', paidOnly: true },
   { key: 'settings', label: 'tab.settings' },
 ];
 
-export const tabsFor = (profile) => TABS.filter((tab) => !tab.need || profile?.caps?.[tab.need]);
+export const tabsFor = (profile) =>
+  TABS.filter((tab) => {
+    if (tab.need && !profile?.caps?.[tab.need]) return false;
+    // Zusätze gibt es nur, wo sie etwas bewirken – auf dem Gratis-Platz wäre das ein leerer Reiter.
+    if (tab.paidOnly && !profile?.plan?.addons) return false;
+    return true;
+  });
 
 export function drawSide() {
   const route = state.route;
@@ -275,6 +302,12 @@ export function drawSide() {
     </div>
 
     <div class="foot stack" style="gap:.6rem">
+      ${
+        state.meta?.discord_invite
+          ? `<a class="side-discord" href="${escapeHtml(state.meta.discord_invite)}"
+               target="_blank" rel="noopener">${icon('discord')}${escapeHtml(tr('discord.join'))}</a>`
+          : ''
+      }
       <a class="card tight" href="#/credits" style="display:block">
         <div class="row spread">
           <span class="small muted">${escapeHtml(tr('dash.credits'))}</span>
@@ -382,11 +415,66 @@ export async function draw() {
   } finally {
     drawing = false;
     banner();
+    announcements();
     if (redrawWanted) {
       redrawWanted = false;
       draw();
     }
   }
+}
+
+/**
+ * Ankündigungen des Betreibers, über der Ansicht.
+ *
+ * Sie standen bisher in der Datenbank und sonst nirgends. Weggeklickt bleiben sie weg – je
+ * Ankündigung gemerkt, nicht als "alle aus": eine neue soll wieder auffallen.
+ */
+function announcements() {
+  document.querySelectorAll('.announce').forEach((node) => node.remove());
+  const list = state.meta?.announcements || [];
+  if (!list.length) return;
+  let hidden = [];
+  try {
+    hidden = JSON.parse(localStorage.getItem('afk-seen-news') || '[]');
+  } catch {
+    hidden = [];
+  }
+  const open = list.filter((entry) => !hidden.includes(entry.id));
+  if (!open.length) return;
+
+  const main = $('#main');
+  const box = document.createElement('div');
+  box.className = 'announce stack';
+  box.innerHTML = open
+    .map(
+      (entry) => `<div class="note ${entry.kind === 'info' ? '' : entry.kind}" data-news="${entry.id}">
+        ${icon(entry.kind === 'info' ? 'info' : 'alert')}
+        <div class="grow">
+          <strong>${escapeHtml(entry.title)}</strong>
+          ${entry.body ? `<p class="small" style="margin:.35rem 0 0">${escapeHtml(entry.body).replace(/\n/g, '<br>')}</p>` : ''}
+          ${
+            entry.link
+              ? `<p style="margin:.5rem 0 0"><a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener">${escapeHtml(
+                  tr('home.what.link')
+                )}</a></p>`
+              : ''
+          }
+        </div>
+        <button class="btn btn-ghost btn-sm" data-dismiss="${entry.id}"
+          aria-label="${escapeHtml(tr('common.close'))}">${icon('x')}</button>
+      </div>`
+    )
+    .join('');
+  main.prepend(box);
+
+  box.querySelectorAll('[data-dismiss]').forEach((button) =>
+    button.addEventListener('click', () => {
+      hidden.push(Number(button.dataset.dismiss));
+      localStorage.setItem('afk-seen-news', JSON.stringify(hidden.slice(-50)));
+      button.closest('[data-news]').remove();
+      if (!box.querySelector('[data-news]')) box.remove();
+    })
+  );
 }
 
 /** Der Streifen ganz oben, wenn ein Administrator dieses Konto gerade nur ansieht. */

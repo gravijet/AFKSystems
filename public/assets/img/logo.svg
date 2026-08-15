@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" role="img" aria-label="AFKSystems">
-  <!-- Würfel in Aufsicht: das Spielfeld. Der Punkt rechts oben ist der Zustand "verbunden". -->
-  <path d="M16 3 28 9.5v13L16 29 4 22.5v-13z" fill="#206cfe" fill-opacity="0.12"/>
-  <path d="M16 3 28 9.5v13L16 29 4 22.5v-13z" stroke="#206cfe" stroke-width="1.8" stroke-linejoin="round"/>
-  <path d="M4 9.5 16 16l12-6.5M16 16v13" stroke="#206cfe" stroke-width="1.4" stroke-linejoin="round" stroke-opacity="0.55"/>
-  <circle cx="26" cy="7" r="4" fill="#00bb7f" stroke="#fefeff" stroke-width="1.6"/>
-</svg>

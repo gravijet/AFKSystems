@@ -12,12 +12,16 @@ import './macros.js'; // hängt die Macro-Engine in den Supervisor
 import * as binaries from './binaries.js';
 import * as billing from './billing.js';
 import * as notify from './notify.js';
+import * as mail from './mail.js';
 import * as pages from './pages.js';
 import * as landing from './landing.js';
+import * as tickets from './tickets.js';
+import { bridge } from './bridge.js';
 import { router as coreRouter } from './routes/core.js';
 import { router as profilesRouter } from './routes/profiles.js';
 import { router as billingRouter, stripeWebhook } from './routes/billing.js';
 import { admin as adminRouter } from './routes/admin.js';
+import { router as botRouter, checkSecret } from './routes/bot.js';
 import { HttpError } from './util.js';
 
 const app = express();
@@ -35,6 +39,7 @@ app.use('/api', coreRouter);
 app.use('/api', billingRouter);
 app.use('/api/profiles', profilesRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/bot', botRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -107,6 +112,9 @@ app.use(
     },
   })
 );
+// Browser fragen die Adresse von sich aus ab, egal was im HTML steht.
+app.get('/favicon.ico', (req, res) => res.redirect(301, `/assets/v/${assetVersion}/img/favicon-32.png`));
+
 app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send(`User-agent: *\nAllow: /\nSitemap: ${config.publicUrl}/sitemap.xml\n`);
 });
@@ -190,7 +198,8 @@ const PAGES = {
 /** Eine feste Seite bauen: Kopfdaten, dazu was die Seite an Beweglichem braucht. */
 function renderPage(slug, lang) {
   const entry = PAGES[slug];
-  const vars = { path: slug ? `/${slug}` : '' };
+  // Was auf jeder Seite vorkommt (Discord in der Kopfleiste), steht an einer Stelle.
+  const vars = { path: slug ? `/${slug}` : '', ...landing.commonVars(lang) };
   if (entry.noindex) vars.robotsTag = NOINDEX;
   if (entry.title) vars.title = `${pages.t(entry.title, lang)} – ${config.brand}`;
   if (entry.description) vars.description = pages.t(entry.description, lang);
@@ -291,11 +300,33 @@ app.use((error, req, res, _next) => {
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
+/** Eigener Server für die Bot-Leitung: andere Anmeldung, andere Nachrichten. */
+const botSockets = new WebSocketServer({ noServer: true });
 
 /** user_id -> Menge offener Verbindungen. */
 const sockets = new Map();
 
 server.on('upgrade', (req, socket, head) => {
+  // Die Leitung zum Discord-Bot. Sie hängt nicht an einer Sitzung, sondern am gemeinsamen
+  // Geheimnis – der Bot ist kein Nutzer.
+  if (req.url.startsWith('/api/bot/stream')) {
+    const header = String(req.headers.authorization || '');
+    if (!checkSecret(header.startsWith('Bearer ') ? header.slice(7) : '')) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      return socket.destroy();
+    }
+    return botSockets.handleUpgrade(req, socket, head, (ws) => {
+      bridge.add(ws);
+      ws.isAlive = true;
+      ws.on('pong', () => {
+        ws.isAlive = true;
+      });
+      ws.on('close', () => bridge.remove(ws));
+      ws.send(JSON.stringify({ type: 'hello', seq: bridge.sequence }));
+      console.log('[bot] verbunden');
+    });
+  }
+
   if (!req.url.startsWith('/api/ws')) return socket.destroy();
   const value = auth.readCookie(req, 'afk_session');
   const row = value
@@ -348,10 +379,34 @@ function push(userId, message) {
 
 supervisor.on('bot-line', ({ userId, key, entry }) => push(userId, { type: 'line', key, entry }));
 supervisor.on('bot-state', ({ userId, key, state }) => push(userId, { type: 'state', key, state }));
+// Anzeigetafel, Spielerliste und Menü. Sie gehen denselben Weg wie ein Zustandswechsel, damit die
+// Ansicht ohne Nachfragen aktuell ist.
+supervisor.on('bot-view', ({ userId, key, kind, view }) => push(userId, { type: 'view', key, kind, view }));
 
-// Tote Verbindungen alle 30 s aussortieren.
+/**
+ * Ticket-Ereignisse an die Beteiligten und ans Team.
+ *
+ * Damit ist der Support-Chat live: Wer ein Ticket offen hat, sieht eine Antwort in dem Moment,
+ * in dem sie geschrieben wird, und dass gerade jemand tippt – ohne die Seite neu zu laden.
+ */
+for (const type of ['ticket.message', 'ticket.status', 'ticket.typing', 'ticket.created']) {
+  bridge.on(type, (message) => {
+    const ticket = tickets.byId(message.ticket_id);
+    if (!ticket) return;
+    const payload = { ...message, type: 'ticket', event: type.split('.')[1] };
+    // Das Team sieht jedes Ticket, die Beteiligten ihres – wer beides ist, bekommt es einmal.
+    const receivers = new Set(db.prepare("SELECT id FROM users WHERE role = 'admin'").all().map((row) => row.id));
+    if (!message.internal) {
+      // Interne Notizen bleiben beim Team. Der Kunde erfährt nicht einmal, dass es sie gibt.
+      for (const person of tickets.participants(ticket.id)) receivers.add(person.id);
+    }
+    for (const id of receivers) push(id, payload);
+  });
+}
+
+// Tote Verbindungen alle 30 s aussortieren – Browser wie Bot.
 setInterval(() => {
-  for (const ws of wss.clients) {
+  for (const ws of [...wss.clients, ...botSockets.clients]) {
     if (!ws.isAlive) {
       ws.terminate();
       continue;
@@ -370,17 +425,27 @@ setInterval(() => {
  */
 function billingTick() {
   const { renewed, suspended } = billing.renewDue();
+  const userById = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 
   for (const entry of renewed) {
-    const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(entry.profileId);
-    const plan = billing.planOf(profile);
-    notify.planRenewed(entry.userId, entry.name, plan.price_credits);
-    push(entry.userId, { type: 'credits', balance: billing.balance(entry.userId) });
+    const balance = billing.balance(entry.userId);
+    notify.planRenewed(entry.userId, entry.name, entry.price);
+    const user = userById(entry.userId);
+    if (user) mail.sendTo(user, 'renewed', { name: entry.name, price: entry.price, balance });
+    push(entry.userId, { type: 'credits', balance });
   }
 
   for (const entry of suspended) {
     supervisor.stopProfile(entry.profileId, 'Laufzeit abgelaufen – Bots gestoppt.');
     notify.planSuspended(entry.userId, entry.name, entry.reason);
+    const user = userById(entry.userId);
+    if (user) {
+      mail.sendTo(user, 'suspended', {
+        name: entry.name,
+        reason: entry.reason,
+        profile_id: entry.profileId,
+      });
+    }
     push(entry.userId, {
       type: 'suspended',
       profile_id: entry.profileId,
@@ -393,15 +458,37 @@ function billingTick() {
   const warnDays = Number(getSetting('renew_warn_days')) || 3;
   for (const row of billing.expiringSoon(warnDays)) {
     const days = Math.max(1, Math.ceil((row.paid_until - Date.now()) / 86_400_000));
-    notify.planExpiring(row.user_id, row.name, days, Math.max(0, row.price_credits - row.credits));
+    const missing = Math.max(0, row.price_credits - row.credits);
+    notify.planExpiring(row.user_id, row.name, days, missing);
+    // Eine Nachricht je Tag und Serverplatz: der Takt hier ist stündlich, und 24 gleichlautende
+    // E-Mails über dasselbe fehlende Guthaben wären das Gegenteil einer Warnung.
+    if (onceADay(`expiring:${row.id}`)) {
+      const user = userById(row.user_id);
+      if (user) mail.sendTo(user, 'expiring', { name: row.name, days, missing });
+    }
   }
 
   const low = Number(getSetting('low_balance'));
   for (const row of db
     .prepare('SELECT id, credits FROM users WHERE credits > 0 AND credits <= ?')
     .all(low)) {
-    if (billing.monthlyCost(row.id) > 0) notify.lowBalance(row.id, row.credits);
+    const monthly = billing.monthlyCost(row.id);
+    if (monthly <= 0) continue;
+    notify.lowBalance(row.id, row.credits);
+    if (onceADay(`low:${row.id}`)) {
+      const user = userById(row.id);
+      if (user) mail.sendTo(user, 'low_balance', { balance: row.credits, monthly });
+    }
   }
+}
+
+/** Sperrzeit für Nachrichten, die aus dem Stundentakt kommen. */
+const lastMailed = new Map();
+function onceADay(key) {
+  const now = Date.now();
+  if (now - (lastMailed.get(key) || 0) < 20 * 60 * 60 * 1000) return false;
+  lastMailed.set(key, now);
+  return true;
 }
 
 setInterval(billingTick, 3_600_000).unref();

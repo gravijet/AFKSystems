@@ -1,0 +1,17 @@
+{
+  "name": "afksystems-discord",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Discord-Bot für AFKSystems: Tickets in beide Richtungen, Rollen nach Tarif.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.27.0",
+    "ws": "^8.18.0"
+  }
+}

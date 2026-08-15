@@ -11,6 +11,7 @@
 
 import { db, getSetting, audit } from './db.js';
 import { voucherCode, bad, notFound } from './util.js';
+import * as mail from './mail.js';
 
 /** Ein Monat sind hier immer 30 Tage. Keine Kalenderrechnerei, kein Februar-Sonderfall. */
 export const MONTH_MS = 30 * 86_400_000;
@@ -73,6 +74,92 @@ export function planOf(profile) {
   return (profile.plan_id && planById(profile.plan_id)) || freePlan() || plans()[0];
 }
 
+// ---------------------------------------------------------------- Zusätze
+//
+// Ein Zusatz hängt am Serverplatz, nicht am Konto: Wer auf einem Server die Anzeigetafel braucht
+// und auf dem anderen nicht, soll auch nur einmal zahlen. Abgerechnet wird im selben Takt wie der
+// Tarif – der Platz hat ein Ablaufdatum, und alles, was dranhängt, endet mit ihm.
+
+export const addons = ({ includeInactive = false } = {}) =>
+  db.prepare(`SELECT * FROM addons ${includeInactive ? '' : 'WHERE active = 1'} ORDER BY sort, id`).all();
+
+export const addonById = (id) => db.prepare('SELECT * FROM addons WHERE id = ?').get(id);
+export const addonByKey = (key) => db.prepare('SELECT * FROM addons WHERE key = ?').get(key);
+
+/** Die gebuchten Zusätze eines Serverplatzes, jeweils mit Menge. */
+export function addonsOf(profileId) {
+  return db
+    .prepare(
+      `SELECT a.*, pa.qty FROM profile_addons pa JOIN addons a ON a.id = pa.addon_id
+        WHERE pa.profile_id = ? ORDER BY a.sort, a.id`
+    )
+    .all(profileId);
+}
+
+/**
+ * Tarif plus gebuchte Zusätze. Das ist das, woran sich alles andere hält – der rohe Tarif sagt
+ * nur, womit jemand angefangen hat.
+ */
+export function featuresOf(profile) {
+  const plan = planOf(profile);
+  const merged = { ...plan };
+  for (const entry of addonsOf(profile.id)) {
+    if (entry.kind === 'slot') merged.max_accounts += entry.amount * entry.qty;
+    else if (entry.flag) merged[entry.flag] = 1;
+  }
+  return merged;
+}
+
+/**
+ * Welche Fähigkeit hinter welchem Tarifmerkmal steht.
+ *
+ * Der Client sagt, was seine Bauform **könnte**; der Tarif sagt, was davon freigeschaltet ist.
+ * Erst beides zusammen ergibt, was ein Serverplatz kann – ohne diese Tabelle hätte jeder mit dem
+ * Premium-Client automatisch auch Anzeigetafel und Menüs, und zwischen Premium und Ultra bliebe
+ * kein Unterschied.
+ */
+const CAP_GATES = {
+  local: 'movement',
+  movement: 'movement',
+  sneak: 'premium',
+  antiafk: 'premium',
+  premium: 'premium',
+  board: 'board',
+  menu: 'menus',
+  proxy: 'proxy',
+  fakehost: 'fakehost',
+  offline: 'offline_accounts',
+  pov: 'pov',
+};
+
+/** Fähigkeiten des Clients, beschnitten auf das, was der Tarif (samt Zusätzen) hergibt. */
+export function gateCaps(clientCaps = {}, features = {}) {
+  const out = {};
+  for (const [key, value] of Object.entries(clientCaps)) {
+    const gate = CAP_GATES[key];
+    out[key] = Boolean(value) && (gate === undefined || Boolean(features[gate]));
+  }
+  return out;
+}
+
+/** Was ein Serverplatz je 30 Tage kostet: Tarif plus Zusätze. */
+export function monthlyPrice(profile) {
+  const plan = planOf(profile);
+  if (plan.free_slot) return 0;
+  return (
+    plan.price_credits +
+    addonsOf(profile.id).reduce((sum, entry) => sum + entry.price_credits * entry.qty, 0)
+  );
+}
+
+/** Anteiliger Preis für den Rest der laufenden Periode – für Zusätze, die mittendrin dazukommen. */
+export function proratedPrice(profile, credits) {
+  if (!profile.paid_until) return 0;
+  const left = profile.paid_until - Date.now();
+  if (left <= 0) return 0;
+  return Math.ceil((credits * Math.min(left, MONTH_MS)) / MONTH_MS);
+}
+
 /** Wie viele kostenlose Plätze ein Konto hat (Einstellung, Vorgabe 1). */
 export const freeSlots = () => Math.max(0, Number(getSetting('free_slots')) || 0);
 
@@ -115,11 +202,14 @@ export function isPayingUser(userId) {
   );
 }
 
-/** Was ein Konto insgesamt im Monat kostet (nur gültige, bezahlte Plätze). */
+/** Was ein Konto insgesamt im Monat kostet (nur gültige, bezahlte Plätze, Zusätze eingerechnet). */
 export function monthlyCost(userId) {
   return db
     .prepare(
-      `SELECT COALESCE(SUM(pl.price_credits), 0) AS n FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+      `SELECT COALESCE(SUM(pl.price_credits + COALESCE(
+                (SELECT SUM(a.price_credits * pa.qty) FROM profile_addons pa
+                   JOIN addons a ON a.id = pa.addon_id WHERE pa.profile_id = p.id), 0)), 0) AS n
+         FROM profiles p JOIN plans pl ON pl.id = p.plan_id
         WHERE p.user_id = ? AND pl.free_slot = 0 AND p.paid_until > ?`
     )
     .get(userId, Date.now()).n;
@@ -131,7 +221,7 @@ export function refundValue(profile) {
   if (plan.free_slot || !profile.paid_until) return 0;
   const left = profile.paid_until - Date.now();
   if (left <= 0) return 0;
-  return Math.floor((plan.price_credits * left) / MONTH_MS);
+  return Math.floor((monthlyPrice(profile) * left) / MONTH_MS);
 }
 
 /**
@@ -154,6 +244,8 @@ export const setPlan = db.transaction((profile, plan, { by = null } = {}) => {
     }
     const refund = refundValue(profile);
     if (refund > 0) move(profile.user_id, refund, 'refund', `Restguthaben "${profile.name}"`);
+    // Zusätze gibt es auf dem Gratis-Platz nicht – der Rest ist im Restguthaben schon drin.
+    db.prepare('DELETE FROM profile_addons WHERE profile_id = ?').run(profile.id);
     db.prepare(
       'UPDATE profiles SET plan_id = ?, paid_until = NULL, suspended = 0, chat_limit = ? WHERE id = ?'
     ).run(plan.id, Math.min(profile.chat_limit || plan.chat_limit, plan.chat_limit), profile.id);
@@ -162,7 +254,20 @@ export const setPlan = db.transaction((profile, plan, { by = null } = {}) => {
   }
 
   const refund = current.free_slot ? 0 : refundValue(profile);
-  const price = plan.price_credits;
+
+  // Was der neue Tarif schon von Haus aus mitbringt, muss niemand als Zusatz weiterbezahlen.
+  for (const entry of addonsOf(profile.id)) {
+    const redundant = entry.kind === 'flag' && entry.flag && plan[entry.flag];
+    const forbidden = !plan.addons;
+    if (redundant || forbidden) {
+      db.prepare('DELETE FROM profile_addons WHERE profile_id = ? AND addon_id = ?').run(
+        profile.id,
+        entry.id
+      );
+    }
+  }
+
+  const price = plan.price_credits + addonsOf(profile.id).reduce((sum, e) => sum + e.price_credits * e.qty, 0);
   if (user.credits + refund < price) {
     throw bad(
       `Zu wenig Guthaben: "${plan.name_de}" kostet ${price} Credits für 30 Tage, vorhanden sind ${
@@ -212,10 +317,13 @@ export function renewDue(now = Date.now()) {
   for (const profile of due) {
     const user = readUser.get(profile.user_id);
     if (!user) continue;
-    if (profile.renew && user.credits >= profile.price_credits) {
+    // Der Preis kommt aus Tarif **und** Zusätzen – sonst liefe ein dazugekaufter Bot-Platz nach
+    // dem ersten Monat gratis weiter.
+    const price = monthlyPrice(profile);
+    if (profile.renew && user.credits >= price) {
       move(
         profile.user_id,
-        -profile.price_credits,
+        -price,
         'plan',
         `${profile.name_de} · ${profile.name} · Verlängerung`,
         String(profile.id)
@@ -223,7 +331,7 @@ export function renewDue(now = Date.now()) {
       // Ab jetzt weiterrechnen, nicht ab dem alten Ende – sonst schrumpft die Laufzeit bei
       // jedem Ausfall des Dienstes um die Zeit, die er stand.
       db.prepare('UPDATE profiles SET paid_until = ? WHERE id = ?').run(now + MONTH_MS, profile.id);
-      renewed.push({ userId: profile.user_id, profileId: profile.id, name: profile.name });
+      renewed.push({ userId: profile.user_id, profileId: profile.id, name: profile.name, price });
     } else {
       db.prepare('UPDATE profiles SET suspended = 1 WHERE id = ?').run(profile.id);
       suspended.push({
@@ -247,11 +355,14 @@ export function expiringSoon(days = 3) {
   const until = Date.now() + days * 86_400_000;
   return db
     .prepare(
-      `SELECT p.id, p.name, p.user_id, p.paid_until, p.renew, pl.price_credits, u.credits
+      `SELECT p.id, p.name, p.user_id, p.paid_until, p.renew, u.credits,
+              pl.price_credits + COALESCE((SELECT SUM(a.price_credits * pa.qty)
+                  FROM profile_addons pa JOIN addons a ON a.id = pa.addon_id
+                 WHERE pa.profile_id = p.id), 0) AS price_credits
          FROM profiles p JOIN plans pl ON pl.id = p.plan_id JOIN users u ON u.id = p.user_id
         WHERE pl.free_slot = 0 AND p.suspended = 0 AND p.renew = 1
           AND p.paid_until BETWEEN ? AND ?
-          AND u.credits < pl.price_credits`
+          AND u.credits < price_credits`
     )
     .all(Date.now(), until);
 }
@@ -265,6 +376,89 @@ export function resume(profile) {
   }
   return setPlan({ ...profile, paid_until: null }, plan);
 }
+
+// ---------------------------------------------------------------- Zusätze buchen
+
+/**
+ * Einen Zusatz auf einen Serverplatz buchen. Bezahlt wird nur der Rest der laufenden Periode –
+ * ab der nächsten Verlängerung steckt er im Monatspreis.
+ */
+export const addAddon = db.transaction((profile, addon, qty = 1) => {
+  const plan = planOf(profile);
+  if (plan.free_slot || !plan.addons) {
+    throw bad('Auf dem kostenlosen Serverplatz gibt es keine Zusätze. Wähle vorher einen Tarif.', {
+      en: 'The free server slot takes no extras. Pick a paid plan first.',
+    });
+  }
+  if (!addon.active || !addon.available) {
+    throw bad('Dieser Zusatz ist gerade nicht buchbar.', { en: 'That extra cannot be booked right now.' });
+  }
+  if (addon.kind === 'flag' && addon.flag && plan[addon.flag]) {
+    throw bad('Das kann dieser Tarif schon.', { en: 'Your plan already includes that.' });
+  }
+
+  const have = db
+    .prepare('SELECT qty FROM profile_addons WHERE profile_id = ? AND addon_id = ?')
+    .get(profile.id, addon.id);
+  const wanted = Math.max(1, Math.trunc(qty));
+  const next = (have?.qty || 0) + wanted;
+  if (next > addon.max_qty) {
+    throw bad(`Von "${addon.name_de}" gehen höchstens ${addon.max_qty}.`, {
+      en: `At most ${addon.max_qty} × "${addon.name_en}".`,
+    });
+  }
+
+  const price = proratedPrice(profile, addon.price_credits * wanted);
+  const user = readUser.get(profile.user_id);
+  if (user.credits < price) {
+    throw bad(`Zu wenig Guthaben: es fehlen ${price - user.credits} Credits.`, {
+      en: `Not enough credits: ${price - user.credits} short.`,
+    });
+  }
+  if (price > 0) {
+    move(
+      profile.user_id,
+      -price,
+      'addon',
+      `${addon.name_de} · ${profile.name} · anteilig`,
+      String(profile.id)
+    );
+  }
+  db.prepare(
+    `INSERT INTO profile_addons (profile_id, addon_id, qty, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(profile_id, addon_id) DO UPDATE SET qty = ?`
+  ).run(profile.id, addon.id, next, Date.now(), next);
+  audit(profile.user_id, 'addon-add', { profile: profile.id, addon: addon.key, qty: next, price });
+  return { qty: next, charged: price, balance: balance(profile.user_id) };
+});
+
+/** Einen Zusatz abbestellen. Der nicht verbrauchte Rest kommt aufs Guthaben zurück. */
+export const removeAddon = db.transaction((profile, addon, qty = 1) => {
+  const have = db
+    .prepare('SELECT qty FROM profile_addons WHERE profile_id = ? AND addon_id = ?')
+    .get(profile.id, addon.id);
+  if (!have) throw notFound('Dieser Zusatz ist nicht gebucht.', { en: 'That extra is not booked.' });
+  const drop = Math.min(have.qty, Math.max(1, Math.trunc(qty)));
+  const rest = have.qty - drop;
+  if (rest > 0) {
+    db.prepare('UPDATE profile_addons SET qty = ? WHERE profile_id = ? AND addon_id = ?').run(
+      rest,
+      profile.id,
+      addon.id
+    );
+  } else {
+    db.prepare('DELETE FROM profile_addons WHERE profile_id = ? AND addon_id = ?').run(
+      profile.id,
+      addon.id
+    );
+  }
+  const refund = proratedPrice(profile, addon.price_credits * drop);
+  if (refund > 0) {
+    move(profile.user_id, refund, 'refund', `${addon.name_de} · ${profile.name} · Rest`, String(profile.id));
+  }
+  audit(profile.user_id, 'addon-remove', { profile: profile.id, addon: addon.key, qty: drop, refund });
+  return { qty: rest, refund, balance: balance(profile.user_id) };
+});
 
 // ---------------------------------------------------------------- Gutscheine
 
@@ -316,12 +510,12 @@ export function createTopup({ userId, provider, amountCent, credits, reference =
   return db.prepare('SELECT * FROM topups WHERE id = ?').get(info.lastInsertRowid);
 }
 
-export const settleTopup = db.transaction((topupId, note = '') => {
+const settle = db.transaction((topupId, note = '') => {
   const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
   if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
-  if (topup.status === 'paid') return topup;
+  if (topup.status === 'paid') return { topup, already: true };
   db.prepare('UPDATE topups SET status = ?, paid_at = ? WHERE id = ?').run('paid', Date.now(), topupId);
-  move(
+  const balance = move(
     topup.user_id,
     topup.credits,
     'topup',
@@ -329,8 +523,30 @@ export const settleTopup = db.transaction((topupId, note = '') => {
     String(topupId)
   );
   audit(topup.user_id, 'topup-paid', { id: topupId, provider: topup.provider });
-  return db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
+  return { topup: db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId), balance, already: false };
 });
+
+/**
+ * Eine Aufladung als bezahlt verbuchen.
+ *
+ * Der Beleg per E-Mail gehört dazu und steht deshalb hier und nicht an den drei Stellen, die
+ * aufladen können (Stripe-Webhook, Admin-Bestätigung, Gutschrift von Hand). Er geht nach der
+ * Transaktion raus – ein hängender Mailserver darf keine Buchung aufhalten.
+ */
+export function settleTopup(topupId, note = '') {
+  const { topup, balance, already } = settle(topupId, note);
+  if (!already) {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(topup.user_id);
+    if (user) {
+      mail.sendTo(user, 'topup', {
+        credits: topup.credits,
+        amount_cent: topup.amount_cent,
+        balance,
+      });
+    }
+  }
+  return topup;
+}
 
 export function cancelTopup(topupId) {
   db.prepare("UPDATE topups SET status = 'cancelled' WHERE id = ? AND status = 'open'").run(topupId);

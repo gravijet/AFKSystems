@@ -8,13 +8,15 @@ import * as mslogin from '../mslogin.js';
 import * as binaries from '../binaries.js';
 import * as notify from '../notify.js';
 import * as mail from '../mail.js';
-import * as discord from '../discord.js';
+import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
+import * as nodes from '../nodes.js';
 import { features } from '../features.js';
 import { actionsFor, eventsFor } from '../macros.js';
 import { supervisor } from '../supervisor.js';
 import * as billing from '../billing.js';
 import { setLangCookie } from '../pages.js';
+import { bridge } from '../bridge.js';
 import { wrap, requireString, requireInt, bad, notFound, HttpError } from '../util.js';
 
 export const router = express.Router();
@@ -35,12 +37,16 @@ router.get(
       registration_open: Boolean(Number(getSetting('registration_open'))) && config.registrationOpen,
       email_verify: mail.verifyRequired(),
       mail_ready: mail.configured(),
-      discord: { available: discord.configured(), login: discord.loginEnabled() },
+      oauth: oauth.state(),
+      discord_invite: String(getSetting('discord_invite') || ''),
       maintenance: Boolean(Number(getSetting('maintenance'))),
       maintenance_text: String(getSetting('maintenance_text') || ''),
-      announcement: db
-        .prepare('SELECT * FROM announcements WHERE active = 1 ORDER BY id DESC LIMIT 1')
-        .get() || null,
+      // Alle sichtbaren Ankündigungen, neueste zuerst. Bisher kam nur eine mit – gab es zwei,
+      // sah niemand die zweite, und im Panel stand nirgends, dass es sie überhaupt gibt.
+      announcements: db
+        .prepare('SELECT * FROM announcements WHERE active = 1 ORDER BY id DESC LIMIT 5')
+        .all()
+        .map((row) => announcementView(row, lang)),
       versions: binaries.state.versions,
       default_version: binaries.state.defaultVersion,
       client_version: binaries.state.clientVersion,
@@ -52,9 +58,11 @@ router.get(
       actions: actionsFor(lang),
       events: eventsFor(lang),
       plans: billing.plans().map((plan) => planView(plan, lang)),
+      addons: billing.addons().map((addon) => addonView(addon, lang, caps)),
       free_slots: billing.freeSlots(),
       month_days: billing.MONTH_DAYS,
       packages: billing.packages(),
+      mail_categories: mail.categoriesFor(lang),
       low_balance: Number(getSetting('low_balance')),
       signup_bonus: Number(getSetting('signup_bonus')),
       ticket_categories: tickets.categoriesFor(lang),
@@ -88,7 +96,43 @@ export function planView(plan, lang = 'en') {
     chat_limit: plan.chat_limit,
     chat_limit_editable: Boolean(plan.chat_limit_editable),
     priority_support: Boolean(plan.priority_support),
+    board: Boolean(plan.board),
+    menus: Boolean(plan.menus),
+    pov: Boolean(plan.pov),
+    max_macros: plan.max_macros,
+    addons: Boolean(plan.addons),
+    highlight: Boolean(plan.highlight),
     active: Boolean(plan.active),
+  };
+}
+
+/** Ein Zusatz, wie ihn das Panel zeigt. `caps` sagt, ob der Client das überhaupt kann. */
+export function addonView(addon, lang = 'en', caps = {}) {
+  return {
+    id: addon.id,
+    key: addon.key,
+    name: lang === 'de' ? addon.name_de : addon.name_en,
+    text: lang === 'de' ? addon.text_de : addon.text_en,
+    price_credits: addon.price_credits,
+    price_euro: (addon.price_credits / 100).toFixed(2),
+    kind: addon.kind,
+    flag: addon.flag,
+    amount: addon.amount,
+    max_qty: addon.max_qty,
+    // Ohne die passende Fähigkeit im Client wäre es ein Knopf, der nichts einlöst.
+    available: Boolean(addon.available) && (!addon.need_cap || Boolean(caps[addon.need_cap])),
+    announced: !addon.available,
+  };
+}
+
+export function announcementView(row, lang = 'en') {
+  return {
+    id: row.id,
+    title: lang === 'de' ? row.title_de : row.title_en,
+    body: lang === 'de' ? row.body_de : row.body_en,
+    kind: row.kind,
+    link: row.link || '',
+    created_at: row.created_at,
   };
 }
 
@@ -112,8 +156,10 @@ router.post(
   '/auth/login',
   wrap((req, res) => {
     const user = auth.login(req.body || {});
+    // Vor dem Anlegen der Sitzung: danach wäre jedes Gerät bekannt (siehe auth.noticeNewDevice).
+    auth.noticeNewDevice(user, req);
     auth.createSession(res, user, req);
-    audit(user.id, 'login');
+    audit(user.id, 'login', null, req.ip);
     res.json({
       user: auth.publicUser(user),
       verify_pending: mail.verifyRequired() && !user.email_verified,
@@ -193,40 +239,59 @@ router.post(
   })
 );
 
-// ------------------------------------------------ Discord
+// ------------------------------------------------ Discord und Google
+//
+// Drei Wege, ein Ablauf: `link` verknüpft ein fremdes Konto mit dem hiesigen, `login` meldet an
+// (und legt beim ersten Mal ein Konto an), `verify` schreibt die Werte für Discords Linked Roles.
+
+const PROVIDER = /^(discord|google)$/;
 
 router.get(
-  '/auth/discord/start',
+  '/auth/:provider/start',
   wrap((req, res) => {
-    const mode = req.query.mode === 'login' ? 'login' : 'link';
-    if (mode === 'link' && !req.user) throw new HttpError(401, 'Bitte anmelden.', { en: 'Please log in.' });
-    res.redirect(discord.startUrl({ mode, userId: req.user?.id, lang: langOf(req) }));
+    if (!PROVIDER.test(req.params.provider)) throw notFound('Unbekannter Anbieter.', { en: 'Unknown provider.' });
+    const mode = ['login', 'verify'].includes(req.query.mode) ? req.query.mode : 'link';
+    if (mode !== 'login' && !req.user) {
+      throw new HttpError(401, 'Bitte anmelden.', { en: 'Please log in.' });
+    }
+    res.redirect(
+      oauth.startUrl(req.params.provider, { mode, userId: req.user?.id, lang: langOf(req) })
+    );
   })
 );
 
 router.get(
-  '/auth/discord/callback',
+  '/auth/:provider/callback',
   wrap(async (req, res) => {
     const lang = langOf(req);
+    const key = req.params.provider;
+    if (!PROVIDER.test(key)) return res.redirect(`/${lang}`);
     try {
-      const result = await discord.callback({ code: req.query.code, state: req.query.state });
-      if (result.action === 'login') {
+      const result = await oauth.callback({ code: req.query.code, state: req.query.state });
+      if (result.action === 'login' || result.action === 'created') {
         const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.userId);
         auth.createSession(res, user, req);
-        audit(user.id, 'login-discord');
+        audit(user.id, `login-${key}`, null, req.ip);
+        setLangCookie(res, user.language);
+        return res.redirect(
+          `/${user.language}/app${result.action === 'created' ? '#/settings?welcome=1' : ''}`
+        );
       }
-      res.redirect(`/${result.lang || lang}/app#/settings?discord=ok`);
+      res.redirect(`/${result.lang || lang}/app#/settings?link=${key}`);
     } catch (error) {
-      res.redirect(`/${lang}/app#/settings?discord=${encodeURIComponent(error.message)}`);
+      res.redirect(`/${lang}/app#/settings?error=${encodeURIComponent(error.message)}`);
     }
   })
 );
 
 router.delete(
-  '/auth/discord',
+  '/auth/:provider',
   auth.requireUser,
   wrap((req, res) => {
-    discord.unlink(req.user.id);
+    if (!PROVIDER.test(req.params.provider)) throw notFound('Unbekannter Anbieter.', { en: 'Unknown provider.' });
+    // Wer sich über Discord oder Google angemeldet hat, hat hier kein Passwort. Ausgesperrt ist er
+    // trotzdem nicht: die E-Mail-Adresse steht am Konto, und "Passwort vergessen" setzt eines.
+    oauth.unlink(req.params.provider, req.user.id);
     res.json({ ok: true });
   })
 );
@@ -288,6 +353,18 @@ router.patch(
       values.push(lang);
       setLangCookie(res, lang);
     }
+    if (body.mail_prefs !== undefined) {
+      // Nur bekannte Kategorien, und die festen lassen sich nicht abstellen – sonst stünde in der
+      // Datenbank irgendwann ein Wunsch, den es gar nicht gibt.
+      const wanted = body.mail_prefs && typeof body.mail_prefs === 'object' ? body.mail_prefs : {};
+      const clean = {};
+      for (const entry of mail.CATEGORIES) {
+        if (entry.locked) continue;
+        clean[entry.key] = wanted[entry.key] !== false;
+      }
+      fields.push('mail_prefs = ?');
+      values.push(JSON.stringify(clean));
+    }
     if (!fields.length) throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
     values.push(req.user.id);
     db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
@@ -299,6 +376,31 @@ router.get(
   '/me/sessions',
   auth.requireUser,
   wrap((req, res) => res.json({ sessions: auth.sessionsOf(req.user.id) }))
+);
+
+/**
+ * Die letzten Nachrichten an dieses Konto.
+ *
+ * Damit lässt sich prüfen, ob eine E-Mail mit unserem Namen wirklich von uns kam: Wer eine
+ * bekommt, die zu Guthaben oder Passwort auffordert, sieht hier nach – steht sie nicht drin,
+ * war sie es nicht.
+ */
+router.get(
+  '/me/mails',
+  auth.requireUser,
+  wrap((req, res) =>
+    res.json({ mails: mail.historyFor(req.user.id, 25), categories: mail.categoriesFor(langOf(req)) })
+  )
+);
+
+router.get(
+  '/me/mails/:id',
+  auth.requireUser,
+  wrap((req, res) => {
+    const row = mail.mailById(requireInt(req.params.id, 'Nachricht'), req.user.id);
+    if (!row) throw notFound('Diese Nachricht gibt es nicht.', { en: 'No such message.' });
+    res.json({ mail: row });
+  })
 );
 
 router.delete(
@@ -475,15 +577,21 @@ router.get(
 
 // ---------------------------------------------------------------- Tickets
 
-const ticketView = (row) => ({
+export const ticketView = (row) => ({
   id: row.id,
   subject: row.subject,
   category: row.category,
   status: row.status,
   priority: row.priority,
+  source: row.source,
   messages: row.messages ?? undefined,
+  shared: Boolean(row.shared),
+  extra_users: row.extra_users ?? undefined,
   unread_user: Boolean(row.unread_user),
   unread_staff: Boolean(row.unread_staff),
+  discord: Boolean(row.discord_channel_id),
+  assigned_to: row.assigned_to ?? null,
+  assigned_name: row.assigned_name ?? null,
   created_at: row.created_at,
   updated_at: row.updated_at,
   closed_at: row.closed_at,
@@ -506,9 +614,12 @@ router.get(
 router.post(
   '/tickets',
   auth.requireUser,
-  wrap(async (req, res) => {
+  wrap((req, res) => {
     const ticket = tickets.create(req.user, req.body || {});
+    // Das Team bekommt Bescheid – über den Webhook und, wenn er läuft, als Kanal in Discord.
     tickets.notifyStaff(ticket, req.user);
+    tickets.notifyParticipants(ticket, 'ticket_opened', {}, null);
+    bridge.emit('ticket.created', { ticket_id: ticket.id, source: 'panel', user_id: req.user.id });
     res.json({ ticket: ticketView(ticket) });
   })
 );
@@ -522,6 +633,24 @@ router.get(
     res.json({
       ticket: ticketView(ticket),
       messages: tickets.messages(ticket.id, { staff: req.user.role === 'admin' }),
+      participants: tickets.participants(ticket.id),
+      me: req.user.id,
+    });
+  })
+);
+
+/** Nur die Nachrichten ab einer bestimmten – der Live-Verlauf holt sich damit den Nachschlag. */
+router.get(
+  '/tickets/:id/messages',
+  auth.requireUser,
+  wrap((req, res) => {
+    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    const since = Number(req.query.since) || 0;
+    tickets.markRead(ticket, req.user);
+    const all = tickets.messages(ticket.id, { staff: req.user.role === 'admin' });
+    res.json({
+      ticket: ticketView(ticket),
+      messages: since ? all.filter((message) => message.id > since) : all,
     });
   })
 );
@@ -532,6 +661,14 @@ router.post(
   wrap((req, res) => {
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
     const updated = tickets.reply(ticket, req.user, req.body?.body);
+    tickets.notifyStaffReply(updated, req.user, req.body?.body || '');
+    // Alle anderen Beteiligten bekommen Post – der Schreiber nicht.
+    tickets.notifyParticipants(
+      updated,
+      'ticket_reply',
+      { preview: String(req.body?.body || '').slice(0, 160) },
+      req.user.id
+    );
     res.json({
       ticket: ticketView(updated),
       messages: tickets.messages(ticket.id, { staff: req.user.role === 'admin' }),
@@ -539,11 +676,77 @@ router.post(
   })
 );
 
+/**
+ * Zustand ändern. Ein Kunde darf schließen und wieder öffnen – mehr nicht: "in Bearbeitung"
+ * setzt das Team, sonst wäre die Anzeige nur noch eine Behauptung.
+ */
+router.post(
+  '/tickets/:id/status',
+  auth.requireUser,
+  wrap((req, res) => {
+    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    const wanted = String(req.body?.status || '');
+    if (!['open', 'closed'].includes(wanted)) {
+      throw bad('Diesen Zustand darfst du nicht setzen.', { en: 'You cannot set that status.' });
+    }
+    const updated = tickets.setStatus(ticket, wanted, req.user.id);
+    if (wanted === 'closed') tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
+    res.json({ ticket: ticketView(updated) });
+  })
+);
+
+// Alter Name, damit nichts bricht, was ihn noch benutzt.
 router.post(
   '/tickets/:id/close',
   auth.requireUser,
   wrap((req, res) => {
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
-    res.json({ ticket: ticketView(tickets.setStatus(ticket, 'closed', req.user.id)) });
+    const updated = tickets.setStatus(ticket, 'closed', req.user.id);
+    tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
+    res.json({ ticket: ticketView(updated) });
   })
+);
+
+/**
+ * "schreibt gerade …".
+ *
+ * Es wird nichts gespeichert: die Meldung geht an alle, die dieses Ticket offen haben, und ist
+ * nach ein paar Sekunden vorbei. Genau deshalb steht sie hier und nicht in der Datenbank.
+ */
+router.post(
+  '/tickets/:id/typing',
+  auth.requireUser,
+  wrap((req, res) => {
+    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    bridge.emit('ticket.typing', {
+      ticket_id: ticket.id,
+      user_id: req.user.id,
+      name: req.user.username,
+      staff: req.user.role === 'admin',
+    });
+    res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------- Ankündigungen
+
+router.get(
+  '/announcements',
+  wrap((req, res) => {
+    const lang = langOf(req);
+    res.json({
+      announcements: db
+        .prepare('SELECT * FROM announcements WHERE active = 1 ORDER BY id DESC LIMIT 20')
+        .all()
+        .map((row) => announcementView(row, lang)),
+    });
+  })
+);
+
+// ---------------------------------------------------------------- Standorte
+
+router.get(
+  '/nodes',
+  auth.requireUser,
+  wrap((req, res) => res.json({ nodes: nodes.visibleFor(req.user) }))
 );

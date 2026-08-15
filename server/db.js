@@ -393,6 +393,215 @@ const migrations = [
       }
     },
   },
+
+  {
+    // Der große Ausbau: Zusätze zum Dazukaufen, Standorte, Tickets mit mehreren Beteiligten und
+    // Anbindung an Discord, Post an Kunden mit eigenen Einstellungen, Google-Verknüpfung.
+    name: '005-zusaetze-standorte-post',
+    sql: `
+      -- ---------------------------------------------------------------- Tarife
+      -- Anzeigetafel und Menüs hingen bisher am Premium-Client. Jetzt entscheidet der Tarif, was
+      -- davon freigeschaltet ist – sonst gäbe es zwischen Premium und Ultra keinen Unterschied
+      -- außer der Anzahl Bots, und für Zusätze zum Dazukaufen bliebe nichts übrig.
+      ALTER TABLE plans ADD COLUMN board      INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE plans ADD COLUMN menus      INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE plans ADD COLUMN pov        INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE plans ADD COLUMN max_macros INTEGER NOT NULL DEFAULT 20;
+      ALTER TABLE plans ADD COLUMN addons     INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE plans ADD COLUMN highlight  INTEGER NOT NULL DEFAULT 0;
+      -- Welche Discord-Rolle jemand bekommt, der diesen Tarif fährt. Leer = die Rolle aus den
+      -- Einstellungen (discord_role_premium / _ultra), damit der einfache Fall ohne Tippen geht.
+      ALTER TABLE plans ADD COLUMN discord_role TEXT;
+
+      UPDATE plans SET board = premium, menus = premium;
+      UPDATE plans SET addons = 1, max_macros = 40 WHERE free_slot = 0;
+      UPDATE plans SET max_macros = 5 WHERE free_slot = 1;
+
+      -- Zusätze: was ein bezahlter Serverplatz dazubuchen kann. Preis je 30 Tage, wie der Tarif.
+      CREATE TABLE addons (
+        id            INTEGER PRIMARY KEY,
+        key           TEXT NOT NULL UNIQUE,
+        name_de       TEXT NOT NULL,
+        name_en       TEXT NOT NULL,
+        text_de       TEXT NOT NULL DEFAULT '',
+        text_en       TEXT NOT NULL DEFAULT '',
+        price_credits INTEGER NOT NULL DEFAULT 0,
+        kind          TEXT NOT NULL DEFAULT 'flag',   -- flag = Merkmal an, slot = mehr Bots
+        flag          TEXT,                           -- welches Tarifmerkmal (bei kind = flag)
+        amount        INTEGER NOT NULL DEFAULT 1,     -- wie viel je Stück (bei kind = slot)
+        max_qty       INTEGER NOT NULL DEFAULT 1,
+        need_cap      TEXT,                           -- ohne diese Client-Fähigkeit gibt es das nicht
+        available     INTEGER NOT NULL DEFAULT 1,     -- 0 = angekündigt, aber noch nicht kaufbar
+        active        INTEGER NOT NULL DEFAULT 1,
+        sort          INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE profile_addons (
+        profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        addon_id   INTEGER NOT NULL REFERENCES addons(id) ON DELETE CASCADE,
+        qty        INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (profile_id, addon_id)
+      );
+
+      -- ---------------------------------------------------------------- Standorte
+      -- Ein Standort ist eine Maschine oder eine Adresse, über die Bots hinausgehen. Der eine,
+      -- der immer da ist, heißt "local": das ist dieser Server. Jeder weitere bekommt eine
+      -- Ausgangsadresse (Proxy) und darf auf bestimmte Nutzer beschränkt werden.
+      CREATE TABLE nodes (
+        id           INTEGER PRIMARY KEY,
+        name         TEXT NOT NULL,
+        kind         TEXT NOT NULL DEFAULT 'egress',  -- local | egress
+        region       TEXT NOT NULL DEFAULT '',
+        proxy_id     INTEGER REFERENCES proxies(id) ON DELETE SET NULL,
+        max_bots     INTEGER NOT NULL DEFAULT 0,      -- 0 = keine Grenze
+        max_profiles INTEGER NOT NULL DEFAULT 0,
+        access       TEXT NOT NULL DEFAULT 'all',     -- all | listed | admin
+        note         TEXT,
+        active       INTEGER NOT NULL DEFAULT 1,
+        sort         INTEGER NOT NULL DEFAULT 0,
+        created_at   INTEGER NOT NULL
+      );
+
+      CREATE TABLE node_users (
+        node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        PRIMARY KEY (node_id, user_id)
+      );
+
+      ALTER TABLE profiles ADD COLUMN node_id     INTEGER REFERENCES nodes(id) ON DELETE SET NULL;
+      ALTER TABLE profiles ADD COLUMN locked      INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE profiles ADD COLUMN lock_reason TEXT;
+      ALTER TABLE proxies  ADD COLUMN node_id     INTEGER REFERENCES nodes(id) ON DELETE SET NULL;
+
+      -- ---------------------------------------------------------------- Tickets
+      ALTER TABLE tickets ADD COLUMN source             TEXT NOT NULL DEFAULT 'panel'; -- panel | discord | staff
+      ALTER TABLE tickets ADD COLUMN discord_channel_id TEXT;
+      ALTER TABLE tickets ADD COLUMN reopened           INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE ticket_messages ADD COLUMN discord_id  TEXT;
+      ALTER TABLE ticket_messages ADD COLUMN author_name TEXT;
+      CREATE INDEX tickets_discord ON tickets(discord_channel_id) WHERE discord_channel_id IS NOT NULL;
+
+      -- Weitere Beteiligte an einem Ticket. Der Ersteller steht weiter in tickets.user_id.
+      CREATE TABLE ticket_users (
+        ticket_id  INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        added_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (ticket_id, user_id)
+      );
+
+      -- ---------------------------------------------------------------- Post
+      -- Wem eine Nachricht galt, damit sie der Empfänger selbst nachlesen kann: wer wissen will,
+      -- ob eine Mail mit seinem Namen echt war, soll das ohne Rückfrage prüfen können.
+      ALTER TABLE mails ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE mails ADD COLUMN body    TEXT;
+
+      -- Welche Nachrichten jemand bekommen will. Leer heißt: alle (siehe mail.js).
+      ALTER TABLE users ADD COLUMN mail_prefs   TEXT NOT NULL DEFAULT '{}';
+      ALTER TABLE users ADD COLUMN google_id    TEXT;
+      ALTER TABLE users ADD COLUMN google_email TEXT;
+      CREATE UNIQUE INDEX users_google ON users(google_id) WHERE google_id IS NOT NULL;
+
+      -- ---------------------------------------------------------------- Ankündigungen
+      ALTER TABLE announcements ADD COLUMN mailed_at INTEGER;
+      ALTER TABLE announcements ADD COLUMN link      TEXT;
+      -- Mehr als eine darf sichtbar sein; bisher schaltete jede neue alle anderen ab.
+
+      -- ---------------------------------------------------------------- Protokoll
+      ALTER TABLE audit ADD COLUMN ip TEXT;
+    `,
+    run() {
+      // Der Standort "dieser Server" muss es geben – an ihm hängt alles, was schon läuft.
+      const info = db
+        .prepare(
+          `INSERT INTO nodes (name, kind, region, access, note, sort, created_at)
+           VALUES ('Haupt-Standort', 'local', '', 'all', 'Dieser Server. Bots laufen hier.', 0, ?)`
+        )
+        .run(Date.now());
+      db.prepare('UPDATE profiles SET node_id = ? WHERE node_id IS NULL').run(info.lastInsertRowid);
+
+      // Ultra bekommt, was Premium jetzt nicht mehr von Haus aus hat – das ist der Unterschied,
+      // für den er das Doppelte kostet. Auf Premium sind beide als Zusatz kaufbar.
+      db.prepare("UPDATE plans SET board = 0, menus = 0 WHERE slug = 'premium'").run();
+      db.prepare("UPDATE plans SET board = 1, menus = 1, highlight = 1 WHERE slug = 'ultra'").run();
+
+      const addon = db.prepare(
+        `INSERT INTO addons (key, name_de, name_en, text_de, text_en, price_credits, kind, flag,
+                             amount, max_qty, need_cap, available, sort)
+         VALUES (@key, @name_de, @name_en, @text_de, @text_en, @price_credits, @kind, @flag,
+                 @amount, @max_qty, @need_cap, @available, @sort)`
+      );
+      for (const entry of ADDON_SEED) addon.run(entry);
+    },
+  },
+];
+
+/**
+ * Die Zusätze aus der Erstbefüllung. Preise sind Credits je 30 Tage, wie beim Tarif – und wie der
+ * Tarif lassen sie sich im Admin-Bereich vollständig ändern.
+ */
+const ADDON_SEED = [
+  {
+    key: 'slot',
+    name_de: 'Ein Bot mehr',
+    name_en: 'One more bot',
+    text_de: 'Ein zusätzliches Minecraft-Konto darf auf diesem Serverplatz gleichzeitig sitzen.',
+    text_en: 'One more Minecraft account may sit on this server slot at the same time.',
+    price_credits: 39,
+    kind: 'slot',
+    flag: null,
+    amount: 1,
+    max_qty: 20,
+    need_cap: null,
+    available: 1,
+    sort: 10,
+  },
+  {
+    key: 'board',
+    name_de: 'Anzeigetafel und Spielerliste',
+    name_en: 'Scoreboard and player list',
+    text_de: 'Die Seitenleiste des Servers und die Spielerliste im Panel, mit Farben wie im Spiel.',
+    text_en: 'The server sidebar and the player list in the panel, in the colours the game uses.',
+    price_credits: 59,
+    kind: 'flag',
+    flag: 'board',
+    amount: 1,
+    max_qty: 1,
+    need_cap: 'board',
+    available: 1,
+    sort: 20,
+  },
+  {
+    key: 'menus',
+    name_de: 'Menüs bedienen',
+    name_en: 'Use menus',
+    text_de: 'Öffnet der Server ein Menü, siehst du es als Raster und klickst ein Feld an.',
+    text_en: 'When the server opens a menu you see it as a grid and can click a slot.',
+    price_credits: 59,
+    kind: 'flag',
+    flag: 'menus',
+    amount: 1,
+    max_qty: 1,
+    need_cap: 'menu',
+    available: 1,
+    sort: 30,
+  },
+  {
+    key: 'pov',
+    name_de: 'Live-Ansicht (POV)',
+    name_en: 'Live view (POV)',
+    text_de: 'Sehen, was der Bot sieht – je Serverplatz und Konto. Noch nicht buchbar.',
+    text_en: 'See what the bot sees, per server slot and account. Not bookable yet.',
+    price_credits: 199,
+    kind: 'flag',
+    flag: 'pov',
+    amount: 1,
+    max_qty: 20,
+    need_cap: 'pov',
+    available: 0,
+    sort: 40,
+  },
 ];
 
 /** Die Beschreibungen der drei Tarife aus der Erstbefüllung – auch von Migration 004 benutzt. */
@@ -453,6 +662,12 @@ const PLAN_SEED = [
     chat_limit: 200,
     chat_limit_editable: 0,
     priority_support: 0,
+    board: 0,
+    menus: 0,
+    pov: 0,
+    max_macros: 5,
+    addons: 0,
+    highlight: 0,
     sort: 0,
   },
   {
@@ -471,6 +686,13 @@ const PLAN_SEED = [
     chat_limit: 2000,
     chat_limit_editable: 1,
     priority_support: 1,
+    // Anzeigetafel und Menüs gehören zu Ultra – auf Premium lassen sie sich dazukaufen.
+    board: 0,
+    menus: 0,
+    pov: 0,
+    max_macros: 40,
+    addons: 1,
+    highlight: 0,
     sort: 10,
   },
   {
@@ -489,6 +711,12 @@ const PLAN_SEED = [
     chat_limit: 10000,
     chat_limit_editable: 1,
     priority_support: 1,
+    board: 1,
+    menus: 1,
+    pov: 0,
+    max_macros: 200,
+    addons: 1,
+    highlight: 1,
     sort: 20,
   },
 ];
@@ -496,11 +724,24 @@ const PLAN_SEED = [
 if (!db.prepare('SELECT COUNT(*) AS n FROM plans').get().n) {
   const insert = db.prepare(`INSERT INTO plans
     (slug, name_de, name_en, blurb_de, blurb_en, price_credits, free_slot, max_accounts, premium,
-     movement, proxy, offline_accounts, fakehost, chat_limit, chat_limit_editable, priority_support, sort)
+     movement, proxy, offline_accounts, fakehost, chat_limit, chat_limit_editable, priority_support,
+     board, menus, pov, max_macros, addons, highlight, sort)
     VALUES (@slug, @name_de, @name_en, @blurb_de, @blurb_en, @price_credits, @free_slot,
      @max_accounts, @premium, @movement, @proxy, @offline_accounts, @fakehost, @chat_limit,
-     @chat_limit_editable, @priority_support, @sort)`);
+     @chat_limit_editable, @priority_support, @board, @menus, @pov, @max_macros, @addons,
+     @highlight, @sort)`);
   db.transaction(() => PLAN_SEED.forEach((plan) => insert.run(plan)))();
+}
+
+// Beim allerersten Start gibt es noch keinen Standort – Migration 005 legt ihn nur für Bestände an.
+if (!db.prepare('SELECT COUNT(*) AS n FROM nodes').get().n) {
+  const info = db
+    .prepare(
+      `INSERT INTO nodes (name, kind, region, access, note, sort, created_at)
+       VALUES ('Haupt-Standort', 'local', '', 'all', 'Dieser Server. Bots laufen hier.', 0, ?)`
+    )
+    .run(Date.now());
+  db.prepare('UPDATE profiles SET node_id = ? WHERE node_id IS NULL').run(info.lastInsertRowid);
 }
 
 // Profile ohne Tarif (aus der Zeit der Stundenabrechnung) bekommen den kostenlosen Platz.
@@ -544,8 +785,35 @@ const defaults = {
   // Discord-Verknüpfung über eine eigene Anwendung des Betreibers
   discord_client_id: '',
   discord_client_secret: '',
-  discord_login: 0, // 1 = Anmelden mit Discord erlaubt
-  discord_staff_webhook: '', // neue Tickets landen hier
+  discord_login: 0, // 1 = Anmelden (und Registrieren) mit Discord erlaubt
+  discord_staff_webhook: '', // neue Tickets und Meldungen ans Team landen hier
+  discord_invite: '', // öffentlicher Einladungslink, steht auf der Website
+
+  // Der Discord-Bot (bot/). Er läuft als eigener Dienst und spricht über /api/bot mit dem Panel.
+  discord_bot_token: '',
+  discord_guild_id: '',
+  discord_bot_secret: '', // gemeinsames Geheimnis zwischen Bot und Panel
+  discord_ticket_channel: '', // Kanal mit dem Knopf "Ticket aufmachen"
+  discord_ticket_category: '', // Kategorie, unter der Ticket-Kanäle entstehen
+  discord_role_linked: '', // hat sein Konto verknüpft
+  discord_role_premium: '',
+  discord_role_ultra: '',
+  discord_role_team: '', // bekommt automatisch, wer Admin oder Mod ist
+  discord_role_admin: '',
+  discord_role_mod: '',
+
+  // Anmelden mit Google. Dieselbe Bauart wie Discord: eigene Anwendung des Betreibers.
+  google_client_id: '',
+  google_client_secret: '',
+  google_login: 0,
+
+  // Welche Nachrichten es überhaupt gibt. Wer keine will, stellt sie am eigenen Konto ab –
+  // hier steht nur, was der Betreiber grundsätzlich verschickt.
+  mail_topup: 1,
+  mail_renewal: 1,
+  mail_ticket: 1,
+  mail_announcement: 1,
+  mail_security: 1, // Anmeldung an neuem Gerät, Passwortwechsel – lässt sich nicht abbestellen
 
   // Rechtstexte. Leer heißt: die Seite sagt, dass der Betreiber sie noch ausfüllen muss.
   // Die _en-Fassung ist freiwillig; fehlt sie, steht überall der deutsche Text.
@@ -596,11 +864,12 @@ export function allSettings() {
 
 export const settingDefaults = defaults;
 
-export function audit(userId, action, detail) {
-  db.prepare('INSERT INTO audit (user_id, action, detail, created_at) VALUES (?, ?, ?, ?)').run(
+export function audit(userId, action, detail, ip = null) {
+  db.prepare('INSERT INTO audit (user_id, action, detail, ip, created_at) VALUES (?, ?, ?, ?, ?)').run(
     userId ?? null,
     action,
     detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : null,
+    ip,
     Date.now()
   );
 }

@@ -5,9 +5,10 @@
 // angeboten – ein Knopf, der nichts tut, ist schlimmer als kein Knopf.
 
 import {
-  api, icon, escapeHtml, since, clock, credits, date, stateBadge, tr, $, $$, ok, fail, toast,
-  confirmDialog, formDialog, debounce,
+  api, icon, escapeHtml, since, clock, credits, euro, date, stateBadge, mcText, tr, $, $$,
+  ok, fail, toast, confirmDialog, formDialog, debounce,
 } from '../ui.js';
+import { mergeLines } from '../chatlog.js';
 import { state, appbar, refresh, draw, profileById, tabsFor, linesOf } from '../app.js';
 
 export async function render(root, route) {
@@ -134,9 +135,18 @@ async function renderProfile(root, route) {
       profile.name,
       `<span class="pill">MC ${escapeHtml(profile.mc_version)}</span>
        <span class="pill ${profile.plan.free_slot ? '' : 'primary'}">${escapeHtml(profile.plan.name)}</span>
-       <span class="pill">${profile.online}/${profile.total}</span>`,
+       ${profile.node ? `<span class="pill">${icon('pin')}${escapeHtml(profile.node.name)}</span>` : ''}
+       <span class="pill">${profile.online}/${profile.features?.max_accounts ?? profile.total}</span>`,
       `<span class="mono">${escapeHtml(profile.address)}</span>`
     )}
+    ${
+      profile.locked
+        ? `<div class="note bad" style="margin-bottom:1.25rem">${icon('lock')}
+            <div><strong>${escapeHtml(tr('adm.locked'))}</strong>
+            ${profile.lock_reason ? `— ${escapeHtml(profile.lock_reason)}` : ''}
+            <br><a href="#/tickets?new=general">${escapeHtml(tr('ov.openTicket'))}</a></div></div>`
+        : ''
+    }
     ${
       profile.suspended
         ? `<div class="note warn" style="margin-bottom:1.25rem">${icon('alert')}
@@ -158,112 +168,134 @@ async function renderProfile(root, route) {
 
   const views = {
     connect: tabConnect,
-    chat: tabChat,
+    // Alter Reiter: Chat steckt jetzt in "Verbinden". Lesezeichen landen dort, statt ins Leere.
+    chat: tabConnect,
     movement: tabMovement,
     board: tabBoard,
     menu: tabMenu,
     macros: tabMacros,
     proxies: tabProxies,
     plan: tabPlan,
+    addons: tabAddons,
     settings: tabSettings,
   };
   await (views[current] || tabConnect)($('#tab-body'), profile);
 }
 
-// ---------------------------------------------------------------- Verbinden
+// ---------------------------------------------------------------- Verbinden und Chat
+//
+// Ein Reiter, nicht zwei. Wer einen Bot startet, will sehen, was er sagt – vorher hieß das:
+// starten, Reiter wechseln, mitlesen, zurückwechseln, stoppen.
 
 async function tabConnect(root, profile) {
+  const members = profile.accounts;
   const free = state.accounts.filter(
-    (account) => !profile.accounts.some((member) => member.account_id === account.id)
+    (account) => !members.some((member) => member.account_id === account.id)
   );
 
-  const paint = () => {
-    // Wartet ein Bot auf eine neue Microsoft-Anmeldung, gehört der Link nach ganz oben.
-    const waiting = profile.accounts
-      .map((member) => state.bots.get(`${profile.id}:${member.account_id}`))
-      .filter((bot) => bot && bot.state === 'auth' && bot.auth?.code);
+  root.innerHTML = `
+    <div id="auth-hint"></div>
 
-    root.innerHTML = `
-      ${waiting
-        .map(
-          (bot) => `<div class="note warn" style="margin-bottom:1rem">${icon('key')}
-            <div><strong>${escapeHtml(bot.account)}</strong> — ${escapeHtml(tr('acc.ms.step'))}
-            <a class="btn btn-sm btn-primary" style="margin-left:.5rem"
-               href="${escapeHtml(bot.auth.uri_complete || bot.auth.uri || 'https://www.microsoft.com/link')}"
-               target="_blank" rel="noopener">${escapeHtml(tr('acc.ms.open'))}</a>
-            <span class="mono strong" style="margin-left:.5rem;letter-spacing:.1em">${escapeHtml(
-              bot.auth.code
-            )}</span></div></div>`
-        )
-        .join('')}
+    <div class="row wrap" style="margin-bottom:1rem">
+      <button class="btn btn-primary btn-sm" id="start" ${profile.active ? '' : 'disabled'}>${icon('play')} ${escapeHtml(
+        tr('srv.startAll')
+      )}</button>
+      <button class="btn btn-sm" id="stop">${icon('stop')} ${escapeHtml(tr('srv.stopAll'))}</button>
+      <button class="btn btn-sm" id="restart" title="${escapeHtml(tr('common.retry'))}">${icon('refresh')}</button>
+      <div class="grow"></div>
+      <button class="btn btn-sm" id="attach" ${free.length && profile.active ? '' : 'disabled'}>${icon('plus')} ${escapeHtml(
+        tr('srv.addAccounts')
+      )}</button>
+    </div>
 
-      <div class="row wrap" style="margin-bottom:1rem">
-        <button class="btn btn-primary btn-sm" id="start" ${profile.active ? '' : 'disabled'}>${icon('play')} ${escapeHtml(
-          tr('srv.startAll')
-        )}</button>
-        <button class="btn btn-sm" id="stop">${icon('stop')} ${escapeHtml(tr('srv.stopAll'))}</button>
-        <button class="btn btn-sm" id="restart">${icon('refresh')}</button>
-        <div class="grow"></div>
-        <button class="btn btn-sm" id="attach" ${free.length ? '' : 'disabled'}>${icon('plus')} ${escapeHtml(
-          tr('srv.addAccounts')
-        )}</button>
-      </div>
+    <div class="split">
+      <section class="panel" id="bots-panel">
+        <header>
+          <h3>${escapeHtml(tr('ov.col.account'))}</h3>
+          <span class="small muted">${profile.online}/${profile.features?.max_accounts ?? members.length}</span>
+        </header>
+        <div class="body" style="padding:0" id="bots"></div>
+      </section>
 
-      ${
-        profile.accounts.length
-          ? `<section class="panel"><div class="table-wrap"><table class="table">
-              <thead><tr>
-                <th style="width:2rem"><input type="checkbox" id="all" aria-label="${escapeHtml(
-                  tr('common.all')
-                )}"></th>
-                <th>${escapeHtml(tr('ov.col.account'))}</th>
-                <th>${escapeHtml(tr('common.status'))}</th>
-                <th>${escapeHtml(tr('ov.col.uptime'))}</th>
-                <th></th><th></th>
-              </tr></thead>
-              <tbody>${profile.accounts.map(row).join('')}</tbody>
-            </table></div></section>`
-          : `<div class="empty"><h3>${escapeHtml(tr('srv.noAccounts'))}</h3>
-              ${
-                state.accounts.length
-                  ? `<button class="btn btn-primary" id="attach-2">${icon('plus')} ${escapeHtml(
-                      tr('srv.addAccounts')
-                    )}</button>`
-                  : `<a class="btn btn-primary" href="#/accounts">${icon('users')} ${escapeHtml(
-                      tr('ov.connectAccount')
-                    )}</a>`
-              }
-            </div>`
-      }`;
+      <section class="panel console-panel">
+        <header>
+          <h3>${escapeHtml(tr('tab.chat'))}</h3>
+          <div class="row">
+            <select id="filter" class="mini" aria-label="${escapeHtml(tr('ch.filter'))}">
+              <option value="all">${escapeHtml(tr('ch.all'))}</option>
+              <option value="chat">${escapeHtml(tr('ch.chatOnly'))}</option>
+            </select>
+            <label class="check small" title="${escapeHtml(tr('ch.autoscrollHint'))}">
+              <input type="checkbox" id="autoscroll" checked> ${escapeHtml(tr('ch.autoscroll'))}</label>
+            <button class="btn btn-ghost btn-sm" id="clear" title="${escapeHtml(tr('ch.clear'))}">${icon('trash')}</button>
+          </div>
+        </header>
+        <div class="body" style="padding:0;display:flex;flex-direction:column;min-height:0">
+          ${
+            members.length > 1
+              ? `<div class="row wrap recv-row">
+                  ${members
+                    .map(
+                      (member) => `<label class="check small">
+                        <input type="checkbox" data-recv="${member.account_id}" checked>
+                        ${escapeHtml(member.name)}</label>`
+                    )
+                    .join('')}
+                </div>`
+              : ''
+          }
+          <div class="console grow" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}"></div>
+          <div class="row send-row">
+            <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))}"
+              autocomplete="off" aria-label="${escapeHtml(tr('tab.chat'))}">
+            ${
+              members.length > 1
+                ? `<select id="sender" class="mini" style="min-width:8rem">
+                    <option value="">${escapeHtml(tr('srv.chatAll'))}</option>
+                    ${members
+                      .map((member) => `<option value="${member.account_id}">${escapeHtml(member.name)}</option>`)
+                      .join('')}
+                  </select>`
+                : ''
+            }
+            <button class="btn btn-primary" id="send">${icon('send')}</button>
+          </div>
+        </div>
+      </section>
+    </div>
 
-    $('#all')?.addEventListener('change', (event) => {
-      $$('[data-pick]').forEach((box) => {
-        box.checked = event.target.checked;
-      });
-    });
+    ${spamPanel()}`;
 
-    $('#start')?.addEventListener('click', () => act('start'));
-    $('#stop')?.addEventListener('click', () => act('stop'));
-    $('#restart')?.addEventListener('click', () => act('restart'));
-    $('#attach')?.addEventListener('click', attach);
-    $('#attach-2')?.addEventListener('click', attach);
+  // ------------------------------------------------------------ Konten
 
-    $$('[data-toggle]').forEach((button) =>
+  const paintBots = () => {
+    const box = $('#bots');
+    if (!members.length) {
+      box.innerHTML = `<div class="empty" style="box-shadow:none;background:transparent;padding:2rem 1rem">
+        <h3>${escapeHtml(tr('srv.noAccounts'))}</h3>
+        ${
+          state.accounts.length
+            ? `<button class="btn btn-primary" id="attach-2">${icon('plus')} ${escapeHtml(tr('srv.addAccounts'))}</button>`
+            : `<a class="btn btn-primary" href="#/accounts">${icon('users')} ${escapeHtml(tr('ov.connectAccount'))}</a>`
+        }</div>`;
+      $('#attach-2')?.addEventListener('click', attach);
+      return;
+    }
+    box.innerHTML = `<ul class="botlist">${members.map(botRow).join('')}</ul>`;
+
+    $$('[data-toggle]', box).forEach((button) =>
       button.addEventListener('click', async () => {
         const accountId = Number(button.dataset.toggle);
-        const member = profile.accounts.find((entry) => entry.account_id === accountId);
+        const bot = state.bots.get(`${profile.id}:${accountId}`);
         button.disabled = true;
         try {
-          if (member.state && member.state !== 'offline') {
-            await api(`/profiles/${profile.id}/stop`, { method: 'POST', body: { accounts: [accountId] } });
-          } else {
-            const result = await api(`/profiles/${profile.id}/start`, {
-              method: 'POST',
-              body: { accounts: [accountId] },
-            });
-            const failed = result.results.find((entry) => !entry.ok);
-            if (failed) throw new Error(failed.error);
-          }
+          const running = bot?.state && bot.state !== 'offline';
+          const result = await api(`/profiles/${profile.id}/${running ? 'stop' : 'start'}`, {
+            method: 'POST',
+            body: { accounts: [accountId] },
+          });
+          const failed = (result.results || []).find((entry) => !entry.ok);
+          if (failed) throw new Error(failed.error);
         } catch (error) {
           fail(error);
         } finally {
@@ -272,10 +304,10 @@ async function tabConnect(root, profile) {
       })
     );
 
-    $$('[data-note]').forEach((button) =>
+    $$('[data-note]', box).forEach((button) =>
       button.addEventListener('click', async () => {
         const accountId = Number(button.dataset.note);
-        const member = profile.accounts.find((entry) => entry.account_id === accountId);
+        const member = members.find((entry) => entry.account_id === accountId);
         const data = await formDialog(member.name, [
           { key: 'note', label: tr('common.edit'), value: member.note || '' },
         ]);
@@ -286,10 +318,10 @@ async function tabConnect(root, profile) {
       })
     );
 
-    $$('[data-detach]').forEach((button) =>
+    $$('[data-detach]', box).forEach((button) =>
       button.addEventListener('click', async () => {
         const accountId = Number(button.dataset.detach);
-        const member = profile.accounts.find((entry) => entry.account_id === accountId);
+        const member = members.find((entry) => entry.account_id === accountId);
         if (!(await confirmDialog(`${member.name} — ${tr('srv.remove')}?`, { confirm: tr('common.delete') })))
           return;
         await api(`/profiles/${profile.id}/accounts/${accountId}`, { method: 'DELETE' });
@@ -299,47 +331,178 @@ async function tabConnect(root, profile) {
     );
   };
 
-  function row(member) {
+  function botRow(member) {
     const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
     const running = bot.state && bot.state !== 'offline';
-    return `<tr>
-      <td><input type="checkbox" data-pick="${member.account_id}" aria-label="${escapeHtml(member.name)}"></td>
-      <td><span class="row"><img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy">
-        <span>${escapeHtml(member.name)}
-        ${
-          member.account_status === 'error'
-            ? `<span class="pill missing" style="margin-left:.4rem">${escapeHtml(tr('acc.error'))}</span>`
-            : ''
-        }</span></span></td>
-      <td>${stateBadge(bot.state || 'offline', bot.detail || bot.last_error || '')}</td>
-      <td class="mono small muted">${running && bot.since ? since(bot.since) : '–'}</td>
-      <td class="small muted">${escapeHtml(member.note || '')}
-        <button class="btn btn-ghost btn-sm" data-note="${member.account_id}">${icon('settings')}</button></td>
-      <td style="text-align:right;white-space:nowrap">
+    return `<li class="botrow ${running ? 'is-on' : ''}">
+      <img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy">
+      <div class="grow" style="min-width:0">
+        <div class="row" style="gap:.4rem">
+          <span class="strong truncate">${escapeHtml(member.name)}</span>
+          ${
+            member.account_status === 'error'
+              ? `<span class="pill missing">${escapeHtml(tr('acc.error'))}</span>`
+              : ''
+          }
+        </div>
+        <div class="small muted truncate">
+          ${stateBadge(bot.state || 'offline', bot.detail || bot.last_error || '')}
+          ${running && bot.since ? `<span class="mono">· ${since(bot.since)}</span>` : ''}
+        </div>
+        ${member.note ? `<div class="small muted truncate">${escapeHtml(member.note)}</div>` : ''}
+      </div>
+      <div class="row" style="gap:.25rem">
         <button class="btn btn-sm ${running ? '' : 'btn-primary'}" data-toggle="${member.account_id}"
-          ${running || profile.active ? '' : 'disabled'}>
-          ${escapeHtml(running ? tr('ov.stop') : tr('ov.start'))}</button>
-        <button class="btn btn-ghost btn-sm btn-danger" data-detach="${member.account_id}">${icon('x')}</button>
-      </td>
-    </tr>`;
+          ${running || profile.active ? '' : 'disabled'}>${escapeHtml(running ? tr('ov.stop') : tr('ov.start'))}</button>
+        <button class="btn btn-ghost btn-sm" data-note="${member.account_id}"
+          title="${escapeHtml(tr('common.edit'))}">${icon('settings')}</button>
+        <button class="btn btn-ghost btn-sm btn-danger" data-detach="${member.account_id}"
+          title="${escapeHtml(tr('srv.remove'))}">${icon('x')}</button>
+      </div>
+    </li>`;
   }
 
-  function picked() {
-    const ids = $$('[data-pick]:checked').map((box) => Number(box.dataset.pick));
-    return ids.length ? ids : profile.accounts.map((member) => member.account_id);
+  /** Wartet ein Bot auf eine neue Microsoft-Anmeldung, gehört der Link nach ganz oben. */
+  const paintAuth = () => {
+    const waiting = members
+      .map((member) => state.bots.get(`${profile.id}:${member.account_id}`))
+      .filter((bot) => bot && bot.state === 'auth' && bot.auth?.code);
+    $('#auth-hint').innerHTML = waiting
+      .map(
+        (bot) => `<div class="note warn" style="margin-bottom:1rem">${icon('key')}
+          <div class="grow"><strong>${escapeHtml(bot.account)}</strong> — ${escapeHtml(tr('acc.ms.step'))}</div>
+          <a class="btn btn-sm btn-primary"
+             href="${escapeHtml(bot.auth.uri_complete || bot.auth.uri || 'https://www.microsoft.com/link')}"
+             target="_blank" rel="noopener">${escapeHtml(tr('acc.ms.open'))}</a></div>`
+      )
+      .join('');
+  };
+
+  // ------------------------------------------------------------ Chat
+
+  const box = $('#chat');
+  const autoscroll = $('#autoscroll');
+  const filter = $('#filter');
+  const receiverKey = `afk-chat-recv-${profile.id}`;
+  let receivers = JSON.parse(localStorage.getItem(receiverKey) || '[]');
+  if (!receivers.length) receivers = members.map((member) => member.account_id);
+
+  const nameOf = (id) => members.find((member) => member.account_id === id)?.name || '?';
+
+  const paintChat = () => {
+    const raw = [];
+    for (const member of members) {
+      if (!receivers.includes(member.account_id)) continue;
+      for (const entry of linesOf(`${profile.id}:${member.account_id}`)) {
+        raw.push({ ...entry, account_id: member.account_id });
+      }
+    }
+    // Drei Bots hören denselben Chat – ohne Zusammenlegen stünde jede Zeile dreimal da.
+    const lines = mergeLines(raw).filter((entry) => filter.value !== 'chat' || entry.type === 'chat');
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+
+    box.innerHTML = lines.slice(-500).map(chatLine).join('');
+    if (autoscroll.checked || atBottom) box.scrollTop = box.scrollHeight;
+  };
+
+  function chatLine(entry) {
+    const many = members.length > 1;
+    // Wer nicht alles gehört hat, ist die Ausnahme – und die gehört dazugeschrieben.
+    const heardBy =
+      entry.type === 'chat' && many && entry.accounts.length && entry.accounts.length < receivers.length
+        ? `<span class="who">${escapeHtml(
+            entry.accounts.length === 1 ? nameOf(entry.accounts[0]) : tr('ch.heardBy', { n: entry.accounts.length })
+          )}</span>`
+        : '';
+    // Was der Bot selbst geschrieben hat, steht auch so da – sonst sieht es aus wie eine Antwort.
+    const prefix =
+      entry.type === 'sent'
+        ? `<span class="tag">${escapeHtml(tr('ch.sent'))}${
+            many && entry.account_id ? ` · ${escapeHtml(nameOf(entry.account_id))}` : ''
+          }:</span> `
+        : entry.type !== 'chat' && many && entry.account_id
+          ? `<span class="who">${escapeHtml(nameOf(entry.account_id))}</span>`
+          : '';
+    return `<div class="line ${entry.type}"><span class="t">${clock(entry.t)}</span>${heardBy}<span class="msg">${prefix}${mcText(
+      entry.text
+    )}</span></div>`;
   }
+
+  // Verlauf vom Server holen – der Zwischenspeicher im Browser ist nach einem Neuladen leer.
+  try {
+    const data = await api(`/profiles/${profile.id}/chat`);
+    for (const line of data.lines) {
+      const key = `${profile.id}:${line.account_id}`;
+      const list = state.lines.get(key) || [];
+      if (!list.some((entry) => entry.t === line.t && entry.text === line.text)) {
+        list.push({ t: line.t, type: line.type, text: line.text });
+      }
+      state.lines.set(key, list);
+    }
+    for (const [key, list] of state.lines) {
+      list.sort((a, b) => a.t - b.t);
+      state.lines.set(key, list);
+    }
+  } catch {
+    /* Verlauf ist nur Beiwerk */
+  }
+
+  paintAuth();
+  paintBots();
+  paintChat();
+
+  $$('[data-recv]').forEach((node) =>
+    node.addEventListener('change', () => {
+      receivers = $$('[data-recv]:checked').map((entry) => Number(entry.dataset.recv));
+      localStorage.setItem(receiverKey, JSON.stringify(receivers));
+      paintChat();
+    })
+  );
+  filter.addEventListener('change', paintChat);
+  $('#clear').addEventListener('click', () => {
+    for (const member of members) state.lines.set(`${profile.id}:${member.account_id}`, []);
+    paintChat();
+  });
+
+  const send = async () => {
+    const input = $('#msg');
+    const text = input.value.trim();
+    if (!text) return;
+    const sender = $('#sender')?.value || '';
+    const accounts = sender ? [Number(sender)] : receivers;
+    input.value = '';
+    try {
+      const result = await api(`/profiles/${profile.id}/chat`, { method: 'POST', body: { text, accounts } });
+      const failures = result.results.filter((entry) => !entry.ok);
+      if (failures.length === result.results.length) toast(failures[0].error, 'bad');
+    } catch (error) {
+      fail(error);
+      input.value = text;
+    }
+  };
+  $('#send').addEventListener('click', send);
+  $('#msg').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') send();
+  });
+
+  // ------------------------------------------------------------ Knöpfe und Spam
+
+  $('#start').addEventListener('click', () => act('start'));
+  $('#stop').addEventListener('click', () => act('stop'));
+  $('#restart').addEventListener('click', () => act('restart'));
+  $('#attach').addEventListener('click', attach);
 
   async function act(what) {
-    const accounts = picked();
+    const accounts = members.map((member) => member.account_id);
     if (!accounts.length) return toast(tr('srv.noAccounts'));
     try {
       const result = await api(`/profiles/${profile.id}/${what}`, { method: 'POST', body: { accounts } });
-      const failures = (result.results || []).filter((entry) => !entry.ok);
-      for (const failure of failures) {
-        const member = profile.accounts.find((entry) => entry.account_id === failure.account_id);
-        toast(`${member?.name || failure.account_id}: ${failure.error}`, 'bad');
+      for (const failure of (result.results || []).filter((entry) => !entry.ok)) {
+        toast(`${nameOf(failure.account_id)}: ${failure.error}`, 'bad');
       }
-      if (!failures.length) ok(what === 'stop' ? tr('ov.stoppedAll') : tr('ov.started'));
+      if (!(result.results || []).some((entry) => !entry.ok)) {
+        ok(what === 'stop' ? tr('ov.stoppedAll') : tr('ov.started'));
+      }
     } catch (error) {
       fail(error);
     }
@@ -374,94 +537,54 @@ async function tabConnect(root, profile) {
     }
   }
 
-  paint();
+  await bindSpam(profile, members);
 
-  const redraw = debounce(async () => {
-    if (state.route.tab !== 'connect') return;
+  // ------------------------------------------------------------ Live
+
+  const refreshBots = debounce(async () => {
+    if (state.route.name !== 'server' || state.route.id !== profile.id) return;
     await refresh({ accounts: false });
     const fresh = profileById(profile.id);
-    if (fresh) {
-      profile.accounts = fresh.accounts;
-      profile.online = fresh.online;
-      paint();
-    }
-  }, 500);
+    if (!fresh) return;
+    profile.accounts = fresh.accounts;
+    profile.online = fresh.online;
+    members.length = 0;
+    members.push(...fresh.accounts);
+    paintBots();
+    paintAuth();
+  }, 400);
+
   state.onLive = (event) => {
-    if (event.type === 'state') redraw();
+    if (event.type === 'line' && event.key.startsWith(`${profile.id}:`)) paintChat();
+    if (event.type === 'state' && event.key.startsWith(`${profile.id}:`)) {
+      paintAuth();
+      refreshBots();
+    }
   };
 }
 
-// ---------------------------------------------------------------- Chat
+/** Der Kasten mit den wiederholten Nachrichten – er hängt am Chat, nicht am Serverplatz. */
+const spamPanel = () => `
+  <section class="panel" style="margin-top:1.25rem">
+    <header><h3>${escapeHtml(tr('srv.spam'))}</h3>
+      <button class="btn btn-sm btn-primary" id="add-spam">${icon('plus')}</button></header>
+    <div class="body" style="padding:0" id="spam-body"></div>
+  </section>`;
 
-async function tabChat(root, profile) {
-  const members = profile.accounts;
-  if (!members.length) return noAccounts(root, profile);
-
-  const spam = (await api(`/profiles/${profile.id}/spam`)).spam;
-  const receiverKey = `afk-chat-recv-${profile.id}`;
-  let receivers = JSON.parse(localStorage.getItem(receiverKey) || '[]');
-  if (!receivers.length) receivers = members.map((member) => member.account_id);
-
-  root.innerHTML = `
-    <div class="stack" style="gap:1.25rem">
-      <section class="panel">
-        <header>
-          <h3>${escapeHtml(tr('tab.chat'))}</h3>
-          <div class="row">
-            <label class="check small"><input type="checkbox" id="autoscroll" checked> ${escapeHtml(
-              tr('dash.live')
-            )}</label>
-            <button class="btn btn-ghost btn-sm" id="clear">${escapeHtml(tr('common.delete'))}</button>
-          </div>
-        </header>
-        <div class="body" style="padding:0">
-          <div class="row wrap" style="padding:.75rem 1.1rem;box-shadow:inset 0 -1px 0 var(--line-soft)">
-            ${members
-              .map(
-                (member) => `<label class="check small">
-                  <input type="checkbox" data-recv="${member.account_id}"
-                    ${receivers.includes(member.account_id) ? 'checked' : ''}>
-                  ${escapeHtml(member.name)}</label>`
-              )
-              .join('')}
-          </div>
-          <div class="console" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}" style="height:min(52vh,32rem);border-radius:0;box-shadow:none"></div>
-          <div class="row" style="padding:.75rem 1.1rem;gap:.5rem">
-            <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))}"
-              autocomplete="off" aria-label="${escapeHtml(tr('tab.chat'))}">
-            <select id="sender" style="width:auto;min-width:9rem">
-              <option value="">${escapeHtml(tr('srv.chatAll'))}</option>
-              ${members
-                .map((member) => `<option value="${member.account_id}">${escapeHtml(member.name)}</option>`)
-                .join('')}
-            </select>
-            <button class="btn btn-primary" id="send">${escapeHtml(tr('srv.chatSend'))}</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('srv.spam'))}</h3>
-          <button class="btn btn-sm btn-primary" id="add-spam">${icon('plus')}</button></header>
-        <div class="body" style="padding:0">
-          ${
-            spam.length
-              ? `<div class="table-wrap"><table class="table">
-                  <thead><tr><th>${escapeHtml(tr('tk.message'))}</th><th></th>
-                    <th>${escapeHtml(tr('ov.col.account'))}</th><th></th><th></th></tr></thead>
-                  <tbody>${spam.map(spamRow).join('')}</tbody></table></div>`
-              : `<p class="muted small" style="padding:1.25rem">${escapeHtml(tr('common.none'))}
-                 <span class="mono">/afk</span> · 300 s</p>`
-          }
-        </div>
-      </section>
-    </div>`;
+async function bindSpam(profile, members) {
+  const { spam } = await api(`/profiles/${profile.id}/spam`);
+  const body = $('#spam-body');
+  body.innerHTML = spam.length
+    ? `<div class="table-wrap"><table class="table">
+        <thead><tr><th>${escapeHtml(tr('tk.message'))}</th><th></th>
+          <th>${escapeHtml(tr('ov.col.account'))}</th><th></th><th></th></tr></thead>
+        <tbody>${spam.map(spamRow).join('')}</tbody></table></div>`
+    : `<p class="muted small" style="padding:1.25rem">${escapeHtml(tr('common.none'))}
+       — <span class="mono">/afk</span> · 300 s</p>`;
 
   function spamRow(entry) {
     const names = entry.accounts.length
-      ? entry.accounts
-          .map((id) => members.find((member) => member.account_id === id)?.name || id)
-          .join(', ')
+      ? entry.accounts.map((id) => members.find((m) => m.account_id === id)?.name || id).join(', ')
       : tr('common.all');
     return `<tr>
       <td class="mono">${escapeHtml(entry.message)}</td>
@@ -476,84 +599,6 @@ async function tabChat(root, profile) {
       </td>
     </tr>`;
   }
-
-  const box = $('#chat');
-  const autoscroll = $('#autoscroll');
-
-  const paint = () => {
-    const lines = [];
-    for (const member of members) {
-      if (!receivers.includes(member.account_id)) continue;
-      for (const entry of linesOf(`${profile.id}:${member.account_id}`)) {
-        lines.push({ ...entry, who: member.name });
-      }
-    }
-    lines.sort((a, b) => a.t - b.t);
-    box.innerHTML = lines
-      .slice(-400)
-      .map(
-        (entry) => `<div class="line ${entry.type}">
-          <span class="t">${clock(entry.t)}</span>
-          ${members.length > 1 ? `<span class="who">${escapeHtml(entry.who)}</span>` : ''}
-          <span class="msg">${escapeHtml(entry.text)}</span></div>`
-      )
-      .join('');
-    if (autoscroll.checked) box.scrollTop = box.scrollHeight;
-  };
-
-  // Verlauf vom Server holen – der Zwischenspeicher im Browser ist nach einem Neuladen leer.
-  try {
-    const data = await api(`/profiles/${profile.id}/chat`);
-    for (const line of data.lines) {
-      const key = `${profile.id}:${line.account_id}`;
-      const list = state.lines.get(key) || [];
-      if (!list.some((entry) => entry.t === line.t && entry.text === line.text)) {
-        list.push({ t: line.t, type: line.type, text: line.text });
-      }
-      state.lines.set(key, list);
-    }
-    for (const [key, list] of state.lines) {
-      list.sort((a, b) => a.t - b.t);
-      state.lines.set(key, list);
-    }
-  } catch {
-    /* Verlauf ist nur Beiwerk */
-  }
-  paint();
-
-  $$('[data-recv]').forEach((node) =>
-    node.addEventListener('change', () => {
-      receivers = $$('[data-recv]:checked').map((entry) => Number(entry.dataset.recv));
-      localStorage.setItem(receiverKey, JSON.stringify(receivers));
-      paint();
-    })
-  );
-
-  $('#clear').addEventListener('click', () => {
-    for (const member of members) state.lines.set(`${profile.id}:${member.account_id}`, []);
-    paint();
-  });
-
-  const send = async () => {
-    const input = $('#msg');
-    const text = input.value.trim();
-    if (!text) return;
-    const sender = $('#sender').value;
-    const accounts = sender ? [Number(sender)] : receivers;
-    input.value = '';
-    try {
-      const result = await api(`/profiles/${profile.id}/chat`, { method: 'POST', body: { text, accounts } });
-      const failures = result.results.filter((entry) => !entry.ok);
-      if (failures.length === result.results.length) toast(failures[0].error, 'bad');
-    } catch (error) {
-      fail(error);
-      input.value = text;
-    }
-  };
-  $('#send').addEventListener('click', send);
-  $('#msg').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') send();
-  });
 
   $('#add-spam').addEventListener('click', () => editSpam(profile, members, null));
   $$('[data-spam-edit]').forEach((button) =>
@@ -581,10 +626,6 @@ async function tabChat(root, profile) {
   bindSwitches('[data-spam-toggle]', (id, enabled) =>
     api(`/profiles/${profile.id}/spam/${id}`, { method: 'PATCH', body: { enabled } })
   );
-
-  state.onLive = (event) => {
-    if (event.type === 'line' && event.key.startsWith(`${profile.id}:`)) paint();
-  };
 }
 
 async function editSpam(profile, members, entry) {
@@ -594,7 +635,7 @@ async function editSpam(profile, members, entry) {
       { key: 'message', label: tr('tk.message'), value: entry?.message || '/afk', required: true },
       {
         key: 'interval_sec',
-        label: `${tr('common.month')} (s)`,
+        label: tr('srv.intervalSec'),
         type: 'number',
         min: 5,
         max: 86400,
@@ -779,7 +820,11 @@ async function tabMovement(root, profile) {
   bindLog(profile, members);
 }
 
-// ---------------------------------------------------------------- Anzeigetafel
+// ---------------------------------------------------------------- Anzeigetafel und Spielerliste
+//
+// Die Seitenleiste eines Servers ist kein Chat und gehört auch nicht in eine Chatfläche: dreizehn
+// Zeilen mit Punktzahlen hintereinander sind dort nicht zu lesen. Hier steht sie so, wie sie im
+// Spiel aussieht – mit Farben, mit den Punktzahlen rechts, je Bot eine Tafel.
 
 async function tabBoard(root, profile) {
   const members = profile.accounts;
@@ -788,20 +833,77 @@ async function tabBoard(root, profile) {
   root.innerHTML = `
     ${accountPicker(members)}
     <div class="row wrap" style="margin-bottom:1rem">
-      <button class="btn btn-primary btn-sm" data-cmd="board|">${escapeHtml(tr('tab.board'))}</button>
-      <button class="btn btn-sm" data-cmd="tab|">${escapeHtml(tr('srv.tabList'))}</button>
+      <button class="btn btn-primary btn-sm" id="get-board">${icon('refresh')} ${escapeHtml(tr('vw.board'))}</button>
+      <button class="btn btn-sm" id="get-tab">${icon('users')} ${escapeHtml(tr('vw.tab'))}</button>
+      <span class="small muted" style="align-self:center">${escapeHtml(tr('vw.hint'))}</span>
     </div>
-    <p class="small muted" style="margin-bottom:1rem">${escapeHtml(tr('srv.boardHint'))}</p>
-    ${logPanel('28rem')}`;
+    <div class="views" id="views"></div>`;
 
   const run = commandRunner(profile);
-  $$('[data-cmd]').forEach((button) =>
-    button.addEventListener('click', () => {
-      const [verb, arg] = button.dataset.cmd.split('|');
-      run(verb, arg);
-    })
-  );
-  bindLog(profile, members);
+  $('#get-board').addEventListener('click', () => run('board'));
+  $('#get-tab').addEventListener('click', () => run('tab'));
+
+  const paint = () => {
+    const boards = [];
+    for (const member of members) {
+      const bot = state.bots.get(`${profile.id}:${member.account_id}`);
+      if (!bot) continue;
+      if (bot.views?.board) boards.push(boardCard(member, bot.views.board, bot));
+      if (bot.views?.tab) boards.push(tabCard(member, bot.views.tab, bot));
+    }
+    $('#views').innerHTML =
+      boards.join('') ||
+      `<div class="empty" style="grid-column:1/-1"><h3>${escapeHtml(tr('vw.empty'))}</h3>
+        <p>${escapeHtml(tr('vw.hint'))}</p></div>`;
+  };
+
+  // Beim Öffnen einmal von selbst abrufen – wer den Reiter anklickt, will die Tafel sehen.
+  paint();
+  run('board');
+  run('tab');
+
+  state.onLive = (event) => {
+    if (event.type === 'view' && event.key.startsWith(`${profile.id}:`)) paint();
+  };
+}
+
+/** Eine Anzeigetafel, wie Minecraft sie zeichnet: Titel oben, Zeile links, Punktzahl rechts. */
+function boardCard(member, view, bot) {
+  if (view.empty) {
+    return `<article class="board is-empty">
+      <header>${escapeHtml(member.name)}</header>
+      <p class="small muted" style="padding:1rem">${escapeHtml(tr('vw.empty'))}</p>
+    </article>`;
+  }
+  return `<article class="board">
+    <header title="${escapeHtml(member.name)}">${mcText(view.title)}</header>
+    <ol class="board-rows">
+      ${view.rows
+        .map(
+          (row) => `<li><span class="board-text">${mcText(row.text)}</span>
+            ${row.score === null ? '' : `<span class="board-score">${row.score}</span>`}</li>`
+        )
+        .join('')}
+    </ol>
+    <footer class="small muted">${escapeHtml(member.name)}</footer>
+  </article>`;
+}
+
+/** Die Spielerliste – dieselbe Bauart, nur ohne Punktzahlen. */
+function tabCard(member, view, bot) {
+  if (view.empty || !view.players.length) {
+    return `<article class="board is-empty">
+      <header>${escapeHtml(tr('vw.tab'))}</header>
+      <p class="small muted" style="padding:1rem">${escapeHtml(tr('vw.emptyTab'))}</p>
+    </article>`;
+  }
+  return `<article class="board">
+    <header>${escapeHtml(tr('vw.players', { n: view.count }))}</header>
+    <ul class="board-rows players">
+      ${view.players.map((name) => `<li><span class="board-text">${mcText(name)}</span></li>`).join('')}
+    </ul>
+    <footer class="small muted">${escapeHtml(member.name)}</footer>
+  </article>`;
 }
 
 // ---------------------------------------------------------------- Menüs
@@ -810,77 +912,207 @@ async function tabMenu(root, profile) {
   const members = profile.accounts;
   if (!members.length) return noAccounts(root, profile);
 
-  const open = members
-    .map((member) => ({ member, bot: state.bots.get(`${profile.id}:${member.account_id}`) }))
-    .filter((entry) => entry.bot?.menu);
-
   root.innerHTML = `
     ${accountPicker(members)}
-
-    ${
-      open.length
-        ? `<section class="panel" style="margin-bottom:1.25rem">
-            <header><h3>${escapeHtml(tr('srv.menuOpen'))}</h3></header>
-            <div class="body stack">
-              ${open
-                .map(
-                  (entry) => `<div class="row spread">
-                    <span>${escapeHtml(entry.member.name)}</span>
-                    <span class="mono small muted">${escapeHtml(entry.bot.menu.title || '')} ·
-                      ${entry.bot.menu.slots || '?'} ${escapeHtml(tr('srv.slot'))}</span>
-                  </div>`
-                )
-                .join('')}
-            </div>
-          </section>`
-        : ''
-    }
-
-    <div class="grid two">
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('tab.menu'))}</h3></header>
-        <div class="body stack">
-          <p class="small muted">${escapeHtml(tr('srv.menuHint'))}</p>
-          <div class="row wrap">
-            <button class="btn btn-sm" data-cmd="menu|">${escapeHtml(tr('common.status'))}</button>
-            <button class="btn btn-sm btn-danger" data-cmd="close|">${escapeHtml(tr('srv.menuClose'))}</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('srv.menuClick'))}</h3></header>
-        <div class="body stack">
-          <div class="row">
-            <div class="field" style="max-width:8rem"><label for="mslot">${escapeHtml(tr('srv.slot'))}</label>
-              <input id="mslot" type="number" min="0" max="100" value="0"></div>
-            <div class="field" style="max-width:10rem"><label for="mbutton">${escapeHtml(tr('srv.button'))}</label>
-              <select id="mbutton">
-                <option value="">${escapeHtml(tr('srv.left'))}</option>
-                <option value="rechts">${escapeHtml(tr('srv.right'))}</option>
-                <option value="shift">Shift</option>
-              </select></div>
-            <button class="btn btn-primary" id="click" style="align-self:flex-end">${escapeHtml(
-              tr('srv.menuClick')
-            )}</button>
-          </div>
-        </div>
-      </section>
+    <div class="row wrap" style="margin-bottom:1rem">
+      <button class="btn btn-primary btn-sm" id="get-menu">${icon('refresh')} ${escapeHtml(tr('common.status'))}</button>
+      <button class="btn btn-sm btn-danger" id="close-menu">${escapeHtml(tr('srv.menuClose'))}</button>
+      <span class="small muted" style="align-self:center">${escapeHtml(tr('vw.menuBlind'))}</span>
     </div>
-
-    ${logPanel()}`;
+    <div class="views" id="views"></div>`;
 
   const run = commandRunner(profile);
-  $$('[data-cmd]').forEach((button) =>
-    button.addEventListener('click', () => {
-      const [verb, arg] = button.dataset.cmd.split('|');
-      run(verb, arg);
+  $('#get-menu').addEventListener('click', () => run('menu'));
+  $('#close-menu').addEventListener('click', () => run('close'));
+
+  const paint = () => {
+    const cards = [];
+    for (const member of members) {
+      const bot = state.bots.get(`${profile.id}:${member.account_id}`);
+      if (!bot) continue;
+      const view = bot.views?.menu || (bot.menu ? { empty: false, ...bot.menu } : null);
+      if (view) cards.push(menuCard(member, view));
+    }
+    $('#views').innerHTML =
+      cards.join('') ||
+      `<div class="empty" style="grid-column:1/-1"><h3>${escapeHtml(tr('vw.emptyMenu'))}</h3></div>`;
+    bindSlots();
+  };
+
+  function menuCard(member, view) {
+    if (view.empty) {
+      return `<article class="board is-empty">
+        <header>${escapeHtml(member.name)}</header>
+        <p class="small muted" style="padding:1rem">${escapeHtml(tr('vw.emptyMenu'))}</p>
+      </article>`;
+    }
+    // Ein Raster wie eine Truhe: neun Felder je Reihe, klickbar. Was drinliegt, weiß der Client
+    // nicht – deshalb steht in jedem Feld nur die Nummer, und die genügt zum Anklicken.
+    const slots = Math.max(9, Math.min(120, Number(view.slots) || 27));
+    return `<article class="board menu-card">
+      <header>${view.title ? mcText(view.title) : escapeHtml(tr('vw.menu'))}</header>
+      <div class="slots">
+        ${Array.from(
+          { length: slots },
+          (_, index) => `<button class="slot" data-slot="${index}" data-account="${member.account_id}"
+            title="${escapeHtml(tr('srv.slot'))} ${index}">${index}</button>`
+        ).join('')}
+      </div>
+      <footer class="small muted">${escapeHtml(member.name)} · ${escapeHtml(
+        tr('vw.slots', { n: slots })
+      )} · ${escapeHtml(tr('vw.clickSlot'))}</footer>
+    </article>`;
+  }
+
+  function bindSlots() {
+    $$('[data-slot]').forEach((button) =>
+      button.addEventListener('click', async (event) => {
+        const button2 = event.currentTarget;
+        const which = event.shiftKey ? 'shift' : event.ctrlKey || event.metaKey ? 'rechts' : '';
+        try {
+          await api(`/profiles/${profile.id}/command`, {
+            method: 'POST',
+            body: {
+              verb: 'click',
+              arg: `${button2.dataset.slot}${which ? ` ${which}` : ''}`,
+              accounts: [Number(button2.dataset.account)],
+            },
+          });
+        } catch (error) {
+          fail(error);
+        }
+      })
+    );
+  }
+
+  paint();
+  run('menu');
+
+  state.onLive = (event) => {
+    if ((event.type === 'view' || event.type === 'state') && event.key.startsWith(`${profile.id}:`)) paint();
+  };
+}
+
+// ---------------------------------------------------------------- Zusätze
+
+async function tabAddons(root, profile) {
+  const data = await api(`/profiles/${profile.id}/addons`);
+
+  root.innerHTML = `
+    <div class="row spread wrap" style="margin-bottom:1.25rem;gap:1rem">
+      <div style="max-width:44rem">
+        <h2 style="font-size:1.25rem;margin:0 0 .35rem">${escapeHtml(tr('ad.title'))}</h2>
+        <p class="small muted" style="margin:0">${escapeHtml(tr('ad.sub'))}</p>
+      </div>
+      <div class="stat" style="min-width:12rem">
+        <div class="k">${escapeHtml(tr('ad.monthlyAfter'))}</div>
+        <div class="v">${credits(data.monthly_credits)}</div>
+        <div class="s">${escapeHtml(euro(data.monthly_credits))}</div>
+      </div>
+    </div>
+
+    ${
+      data.allowed
+        ? ''
+        : `<div class="note warn" style="margin-bottom:1.25rem">${icon('info')}
+            <div>${escapeHtml(data.reason || tr('ad.freePlan'))}
+            <a href="#/servers/${profile.id}/plan">${escapeHtml(tr('srv.changePlan'))}</a></div></div>`
+    }
+
+    <div class="grid two addon-grid">${data.addons.map(card).join('')}</div>`;
+
+  function card(addon) {
+    const soon = addon.announced;
+    const state_ =
+      addon.included ? 'included' : addon.qty > 0 ? 'booked' : soon ? 'soon' : 'open';
+    return `<article class="card addon ${state_}">
+      <div class="row spread" style="align-items:flex-start">
+        <div style="min-width:0">
+          <div class="strong">${escapeHtml(addon.name)}</div>
+          <p class="small muted" style="margin:.35rem 0 0">${escapeHtml(addon.text)}</p>
+        </div>
+        ${
+          addon.included
+            ? `<span class="pill primary">${escapeHtml(tr('ad.included'))}</span>`
+            : addon.qty > 0
+              ? `<span class="pill primary">${escapeHtml(tr('ad.booked'))}${
+                  addon.max_qty > 1 ? ` · ${addon.qty}×` : ''
+                }</span>`
+              : soon
+                ? `<span class="pill missing">${escapeHtml(tr('ad.soon'))}</span>`
+                : ''
+        }
+      </div>
+
+      <div class="row spread" style="margin-top:1rem;align-items:flex-end">
+        <div>
+          <!-- Euro zuerst: das ist die Zahl, mit der jemand entscheidet. Credits stehen darunter,
+               weil im Panel damit gerechnet wird. -->
+          <div class="price-line" style="margin:0">${escapeHtml(euro(addon.price_credits))}
+            <span class="small muted">${escapeHtml(tr('ad.perMonth'))}</span></div>
+          <div class="small muted">${credits(addon.price_credits)} ${escapeHtml(
+            tr('common.creditsInline')
+          )} ${escapeHtml(tr('ad.perMonth'))}</div>
+          ${
+            !addon.included && !soon && data.allowed && data.days_left !== null
+              ? `<div class="small" style="color:var(--ok)">${escapeHtml(
+                  tr('ad.nowOnly', { credits: credits(addon.prorated) })
+                )} — ${escapeHtml(tr('ad.restOfMonth', { n: data.days_left }))}</div>`
+              : ''
+          }
+        </div>
+        <div class="row">
+          ${
+            addon.qty > 0
+              ? `<button class="btn btn-sm btn-danger" data-drop="${addon.id}">${escapeHtml(tr('ad.cancel'))}</button>`
+              : ''
+          }
+          ${
+            !addon.included && !soon && data.allowed && (addon.qty < addon.max_qty)
+              ? `<button class="btn btn-sm btn-primary" data-buy="${addon.id}">${escapeHtml(tr('ad.book'))}</button>`
+              : ''
+          }
+        </div>
+      </div>
+      ${soon ? `<p class="small muted" style="margin:.75rem 0 0">${escapeHtml(tr('ad.soonHint'))}</p>` : ''}
+    </article>`;
+  }
+
+  $$('[data-buy]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const addon = data.addons.find((entry) => entry.id === Number(button.dataset.buy));
+      const price = data.days_left === null ? addon.price_credits : addon.prorated;
+      if (!(await confirmDialog(tr('ad.confirmBuy', { name: addon.name, credits: price }), {
+        confirm: tr('ad.book'),
+        danger: false,
+      })))
+        return;
+      try {
+        await api(`/profiles/${profile.id}/addons`, { method: 'POST', body: { addon_id: addon.id, qty: 1 } });
+        await refresh({ accounts: false });
+        ok(tr('srv.saved'));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
     })
   );
-  $('#click').addEventListener('click', () =>
-    run('click', `${$('#mslot').value} ${$('#mbutton').value}`.trim())
+
+  $$('[data-drop]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const addon = data.addons.find((entry) => entry.id === Number(button.dataset.drop));
+      if (!(await confirmDialog(tr('ad.confirmDrop', { name: addon.name }), { confirm: tr('ad.cancel') })))
+        return;
+      try {
+        await api(`/profiles/${profile.id}/addons/${addon.id}`, { method: 'DELETE' });
+        await refresh({ accounts: false });
+        ok(tr('srv.saved'));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
   );
-  bindLog(profile, members);
 }
 
 // ---------------------------------------------------------------- Proxys
@@ -1323,18 +1555,28 @@ async function tabPlan(root, profile) {
             <p class="price-line">${
               plan.free_slot
                 ? escapeHtml(tr('common.free'))
-                : `${credits(plan.price_credits)} <span class="small muted">${escapeHtml(
+                : `${escapeHtml(euro(plan.price_credits))} <span class="small muted">${escapeHtml(
                     tr('pricing.perServer')
                   )}</span>`
             }</p>
+            ${
+              plan.free_slot
+                ? ''
+                : `<p class="small muted" style="margin:.2rem 0 0">${credits(
+                    plan.price_credits
+                  )} ${escapeHtml(tr('common.creditsInline'))}</p>`
+            }
             <p class="small muted">${escapeHtml(plan.blurb || '')}</p>
-            <ul class="small stack" style="margin:1rem 0 0;padding:0;list-style:none">
+            <ul class="plan-list grow">
               <li>${plan.max_accounts} ${escapeHtml(
                 tr(plan.max_accounts === 1 ? 'pricing.bot' : 'pricing.bots')
               )}</li>
               <li>${escapeHtml(tr(plan.premium ? 'pricing.premiumClient' : 'pricing.slimClient'))}</li>
               <li>${plan.chat_limit} ${escapeHtml(tr('pricing.chatHistory'))}</li>
+              ${plan.board ? `<li>${escapeHtml(tr('vw.board'))} + ${escapeHtml(tr('vw.tab'))}</li>` : ''}
+              ${plan.menus ? `<li>${escapeHtml(tr('vw.menu'))}</li>` : ''}
               ${plan.proxy ? `<li>${escapeHtml(tr('pricing.proxyOnRequest'))}</li>` : ''}
+              ${plan.priority_support ? `<li>${escapeHtml(tr('pricing.prioritySupport'))}</li>` : ''}
             </ul>
             ${
               plan.id === profile.plan.id
@@ -1349,6 +1591,51 @@ async function tabPlan(root, profile) {
         )
         .join('')}
     </div>
+
+    ${
+      profile.addons?.length
+        ? `<section class="panel" style="margin-top:1.5rem">
+            <header><h3>${escapeHtml(tr('ad.title'))}</h3>
+              <a class="btn btn-sm" href="#/servers/${profile.id}/addons">${escapeHtml(tr('common.edit'))}</a></header>
+            <div class="body stack">
+              ${profile.addons
+                .map(
+                  (addon) => `<div class="row spread">
+                    <span>${escapeHtml(addon.name)}${addon.qty > 1 ? ` · ${addon.qty}×` : ''}</span>
+                    <span class="mono">${credits(addon.price_credits)}</span>
+                  </div>`
+                )
+                .join('')}
+              <hr class="rule">
+              <div class="row spread strong">
+                <span>${escapeHtml(tr('ad.monthlyAfter'))}</span>
+                <span class="mono">${credits(profile.monthly_credits)} · ${escapeHtml(
+                  euro(profile.monthly_credits)
+                )}</span>
+              </div>
+            </div>
+          </section>`
+        : ''
+    }
+
+    ${
+      profile.node
+        ? `<section class="panel" style="margin-top:1.5rem">
+            <header><h3>${escapeHtml(tr('nd.title'))}</h3></header>
+            <div class="body row spread wrap" style="gap:1rem">
+              <div>
+                <div class="row" style="gap:.5rem">${icon('pin')}
+                  <span class="strong">${escapeHtml(profile.node.name)}</span>
+                  ${profile.node.region ? `<span class="pill">${escapeHtml(profile.node.region)}</span>` : ''}</div>
+                <p class="small muted" style="margin:.4rem 0 0;max-width:34rem">${escapeHtml(
+                  profile.node.note || tr('nd.sub')
+                )}</p>
+              </div>
+              <button class="btn btn-sm" id="change-node">${escapeHtml(tr('nd.change'))}</button>
+            </div>
+          </section>`
+        : ''
+    }
 
     ${
       profile.plan.free_slot
@@ -1391,6 +1678,40 @@ async function tabPlan(root, profile) {
       }
     })
   );
+
+  $('#change-node')?.addEventListener('click', async () => {
+    const { nodes } = await api('/nodes');
+    const options = nodes
+      .filter((node) => !node.full || node.id === profile.node?.id)
+      .map((node) => ({
+        value: String(node.id),
+        label: `${node.name}${node.region ? ` · ${node.region}` : ''}`,
+      }));
+    if (!options.length) return toast(tr('common.none'));
+    const answer = await formDialog(
+      tr('nd.change'),
+      [
+        { type: 'note', key: 'note', label: tr('nd.changeHint') },
+        {
+          key: 'node_id',
+          label: tr('nd.title'),
+          type: 'select',
+          value: String(profile.node?.id || options[0].value),
+          options,
+        },
+      ],
+      { submit: tr('nd.change') }
+    );
+    if (!answer) return;
+    try {
+      await api(`/profiles/${profile.id}/node`, { method: 'POST', body: { node_id: Number(answer.node_id) } });
+      await refresh({ accounts: false });
+      ok(tr('srv.saved'));
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
 
   bindSwitches('[data-renew]', (id, enabled) =>
     api(`/profiles/${id}`, { method: 'PATCH', body: { renew: enabled } })
@@ -1592,9 +1913,8 @@ function bindLog(profile, members) {
       .slice(-120)
       .map(
         (entry) => `<div class="line ${entry.type}"><span class="t">${clock(entry.t)}</span>
-          <span class="who">${escapeHtml(entry.who)}</span><span class="msg">${escapeHtml(
-            entry.text
-          )}</span></div>`
+          ${members.length > 1 ? `<span class="who">${escapeHtml(entry.who)}</span>` : ''}
+          <span class="msg">${mcText(entry.text)}</span></div>`
       )
       .join('');
     log.scrollTop = log.scrollHeight;

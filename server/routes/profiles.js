@@ -8,7 +8,10 @@ import { supervisor } from '../supervisor.js';
 import { macros as macroEngine, ACTIONS, EVENT_TYPES } from '../macros.js';
 import * as binaries from '../binaries.js';
 import * as billing from '../billing.js';
-import { planView } from './core.js';
+import * as nodes from '../nodes.js';
+import * as roles from '../roles.js';
+import { planView, addonView } from './core.js';
+import { mergeLines } from '../../public/assets/js/chatlog.js';
 import {
   wrap,
   requireString,
@@ -82,9 +85,12 @@ function membersOf(profile) {
 
 function profileView(profile, lang = 'en') {
   const plan = billing.planOf(profile);
+  // Was der Platz wirklich kann, steht nicht im Tarif allein: dazugekaufte Zusätze zählen mit.
+  const features = billing.featuresOf(profile);
   const members = membersOf(profile);
-  const build = binaries.buildFor(profile, plan);
-  const caps = build ? binaries.caps(build) : {};
+  const build = binaries.buildFor(profile, features);
+  const caps = build ? billing.gateCaps(binaries.caps(build), features) : {};
+  const node = profile.node_id ? nodes.byId(profile.node_id) : null;
   return {
     id: profile.id,
     name: profile.name,
@@ -110,13 +116,35 @@ function profileView(profile, lang = 'en') {
     created_at: profile.created_at,
 
     plan: planView(plan, lang),
+    // Der Tarif sagt, womit der Platz angefangen hat; `features` sagt, was er heute kann.
+    features: {
+      max_accounts: features.max_accounts,
+      board: Boolean(features.board),
+      menus: Boolean(features.menus),
+      pov: Boolean(features.pov),
+      movement: Boolean(features.movement),
+      proxy: Boolean(features.proxy),
+      premium: Boolean(features.premium),
+      max_macros: features.max_macros,
+    },
+    addons: billing.addonsOf(profile.id).map((addon) => ({
+      id: addon.id,
+      key: addon.key,
+      name: lang === 'de' ? addon.name_de : addon.name_en,
+      qty: addon.qty,
+      price_credits: addon.price_credits * addon.qty,
+    })),
+    monthly_credits: billing.monthlyPrice(profile),
     paid_until: profile.paid_until,
     renew: Boolean(profile.renew),
     suspended: Boolean(profile.suspended),
-    active: billing.isActive(profile),
+    locked: Boolean(profile.locked),
+    lock_reason: profile.lock_reason || '',
+    active: billing.isActive(profile) && !profile.locked,
     days_left: profile.paid_until
       ? Math.max(0, Math.ceil((profile.paid_until - Date.now()) / 86_400_000))
       : null,
+    node: node ? nodes.view(node) : null,
 
     build,
     caps,
@@ -142,11 +170,26 @@ function targets(req, profile) {
 
 const langOf = (req) => (String(req.query.lang || req.user?.language || 'en') === 'de' ? 'de' : 'en');
 
-/** Fähigkeiten, die diesem Serverplatz zur Verfügung stehen. */
+/** Fähigkeiten, die diesem Serverplatz zur Verfügung stehen – Client und Tarif zusammen. */
 const capsOf = (profile) => {
-  const build = binaries.buildFor(profile, billing.planOf(profile));
-  return build ? binaries.caps(build) : {};
+  const features = billing.featuresOf(profile);
+  const build = binaries.buildFor(profile, features);
+  return build ? billing.gateCaps(binaries.caps(build), features) : {};
 };
+
+/** Ein gesperrter Serverplatz lässt sich nicht mehr ändern – nur noch ansehen. */
+function notLocked(profile) {
+  if (profile.locked) {
+    throw new HttpError(
+      403,
+      `"${profile.name}" ist gesperrt${profile.lock_reason ? `: ${profile.lock_reason}` : '.'} Bitte melde dich beim Support.`,
+      {
+        en: `"${profile.name}" is locked${profile.lock_reason ? `: ${profile.lock_reason}` : '.'} Please contact support.`,
+      }
+    );
+  }
+  return profile;
+}
 
 // ---------------------------------------------------------------- Serverplätze
 
@@ -161,6 +204,7 @@ router.get(
       profiles: rows.map((profile) => profileView(profile, lang)),
       free_slots_left: Math.max(0, billing.freeSlots() - billing.usedFreeSlots(req.user.id)),
       plans: billing.plans().map((plan) => planView(plan, lang)),
+      nodes: nodes.visibleFor(req.user),
     });
   })
 );
@@ -204,6 +248,9 @@ router.post(
       );
     }
 
+    // Wo der Platz hin soll. Ohne Wunsch nimmt `pick` den ersten freien, den dieses Konto darf.
+    const node = nodes.pick(req.user, body.node_id);
+
     let slug = slugify(name);
     let suffix = 1;
     while (db.prepare('SELECT 1 FROM profiles WHERE user_id = ? AND slug = ?').get(req.user.id, slug)) {
@@ -213,8 +260,8 @@ router.post(
     const max = db.prepare('SELECT MAX(ordinal) AS m FROM profiles WHERE user_id = ?').get(req.user.id).m;
     const info = db
       .prepare(
-        `INSERT INTO profiles (user_id, name, slug, host, port, mc_version, plan_id, chat_limit, ordinal, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO profiles (user_id, name, slug, host, port, mc_version, plan_id, node_id, chat_limit, ordinal, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         req.user.id,
@@ -224,6 +271,7 @@ router.post(
         port,
         version,
         plan.id,
+        node.id,
         Math.min(200, plan.chat_limit),
         (max ?? 0) + 1,
         Date.now()
@@ -259,8 +307,9 @@ router.get(
 router.patch(
   '/:id',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
-    const plan = billing.planOf(profile);
+    const profile = notLocked(ownedProfile(req));
+    // Für die Grenzen zählt, was der Platz kann – ein dazugekaufter Zusatz gehört dazu.
+    const plan = billing.featuresOf(profile);
     const body = req.body || {};
     const set = [];
     const values = [];
@@ -376,22 +425,115 @@ router.patch(
 router.post(
   '/:id/plan',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const plan = billing.planById(requireInt(req.body?.plan_id, 'Tarif'));
     if (!plan) throw notFound('Diesen Tarif gibt es nicht.', { en: 'No such plan.' });
     const updated = billing.setPlan(profile, plan);
     // Was der neue Tarif nicht mehr hergibt, wird sofort abgeschaltet statt still weiterzulaufen.
-    if (!plan.premium) {
+    // Gerechnet wird mit den Merkmalen nach dem Wechsel: setPlan hat Zusätze, die der neue Tarif
+    // schon mitbringt oder gar nicht erlaubt, bereits abgeräumt.
+    const features = billing.featuresOf(updated);
+    if (!features.premium) {
       db.prepare('UPDATE profiles SET antiafk_sec = 0, sneak = 0 WHERE id = ?').run(profile.id);
     }
-    if (!plan.movement) db.prepare('UPDATE profiles SET movement = 0 WHERE id = ?').run(profile.id);
-    if (!plan.fakehost) db.prepare('UPDATE profiles SET fake_host = NULL WHERE id = ?').run(profile.id);
-    if (supervisor.runningOnProfile(profile.id) > plan.max_accounts) {
+    if (!features.movement) db.prepare('UPDATE profiles SET movement = 0 WHERE id = ?').run(profile.id);
+    if (!features.fakehost) db.prepare('UPDATE profiles SET fake_host = NULL WHERE id = ?').run(profile.id);
+    if (supervisor.runningOnProfile(profile.id) > features.max_accounts) {
       supervisor.stopProfile(profile.id, 'Tarif gewechselt – bitte neu starten.', { keepWanted: false });
     }
+    // Ein anderer Tarif kann eine andere Discord-Rolle bedeuten – der Bot erfährt es sofort.
+    roles.changed(req.user.id);
     res.json({
       profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(updated.id), langOf(req)),
       balance: billing.balance(req.user.id),
+    });
+  })
+);
+
+// ---------------------------------------------------------------- Zusätze
+//
+// Ein Serverplatz muss nicht auf den nächstgrößeren Tarif springen, nur weil ein Bot mehr
+// gebraucht wird. Bezahlt wird beim Buchen anteilig für den Rest des Monats; ab der nächsten
+// Verlängerung steckt der Zusatz im Monatspreis.
+
+router.get(
+  '/:id/addons',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const plan = billing.planOf(profile);
+    const lang = langOf(req);
+    const caps = binaries.anyCaps();
+    const booked = Object.fromEntries(billing.addonsOf(profile.id).map((entry) => [entry.id, entry.qty]));
+    res.json({
+      allowed: Boolean(plan.addons) && !plan.free_slot,
+      reason: plan.free_slot
+        ? lang === 'de'
+          ? 'Auf dem kostenlosen Serverplatz gibt es keine Zusätze. Wähle zuerst einen bezahlten Tarif.'
+          : 'The free server slot takes no extras. Pick a paid plan first.'
+        : '',
+      addons: billing.addons().map((addon) => ({
+        ...addonView(addon, lang, caps),
+        qty: booked[addon.id] || 0,
+        // Was der Tarif schon kann, muss niemand kaufen.
+        included: addon.kind === 'flag' && addon.flag ? Boolean(plan[addon.flag]) : false,
+        prorated: billing.proratedPrice(profile, addon.price_credits),
+      })),
+      days_left: profile.paid_until
+        ? Math.max(0, Math.ceil((profile.paid_until - Date.now()) / 86_400_000))
+        : null,
+      monthly_credits: billing.monthlyPrice(profile),
+    });
+  })
+);
+
+router.post(
+  '/:id/addons',
+  wrap((req, res) => {
+    const profile = notLocked(ownedProfile(req));
+    const addon = billing.addonById(requireInt(req.body?.addon_id, 'Zusatz'));
+    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.', { en: 'No such extra.' });
+    if (addon.need_cap && !binaries.anyCaps()[addon.need_cap]) {
+      throw bad('Der Client kann das auf diesem Server gerade nicht.', {
+        en: 'The client cannot do that on this server right now.',
+      });
+    }
+    const result = billing.addAddon(profile, addon, Number(req.body?.qty) || 1);
+    res.json({
+      ...result,
+      profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id), langOf(req)),
+    });
+  })
+);
+
+router.delete(
+  '/:id/addons/:addonId',
+  wrap((req, res) => {
+    const profile = notLocked(ownedProfile(req));
+    const addon = billing.addonById(requireInt(req.params.addonId, 'Zusatz'));
+    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.', { en: 'No such extra.' });
+    const result = billing.removeAddon(profile, addon, Number(req.body?.qty) || 1);
+    // Weniger Bots erlaubt als gerade laufen: die überzähligen gehen aus, sonst liefe etwas
+    // weiter, das niemand mehr bezahlt.
+    const features = billing.featuresOf(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id));
+    if (supervisor.runningOnProfile(profile.id) > features.max_accounts) {
+      supervisor.stopProfile(profile.id, 'Zusatz abbestellt – bitte neu starten.', { keepWanted: false });
+    }
+    res.json({
+      ...result,
+      profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id), langOf(req)),
+    });
+  })
+);
+
+/** Den Standort wechseln. Laufende Bots starten dabei neu, weil die Adresse im Start steckt. */
+router.post(
+  '/:id/node',
+  wrap((req, res) => {
+    const profile = notLocked(ownedProfile(req));
+    const node = nodes.pick(req.user, requireInt(req.body?.node_id, 'Standort'));
+    nodes.move(profile.id, node.id, req.user.id);
+    res.json({
+      profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id), langOf(req)),
     });
   })
 );
@@ -428,8 +570,8 @@ router.delete(
 router.post(
   '/:id/accounts',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
-    const plan = billing.planOf(profile);
+    const profile = notLocked(ownedProfile(req));
+    const plan = billing.featuresOf(profile);
     const wanted = Array.isArray(req.body?.accounts) ? req.body.accounts : [req.body?.account_id];
     // Jedes Konto gehört einmal geprüft und einmal gezählt. Doppelte Einträge in der Anfrage und
     // solche, die schon auf dem Platz sitzen, haben vorher gegen das Tariflimit gezählt – damit
@@ -460,8 +602,8 @@ router.post(
 router.patch(
   '/:id/accounts/:accountId',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
-    const plan = billing.planOf(profile);
+    const profile = notLocked(ownedProfile(req));
+    const plan = billing.featuresOf(profile);
     const account = ownedAccount(req, req.params.accountId);
     const body = req.body || {};
     if (body.note !== undefined) {
@@ -513,8 +655,8 @@ router.delete(
 router.post(
   '/:id/start',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
-    const plan = billing.planOf(profile);
+    const profile = notLocked(ownedProfile(req));
+    const plan = billing.featuresOf(profile);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     const results = [];
     for (const accountId of targets(req, profile)) {
@@ -550,8 +692,8 @@ router.post(
 router.post(
   '/:id/restart',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
-    const plan = billing.planOf(profile);
+    const profile = notLocked(ownedProfile(req));
+    const plan = billing.featuresOf(profile);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
     const list = targets(req, profile);
     for (const accountId of list) supervisor.stop(profile.id, accountId, { keepWanted: true });
@@ -588,8 +730,36 @@ router.get(
         lines.push({ ...entry, account_id: member.account_id, account: member.name });
       }
     }
-    lines.sort((a, b) => a.t - b.t);
-    res.json({ lines: lines.slice(-2000), now: Date.now() });
+    // Drei Bots auf demselben Server hören denselben Chat. Ohne das Zusammenlegen stünde jede
+    // Servernachricht dreimal untereinander – siehe public/assets/js/chatlog.js.
+    res.json({ lines: mergeLines(lines).slice(-2000), now: Date.now() });
+  })
+);
+
+/**
+ * Anzeigetafel, Spielerliste und Menü der Bots dieses Platzes.
+ *
+ * Sie stehen nicht im Chat, weil sie kein Chat sind: dreizehn Zeilen Seitenleiste zwischen den
+ * Nachrichten sind für niemanden zu lesen. Der Client schickt sie auf Anfrage, das Panel hält
+ * die letzte Antwort je Bot vor und gibt sie hier aus.
+ */
+router.get(
+  '/:id/views',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const kinds = ['board', 'tab', 'menu'];
+    const wanted = kinds.includes(String(req.query.kind)) ? [String(req.query.kind)] : kinds;
+    const out = [];
+    for (const member of membersOf(profile)) {
+      const bot = supervisor.get(profile.id, member.account_id);
+      if (!bot) continue;
+      for (const kind of wanted) {
+        if (bot.views?.[kind]) {
+          out.push({ account_id: member.account_id, account: member.name, kind, view: bot.views[kind] });
+        }
+      }
+    }
+    res.json({ views: out });
   })
 );
 
@@ -772,11 +942,21 @@ router.get(
 router.post(
   '/:id/macros',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const body = req.body || {};
     const name = requireString(body.name, 'Name', { max: 60 });
     const event = EVENT_TYPES.includes(body.event) ? body.event : 'join';
     const actions = cleanActions(body.actions, capsOf(profile));
+
+    // Wie viele Macros ein Platz haben darf, steht im Tarif: jedes läuft im Panel mit und kostet
+    // Arbeitsspeicher und Zeit, sobald eine Chatzeile hereinkommt.
+    const limit = billing.featuresOf(profile).max_macros;
+    const have = db.prepare('SELECT COUNT(*) AS n FROM macros WHERE profile_id = ?').get(profile.id).n;
+    if (have >= limit) {
+      throw new HttpError(402, `Dieser Tarif erlaubt ${limit} Macros je Serverplatz.`, {
+        en: `This plan allows ${limit} macros per server slot.`,
+      });
+    }
     const info = db
       .prepare(
         `INSERT INTO macros (profile_id, name, event, config, actions, accounts, enabled, created_at)

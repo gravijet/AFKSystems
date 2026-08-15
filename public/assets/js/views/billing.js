@@ -7,6 +7,7 @@ const KIND = {
   topup: 'bill.kind.topup',
   voucher: 'bill.kind.voucher',
   plan: 'bill.kind.plan',
+  addon: 'bill.kind.addon',
   refund: 'bill.kind.refund',
   admin: 'bill.kind.admin',
   bonus: 'bill.kind.bonus',
@@ -20,8 +21,7 @@ export async function render(root) {
   root.innerHTML = `
     ${appbar(
       tr('bill.title'),
-      `<button class="btn btn-sm" id="voucher">${icon('ticket')} ${escapeHtml(tr('bill.voucher'))}</button>
-       <button class="btn btn-primary btn-sm" id="topup">${icon('wallet')} ${escapeHtml(tr('bill.topUp'))}</button>`,
+      `<button class="btn btn-primary btn-sm" id="topup">${icon('wallet')} ${escapeHtml(tr('bill.topUp'))}</button>`,
       tr('bill.sub')
     )}
 
@@ -66,7 +66,82 @@ export async function render(root) {
         : ''
     }
 
-    <div class="grid two" style="align-items:start">
+    <!-- Aufladen steht zuerst und quer: es ist das eine, wofür man auf diese Seite kommt.
+         Vorher war es eine schmale Spalte rechts, unter der die Pakete untereinander in die
+         Länge liefen, und der Kontoauszug stand ganz unten außer Sichtweite. -->
+    <section class="topup-box">
+      <div class="topup-head">
+        <div>
+          <h2>${escapeHtml(tr('bill.topUpBig'))}</h2>
+          <p>${escapeHtml(tr('bill.topUpLead'))}</p>
+        </div>
+        <button class="btn btn-lg btn-primary" id="topup-other">${icon('wallet')} ${escapeHtml(
+          tr('bill.method')
+        )}</button>
+      </div>
+      <div class="packs">
+        ${data.packages
+          .map(
+            (pack, index) => `<button class="pack-card ${
+              index === data.packages.length - 2 ? 'is-best' : ''
+            }" data-pack="${index}">
+              ${
+                index === data.packages.length - 2
+                  ? `<span class="pack-flag">${escapeHtml(tr('bill.mostPopular'))}</span>`
+                  : ''
+              }
+              <span class="pack-price">${escapeHtml(pack.label)}</span>
+              <span class="pack-get">${credits(pack.credits)} ${escapeHtml(tr('common.creditsInline'))}</span>
+              <span class="pack-plus">${
+                pack.bonus > 0
+                  ? `+${credits(pack.bonus)} ${escapeHtml(tr('bill.bonus'))}`
+                  : '&nbsp;'
+              }</span>
+            </button>`
+          )
+          .join('')}
+      </div>
+      <div class="row wrap topup-foot">
+        <button class="btn btn-sm" id="voucher">${icon('ticket')} ${escapeHtml(tr('bill.voucher'))}</button>
+        ${
+          data.methods.stripe
+            ? `<span class="small muted">${escapeHtml(tr('bill.card'))}</span>`
+            : ''
+        }
+        ${data.methods.transfer ? `<span class="small muted">${escapeHtml(tr('bill.transfer'))}</span>` : ''}
+        ${data.methods.paypal ? `<span class="small muted">${escapeHtml(tr('bill.paypal'))}</span>` : ''}
+      </div>
+    </section>
+
+    ${
+      data.topups.filter((topup) => topup.status === 'open').length
+        ? `<section class="panel" style="margin-top:1.5rem">
+            <header><h3>${escapeHtml(tr('bill.open'))}</h3></header>
+            <div class="body stack">
+              ${data.topups
+                .filter((topup) => topup.status === 'open')
+                .map(
+                  (topup) => `<div class="row spread">
+                    <span class="small">${escapeHtml(topup.provider)} · ${credits(topup.credits)} ${escapeHtml(
+                      tr('common.credits')
+                    )}</span>
+                    <span class="row small muted mono">${escapeHtml(topup.reference || '')}
+                      ${
+                        topup.reference
+                          ? `<button class="btn btn-ghost btn-sm" data-copy="${escapeHtml(
+                              topup.reference
+                            )}">${icon('copy')}</button>`
+                          : ''
+                      }</span>
+                  </div>`
+                )
+                .join('')}
+            </div>
+          </section>`
+        : ''
+    }
+
+    <div class="grid two" style="align-items:start;margin-top:1.5rem">
       <section class="panel">
         <header><h3>${escapeHtml(tr('bill.slots'))}</h3></header>
         <div class="body" style="padding:0">
@@ -101,81 +176,39 @@ export async function render(root) {
       </section>
 
       <section class="panel">
-        <header><h3>${escapeHtml(tr('bill.topUp'))}</h3></header>
-        <div class="body stack">
-          ${data.packages
-            .map(
-              (pack, index) => `<button class="row spread pack-button" data-pack="${index}">
-                <span>
-                  <span class="strong">${credits(pack.credits)} ${escapeHtml(tr('common.credits'))}</span>
-                  <span class="small muted" style="display:block">
-                    ${pack.bonus > 0 ? `+${credits(pack.bonus)} ${escapeHtml(tr('pricing.topup.bonus'))}` : '&nbsp;'}
-                  </span>
-                </span>
-                <span class="strong mono">${escapeHtml(pack.label)}</span>
-              </button>`
-            )
-            .join('')}
-          <p class="small muted">${escapeHtml(tr('pricing.topup.lead'))}</p>
+        <header>
+          <h3>${escapeHtml(tr('bill.movements'))}</h3>
+          <span class="small muted">${escapeHtml(tr('bill.movementsSub'))}</span>
+        </header>
+        <div class="body" style="padding:0">
+          ${
+            data.history.length
+              ? `<ul class="ledger" id="ledger">${data.history.map(ledgerRow).join('')}</ul>
+                 ${
+                   data.history.length > 12
+                     ? `<div class="row center" style="padding:.75rem">
+                         <button class="btn btn-sm" id="more">${escapeHtml(tr('bill.showAll'))}</button></div>`
+                     : ''
+                 }`
+              : `<p class="small muted" style="padding:1.25rem">${escapeHtml(tr('bill.noHistory'))}</p>`
+          }
         </div>
       </section>
-    </div>
+    </div>`;
 
-    ${
-      data.topups.filter((topup) => topup.status === 'open').length
-        ? `<section class="panel" style="margin-top:1.5rem">
-            <header><h3>${escapeHtml(tr('bill.open'))}</h3></header>
-            <div class="body stack">
-              ${data.topups
-                .filter((topup) => topup.status === 'open')
-                .map(
-                  (topup) => `<div class="row spread">
-                    <span class="small">${escapeHtml(topup.provider)} · ${credits(topup.credits)} ${escapeHtml(
-                      tr('common.credits')
-                    )}</span>
-                    <span class="row small muted mono">${escapeHtml(topup.reference || '')}
-                      ${
-                        topup.reference
-                          ? `<button class="btn btn-ghost btn-sm" data-copy="${escapeHtml(
-                              topup.reference
-                            )}">${icon('copy')}</button>`
-                          : ''
-                      }</span>
-                  </div>`
-                )
-                .join('')}
-            </div>
-          </section>`
-        : ''
-    }
-
-    <section class="panel" style="margin-top:1.5rem">
-      <header><h3>${escapeHtml(tr('bill.history'))}</h3></header>
-      <div class="body" style="padding:0">
-        ${
-          data.history.length
-            ? `<div class="table-wrap"><table class="table">
-                <thead><tr><th>${escapeHtml(tr('common.status'))}</th><th></th>
-                  <th style="text-align:right">${escapeHtml(tr('common.credits'))}</th>
-                  <th style="text-align:right">${escapeHtml(tr('bill.balance'))}</th></tr></thead>
-                <tbody>${data.history
-                  .map(
-                    (row) => `<tr>
-                      <td class="small muted mono">${datetime(row.created_at)}</td>
-                      <td>${escapeHtml(tr(KIND[row.kind] || 'bill.kind.admin'))}
-                        ${row.note ? `<span class="small muted">· ${escapeHtml(row.note)}</span>` : ''}</td>
-                      <td class="mono" style="text-align:right;color:${
-                        row.delta >= 0 ? 'var(--ok)' : 'var(--text)'
-                      }">${row.delta >= 0 ? '+' : ''}${credits(row.delta)}</td>
-                      <td class="mono small muted" style="text-align:right">${credits(row.balance)}</td>
-                    </tr>`
-                  )
-                  .join('')}</tbody>
-              </table></div>`
-            : `<p class="small muted" style="padding:1.25rem">${escapeHtml(tr('bill.noHistory'))}</p>`
-        }
-      </div>
-    </section>`;
+  function ledgerRow(row, index) {
+    return `<li class="${index >= 12 ? 'hide extra' : ''}">
+      <span class="ledger-when small muted mono">${datetime(row.created_at)}</span>
+      <span class="ledger-what">
+        <span class="strong">${escapeHtml(tr(KIND[row.kind] || 'bill.kind.admin'))}</span>
+        ${row.note ? `<span class="small muted"> · ${escapeHtml(row.note)}</span>` : ''}
+      </span>
+      <span class="ledger-delta mono ${row.delta >= 0 ? 'up' : ''}">${
+        row.delta >= 0 ? '+' : ''
+      }${credits(row.delta)}</span>
+      <span class="ledger-balance mono small muted">${credits(row.balance)}</span>
+    </li>`;
+  }
 
   $$('[data-copy]').forEach((button) =>
     button.addEventListener('click', () => copy(button.dataset.copy))
@@ -185,6 +218,12 @@ export async function render(root) {
     button.addEventListener('click', () => startTopup(data, Number(button.dataset.pack)))
   );
   $('#topup').addEventListener('click', () => startTopup(data, data.packages.length - 1));
+  $('#topup-other').addEventListener('click', () => startTopup(data, data.packages.length - 1));
+
+  $('#more')?.addEventListener('click', (event) => {
+    $$('.ledger .extra').forEach((node) => node.classList.remove('hide'));
+    event.target.remove();
+  });
 
   $('#voucher').addEventListener('click', async () => {
     const answer = await formDialog(

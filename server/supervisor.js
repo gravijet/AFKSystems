@@ -15,7 +15,7 @@ import path from 'node:path';
 import { config, paths, userDir } from './config.js';
 import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
-import { planOf, isActive } from './billing.js';
+import { featuresOf, isActive, gateCaps } from './billing.js';
 import { HttpError, codeUrl, MS_LINK } from './util.js';
 
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -82,6 +82,58 @@ function parseEvent(line) {
   return event;
 }
 
+/**
+ * Die Antwort auf `:board`, `:tab` oder `:menu` in Daten übersetzen.
+ *
+ * Der Client schreibt sie als Text – die Anzeigetafel Zeile für Zeile mit der Punktzahl hinten,
+ * die Spielerliste mit einer Kopfzeile. Hier wird daraus etwas, das sich als Tafel zeichnen lässt;
+ * die Farbcodes (§) bleiben stehen und werden erst im Browser zu Farben.
+ */
+function parseView(kind, lines) {
+  const rows = lines.filter((line) => line.trim().length);
+  if (kind === 'board') {
+    if (!rows.length || rows.some((line) => /keine Seitenleiste/i.test(line))) {
+      return { empty: true, title: '', rows: [] };
+    }
+    const [head, ...rest] = rows;
+    return {
+      empty: false,
+      title: head.trim(),
+      // "Ping: 16ms§s§? 12" – hinten steht die Punktzahl, die Minecraft rechts anzeigt.
+      rows: rest.map((line) => {
+        const match = /^(.*?)[ \t]+(-?\d+)$/.exec(line);
+        return match ? { text: match[1], score: Number(match[2]) } : { text: line, score: null };
+      }),
+    };
+  }
+
+  if (kind === 'tab') {
+    const players = [];
+    let count = null;
+    for (const line of rows) {
+      const head = /^Spieler\s*\((\d+)\)/.exec(line.trim());
+      if (head) {
+        count = Number(head[1]);
+        continue;
+      }
+      if (/noch keine|keine Zeilen/i.test(line)) continue;
+      for (const part of line.split('\t')) {
+        const name = part.trim();
+        if (name) players.push(name);
+      }
+    }
+    return { empty: count === null && !players.length, count: count ?? players.length, players };
+  }
+
+  const text = rows.join(' ');
+  if (!rows.length || /kein Men(ü|ue) offen/i.test(text)) return { empty: true, title: '', slots: 0 };
+  return {
+    empty: false,
+    title: /[»"„]([^»"“]{1,64})[«"“]/.exec(text)?.[1] || '',
+    slots: Number(/(\d+)\s*Feld/.exec(text)?.[1]) || 0,
+  };
+}
+
 class Bot extends EventEmitter {
   constructor(supervisor, { profile, account, user, plan }) {
     super();
@@ -101,6 +153,11 @@ class Bot extends EventEmitter {
     this.proc = null;
     this.build = null;
     this.menu = null;
+    // Anzeigetafel, Spielerliste und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
+    // dem Client; gesammelt werden sie nur, wenn das Panel gerade danach gefragt hat (siehe
+    // `capture`). Ohne das stünden dreizehn Zeilen Seitenleiste zwischen den Chatnachrichten.
+    this.views = { board: null, tab: null, menu: null };
+    this.capture = null;
     this.stopping = false;
     this.timers = new Set();
     this.buffers = { out: '', err: '' };
@@ -121,9 +178,13 @@ class Bot extends EventEmitter {
     return Math.min(this.profile.chat_limit || 200, this.plan.chat_limit, config.chatHistoryMax);
   }
 
-  /** Fähigkeiten der Bauform, mit der dieser Bot läuft. */
+  /**
+   * Was dieser Bot wirklich kann: die Fähigkeiten seiner Bauform, beschnitten auf das, was der
+   * Tarif samt gebuchten Zusätzen freigibt. Der Premium-Client liegt für jeden bezahlten Platz
+   * bereit – Anzeigetafel und Menüs hat trotzdem nur, wer sie im Tarif hat oder dazugebucht.
+   */
   get caps() {
-    return binaries.caps(this.build || 'slim');
+    return gateCaps(binaries.caps(this.build || 'slim'), this.plan);
   }
 
   // ------------------------------------------------------------ Start / Stopp
@@ -184,13 +245,25 @@ class Bot extends EventEmitter {
     return args;
   }
 
-  /** Proxy-Adresse dieses Bots als URL für `--proxy`, oder null. */
+  /**
+   * Ausgangsadresse dieses Bots als URL für `--proxy`, oder null.
+   *
+   * Zuerst gilt, was am Konto steht. Steht dort nichts, gilt die Adresse des Standorts, auf dem
+   * der Serverplatz liegt – genau dafür gibt es Standorte: ein zweiter VPS oder eine zweite IP
+   * ist eine zweite Ausgangsadresse, und die soll man nicht an jedem Konto einzeln eintragen.
+   */
   proxy() {
     const link = db
       .prepare('SELECT proxy_id FROM profile_accounts WHERE profile_id = ? AND account_id = ?')
       .get(this.profile.id, this.account.id);
-    if (!link?.proxy_id) return null;
-    const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(link.proxy_id);
+    let proxyId = link?.proxy_id || null;
+    if (!proxyId && this.profile.node_id) {
+      proxyId =
+        db.prepare('SELECT proxy_id FROM nodes WHERE id = ? AND active = 1').get(this.profile.node_id)
+          ?.proxy_id || null;
+    }
+    if (!proxyId) return null;
+    const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(proxyId);
     if (!row) return null;
     const auth = row.username
       ? `${encodeURIComponent(row.username)}:${encodeURIComponent(row.password || '')}@`
@@ -200,8 +273,10 @@ class Bot extends EventEmitter {
 
   start() {
     if (this.proc) return this;
-    const { command, build, caps } = binaries.command(this.profile, this.plan);
+    const { command, build } = binaries.command(this.profile, this.plan);
     this.build = build;
+    // `this.caps` erst nach `this.build` lesen – es hängt an der Bauform, die gerade gewählt wurde.
+    const caps = this.caps;
     const args = this.args(caps);
     this.usesEvents = Boolean(caps.events);
     const home = userDir(this.userId);
@@ -282,6 +357,11 @@ class Bot extends EventEmitter {
     this.startedAt = null;
     this.auth = null;
     this.menu = null;
+    this.views = { board: null, tab: null, menu: null };
+    if (this.capture) {
+      clearTimeout(this.capture.timer);
+      this.capture = null;
+    }
     clearTimeout(this.authTimer);
     for (const timer of this.timers) clearInterval(timer);
     this.timers.clear();
@@ -353,7 +433,18 @@ class Bot extends EventEmitter {
         this.setState('reconnecting', `Versuch ${event.versuch || '?'}, in ${event.in || '?'}`);
         break;
       case 'menu': {
-        this.menu = event.text === 'close' ? null : { id: event.id || null, at: Date.now() };
+        this.menu =
+          event.text === 'close'
+            ? null
+            : {
+                id: event.id || null,
+                // Der Client gibt Titel und Feldzahl mit, wenn er sie kennt. Sonst holt sie die
+                // erste `:menu`-Abfrage nach.
+                title: event.titel || event.title || '',
+                slots: Number(event.felder || event.slots) || 0,
+                at: Date.now(),
+              };
+        if (!this.menu) this.views.menu = { empty: true, title: '', slots: 0 };
         this.supervisor.emit('bot-state', {
           userId: this.userId,
           key: this.key,
@@ -367,6 +458,16 @@ class Bot extends EventEmitter {
   }
 
   onStatus(line) {
+    // Läuft gerade eine Abfrage (`:board`, `:tab`, `:menu`), gehört die Zeile dorthin und nicht
+    // in die Ausgabe – sonst stünde die halbe Seitenleiste als Fließtext im Protokoll.
+    if (this.capture && Date.now() < this.capture.until) {
+      this.capture.lines.push(line);
+      clearTimeout(this.capture.timer);
+      this.capture.timer = setTimeout(() => this.finishCapture(), 400);
+      this.capture.timer.unref?.();
+      return;
+    }
+
     const hit = classify(line);
     if (!hit) {
       this.push('status', line);
@@ -452,6 +553,41 @@ class Bot extends EventEmitter {
         break;
     }
     this.push('status', line);
+  }
+
+  // ------------------------------------------------------------ Abfragen einsammeln
+
+  /**
+   * Ab jetzt gehören die nächsten Ausgabezeilen zu einer Abfrage. Der Client kennt dafür kein
+   * Ereignis – er schreibt die Seitenleiste als Text hin. Da aber immer das Panel danach fragt,
+   * weiß es auch, wann eine Antwort zu erwarten ist: zwei Sekunden, oder bis 400 ms Ruhe ist.
+   */
+  beginCapture(kind) {
+    if (this.capture) {
+      clearTimeout(this.capture.timer);
+      this.finishCapture();
+    }
+    this.capture = { kind, lines: [], until: Date.now() + 2000, timer: null };
+    this.capture.timer = setTimeout(() => this.finishCapture(), 2000);
+    this.capture.timer.unref?.();
+  }
+
+  finishCapture() {
+    const capture = this.capture;
+    if (!capture) return;
+    clearTimeout(capture.timer);
+    this.capture = null;
+    const view = parseView(capture.kind, capture.lines);
+    this.views[capture.kind] = view;
+    if (capture.kind === 'menu' && view && !view.empty) {
+      this.menu = { ...(this.menu || {}), title: view.title, slots: view.slots, at: Date.now() };
+    }
+    this.supervisor.emit('bot-view', {
+      userId: this.userId,
+      key: this.key,
+      kind: capture.kind,
+      view,
+    });
   }
 
   /** Konto als "braucht neue Anmeldung" kennzeichnen – das Panel zeigt es an prominenter Stelle. */
@@ -545,6 +681,8 @@ class Bot extends EventEmitter {
         }
       );
     }
+    // Abfragen, deren Antwort als Ansicht gehört und nicht als Textzeilen.
+    if (verb === 'board' || verb === 'tab' || verb === 'menu') this.beginCapture(verb);
     return this.send(`:${verb}${arg ? ` ${arg}` : ''}`);
   }
 
@@ -562,6 +700,7 @@ class Bot extends EventEmitter {
       last_error: this.lastError,
       build: this.build,
       menu: this.menu,
+      views: this.views,
       uptime: this.startedAt ? Date.now() - this.startedAt : 0,
       // Nur gesetzt, wenn der Client gerade auf eine neue Microsoft-Anmeldung wartet.
       auth: this.state === 'auth' ? this.auth : null,
@@ -657,7 +796,7 @@ class Supervisor extends EventEmitter {
 
   /** Bot anlegen (falls nötig) und starten. */
   start({ profile, account, user, plan }) {
-    const tariff = plan || planOf(profile);
+    const tariff = plan || featuresOf(profile);
     const maxPerUser = Number(getSetting('max_bots_per_user')) || config.maxBotsPerUser;
     if (this.runningCount() >= config.maxBotsTotal) {
       throw new HttpError(429, 'Der Server ist ausgelastet. Bitte später erneut versuchen.', {
@@ -668,6 +807,15 @@ class Supervisor extends EventEmitter {
       throw new HttpError(429, `Mehr als ${maxPerUser} Bots gleichzeitig gehen nicht.`, {
         en: `More than ${maxPerUser} bots at once is not possible.`,
       });
+    }
+    if (profile.locked) {
+      throw new HttpError(
+        403,
+        `"${profile.name}" ist gesperrt${profile.lock_reason ? `: ${profile.lock_reason}` : '.'}`,
+        {
+          en: `"${profile.name}" is locked${profile.lock_reason ? `: ${profile.lock_reason}` : '.'}`,
+        }
+      );
     }
     if (profile.suspended) {
       throw new HttpError(
@@ -807,7 +955,27 @@ class Supervisor extends EventEmitter {
     if (!profile || !account) return null;
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.user_id);
     if (!user) return null;
-    return { profile, account, user, plan: planOf(profile) };
+    return { profile, account, user, plan: featuresOf(profile) };
+  }
+
+  /** Wie viele Bots gerade auf einem Standort laufen – für die Auslastungsanzeige und die Grenze. */
+  runningOnNode(nodeId) {
+    let count = 0;
+    for (const bot of this.bots.values()) {
+      if (bot.running && bot.profile.node_id === nodeId) count += 1;
+    }
+    return count;
+  }
+
+  /** Die Betriebssystem-Prozesse aller Bots – Grundlage für die Ressourcenanzeige im Admin-Bereich. */
+  pids() {
+    const out = [];
+    for (const bot of this.bots.values()) {
+      if (bot.proc?.pid) {
+        out.push({ pid: bot.proc.pid, key: bot.key, userId: bot.userId, profileId: bot.profile.id });
+      }
+    }
+    return out;
   }
 
   /** Nach einem Neustart des Dienstes alles wieder hochfahren, was laufen soll. */
@@ -819,7 +987,7 @@ class Supervisor extends EventEmitter {
     for (const row of rows) {
       const context = this.context(row.profile_id, row.account_id);
       if (!context) continue;
-      if (context.user.blocked || !isActive(context.profile)) continue;
+      if (context.user.blocked || context.profile.locked || !isActive(context.profile)) continue;
       try {
         this.start(context);
         started += 1;

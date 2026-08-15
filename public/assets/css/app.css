@@ -994,92 +994,6 @@ body.site {
   line-height: 1.55;
 }
 
-/* ---------------------------------------------------------------- Funktionen */
-
-.spec {
-  display: grid;
-  gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  align-items: start;
-}
-.spec-group {
-  padding: 1.35rem 1.5rem;
-  border-radius: var(--r-2xl);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.band.alt .spec-group {
-  background: var(--background);
-}
-.spec-group > h3 {
-  font-size: 0.75rem;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--accent);
-}
-.spec-group ul {
-  margin: 0.5rem 0 0;
-  padding: 0;
-  list-style: none;
-}
-.spec-row {
-  padding: 0.85rem 0;
-  box-shadow: inset 0 1px 0 var(--line-soft);
-}
-.spec-row:first-child {
-  box-shadow: none;
-}
-.spec-name {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  font-weight: 600;
-}
-.spec-text {
-  margin-top: 0.25rem;
-  color: var(--text-2);
-  font-size: 0.875rem;
-  line-height: 1.5;
-}
-/* Was einen bezahlten Serverplatz braucht, steht als Etikett dahinter – sonst nichts. */
-.spec-tag {
-  padding: 0.05rem 0.45rem;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--accent) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--accent) 32%, transparent);
-  color: var(--accent);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-}
-
-.versions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.versions li {
-  padding: 0.35rem 0.7rem;
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
-  font-family: var(--mono);
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-.band.alt .versions li {
-  background: var(--background);
-}
-.versions:empty::after {
-  content: '–';
-  color: var(--text-2);
-}
-
 /* ---------------------------------------------------------------- Preise */
 
 .slots {
@@ -1119,19 +1033,40 @@ body.site {
   color: var(--accent);
 }
 
+/* Die Tarifkästen sind gleich hoch, egal wie viel in ihnen steht: `align-items: start` ließ sie
+ * unterschiedlich lang enden, und drei verschieden hohe Kästen nebeneinander sehen aus, als wäre
+ * beim Laden etwas schiefgegangen. Die Merkmalsliste dehnt sich (flex: 1), dadurch stehen auch
+ * die Knöpfe darunter auf einer Linie. */
 .plans {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
-  align-items: start;
+  align-items: stretch;
 }
 .plan {
+  position: relative;
   display: flex;
   flex-direction: column;
   padding: 1.6rem 1.5rem;
   border-radius: var(--r-2xl);
   background: var(--surface);
   box-shadow: inset 0 0 0 1px var(--line);
+}
+.plan.is-best {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.plan-flag {
+  position: absolute;
+  top: -0.6rem;
+  left: 1.5rem;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 .band.alt .plan {
   background: var(--background);
@@ -1175,6 +1110,7 @@ body.site {
   line-height: 1.5;
 }
 .plan-list {
+  flex: 1;
   margin: 1.25rem 0 0;
   padding: 0;
   list-style: none;
@@ -1930,38 +1866,6 @@ dialog footer {
   font-weight: 600;
 }
 
-/* Ticket-Nachrichten. */
-.msg {
-  padding: 0.9rem 1rem;
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-}
-.msg.staff {
-  background: color-mix(in oklab, var(--primary) 8%, var(--surface));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 25%, transparent);
-}
-.msg.internal {
-  background: color-mix(in oklab, var(--warn) 10%, var(--surface));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 30%, transparent);
-}
-.msg p {
-  margin: 0.5rem 0 0;
-  font-size: 0.9375rem;
-  white-space: pre-wrap;
-}
-
-/* Der Microsoft-Code im Anmeldedialog. */
-.code-box {
-  flex: 1;
-  padding: 0.6rem 0.9rem;
-  border-radius: var(--r-xl);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
-  font-size: 1.5rem;
-  letter-spacing: 0.12em;
-}
-
 /* Aufladepakete als Knopfliste. */
 .pack-button {
   width: 100%;
@@ -2000,4 +1904,1124 @@ hr.rule {
   margin: 0.25rem 0;
   border: 0;
   border-top: 1px solid var(--line-soft);
+}
+
+/* ================================================================ Panel: neue Bausteine
+ * Alles hier gehört zu Ansichten, die es vorher nicht gab – Anzeigetafel, Zusätze, Standorte,
+ * der Support-Chat, das Protokoll. Reihenfolge wie im Panel, damit sich beides zusammen lesen
+ * lässt. */
+
+/* ---------------------------------------------------------------- Kleinteile */
+
+.mini {
+  height: 2rem;
+  padding: 0 0.55rem;
+  font-size: 0.8125rem;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+.grid.three {
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+
+/* Beschriftete Werte. Zwei Spalten, damit die Werte untereinander stehen und nicht zittern. */
+.facts {
+  display: grid;
+  gap: 0.5rem 1rem;
+  margin: 0;
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+.facts > div {
+  display: grid;
+  gap: 0.15rem;
+}
+.facts dt {
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+.facts dd {
+  margin: 0;
+  font-size: 0.9375rem;
+}
+
+.plain-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.5rem;
+}
+
+/* Ein Balken für eine Auslastung. */
+.meter {
+  height: 0.4rem;
+  margin: 0.55rem 0;
+  border-radius: 999px;
+  background: var(--line-soft);
+  overflow: hidden;
+}
+.meter span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--ok);
+  transition: width 0.4s ease;
+}
+.meter.warn span {
+  background: var(--warn);
+}
+.meter.bad span {
+  background: var(--bad);
+}
+
+/* Ankündigungen über der Ansicht. */
+.announce {
+  margin-bottom: 1.25rem;
+}
+
+/* ---------------------------------------------------------------- Verbinden und Chat */
+
+/* Konten links, Chat rechts. Unter 62rem untereinander – auf dem Handy ist nebeneinander nichts. */
+.split {
+  display: grid;
+  gap: 1.25rem;
+  align-items: stretch;
+}
+@media (min-width: 62rem) {
+  .split {
+    grid-template-columns: minmax(18rem, 22rem) 1fr;
+  }
+}
+.console-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 26rem;
+  max-height: min(70vh, 44rem);
+}
+.console-panel > .body {
+  flex: 1;
+  min-height: 0;
+}
+.console-panel .console {
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 0;
+}
+.recv-row {
+  padding: 0.6rem 1.1rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.send-row {
+  gap: 0.5rem;
+  padding: 0.7rem 1.1rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.send-row input[type='text'] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* "Gesendet:" vor der eigenen Nachricht – sonst liest sie sich wie eine Antwort des Servers. */
+.console .tag {
+  color: #ffd57e;
+  font-weight: 700;
+}
+.console .line.sent .msg {
+  color: #f4e3bd;
+}
+.mc-obf {
+  opacity: 0.6;
+}
+
+/* Die Konten als Liste statt als Tabelle: eine Tabelle mit sechs Spalten wird auf dem Handy zur
+ * Rutschbahn, und mehr als Name, Zustand und zwei Knöpfe braucht es hier nicht. */
+.botlist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.botrow {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.7rem 1.1rem;
+}
+.botrow + .botrow {
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.botrow.is-on {
+  background: color-mix(in srgb, var(--ok) 7%, transparent);
+}
+
+/* ---------------------------------------------------------------- Anzeigetafel, Liste, Menü */
+
+.views {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  align-items: start;
+}
+
+/* Eine Tafel sieht aus wie im Spiel: dunkler Grund, feste Schrift, Punktzahl rechts. */
+.board {
+  border-radius: var(--r-xl);
+  background: #0d0d0f;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  color: #e6e6ea;
+  font-family: var(--mono);
+  overflow: hidden;
+}
+.board > header {
+  padding: 0.7rem 0.9rem;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.9375rem;
+  font-weight: 700;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.board-rows {
+  margin: 0;
+  padding: 0.5rem 0;
+  list-style: none;
+  font-size: 0.8125rem;
+}
+.board-rows li {
+  display: flex;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.1rem 0.9rem;
+}
+.board-rows li:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+.board-text {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.board-score {
+  flex: none;
+  color: #ff5555;
+  font-variant-numeric: tabular-nums;
+}
+.board-rows.players li {
+  padding: 0.15rem 0.9rem;
+}
+.board > footer {
+  padding: 0.5rem 0.9rem;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.75rem;
+}
+.board.is-empty > header {
+  background: transparent;
+  color: #9aa3af;
+  font-weight: 600;
+}
+
+/* Ein Menü ist ein Raster wie eine Truhe. Was in den Feldern liegt, liest der Client nicht –
+ * die Nummer genügt zum Anklicken, und mehr behaupten wir auch nicht. */
+.menu-card .slots {
+  display: grid;
+  gap: 3px;
+  grid-template-columns: repeat(9, 1fr);
+  margin: 0;
+  padding: 0.6rem;
+}
+.slot {
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #6b7280;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  cursor: pointer;
+}
+.slot:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* ---------------------------------------------------------------- Zusätze */
+
+.addon-grid {
+  align-items: stretch;
+}
+.addon {
+  display: flex;
+  flex-direction: column;
+}
+.addon.booked {
+  box-shadow: inset 0 0 0 2px var(--ok);
+}
+.addon.included,
+.addon.soon {
+  opacity: 0.75;
+}
+
+/* ---------------------------------------------------------------- Einstellungen */
+
+/* Zwei Spalten als Textspalten, nicht als Raster: die Kästen sind unterschiedlich hoch, und ein
+ * Raster ließe unter dem kürzeren eine Lücke von einer halben Bildschirmhöhe stehen. So füllen
+ * sie sich von selbst auf. */
+.settings {
+  display: grid;
+  gap: 1.25rem;
+}
+@media (min-width: 70rem) {
+  .settings {
+    display: block;
+    column-count: 2;
+    column-gap: 1.25rem;
+  }
+}
+.setting-card {
+  border-radius: var(--r-2xl);
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+  overflow: hidden;
+  break-inside: avoid;
+  margin-bottom: 1.25rem;
+}
+.setting-head {
+  display: flex;
+  gap: 0.9rem;
+  padding: 1.25rem 1.4rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.setting-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.setting-head h2 {
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+.setting-head p {
+  margin: 0.25rem 0 0;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+.setting-body {
+  display: grid;
+  gap: 1rem;
+  padding: 1.25rem 1.4rem;
+}
+
+/* Ein Schalter mit Beschriftung und Erklärung – nicht nur ein nackter Schlüsselname. */
+.switch-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  cursor: pointer;
+}
+.switch-row .strong {
+  display: block;
+}
+.switch-row .small {
+  display: block;
+  margin-top: 0.15rem;
+  line-height: 1.45;
+}
+.switch-row input:checked ~ .switch {
+  background: var(--primary);
+}
+.switch-row input:checked ~ .switch::after {
+  transform: translateX(1.125rem);
+}
+.switch-row input:focus-visible ~ .switch {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.switch-list {
+  display: grid;
+  gap: 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.switch-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.switch-list p {
+  margin: 0.15rem 0 0;
+  line-height: 1.45;
+}
+
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.85rem;
+  border-radius: var(--r-xl);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.link-row.is-linked {
+  box-shadow: inset 0 0 0 1px var(--ok);
+}
+.link-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text-2);
+}
+.link-row.is-linked .link-icon {
+  color: var(--ok);
+}
+
+.mail-list li {
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--r-lg);
+  cursor: pointer;
+}
+.mail-list li:hover {
+  background: var(--surface);
+}
+.mail-body {
+  margin: 0;
+  padding: 1rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Der Speichern-Knopf bleibt am unteren Rand stehen: die Einstellungsseite ist lang, und ein
+ * Knopf ganz unten heißt scrollen, um zu speichern, was oben geändert wurde. */
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  padding: 0.9rem 0;
+  background: linear-gradient(to top, var(--background) 65%, transparent);
+}
+
+/* ---------------------------------------------------------------- Guthaben */
+
+.topup-box {
+  padding: clamp(1.25rem, 3vw, 1.9rem);
+  border-radius: var(--r-3xl);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--primary) 10%, var(--surface-2)),
+    var(--surface-2) 55%
+  );
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+}
+.topup-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.topup-head h2 {
+  font-size: clamp(1.2rem, 2.4vw, 1.6rem);
+  letter-spacing: -0.02em;
+}
+.topup-head p {
+  margin: 0.35rem 0 0;
+  max-width: 34rem;
+  color: var(--text-2);
+  font-size: 0.9375rem;
+}
+.packs {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+}
+.pack-card {
+  position: relative;
+  display: grid;
+  gap: 0.2rem;
+  padding: 1.1rem 1rem;
+  border: 0;
+  border-radius: var(--r-2xl);
+  background: var(--background);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.pack-card:hover {
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.pack-card.is-best {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.pack-flag {
+  position: absolute;
+  top: -0.55rem;
+  right: 0.85rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.pack-price {
+  font-size: 1.6rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.pack-get {
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+}
+.pack-plus {
+  min-height: 1rem;
+  color: var(--ok);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+.topup-foot {
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+
+/* Der Kontoauszug als Liste – vier Spalten in einer Tabelle brauchten unten am Rand mehr Platz,
+ * als da war, und landeten deshalb ganz nach unten. */
+.ledger {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ledger li {
+  display: grid;
+  gap: 0.15rem 0.75rem;
+  align-items: baseline;
+  grid-template-columns: 1fr auto;
+  padding: 0.6rem 1.1rem;
+}
+.ledger li + li {
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.ledger-when {
+  grid-row: 1;
+  grid-column: 1;
+}
+.ledger-what {
+  grid-row: 2;
+  grid-column: 1;
+  overflow-wrap: anywhere;
+}
+.ledger-delta {
+  grid-row: 1 / span 2;
+  grid-column: 2;
+  font-size: 1rem;
+  font-weight: 700;
+  text-align: right;
+}
+.ledger-delta.up {
+  color: var(--ok);
+}
+.ledger-balance {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- Tickets */
+
+.ticket-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.ticket-row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem 1.1rem;
+  cursor: pointer;
+}
+.ticket-row + .ticket-row {
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.ticket-row:hover {
+  background: var(--surface);
+}
+.ticket-row.is-unread {
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+.ticket-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--text-2);
+}
+.ticket-dot.open {
+  background: var(--primary);
+}
+.ticket-dot.answered {
+  background: var(--ok);
+}
+.ticket-dot.waiting {
+  background: var(--warn);
+}
+.ticket-dot.closed {
+  background: var(--line);
+}
+
+.ticket {
+  display: grid;
+  gap: 1.25rem;
+  align-items: start;
+}
+@media (min-width: 64rem) {
+  .ticket {
+    grid-template-columns: 1fr minmax(16rem, 20rem);
+  }
+}
+.ticket-main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.ticket-side {
+  display: grid;
+  gap: 1rem;
+}
+
+/* Der Verlauf ist ein Gespräch, kein Formular: Blasen, eigene rechts, System in der Mitte. */
+.chat-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-height: min(58vh, 34rem);
+  overflow-y: auto;
+  padding: 1.1rem;
+  border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.chat-msg {
+  max-width: min(46rem, 88%);
+  padding: 0.75rem 0.95rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+}
+.chat-msg.mine {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+}
+.chat-msg.staff:not(.mine) {
+  background: color-mix(in srgb, var(--ok) 10%, var(--surface));
+}
+.chat-msg.internal {
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.chat-msg > header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.8125rem;
+}
+.chat-msg > header time {
+  margin-left: auto;
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+}
+.chat-msg p {
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.chat-system {
+  align-self: center;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+.chat-system span {
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.typing {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 1.5rem;
+  padding: 0.15rem 1.1rem;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+  font-size: 0.8125rem;
+}
+.dots {
+  display: inline-flex;
+  gap: 3px;
+}
+.dots i {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--text-2);
+  animation: blink 1.2s infinite;
+}
+.dots i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.dots i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+@keyframes blink {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+  }
+  30% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dots i {
+    animation: none;
+    opacity: 0.6;
+  }
+}
+
+.reply-box {
+  padding: 1rem 1.1rem;
+  border-radius: 0 0 var(--r-2xl) var(--r-2xl);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.reply-box textarea {
+  resize: vertical;
+}
+
+/* Der Zustand steht als Reihe von Knöpfen da, nicht als Auswahlfeld in der Ecke: welcher gilt,
+ * sieht man ohne aufzuklappen, und ein Klick genügt. */
+.status-picker {
+  display: grid;
+  gap: 0.4rem;
+  grid-template-columns: repeat(2, 1fr);
+}
+.status-choice {
+  padding: 0.5rem 0.6rem;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.status-choice:hover {
+  color: var(--text);
+}
+.status-choice.active {
+  background: var(--primary);
+  color: var(--primary-ink);
+  box-shadow: none;
+}
+.status-choice.closed.active {
+  background: var(--text-2);
+}
+
+/* ---------------------------------------------------------------- Admin: System */
+
+.usage-card {
+  padding: 1.25rem 1.35rem;
+  border-radius: var(--r-2xl);
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+}
+.usage-card .k {
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.usage-card .v {
+  margin-top: 0.35rem;
+  font-size: 1.85rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.usage-card .s {
+  color: var(--text-2);
+  font-size: 0.8125rem;
+}
+
+.node-card.is-off {
+  opacity: 0.6;
+}
+
+/* ---------------------------------------------------------------- Admin: Protokoll */
+
+.log {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.log-row + .log-row {
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.log-head {
+  display: grid;
+  gap: 0.15rem 0.75rem;
+  align-items: baseline;
+  grid-template-columns: auto auto 1fr auto;
+  padding: 0.6rem 1.1rem;
+}
+.log-row.has-detail .log-head {
+  cursor: pointer;
+}
+.log-row.has-detail .log-head:hover {
+  background: var(--surface);
+}
+.log-when {
+  grid-column: 1;
+}
+.log-who {
+  grid-column: 2;
+  font-size: 0.875rem;
+}
+.log-action {
+  grid-column: 3;
+  font-size: 0.8125rem;
+  color: var(--text-2);
+}
+.log-caret {
+  grid-column: 4;
+  color: var(--text-2);
+  transition: transform 0.15s ease;
+}
+.log-row.open .log-caret {
+  transform: rotate(90deg);
+}
+.log-summary {
+  grid-column: 1 / -1;
+  grid-row: 2;
+}
+.log-detail {
+  padding: 0.25rem 1.1rem 1rem;
+  background: var(--surface);
+}
+@media (max-width: 48rem) {
+  .log-head {
+    grid-template-columns: 1fr auto;
+  }
+  .log-when,
+  .log-who,
+  .log-action {
+    grid-column: 1;
+  }
+  .log-caret {
+    grid-column: 2;
+    grid-row: 1 / span 3;
+  }
+}
+
+/* ================================================================ Website: neue Bausteine */
+
+/* Eine schmale Bahn für einen einzelnen Hinweis – volle Breite liest sich schlechter als
+ * 44 Zeichen zu wenig. */
+.page.narrow {
+  max-width: 52rem;
+}
+
+.plans-note {
+  margin: 1.25rem 0 0;
+  color: var(--text-2);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+/* Der Hinweis zu Server-Regeln. Er warnt, ohne zu schreien: kein rotes Feld, aber deutlich
+ * abgesetzt – wer ihn übersieht, hat ihn nicht gelesen, und darauf kommt es hier an. */
+.rules-note {
+  display: flex;
+  gap: 1rem;
+  padding: 1.35rem 1.5rem;
+  border-radius: var(--r-2xl);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--warn);
+}
+.rules-note > .icon {
+  flex: none;
+  width: 1.35rem;
+  height: 1.35rem;
+  color: var(--warn);
+}
+.rules-note strong {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-size: 1rem;
+}
+.rules-note p {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+/* Discord: eine eigene Bahn, weil der Link groß sein soll und nicht als vierter Punkt im Fuß. */
+.discord-band {
+  padding: clamp(2rem, 5vw, 3.5rem) 0;
+  background: linear-gradient(135deg, #5865f2 0%, #404eed 100%);
+  color: #fff;
+}
+.discord-band > .page {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+.discord-copy h2 {
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  letter-spacing: -0.02em;
+}
+.discord-copy p {
+  margin: 0.5rem 0 0;
+  max-width: 38rem;
+  font-size: 1rem;
+  line-height: 1.6;
+  opacity: 0.92;
+}
+.discord-band .btn {
+  background: #fff;
+  color: #404eed;
+  box-shadow: none;
+}
+.discord-band .btn:hover:not(:disabled) {
+  background: #f2f3ff;
+  color: #303bb5;
+}
+
+.head-discord {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.head-discord:hover {
+  background: var(--surface);
+  color: #5865f2;
+  text-decoration: none;
+}
+@media (max-width: 52rem) {
+  .head-discord span {
+    display: none;
+  }
+}
+
+/* Funktionsseite: Gruppen als Karten mit Symbol statt einer sehr langen Spalte. */
+.spec {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  align-items: start;
+}
+.spec-group {
+  padding: 1.5rem;
+  border-radius: var(--r-2xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.band.alt .spec-group {
+  background: var(--background);
+}
+.spec-group > header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding-bottom: 0.9rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.spec-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.1rem;
+  height: 2.1rem;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.spec-group h3 {
+  font-size: 1rem;
+  letter-spacing: -0.01em;
+}
+.spec-group ul {
+  display: grid;
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.spec-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  font-weight: 600;
+}
+.spec-tag {
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.spec-text {
+  margin: 0.25rem 0 0;
+  color: var(--text-2);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+}
+
+/* Aufladepakete auf der Preisseite: größer, wenn sie eine eigene Bahn bekommen. */
+.topup-list.big {
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 1rem;
+}
+.topup-list.big .pack {
+  padding: 1.4rem 1.5rem;
+  border-radius: var(--r-2xl);
+}
+.topup-list.big .pack-euro {
+  font-size: 2rem;
+}
+.topup-list.big .pack-credits {
+  font-size: 0.875rem;
+}
+
+/* Der Discord-Link in der Seitenleiste des Panels. Er soll auffallen, ohne wie ein Menüpunkt
+ * auszusehen – er führt schließlich aus dem Panel hinaus. */
+.side-discord {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, #5865f2 12%, transparent);
+  color: #5865f2;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.side-discord:hover {
+  background: #5865f2;
+  color: #fff;
+  text-decoration: none;
+}
+
+/* ---------------------------------------------------------------- Vorschau auf der Startseite
+ * Dieselben Bausteine wie im Panel – dieselbe Chatfläche, dieselbe Anzeigetafel. Ein
+ * Bildschirmfoto wäre nach der nächsten Änderung falsch; das hier ist es nie. */
+
+.demo {
+  border-radius: var(--r-3xl);
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.demo-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 1.1rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.demo-name {
+  font-family: var(--mono);
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.demo-tag {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+.demo-body {
+  display: grid;
+  gap: 1px;
+  background: var(--line-soft);
+}
+@media (min-width: 52rem) {
+  .demo-body {
+    grid-template-columns: 1fr 16rem;
+  }
+}
+.demo-body .console {
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 13rem;
+  padding: 1rem 1.1rem;
+}
+.demo-body .board {
+  border-radius: 0;
+  box-shadow: none;
+}
+.demo-note {
+  margin: 1rem 0 0;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  text-align: center;
 }

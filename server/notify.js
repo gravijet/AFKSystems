@@ -8,7 +8,7 @@
 //     (ein Bot fliegt raus). Warnungen, die aus dem Stundentakt kommen, setzen sie höher – sonst
 //     stünden drei Tage vor Ablauf 72 gleichlautende Nachrichten im Kanal.
 
-import { db } from './db.js';
+import { db, getSetting } from './db.js';
 import { config } from './config.js';
 import { formatCredits, formatEuro } from './util.js';
 
@@ -18,11 +18,57 @@ const DAILY_MS = 20 * 60 * 60 * 1000;
 
 const readUser = db.prepare('SELECT discord_webhook, username, language FROM users WHERE id = ?');
 
+/**
+ * Wie jede Nachricht von uns in Discord aussieht: derselbe Name, dasselbe Bild, derselbe Fuß.
+ *
+ * Das steht hier an einer Stelle, weil es sonst an jeder Aufrufstelle einzeln stünde – und dann
+ * hieße die eine Hälfte "AFKSystems" und die andere "Captain Hook" mit grauem Fragezeichen.
+ */
+export const IDENTITY = {
+  username: config.brand,
+  avatar_url: `${config.publicUrl}/assets/img/logo-256.png`,
+};
+
+export const FOOTER = {
+  text: config.brand,
+  icon_url: IDENTITY.avatar_url,
+};
+
+export const COLORS = { info: 0x206cfe, ok: 0x00bb7f, warn: 0xfcbb00, bad: 0xfb2c36 };
+
+/** Eine fertige Nachricht an einen Webhook schicken. Wirft nie. */
+export async function post(url, { embeds = [], content = '' } = {}) {
+  if (!url) return false;
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        ...IDENTITY,
+        content: content || undefined,
+        embeds: embeds.map((embed) => ({
+          color: COLORS.info,
+          footer: FOOTER,
+          timestamp: new Date().toISOString(),
+          ...embed,
+        })),
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Eine Meldung ans Team – über den Webhook aus den Einstellungen. */
+export const staff = (embed) => post(String(getSetting('discord_staff_webhook') || '').trim(), { embeds: [embed] });
+
 /** `text` ist entweder ein Text oder {de, en}. */
 const pick = (value, lang) =>
   value && typeof value === 'object' ? value[lang] ?? value.de ?? '' : String(value ?? '');
 
-export async function notify(userId, title, text, { key = null, color = 0x206cfe, quiet = QUIET_MS } = {}) {
+export async function notify(userId, title, text, { key = null, color = COLORS.info, quiet = QUIET_MS } = {}) {
   const user = readUser.get(userId);
   if (!user?.discord_webhook) return false;
   const lang = user.language === 'de' ? 'de' : 'en';
@@ -32,28 +78,9 @@ export async function notify(userId, title, text, { key = null, color = 0x206cfe
   if (now - (lastSent.get(mapKey) || 0) < quiet) return false;
   lastSent.set(mapKey, now);
 
-  try {
-    const response = await fetch(user.discord_webhook, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        username: config.brand,
-        embeds: [
-          {
-            title: pick(title, lang),
-            description: pick(text, lang),
-            color,
-            footer: { text: config.publicUrl.replace(/^https?:\/\//, '') },
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
+  return post(user.discord_webhook, {
+    embeds: [{ title: pick(title, lang), description: pick(text, lang), color }],
+  });
 }
 
 export const lowBalance = (userId, credits) =>
@@ -64,7 +91,7 @@ export const lowBalance = (userId, credits) =>
       de: `Noch ${formatCredits(credits)} Credits (${formatEuro(credits, 'de')}). Für die nächste Verlängerung könnte es zu wenig sein.`,
       en: `${formatCredits(credits)} credits left (${formatEuro(credits, 'en')}). That may not cover the next renewal.`,
     },
-    { key: 'low-balance', color: 0xfcbb00, quiet: DAILY_MS }
+    { key: 'low-balance', color: COLORS.warn, quiet: DAILY_MS }
   );
 
 export const planRenewed = (userId, name, price) =>
@@ -75,7 +102,7 @@ export const planRenewed = (userId, name, price) =>
       de: `"${name}" läuft weitere 30 Tage. Abgebucht: ${price} Credits.`,
       en: `"${name}" runs for another 30 days. ${price} credits were charged.`,
     },
-    { key: `renew-${name}`, color: 0x00bb7f }
+    { key: `renew-${name}`, color: COLORS.ok }
   );
 
 export const planSuspended = (userId, name, reason) =>
@@ -91,7 +118,7 @@ export const planSuspended = (userId, name, reason) =>
           de: `"${name}" ist ausgelaufen, weil die Verlängerung abgeschaltet war. Die Bots sind aus.`,
           en: `"${name}" ran out because renewal was switched off. The bots are stopped.`,
         },
-    { key: `suspend-${name}`, color: 0xfb2c36 }
+    { key: `suspend-${name}`, color: COLORS.bad }
   );
 
 export const planExpiring = (userId, name, days, missing) =>
@@ -102,7 +129,7 @@ export const planExpiring = (userId, name, days, missing) =>
       de: `"${name}" wird in ${days} Tag(en) verlängert – es fehlen noch ${missing} Credits.`,
       en: `"${name}" renews in ${days} day(s) and is ${missing} credits short.`,
     },
-    { key: `expire-${name}`, color: 0xfcbb00, quiet: DAILY_MS }
+    { key: `expire-${name}`, color: COLORS.warn, quiet: DAILY_MS }
   );
 
 export const botTrouble = (userId, name, reason) =>
@@ -110,5 +137,5 @@ export const botTrouble = (userId, name, reason) =>
     userId,
     { de: `Bot "${name}" hat ein Problem`, en: `Bot "${name}" has a problem` },
     reason,
-    { key: `bot-${name}`, color: 0xfb2c36 }
+    { key: `bot-${name}`, color: COLORS.bad }
   );

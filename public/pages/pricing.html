@@ -23,14 +23,33 @@
           </div>
 
           <div class="plans">{{plansHtml}}</div>
+          <p class="plans-note">{{pricing.creditsNote}}</p>
+        </div>
+      </section>
 
-          <div class="topup">
-            <div class="topup-copy">
-              <h3>{{pricing.topup.title}}</h3>
-              <p>{{pricing.topup.lead}}</p>
-            </div>
-            <div class="topup-list">{{packagesHtml}}</div>
-          </div>
+      <!-- Zusätze. Wer einen Bot mehr braucht, muss deshalb nicht den ganzen Tarif wechseln. -->
+      <section class="band alt">
+        <div class="page">
+          <header class="band-head">
+            <h2>{{pricing.addonsTitle}}</h2>
+            <p class="lead">{{pricing.addonsLead}}</p>
+          </header>
+          <div class="topup-list">{{addonsHtml}}</div>
+        </div>
+      </section>
+
+      <!-- Aufladen bekommt eine eigene Bahn statt einer Spalte am Rand: es ist der Schritt, den
+           jeder gehen muss, der mehr als den Gratis-Platz will. -->
+      <section class="band">
+        <div class="page">
+          <header class="band-head">
+            <h2>{{pricing.topup.title}}</h2>
+            <p class="lead">{{pricing.topup.lead}}</p>
+          </header>
+          <div class="topup-list big">{{packagesHtml}}</div>
+          <p class="band-foot">
+            <a class="btn btn-primary btn-lg" href="/{{lang}}/register">{{pricing.choose}}</a>
+          </p>
         </div>
       </section>
 
@@ -56,9 +75,15 @@
               <summary>{{pricing.rules.4.q}}</summary>
               <p>{{pricing.rules.4.a}}</p>
             </details>
+            <details>
+              <summary>{{rules.title}}</summary>
+              <p>{{rules.text}}</p>
+            </details>
           </div>
         </div>
       </section>
+
+      {{discordBlock}}
 
       <section class="closing">
         <div class="page">

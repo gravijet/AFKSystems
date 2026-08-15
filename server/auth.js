@@ -214,6 +214,37 @@ export function changePassword(user, oldPassword, newPassword, repeat) {
   // Andere Sitzungen fliegen raus, die aktuelle wird vom Aufrufer neu gesetzt.
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
   audit(user.id, 'password-change');
+  mail.sendTo(user, 'security', {
+    title: user.language === 'en' ? 'Your password was changed' : 'Dein Passwort wurde geändert',
+    text:
+      user.language === 'en'
+        ? 'The password of your account was just changed. Every other device was signed out.'
+        : 'Das Passwort deines Kontos wurde gerade geändert. Alle anderen Geräte wurden abgemeldet.',
+    detail: '',
+  });
+}
+
+/**
+ * Eine Anmeldung von einem Gerät, das dieses Konto noch nie benutzt hat.
+ *
+ * Das ist die einzige Stelle, an der wir von uns aus schreiben, ohne dass jemand etwas bestellt
+ * hat – und sie ist es wert: Wer eine solche Nachricht bekommt und nichts davon weiß, hat genau
+ * die Information, die er braucht.
+ *
+ * Muss **vor** `createSession` laufen: danach gäbe es die neue Sitzung schon, und jedes Gerät
+ * wäre bekannt.
+ */
+export function noticeNewDevice(user, req) {
+  const agent = String(req.headers['user-agent'] || '').slice(0, 200);
+  if (db.prepare('SELECT 1 FROM sessions WHERE user_id = ? AND agent = ?').get(user.id, agent)) return;
+  mail.sendTo(user, 'security', {
+    title: user.language === 'en' ? 'New sign-in' : 'Neue Anmeldung',
+    text:
+      user.language === 'en'
+        ? 'Someone just signed in to your account from a device we had not seen before.'
+        : 'An deinem Konto hat sich gerade jemand von einem Gerät angemeldet, das wir noch nicht kannten.',
+    detail: `${req.ip || '?'} · ${agent || 'unbekannt'}`,
+  });
 }
 
 // ---------------------------------------------------------------- E-Mail bestätigen
@@ -296,6 +327,8 @@ export function publicUser(user) {
     discord: user.discord_id
       ? { id: user.discord_id, name: user.discord_name, avatar: user.discord_avatar }
       : null,
+    google: user.google_id ? { id: user.google_id, email: user.google_email } : null,
+    mail_prefs: mail.prefsOf(user),
     paying,
     premium_until: user.premium_until || null,
     proxy_allowance: user.proxy_allowance,

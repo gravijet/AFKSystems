@@ -1,6 +1,16 @@
 // Support-Tickets. Ein Ticket ist ein Betreff, eine Kategorie und ein Verlauf aus Nachrichten –
 // mehr braucht es nicht, und weniger würde beim Nachfragen nerven.
 //
+// Drei Dinge kommen dazu, die ein Ticket vom Briefkasten unterscheiden:
+//
+//   * An einem Ticket dürfen **mehrere Kunden** hängen. Wer zu zweit einen Serverplatz betreibt,
+//     soll nicht zwei Tickets über dieselbe Sache aufmachen müssen; das Team kann jemanden
+//     dazuholen.
+//   * Ein geschlossenes Ticket geht **durch eine Antwort wieder auf**. Ein Kunde, bei dem etwas
+//     doch nicht stimmt, soll nicht bei null anfangen und den Verlauf verlieren.
+//   * Jedes Ticket kann einen **Kanal in Discord** haben. Was hier steht, steht dort, und
+//     umgekehrt – der Abgleich läuft über bridge.js.
+//
 // Die Kategorie `proxy` ist der Weg, über den Proxys vergeben werden: Proxys gibt es nur für
 // bezahlte Serverplätze, und zugeteilt werden sie von Hand, weil dahinter echte IP-Adressen
 // stehen, die jemand kaufen und pflegen muss.
@@ -10,6 +20,8 @@ import { config } from './config.js';
 import { bad, notFound, forbidden, requireString } from './util.js';
 import { isPayingUser } from './billing.js';
 import * as mail from './mail.js';
+import * as notify from './notify.js';
+import { bridge } from './bridge.js';
 
 export const CATEGORIES = [
   { key: 'general', de: 'Allgemeine Frage', en: 'General question' },
@@ -26,17 +38,75 @@ export const categoriesFor = (lang = 'de') =>
   CATEGORIES.map((entry) => ({ key: entry.key, label: entry[lang === 'en' ? 'en' : 'de'] }));
 
 const ticketRow = db.prepare('SELECT * FROM tickets WHERE id = ?');
+export const byId = (id) => ticketRow.get(id);
+export const byChannel = (channelId) =>
+  db.prepare('SELECT * FROM tickets WHERE discord_channel_id = ?').get(String(channelId));
+
+// ---------------------------------------------------------------- Beteiligte
+
+/** Alle Kunden, die dieses Ticket sehen dürfen – der Ersteller zuerst. */
+export function participants(ticketId) {
+  return db
+    .prepare(
+      `SELECT u.id, u.username, u.email, u.language, u.discord_id, 1 AS owner FROM tickets t
+         JOIN users u ON u.id = t.user_id WHERE t.id = ?
+       UNION
+       SELECT u.id, u.username, u.email, u.language, u.discord_id, 0 AS owner FROM ticket_users tu
+         JOIN users u ON u.id = tu.user_id WHERE tu.ticket_id = ?
+       ORDER BY owner DESC, u.username`
+    )
+    .all(ticketId, ticketId);
+}
+
+export const isParticipant = (ticketId, userId) =>
+  Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM tickets WHERE id = ? AND user_id = ?
+         UNION SELECT 1 FROM ticket_users WHERE ticket_id = ? AND user_id = ?`
+      )
+      .get(ticketId, userId, ticketId, userId)
+  );
 
 export function get(id, user) {
   const ticket = ticketRow.get(id);
   if (!ticket) throw notFound('Dieses Ticket gibt es nicht.', { en: 'No such ticket.' });
-  if (ticket.user_id !== user.id && user.role !== 'admin') throw forbidden();
+  if (user.role !== 'admin' && !isParticipant(ticket.id, user.id)) throw forbidden();
   return ticket;
 }
 
+export function addUser(ticket, userId, by) {
+  if (ticket.user_id === userId) return participants(ticket.id);
+  const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+  if (!user) throw notFound('Diesen Nutzer gibt es nicht.', { en: 'No such user.' });
+  db.prepare(
+    `INSERT INTO ticket_users (ticket_id, user_id, added_by, created_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(ticket_id, user_id) DO NOTHING`
+  ).run(ticket.id, userId, by, Date.now());
+  system(ticket, `${user.username} wurde zum Ticket hinzugefügt.`);
+  audit(by, 'ticket-add-user', { ticket: ticket.id, user: userId });
+  return participants(ticket.id);
+}
+
+export function removeUser(ticket, userId, by) {
+  if (ticket.user_id === userId) {
+    throw bad('Der Ersteller lässt sich nicht entfernen.', { en: 'The author cannot be removed.' });
+  }
+  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+  db.prepare('DELETE FROM ticket_users WHERE ticket_id = ? AND user_id = ?').run(ticket.id, userId);
+  if (user) system(ticket, `${user.username} wurde vom Ticket entfernt.`);
+  audit(by, 'ticket-remove-user', { ticket: ticket.id, user: userId });
+  return participants(ticket.id);
+}
+
+// ---------------------------------------------------------------- Lesen
+
 export function messages(ticketId, { staff = false } = {}) {
   const rows = db
-    .prepare('SELECT m.*, u.username FROM ticket_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.ticket_id = ? ORDER BY m.id')
+    .prepare(
+      `SELECT m.*, u.username FROM ticket_messages m LEFT JOIN users u ON u.id = m.user_id
+        WHERE m.ticket_id = ? ORDER BY m.id`
+    )
     .all(ticketId);
   return staff ? rows : rows.filter((row) => !row.internal);
 }
@@ -44,13 +114,16 @@ export function messages(ticketId, { staff = false } = {}) {
 export function listFor(user) {
   return db
     .prepare(
-      `SELECT t.*, (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id AND m.internal = 0) AS messages
-         FROM tickets t WHERE t.user_id = ? ORDER BY t.status = 'closed', t.updated_at DESC`
+      `SELECT t.*, (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id AND m.internal = 0) AS messages,
+              (t.user_id != ?) AS shared
+         FROM tickets t
+        WHERE t.user_id = ? OR EXISTS (SELECT 1 FROM ticket_users tu WHERE tu.ticket_id = t.id AND tu.user_id = ?)
+        ORDER BY t.status = 'closed', t.updated_at DESC`
     )
-    .all(user.id);
+    .all(user.id, user.id, user.id);
 }
 
-export function listAll({ status = null, category = null, search = '' } = {}) {
+export function listAll({ status = null, category = null, priority = null, search = '' } = {}) {
   const where = [];
   const values = [];
   if (status && status !== 'all') {
@@ -61,32 +134,79 @@ export function listAll({ status = null, category = null, search = '' } = {}) {
     where.push('t.category = ?');
     values.push(category);
   }
+  if (priority && priority !== 'all') {
+    where.push('t.priority = ?');
+    values.push(priority);
+  }
   if (search) {
-    where.push('(t.subject LIKE ? OR u.username LIKE ? OR u.email LIKE ?)');
-    values.push(`%${search}%`, `%${search}%`, `%${search}%`);
+    where.push('(t.subject LIKE ? OR u.username LIKE ? OR u.email LIKE ? OR t.id = ?)');
+    values.push(`%${search}%`, `%${search}%`, `%${search}%`, Number(search) || 0);
   }
   return db
     .prepare(
       `SELECT t.*, u.username, u.email,
-              (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id) AS messages
+              (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id) AS messages,
+              (SELECT COUNT(*) FROM ticket_users tu WHERE tu.ticket_id = t.id) AS extra_users,
+              a.username AS assigned_name
          FROM tickets t JOIN users u ON u.id = t.user_id
+         LEFT JOIN users a ON a.id = t.assigned_to
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-        ORDER BY t.status = 'closed', t.priority = 'urgent' DESC, t.updated_at DESC
+        ORDER BY t.status = 'closed',
+                 CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
+                 t.updated_at DESC
         LIMIT 300`
     )
     .all(...values);
 }
 
-/** Ein neues Ticket mit der ersten Nachricht. */
-export const create = db.transaction((user, { subject, category, body, priority }) => {
+export const counts = () =>
+  db
+    .prepare(
+      `SELECT
+         COUNT(*) FILTER (WHERE status != 'closed')                     AS open,
+         COUNT(*) FILTER (WHERE unread_staff = 1 AND status != 'closed') AS unread,
+         COUNT(*) FILTER (WHERE priority IN ('high','urgent') AND status != 'closed') AS urgent
+       FROM tickets`
+    )
+    .get();
+
+// ---------------------------------------------------------------- Schreiben
+
+/** Eine Systemzeile in den Verlauf – "X wurde hinzugefügt", "wieder geöffnet". */
+export function system(ticket, text) {
+  const now = Date.now();
+  const info = db
+    .prepare(
+      "INSERT INTO ticket_messages (ticket_id, role, body, created_at) VALUES (?, 'system', ?, ?)"
+    )
+    .run(ticket.id, text, now);
+  db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(now, ticket.id);
+  bridge.emit('ticket.message', {
+    ticket_id: ticket.id,
+    message_id: info.lastInsertRowid,
+    role: 'system',
+    body: text,
+    created_at: now,
+  });
+  return info.lastInsertRowid;
+}
+
+/**
+ * Ein neues Ticket mit der ersten Nachricht.
+ *
+ * `owner` ist, wem das Ticket gehört; `by` wer es angelegt hat. Beide sind meist dieselbe Person –
+ * anders nur, wenn ein Administrator für einen Kunden eines aufmacht.
+ */
+export const create = db.transaction((owner, { subject, category, body, priority }, options = {}) => {
+  const { by = owner.id, source = 'panel', staffPriority = false } = options;
   const title = requireString(subject, 'Betreff', { max: 120 });
   const text = requireString(body, 'Nachricht', { max: 8000 });
   const kind = CATEGORIES.some((entry) => entry.key === category) ? category : 'general';
 
   const open = db
     .prepare("SELECT COUNT(*) AS n FROM tickets WHERE user_id = ? AND status != 'closed'")
-    .get(user.id).n;
-  if (open >= 10) {
+    .get(owner.id).n;
+  if (open >= 10 && by === owner.id) {
     throw bad('Es sind schon zehn Tickets offen. Bitte erst die alten abschließen.', {
       en: 'Ten tickets are already open. Please close a few first.',
     });
@@ -95,48 +215,81 @@ export const create = db.transaction((user, { subject, category, body, priority 
   // Wer zahlt, wird zuerst gelesen – das ist keine Willkür, sondern steht so im Tarif. "urgent"
   // vergibt nur das Team: sonst stünde nach kurzer Zeit jedes Ticket dort.
   const wanted = PRIORITIES.includes(priority) ? priority : 'normal';
-  const allowed = isPayingUser(user.id) ? ['low', 'normal', 'high'] : ['low', 'normal'];
+  const allowed = staffPriority
+    ? PRIORITIES
+    : isPayingUser(owner.id)
+      ? ['low', 'normal', 'high']
+      : ['low', 'normal'];
   const boost = allowed.includes(wanted) ? wanted : 'normal';
   const now = Date.now();
+
   const info = db
     .prepare(
-      `INSERT INTO tickets (user_id, subject, category, status, priority, unread_staff, created_at, updated_at)
-       VALUES (?, ?, ?, 'open', ?, 1, ?, ?)`
+      `INSERT INTO tickets (user_id, subject, category, status, priority, source, unread_staff,
+                            unread_user, created_at, updated_at)
+       VALUES (?, ?, ?, 'open', ?, ?, 1, ?, ?, ?)`
     )
-    .run(user.id, title, kind, boost, now, now);
+    .run(owner.id, title, kind, boost, source, by === owner.id ? 0 : 1, now, now);
+  const id = info.lastInsertRowid;
   db.prepare(
-    "INSERT INTO ticket_messages (ticket_id, user_id, role, body, created_at) VALUES (?, ?, 'user', ?, ?)"
-  ).run(info.lastInsertRowid, user.id, text, now);
-  audit(user.id, 'ticket-create', { id: info.lastInsertRowid, category: kind });
-  return ticketRow.get(info.lastInsertRowid);
+    `INSERT INTO ticket_messages (ticket_id, user_id, role, body, created_at)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(id, by, by === owner.id ? 'user' : 'staff', text, now);
+  audit(by, 'ticket-create', { id, category: kind, owner: owner.id, source });
+  return ticketRow.get(id);
 });
 
-/** Eine Antwort anhängen. `internal` sieht nur das Team. */
-export const reply = db.transaction((ticket, user, body, { internal = false } = {}) => {
+/**
+ * Eine Antwort anhängen. `internal` sieht nur das Team.
+ *
+ * Ist das Ticket geschlossen und antwortet ein Kunde, geht es wieder auf. Vorher stand hier ein
+ * "Bitte ein neues aufmachen" – das kostet den Verlauf und macht aus einer Rückfrage ein zweites
+ * Ticket, das niemand mit dem ersten in Verbindung bringt.
+ */
+export const reply = db.transaction((ticket, user, body, { internal = false, authorName = null, discordId = null } = {}) => {
   const text = requireString(body, 'Nachricht', { max: 8000 });
-  if (ticket.status === 'closed' && user.role !== 'admin') {
-    throw bad('Dieses Ticket ist geschlossen. Bitte ein neues aufmachen.', {
-      en: 'This ticket is closed. Please open a new one.',
-    });
-  }
   const staff = user.role === 'admin';
   const now = Date.now();
-  db.prepare(
-    'INSERT INTO ticket_messages (ticket_id, user_id, role, body, internal, created_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(ticket.id, user.id, staff ? 'staff' : 'user', text, internal ? 1 : 0, now);
+  const reopened = ticket.status === 'closed' && !internal;
+
+  const info = db
+    .prepare(
+      `INSERT INTO ticket_messages (ticket_id, user_id, role, body, internal, author_name, discord_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(ticket.id, user.id, staff ? 'staff' : 'user', text, internal ? 1 : 0, authorName, discordId, now);
 
   if (internal) {
     db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(now, ticket.id);
   } else if (staff) {
     db.prepare(
-      "UPDATE tickets SET status = 'answered', unread_user = 1, unread_staff = 0, updated_at = ? WHERE id = ?"
+      "UPDATE tickets SET status = 'answered', unread_user = 1, unread_staff = 0, closed_at = NULL, updated_at = ? WHERE id = ?"
     ).run(now, ticket.id);
   } else {
     db.prepare(
-      "UPDATE tickets SET status = 'open', unread_staff = 1, unread_user = 0, updated_at = ? WHERE id = ?"
-    ).run(now, ticket.id);
+      "UPDATE tickets SET status = 'open', unread_staff = 1, unread_user = 0, closed_at = NULL, updated_at = ?, reopened = reopened + ? WHERE id = ?"
+    ).run(now, reopened ? 1 : 0, ticket.id);
   }
-  return ticketRow.get(ticket.id);
+  if (reopened) {
+    db.prepare(
+      "INSERT INTO ticket_messages (ticket_id, role, body, created_at) VALUES (?, 'system', ?, ?)"
+    ).run(ticket.id, 'Das Ticket wurde durch eine Antwort wieder geöffnet.', now + 1);
+  }
+
+  const fresh = ticketRow.get(ticket.id);
+  bridge.emit('ticket.message', {
+    ticket_id: ticket.id,
+    message_id: info.lastInsertRowid,
+    role: staff ? 'staff' : 'user',
+    internal,
+    author: authorName || user.username,
+    user_id: user.id,
+    body: text,
+    created_at: now,
+    status: fresh.status,
+    reopened,
+  });
+  return fresh;
 });
 
 export function setStatus(ticket, status, by) {
@@ -148,53 +301,83 @@ export function setStatus(ticket, status, by) {
     ticket.id
   );
   audit(by, 'ticket-status', { id: ticket.id, status });
-  return ticketRow.get(ticket.id);
+  const fresh = ticketRow.get(ticket.id);
+  bridge.emit('ticket.status', { ticket_id: ticket.id, status, by });
+  return fresh;
 }
 
 export function markRead(ticket, user) {
   if (user.role === 'admin') db.prepare('UPDATE tickets SET unread_staff = 0 WHERE id = ?').run(ticket.id);
-  if (ticket.user_id === user.id) db.prepare('UPDATE tickets SET unread_user = 0 WHERE id = ?').run(ticket.id);
+  if (isParticipant(ticket.id, user.id)) {
+    db.prepare('UPDATE tickets SET unread_user = 0 WHERE id = ?').run(ticket.id);
+  }
 }
 
 export const unreadFor = (user) =>
-  db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE user_id = ? AND unread_user = 1").get(user.id).n;
+  db
+    .prepare(
+      `SELECT COUNT(*) AS n FROM tickets t
+        WHERE t.unread_user = 1
+          AND (t.user_id = ? OR EXISTS (SELECT 1 FROM ticket_users tu WHERE tu.ticket_id = t.id AND tu.user_id = ?))`
+    )
+    .get(user.id, user.id).n;
 
 export const openForStaff = () =>
   db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE unread_staff = 1 AND status != 'closed'").get().n;
 
-/** Das Team über ein neues Ticket informieren – über den Webhook aus den Einstellungen. */
+/** Den Discord-Kanal merken, den der Bot für dieses Ticket angelegt hat. */
+export function setChannel(ticketId, channelId) {
+  db.prepare('UPDATE tickets SET discord_channel_id = ? WHERE id = ?').run(
+    channelId ? String(channelId) : null,
+    ticketId
+  );
+}
+
+// ---------------------------------------------------------------- Bescheid geben
+
+const CATEGORY_LABEL = Object.fromEntries(CATEGORIES.map((entry) => [entry.key, entry.de]));
+
+/** Das Team über ein neues Ticket informieren – Webhook und, wenn er läuft, der Bot. */
 export async function notifyStaff(ticket, user) {
-  const hook = String(getSetting('discord_staff_webhook') || '').trim();
-  if (!hook) return false;
-  try {
-    const response = await fetch(hook, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        username: `${config.brand} Support`,
-        embeds: [
-          {
-            title: `#${ticket.id} · ${ticket.subject}`,
-            description: `Von **${user.username}** · Kategorie \`${ticket.category}\``,
-            // Ohne Sprache in der Adresse: /app leitet auf die Sprache weiter, die der Öffnende
-            // eingestellt hat. Vorher stand hier fest /de/.
-            url: `${config.publicUrl}/app#/admin/tickets`,
-            color: 0x206cfe,
-            timestamp: new Date().toISOString(),
-          },
-        ],
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
-    return response.ok;
-  } catch {
-    return false;
+  const paying = isPayingUser(user.id);
+  return notify.staff({
+    title: `Neues Ticket #${ticket.id}: ${ticket.subject}`,
+    url: `${config.publicUrl}/app#/tickets/${ticket.id}`,
+    description: [
+      `**Von** ${user.username}${paying ? ' · zahlender Kunde' : ''}`,
+      `**Kategorie** ${CATEGORY_LABEL[ticket.category] || ticket.category}`,
+      `**Dringlichkeit** ${ticket.priority}`,
+      ticket.source === 'discord' ? '**Über** Discord' : null,
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    color: ticket.priority === 'urgent' ? notify.COLORS.bad : notify.COLORS.info,
+  });
+}
+
+/** Das Team über eine Kundenantwort informieren. */
+export const notifyStaffReply = (ticket, user, body) =>
+  notify.staff({
+    title: `Antwort auf #${ticket.id}: ${ticket.subject}`,
+    url: `${config.publicUrl}/app#/tickets/${ticket.id}`,
+    description: `**${user.username}**\n${String(body).slice(0, 400)}`,
+    color: notify.COLORS.warn,
+  });
+
+/**
+ * Alle Beteiligten außer einem benachrichtigen. Wer selbst geschrieben hat, bekommt keine Post
+ * über die eigene Nachricht.
+ */
+export function notifyParticipants(ticket, kind, vars = {}, exceptUserId = null) {
+  if (!mail.configured()) return;
+  for (const person of participants(ticket.id)) {
+    if (person.id === exceptUserId) continue;
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(person.id);
+    if (!user) continue;
+    mail.sendTo(user, kind, { id: ticket.id, subject: ticket.subject, ...vars });
   }
 }
 
-/** Den Nutzer über eine Antwort informieren, wenn Post eingerichtet ist. */
-export function notifyUser(ticket) {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
-  if (!user || !mail.configured()) return;
-  mail.sendTicketReply(user, ticket);
-}
+/** Kurzform für den häufigsten Fall: das Team hat geantwortet. */
+export const notifyUser = (ticket, preview = '') =>
+  notifyParticipants(ticket, 'ticket_reply', { preview: String(preview).slice(0, 160) });

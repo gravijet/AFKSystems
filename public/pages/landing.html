@@ -24,6 +24,19 @@
         </div>
       </section>
 
+      <!-- So sieht es aus. Kein Bildschirmfoto, sondern dieselben Bausteine wie im Panel –
+           ein Foto wäre nach der nächsten Änderung falsch. -->
+      <section class="band">
+        <div class="page">
+          <header class="band-head">
+            <h2>{{demo.title}}</h2>
+            <p class="lead">{{demo.lead}}</p>
+          </header>
+          {{demoHtml}}
+          <p class="demo-note">{{demo.note}}</p>
+        </div>
+      </section>
+
       <!-- Wofür das gut ist. Vier Sätze, keine Aufzählung von Innereien – die Einzelheiten
            stehen auf /features. -->
       <section class="band alt">
@@ -76,6 +89,7 @@
               <span class="slot-what">{{pricing.slot2}}</span>
             </div>
           </div>
+          <p class="plans-note">{{pricing.creditsNote}}</p>
           <p class="band-foot"><a class="btn" href="/{{lang}}/pricing">{{home.price.link}}</a></p>
         </div>
       </section>
@@ -104,6 +118,16 @@
           </ol>
         </div>
       </section>
+
+      <!-- Der Hinweis zu Server-Regeln steht schon auf der Startseite und nicht erst im
+           Kleingedruckten: Wer einen AFK-Bot sucht, soll vorher wissen, wo die Grenze verläuft. -->
+      <section class="band">
+        <div class="page narrow">
+          {{rulesNote}}
+        </div>
+      </section>
+
+      {{discordBlock}}
 
       <section class="closing">
         <div class="page">
