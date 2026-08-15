@@ -8,6 +8,8 @@ import { grant, planOf, isPayingUser, monthlyCost } from './billing.js';
 import * as mail from './mail.js';
 
 const COOKIE = 'afk_session';
+/** So oft höchstens wird "zuletzt gesehen" nachgeführt. */
+const SEEN_MS = 5 * 60 * 1000;
 
 export function readCookie(req, name) {
   const header = req.headers.cookie;
@@ -83,7 +85,12 @@ export function attachUser(req, _res, next) {
           .get(impersonatorId);
         req.parentToken = parentToken;
       }
-      db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), user.id);
+      // Nur alle paar Minuten schreiben. Diese Middleware läuft vor allem anderen, also auch für
+      // jede CSS-, JS- und Schriftdatei – ein Seitenaufruf hat sonst ein Dutzend Schreibzugriffe
+      // ausgelöst, für eine Zahl, die auf die Minute genau niemanden interessiert.
+      if (!user.last_seen_at || Date.now() - user.last_seen_at > SEEN_MS) {
+        db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), user.id);
+      }
     }
   }
   next();

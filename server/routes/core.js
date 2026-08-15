@@ -320,8 +320,11 @@ router.post(
     if (!req.user.discord_webhook) throw bad('Es ist kein Webhook hinterlegt.', { en: 'No webhook is stored.' });
     const sent = await notify.notify(
       req.user.id,
-      'Testnachricht',
-      'Wenn du das liest, funktioniert die Benachrichtigung.',
+      { de: 'Testnachricht', en: 'Test message' },
+      {
+        de: 'Wenn du das liest, funktioniert die Benachrichtigung.',
+        en: 'If you can read this, notifications are working.',
+      },
       { key: `test-${Date.now()}` }
     );
     if (!sent) {
@@ -445,6 +448,7 @@ router.get(
   auth.requireUser,
   wrap((req, res) => {
     const paying = billing.isPayingUser(req.user.id);
+    const lang = langOf(req);
     const rows = paying
       ? db
           .prepare(
@@ -457,9 +461,14 @@ router.get(
       proxies: rows,
       allowed: paying,
       supported: Boolean(binaries.anyCaps().proxy),
+      // Der Hinweis stand nur auf Deutsch da, egal in welcher Sprache das Panel lief.
       hint: paying
-        ? 'Proxys werden von Hand zugeteilt – mach dafür ein Ticket der Kategorie „Proxy anfragen“ auf.'
-        : 'Proxys gibt es ab einem bezahlten Serverplatz.',
+        ? lang === 'de'
+          ? 'Proxys werden von Hand zugeteilt – mach dafür ein Ticket der Kategorie „Proxy anfragen“ auf.'
+          : 'Proxies are assigned by hand. Open a ticket in the “Request a proxy” category.'
+        : lang === 'de'
+          ? 'Proxys gibt es ab einem bezahlten Serverplatz.'
+          : 'Proxies come with a paid server slot.',
     });
   })
 );

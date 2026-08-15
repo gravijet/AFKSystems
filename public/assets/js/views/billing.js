@@ -87,7 +87,7 @@ export async function render(root) {
                         ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
                         : slot.paid_until
                           ? `${escapeHtml(tr('srv.daysLeft', { n: slot.days_left }))} · ${date(slot.paid_until)}`
-                          : escapeHtml(tr('pricing.forever'))
+                          : escapeHtml(tr('common.forever'))
                     }</td>
                   </tr>`
                 )

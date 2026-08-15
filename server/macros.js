@@ -115,6 +115,22 @@ export const EVENTS = [
   { type: 'disconnect', de: 'Bei Verbindungsabbruch', en: 'On disconnect', config: [] },
 ];
 
+// Muster einmal übersetzen und behalten: onChat läuft für jede einzelne Chatzeile jedes Bots,
+// und `new RegExp` bei jedem Aufruf war reine Arbeit für nichts. Geprüft wird das Muster schon
+// beim Speichern (siehe cleanConfig in routes/profiles.js), hier bleibt nur der Notausgang.
+const patterns = new Map();
+
+function compiled(source) {
+  if (!patterns.has(source)) {
+    try {
+      patterns.set(source, new RegExp(source, 'i'));
+    } catch {
+      patterns.set(source, null);
+    }
+  }
+  return patterns.get(source);
+}
+
 class MacroEngine {
   constructor() {
     // key -> { timers: Set<Timeout>, running: Set<string> }
@@ -256,13 +272,7 @@ class MacroEngine {
       const config = JSON.parse(macro.config || '{}');
       let hit = false;
       if (config.contains) hit = line.toLowerCase().includes(String(config.contains).toLowerCase());
-      if (!hit && config.regex) {
-        try {
-          hit = new RegExp(config.regex, 'i').test(line);
-        } catch {
-          hit = false;
-        }
-      }
+      if (!hit && config.regex) hit = compiled(config.regex)?.test(line) ?? false;
       if (hit) this.run(bot, macro, { line });
     }
   }

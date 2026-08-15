@@ -92,8 +92,11 @@ export const create = db.transaction((user, { subject, category, body, priority 
     });
   }
 
-  // Wer zahlt, wird zuerst gelesen – das ist keine Willkür, sondern steht so im Tarif.
-  const boost = isPayingUser(user.id) && priority === 'high' ? 'high' : 'normal';
+  // Wer zahlt, wird zuerst gelesen – das ist keine Willkür, sondern steht so im Tarif. "urgent"
+  // vergibt nur das Team: sonst stünde nach kurzer Zeit jedes Ticket dort.
+  const wanted = PRIORITIES.includes(priority) ? priority : 'normal';
+  const allowed = isPayingUser(user.id) ? ['low', 'normal', 'high'] : ['low', 'normal'];
+  const boost = allowed.includes(wanted) ? wanted : 'normal';
   const now = Date.now();
   const info = db
     .prepare(
@@ -173,7 +176,9 @@ export async function notifyStaff(ticket, user) {
           {
             title: `#${ticket.id} · ${ticket.subject}`,
             description: `Von **${user.username}** · Kategorie \`${ticket.category}\``,
-            url: `${config.publicUrl}/de/app#/admin/tickets`,
+            // Ohne Sprache in der Adresse: /app leitet auf die Sprache weiter, die der Öffnende
+            // eingestellt hat. Vorher stand hier fest /de/.
+            url: `${config.publicUrl}/app#/admin/tickets`,
             color: 0x206cfe,
             timestamp: new Date().toISOString(),
           },

@@ -91,10 +91,15 @@ async function create(data, category = 'general') {
         ? [
             {
               key: 'priority',
-              label: 'Priorität',
+              label: tr('tk.priority'),
               type: 'select',
               value: 'normal',
-              options: ['low', 'normal', 'high', 'urgent'].map((value) => ({ value, label: value })),
+              // "urgent" vergibt nur das Team – es hier anzubieten hieße, einen Knopf zu zeigen,
+              // der beim Speichern still auf "normal" zurückfällt.
+              options: ['low', 'normal', 'high'].map((value) => ({
+                value,
+                label: tr(`tk.priority.${value}`),
+              })),
             },
           ]
         : []),
