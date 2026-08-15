@@ -765,6 +765,14 @@ export const S = {
   'adm.logoutUser': { en: 'Sign out everywhere', de: 'Überall abmelden' },
   'adm.newUser': { en: 'New user', de: 'Neuer Nutzer' },
   'adm.saved': { en: 'Saved.', de: 'Gespeichert.' },
+  'adm.usersLine': { en: '+{new} in 30 days · {active} active today', de: '+{new} in 30 Tagen · {active} heute aktiv' },
+  'adm.unread': { en: '{n} unread', de: '{n} ungelesen' },
+  'adm.revenueAll': { en: '{total} all time', de: '{total} insgesamt' },
+  'adm.attention': { en: 'Needs a look', de: 'Braucht einen Blick' },
+  'adm.attentionLine': {
+    en: '{blocked} blocked · {unverified} unconfirmed',
+    de: '{blocked} gesperrt · {unverified} unbestätigt',
+  },
 
   // ---------------------------------------------------------------- Rechtliches
   'legal.imprint.title': { en: 'Imprint', de: 'Impressum' },

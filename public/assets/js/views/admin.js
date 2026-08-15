@@ -91,18 +91,22 @@ async function overview(root) {
 
   root.innerHTML = `
     <div class="grid four" style="margin-bottom:1.5rem">
-      ${stat(tr('adm.users'), data.users, `+${data.users_new_30d} · ${data.users_active_24h} ${tr('ov.inGame')}`)}
-      ${stat(tr('adm.bots'), data.bots_running, `${data.bots_online} ${tr('state.online')}`)}
-      ${stat(tr('adm.profiles'), data.profiles, `${data.profiles_paid} ${tr('bill.slotsLine', {
-        paid: data.profiles_paid,
-        free: data.profiles - data.profiles_paid,
-      })}`)}
+      ${stat(tr('adm.users'), data.users, tr('adm.usersLine', { new: data.users_new_30d, active: data.users_active_24h }))}
+      ${stat(tr('adm.bots'), data.bots_running, `${data.bots_online} × ${tr('state.online')}`)}
+      ${stat(
+        tr('adm.profiles'),
+        data.profiles,
+        tr('bill.slotsLine', { paid: data.profiles_paid, free: data.profiles - data.profiles_paid })
+      )}
       ${stat('MRR', credits(data.mrr_credits), euro(data.mrr_credits))}
       ${stat(tr('bill.balance'), credits(data.credits_outstanding), euro(data.credits_outstanding))}
-      ${stat(tr('adm.topups'), euro(data.revenue_30d_cent), `${euro(data.revenue_cent)} gesamt`)}
-      ${stat(tr('adm.tickets'), data.open_tickets, `${data.unread_tickets} ungelesen`)}
-      ${stat(tr('adm.overview'), data.users_blocked + data.users_unverified,
-        `${data.users_blocked} blocked · ${data.users_unverified} unverified`)}
+      ${stat(tr('adm.topups'), euro(data.revenue_30d_cent), tr('adm.revenueAll', { total: euro(data.revenue_cent) }))}
+      ${stat(tr('adm.tickets'), data.open_tickets, tr('adm.unread', { n: data.unread_tickets }))}
+      ${stat(
+        tr('adm.attention'),
+        data.users_blocked + data.users_unverified,
+        tr('adm.attentionLine', { blocked: data.users_blocked, unverified: data.users_unverified })
+      )}
     </div>
 
     <div class="grid two" style="align-items:start">
