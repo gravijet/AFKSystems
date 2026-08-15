@@ -111,7 +111,16 @@ app.get('/robots.txt', (req, res) => {
   res.type('text/plain').send(`User-agent: *\nAllow: /\nSitemap: ${config.publicUrl}/sitemap.xml\n`);
 });
 app.get('/sitemap.xml', (req, res) => {
-  const paths_ = ['', '/login', '/register', '/imprint', '/privacy', '/terms'];
+  const paths_ = [
+    '',
+    '/features',
+    '/pricing',
+    '/faq',
+    '/register',
+    '/imprint',
+    '/privacy',
+    '/terms',
+  ];
   const urls = pages.LANGS.flatMap((lang) =>
     paths_.map(
       (page) =>
@@ -154,7 +163,20 @@ function maintenanceGuard(req, res, next) {
 const NOINDEX = '<meta name="robots" content="noindex, nofollow" />';
 
 const PAGES = {
-  '': { view: 'landing' },
+  '': { view: 'landing', vars: landing.homeVars },
+  features: {
+    view: 'features',
+    title: 'features.title',
+    description: 'meta.features.description',
+    vars: landing.featureVars,
+  },
+  pricing: {
+    view: 'pricing',
+    title: 'pricing.title',
+    description: 'meta.pricing.description',
+    vars: landing.pricingVars,
+  },
+  faq: { view: 'faq', title: 'faq.title', description: 'meta.faq.description' },
   login: { view: 'login', title: 'auth.login.title', noindex: true },
   register: { view: 'register', title: 'auth.register.title' },
   forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true },
@@ -171,15 +193,19 @@ function renderPage(slug, lang) {
   const vars = { path: slug ? `/${slug}` : '' };
   if (entry.noindex) vars.robotsTag = NOINDEX;
   if (entry.title) vars.title = `${pages.t(entry.title, lang)} – ${config.brand}`;
+  if (entry.description) vars.description = pages.t(entry.description, lang);
   if (entry.legal) Object.assign(vars, landing.legalVars(entry.legal, lang));
-  if (!slug) Object.assign(vars, landing.landingVars(lang));
+  if (entry.vars) Object.assign(vars, entry.vars(lang));
   return pages.render(entry.view, lang, vars);
 }
 
 /** Das Dashboard – eine Seite, der Rest steht im Browser-Router. */
 const renderApp = (lang) =>
   pages.render('app', lang, {
-    bodyClass: 'app',
+    // Nicht "app": so heißt schon das Raster im Inneren der Seite (.app in app.css). Stand beides
+    // da, war der <body> selbst ein Raster mit einer 17,5-rem-Spalte – und das ganze Dashboard
+    // stand am PC zusammengequetscht am linken Rand.
+    bodyClass: 'dash',
     robotsTag: NOINDEX,
     path: '/app',
     title: `${pages.t('nav.dashboard', lang)} – ${config.brand}`,
@@ -366,7 +392,6 @@ function billingTick() {
   // Rechtzeitig Bescheid geben, wenn für die nächste Verlängerung Guthaben fehlt.
   const warnDays = Number(getSetting('renew_warn_days')) || 3;
   for (const row of billing.expiringSoon(warnDays)) {
-    if (!row.renew) continue;
     const days = Math.max(1, Math.ceil((row.paid_until - Date.now()) / 86_400_000));
     notify.planExpiring(row.user_id, row.name, days, Math.max(0, row.price_credits - row.credits));
   }

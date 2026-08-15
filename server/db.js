@@ -359,7 +359,57 @@ const migrations = [
       }
     },
   },
+
+  {
+    // Die Tarifbeschreibungen der ersten Fassung lasen sich wie eine Merkmalsliste mit Gedanken-
+    // strichen. Auf der Preisseite stehen die Merkmale ohnehin darunter – der Satz darüber soll
+    // sagen, für wen der Tarif gedacht ist.
+    //
+    // Überschrieben wird nur, was noch wörtlich aus der Erstbefüllung stammt: wer seine Texte im
+    // Admin-Bereich selbst geschrieben hat, behält sie.
+    name: '004-tarif-texte',
+    run() {
+      const update = db.prepare('UPDATE plans SET blurb_de = ?, blurb_en = ? WHERE slug = ?');
+      const alt = {
+        free: [
+          'Ein Server, dauerhaft kostenlos. Kein Zahlungsmittel nötig.',
+          'One server, free forever. No payment details needed.',
+        ],
+        premium: [
+          'Premium-Client: Bewegung, Anti-AFK, Scoreboard, Menüs, Proxys – je Server im Monat.',
+          'Premium client: movement, anti-AFK, scoreboard, menus, proxies – per server, monthly.',
+        ],
+        ultra: [
+          'Für ganze Netzwerke: 25 Bots je Server, längster Chatverlauf, Support mit Vorrang.',
+          'For whole networks: 25 bots per server, longest chat history, priority support.',
+        ],
+      };
+      for (const [slug, [de, en]] of Object.entries(alt)) {
+        const row = db.prepare('SELECT blurb_de, blurb_en FROM plans WHERE slug = ?').get(slug);
+        if (!row) continue;
+        if (row.blurb_de !== de && row.blurb_en !== en) continue;
+        const next = PLAN_TEXTS[slug];
+        update.run(next.blurb_de, next.blurb_en, slug);
+      }
+    },
+  },
 ];
+
+/** Die Beschreibungen der drei Tarife aus der Erstbefüllung – auch von Migration 004 benutzt. */
+const PLAN_TEXTS = {
+  free: {
+    blurb_de: 'Ein Server ohne Kosten. Zahlungsdaten brauchst du dafür nicht.',
+    blurb_en: 'One server at no cost. You do not need payment details for it.',
+  },
+  premium: {
+    blurb_de: 'Für Server, auf denen der Bot mehr tun soll, als nur dazustehen.',
+    blurb_en: 'For servers where the bot should do more than just stand there.',
+  },
+  ultra: {
+    blurb_de: 'Wenn ein Serverplatz viele Konten gleichzeitig tragen muss.',
+    blurb_en: 'When one server slot has to carry a lot of accounts at once.',
+  },
+};
 
 db.exec(`CREATE TABLE IF NOT EXISTS migrations (
   name TEXT PRIMARY KEY,
@@ -391,8 +441,7 @@ const PLAN_SEED = [
     slug: 'free',
     name_de: 'Gratis',
     name_en: 'Free',
-    blurb_de: 'Ein Server, dauerhaft kostenlos. Kein Zahlungsmittel nötig.',
-    blurb_en: 'One server, free forever. No payment details needed.',
+    ...PLAN_TEXTS.free,
     price_credits: 0,
     free_slot: 1,
     max_accounts: 1,
@@ -410,8 +459,7 @@ const PLAN_SEED = [
     slug: 'premium',
     name_de: 'Premium',
     name_en: 'Premium',
-    blurb_de: 'Premium-Client: Bewegung, Anti-AFK, Scoreboard, Menüs, Proxys – je Server im Monat.',
-    blurb_en: 'Premium client: movement, anti-AFK, scoreboard, menus, proxies – per server, monthly.',
+    ...PLAN_TEXTS.premium,
     price_credits: 249,
     free_slot: 0,
     max_accounts: 5,
@@ -429,8 +477,7 @@ const PLAN_SEED = [
     slug: 'ultra',
     name_de: 'Ultra',
     name_en: 'Ultra',
-    blurb_de: 'Für ganze Netzwerke: 25 Bots je Server, längster Chatverlauf, Support mit Vorrang.',
-    blurb_en: 'For whole networks: 25 bots per server, longest chat history, priority support.',
+    ...PLAN_TEXTS.ultra,
     price_credits: 599,
     free_slot: 0,
     max_accounts: 25,

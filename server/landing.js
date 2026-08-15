@@ -1,4 +1,4 @@
-// Die beweglichen Teile der Startseite – auf dem Server gebaut, nicht im Browser.
+// Die beweglichen Teile der öffentlichen Seiten – auf dem Server gebaut, nicht im Browser.
 //
 // Funktionen, Tarife, Pakete und Versionen stehen in der Datenbank bzw. im Client. Würde der
 // Browser sie nachladen, stünde die halbe Seite beim ersten Blick leer da und Suchmaschinen sähen
@@ -20,40 +20,49 @@ const escape = (text) =>
 
 const number = (value, lang) => Number(value || 0).toLocaleString(lang === 'de' ? 'de-DE' : 'en-GB');
 
-// Auf der Startseite werden nur vier Zustände unterschieden. `missing` heißt: die Bauform, die
-// das könnte, liegt gerade nicht auf diesem Server – dann wird es auch nicht versprochen.
-const STATUS_LABEL = {
-  ready: 'features.legend.ready',
-  premium: 'features.legend.premium',
-  soon: 'features.legend.soon',
-  no: 'features.legend.no',
-  missing: 'features.legend.missing',
+// Die paar Symbole, die auf der Startseite vorkommen. Dieselben Pfade wie im Panel (ui.js) –
+// hier noch einmal, weil ui.js für den Browser gedacht ist und der Server nichts davon lädt.
+const ICONS = {
+  clock: '<circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>',
+  message: '<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22z"/>',
+  server:
+    '<rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01"/><path d="M6 18h.01"/>',
+  monitor:
+    '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
 };
 
+const iconVars = () =>
+  Object.fromEntries(
+    Object.entries(ICONS).map(([name, paths]) => [
+      `icon.${name}`,
+      `<svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+        stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true">${paths}</svg>`,
+    ])
+  );
+
+/** Die Funktionsliste, nach Gruppen. Was ein bezahlter Platz braucht, bekommt ein Etikett. */
 function featuresHtml(lang) {
-  const caps = binaries.anyCaps();
-  const list = features(caps, lang);
+  const list = features(binaries.anyCaps(), lang);
   const groups = new Map();
   for (const feature of list) {
     if (!groups.has(feature.group)) groups.set(feature.group, { label: feature.group_label, rows: [] });
     groups.get(feature.group).rows.push(feature);
   }
+  const tag = escape(t('features.premium', lang));
 
-  const html = [...groups.values()]
+  return [...groups.values()]
     .map(
       (group) => `<section class="spec-group">
         <h3>${escape(group.label)}</h3>
         <ul>
           ${group.rows
             .map(
-              (row) => `<li class="spec-row" data-status="${row.status}">
-                <div>
-                  <span class="spec-name">${escape(row.title)}</span>
-                  <p class="spec-text">${escape(row.text)}</p>
-                </div>
-                <span class="spec-status"><i aria-hidden="true"></i>${escape(
-                  t(STATUS_LABEL[row.status], lang)
-                )}</span>
+              (row) => `<li class="spec-row">
+                <p class="spec-name">${escape(row.title)}${
+                  row.premium ? `<span class="spec-tag">${tag}</span>` : ''
+                }</p>
+                <p class="spec-text">${escape(row.text)}</p>
               </li>`
             )
             .join('')}
@@ -61,17 +70,6 @@ function featuresHtml(lang) {
       </section>`
     )
     .join('');
-
-  const used = [...new Set(list.map((row) => row.status))];
-  const legend = ['ready', 'premium', 'soon', 'no', 'missing']
-    .filter((status) => used.includes(status))
-    .map(
-      (status) =>
-        `<li data-status="${status}"><i aria-hidden="true"></i>${escape(t(STATUS_LABEL[status], lang))}</li>`
-    )
-    .join('');
-
-  return { featuresHtml: html, legendHtml: legend };
 }
 
 function planLines(plan, lang) {
@@ -82,7 +80,6 @@ function planLines(plan, lang) {
   lines.push(t(plan.premium ? 'pricing.premiumClient' : 'pricing.slimClient', lang));
   lines.push(`${number(plan.chat_limit, lang)} ${t('pricing.chatHistory', lang)}`);
   if (plan.offline_accounts) lines.push(t('pricing.offlineAccounts', lang));
-  if (plan.fakehost) lines.push(t('pricing.fakehost', lang));
   if (plan.proxy) lines.push(t('pricing.proxyOnRequest', lang));
   if (plan.priority_support) lines.push(t('pricing.prioritySupport', lang));
   return lines;
@@ -101,12 +98,6 @@ function plansHtml(lang) {
       return `<article class="plan${plan.free_slot ? ' is-free' : ''}">
         <h3>${escape(name)}</h3>
         <p class="plan-price">${price}</p>
-        <p class="plan-blurb">${escape(blurb || '')}</p>
-        <ul class="plan-list">
-          ${planLines(plan, lang)
-            .map((line) => `<li>${escape(line)}</li>`)
-            .join('')}
-        </ul>
         ${
           plan.free_slot
             ? ''
@@ -114,6 +105,12 @@ function plansHtml(lang) {
                 t('pricing.perMonthEuro', lang, { amount: formatEuro(plan.price_credits, lang) })
               )}</p>`
         }
+        <p class="plan-blurb">${escape(blurb || '')}</p>
+        <ul class="plan-list">
+          ${planLines(plan, lang)
+            .map((line) => `<li>${escape(line)}</li>`)
+            .join('')}
+        </ul>
       </article>`;
     })
     .join('');
@@ -137,29 +134,52 @@ function packagesHtml(lang) {
 }
 
 function versionsHtml() {
-  const list = binaries.state.versions || [];
-  if (!list.length) return '';
-  return list.map((version) => `<li>${escape(version)}</li>`).join('');
+  return (binaries.state.versions || []).map((version) => `<li>${escape(version)}</li>`).join('');
 }
 
-/** Alles, was landing.html an Platzhaltern kennt. */
-export function landingVars(lang) {
+/** "ab 249 Credits" für die Preiszeile, und derselbe Betrag in Euro für die Zahlenleiste. */
+function fromPrice(lang) {
   const cheapest = billing.cheapestPaidPlan();
+  if (!cheapest) {
+    return { 'pricing.fromPrice': t('pricing.onRequest', lang), fromEuro: t('pricing.onRequest', lang) };
+  }
   return {
-    ...featuresHtml(lang),
+    'pricing.fromPrice': `${t('pricing.from', lang)} ${number(cheapest.price_credits, lang)} ${t(
+      'common.creditsInline',
+      lang
+    )}`,
+    fromEuro: formatEuro(cheapest.price_credits, lang),
+  };
+}
+
+/** Platzhalter der Startseite. */
+export function homeVars(lang) {
+  return {
+    ...iconVars(),
+    ...fromPrice(lang),
+    freeSlots: String(billing.freeSlots()),
+  };
+}
+
+/** Platzhalter der Funktionsseite. */
+export function featureVars(lang) {
+  return { featuresHtml: featuresHtml(lang), versionsHtml: versionsHtml() };
+}
+
+/** Platzhalter der Preisseite. */
+export function pricingVars(lang) {
+  return {
+    ...fromPrice(lang),
     plansHtml: plansHtml(lang),
     packagesHtml: packagesHtml(lang),
-    versionsHtml: versionsHtml(),
-    'pricing.fromPrice': cheapest
-      ? `${t('pricing.from', lang)} ${number(cheapest.price_credits, lang)} ${t('common.creditsInline', lang)}`
-      : t('pricing.onRequest', lang),
     freeSlots: String(billing.freeSlots()),
   };
 }
 
 /** Für Impressum, Datenschutz und Nutzungsbedingungen: Text aus den Einstellungen. */
 export function legalVars(kind, lang) {
-  const raw = String(getSetting(lang === 'en' ? `legal_${kind}_en` : `legal_${kind}`) || '') ||
+  const raw =
+    String(getSetting(lang === 'en' ? `legal_${kind}_en` : `legal_${kind}`) || '') ||
     String(getSetting(`legal_${kind}`) || '');
   const body = raw.trim()
     ? raw

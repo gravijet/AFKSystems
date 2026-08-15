@@ -8,21 +8,20 @@
             </a>
             <p>{{footer.about}}</p>
           </div>
-          <nav aria-labelledby="foot-panel">
-            <h2 id="foot-panel">{{footer.panel}}</h2>
-            <ul>
-              <li><a href="/{{lang}}/app">{{nav.dashboard}}</a></li>
-              <li><a href="/{{lang}}/login">{{nav.login}}</a></li>
-              <li><a href="/{{lang}}/register">{{nav.register}}</a></li>
-            </ul>
-          </nav>
           <nav aria-labelledby="foot-topics">
             <h2 id="foot-topics">{{footer.topics}}</h2>
             <ul>
-              <li><a href="/{{lang}}#features">{{nav.features}}</a></li>
-              <li><a href="/{{lang}}#pricing">{{nav.pricing}}</a></li>
-              <li><a href="/{{lang}}#versions">{{nav.versions}}</a></li>
-              <li><a href="/{{lang}}#faq">{{nav.faq}}</a></li>
+              <li><a href="/{{lang}}/features">{{nav.features}}</a></li>
+              <li><a href="/{{lang}}/pricing">{{nav.pricing}}</a></li>
+              <li><a href="/{{lang}}/faq">{{nav.faq}}</a></li>
+            </ul>
+          </nav>
+          <nav aria-labelledby="foot-panel">
+            <h2 id="foot-panel">{{footer.panel}}</h2>
+            <ul>
+              <li><a href="/{{lang}}/login">{{nav.login}}</a></li>
+              <li><a href="/{{lang}}/register">{{nav.register}}</a></li>
+              <li><a href="/{{lang}}/app">{{nav.dashboard}}</a></li>
             </ul>
           </nav>
           <nav aria-labelledby="foot-legal">
@@ -35,7 +34,7 @@
           </nav>
         </div>
         <div class="foot-legal">
-          <span class="mono">© {{year}} {{brand}}</span>
+          <span>© {{year}} {{brand}}</span>
           <span>{{footer.disclaimer}}</span>
         </div>
       </div>
