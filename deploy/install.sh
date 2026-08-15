@@ -58,7 +58,18 @@ systemctl --no-pager --lines=10 status "$DIENST" || true
 
 echo "== nginx =="
 if [ -d /etc/nginx/sites-available ]; then
-  install -m 0644 "$QUELLE/deploy/nginx-afksystems.de.conf" "/etc/nginx/sites-available/$DOMAIN"
+  # Gibt es schon ein Zertifikat, wird die Fassung mit TLS installiert. Ohne diese Unterscheidung
+  # würde jedes Deployment den TLS-Block wieder wegnehmen – und hinter Cloudflare landete Port 443
+  # dann im nächstbesten fremden vHost.
+  VHOST="$QUELLE/deploy/nginx-afksystems.de.conf"
+  if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+    VHOST="$QUELLE/deploy/nginx-afksystems.de-ssl.conf"
+    echo "Zertifikat gefunden – vHost mit TLS."
+  else
+    echo "Kein Zertifikat für $DOMAIN – vHost vorerst nur über Port 80."
+    echo "Danach einmal:  certbot --nginx -d $DOMAIN  und install.sh erneut aufrufen."
+  fi
+  install -m 0644 "$VHOST" "/etc/nginx/sites-available/$DOMAIN"
   ln -sf "/etc/nginx/sites-available/$DOMAIN" "/etc/nginx/sites-enabled/$DOMAIN"
   if nginx -t; then
     systemctl reload nginx
