@@ -167,7 +167,7 @@ export function legalVars(kind, lang) {
         .split(/\n{2,}/)
         .map((block) => `<p>${escape(block).replace(/\n/g, '<br />')}</p>`)
         .join('')
-    : `<p class="note warn">${escape(t('legal.placeholder', lang))}</p>`;
+    : `<p class="note warn">${escape(t(`legal.placeholder.${kind}`, lang))}</p>`;
   return {
     legalTitle: t(`legal.${kind}.title`, lang),
     legalBody: body,
