@@ -1,78 +1,118 @@
 // Macros und Spam: was auf ein Ereignis hin passieren soll.
 //
-// Ein Macro besteht aus einem Auslöser (Beitritt, Zeittakt, Chatzeile, Tod, Verbindungsabbruch) und
-// einer Kette von Schritten, die der Reihe nach laufen. Getaktet wird hier im Panel statt im
-// Client, damit eine Änderung sofort greift, ohne den Bot neu zu starten – nur der einfachste Fall
-// (reine Chatzeilen ohne Wartezeit) wandert beim Start als `--cmd` in den Client, weil der das
-// zuverlässiger direkt nach dem Beitritt schickt.
+// Ein Macro besteht aus einem Auslöser (Beitritt, Zeittakt, Chatzeile, Weltwechsel, Tod,
+// Verbindungsabbruch) und einer Kette von Schritten, die der Reihe nach laufen.
 //
-// Welche Schritte es gibt, richtet sich danach, was der Client kann: Chat/Befehl und Warten immer,
-// Bewegung nur in der Bewegungs-Bauform. Schritte, die der Client nicht kann (Inventar, Blöcke,
-// Schlagen), gibt es hier bewusst nicht – sie stünden sonst im Panel und täten nichts.
+// Wer taktet, hängt davon ab, wer es besser kann:
+//   * Der **Client** bekommt beim Start alles, was er selbst im Protokoll sieht und ohne Zutun
+//     abarbeiten kann – Beitrittsbefehle, Wiederholungen, und mit `--on` auch Weltwechsel, Tod
+//     und einfache Chat-Treffer. Das überlebt jeden Reconnect ohne Zutun des Panels.
+//   * Das **Panel** taktet alles, was sich zur Laufzeit ändern soll oder mehr als eine Chatzeile
+//     ist: Wartezeiten, Bewegung, reguläre Ausdrücke, Spam.
+//
+// Welche Schritte es gibt, richtet sich danach, was die Bauform des Bots kann. Schritte, die kein
+// Client beherrscht (Blöcke abbauen, schlagen), gibt es hier bewusst nicht.
 
 import { db } from './db.js';
-import * as binaries from './binaries.js';
-import { supervisor } from './supervisor.js';
+import { supervisor, simpleChatMacro } from './supervisor.js';
 
 /** Alle Schritte, die das Panel ausführen kann. Das Frontend baut daraus seine Auswahl. */
 export const ACTIONS = [
-  { type: 'chat', label: 'Chat / Befehl', fields: [{ key: 'text', label: 'Text', type: 'text' }] },
+  {
+    type: 'chat',
+    de: 'Chat / Befehl',
+    en: 'Chat / command',
+    fields: [{ key: 'text', de: 'Text', en: 'Text', type: 'text' }],
+  },
   {
     type: 'wait',
-    label: 'Warten',
-    fields: [{ key: 'seconds', label: 'Sekunden', type: 'number', min: 1, max: 3600 }],
+    de: 'Warten',
+    en: 'Wait',
+    fields: [{ key: 'seconds', de: 'Sekunden', en: 'Seconds', type: 'number', min: 1, max: 3600 }],
   },
   {
     type: 'move',
-    label: 'Gehen',
+    de: 'Gehen',
+    en: 'Walk',
     needs: 'movement',
     fields: [
       {
         key: 'direction',
-        label: 'Richtung',
+        de: 'Richtung',
+        en: 'Direction',
         type: 'select',
         options: ['vor', 'zurück', 'links', 'rechts'],
+        labels: { de: ['vor', 'zurück', 'links', 'rechts'], en: ['forward', 'back', 'left', 'right'] },
       },
-      { key: 'blocks', label: 'Blöcke', type: 'number', min: 1, max: 64 },
+      { key: 'blocks', de: 'Blöcke', en: 'Blocks', type: 'number', min: 1, max: 64 },
     ],
   },
   {
     type: 'look',
-    label: 'Blickrichtung',
+    de: 'Blickrichtung',
+    en: 'Look direction',
     needs: 'movement',
     fields: [
-      { key: 'yaw', label: 'Links/Rechts (Yaw)', type: 'number', min: -180, max: 180 },
-      { key: 'pitch', label: 'Hoch/Runter (Pitch)', type: 'number', min: -90, max: 90 },
+      { key: 'yaw', de: 'Links/Rechts (Yaw)', en: 'Left/right (yaw)', type: 'number', min: -180, max: 180 },
+      { key: 'pitch', de: 'Hoch/Runter (Pitch)', en: 'Up/down (pitch)', type: 'number', min: -90, max: 90 },
     ],
   },
-  { type: 'jump', label: 'Springen', needs: 'movement', fields: [] },
-  { type: 'home', label: 'Nach Hause laufen', needs: 'movement', fields: [] },
-  { type: 'stop', label: 'Bewegung stoppen', needs: 'movement', fields: [] },
-  { type: 'disconnect', label: 'Trennen', fields: [] },
+  { type: 'jump', de: 'Springen', en: 'Jump', needs: 'movement', fields: [] },
+  { type: 'home', de: 'Nach Hause laufen', en: 'Walk home', needs: 'movement', fields: [] },
+  { type: 'stop', de: 'Bewegung stoppen', en: 'Stop moving', needs: 'movement', fields: [] },
+  { type: 'sneak', de: 'Schleichen an/aus', en: 'Toggle sneak', needs: 'sneak', fields: [] },
+  { type: 'swing', de: 'Arm schwingen', en: 'Swing arm', needs: 'sneak', fields: [] },
+  { type: 'use', de: 'Gegenstand benutzen', en: 'Use item', needs: 'sneak', fields: [] },
+  {
+    type: 'hand',
+    de: 'Schnellleiste wählen',
+    en: 'Pick hotbar slot',
+    needs: 'sneak',
+    fields: [{ key: 'slot', de: 'Feld (1–9)', en: 'Slot (1–9)', type: 'number', min: 1, max: 9 }],
+  },
+  {
+    type: 'click',
+    de: 'Menüfeld anklicken',
+    en: 'Click menu slot',
+    needs: 'menu',
+    fields: [
+      { key: 'slot', de: 'Feld', en: 'Slot', type: 'number', min: 0, max: 100 },
+      {
+        key: 'button',
+        de: 'Taste',
+        en: 'Button',
+        type: 'select',
+        options: ['', 'rechts', 'shift'],
+        labels: { de: ['links', 'rechts', 'shift'], en: ['left', 'right', 'shift'] },
+      },
+    ],
+  },
+  { type: 'close', de: 'Menü schließen', en: 'Close menu', needs: 'menu', fields: [] },
+  { type: 'disconnect', de: 'Trennen', en: 'Disconnect', fields: [] },
 ];
 
 export const EVENTS = [
-  { type: 'join', label: 'Beim Beitritt', config: [] },
+  { type: 'join', de: 'Beim Beitritt', en: 'On join', config: [] },
   {
     type: 'timer',
-    label: 'Im Zeittakt',
-    config: [{ key: 'interval_sec', label: 'Alle … Sekunden', type: 'number', min: 5, max: 86400 }],
-  },
-  {
-    type: 'chat',
-    label: 'Bei Chat-Nachricht',
+    de: 'Im Zeittakt',
+    en: 'On a timer',
     config: [
-      { key: 'contains', label: 'Enthält Text', type: 'text' },
-      { key: 'regex', label: 'oder regulärer Ausdruck', type: 'text' },
+      { key: 'interval_sec', de: 'Alle … Sekunden', en: 'Every … seconds', type: 'number', min: 5, max: 86400 },
     ],
   },
   {
-    type: 'world',
-    label: 'Bei Weltwechsel (Unterserver)',
-    config: [],
+    type: 'chat',
+    de: 'Bei Chat-Nachricht',
+    en: 'On chat message',
+    config: [
+      { key: 'contains', de: 'Enthält Text', en: 'Contains text', type: 'text' },
+      { key: 'regex', de: 'oder regulärer Ausdruck', en: 'or regular expression', type: 'text' },
+    ],
   },
-  { type: 'death', label: 'Bei Tod', config: [] },
-  { type: 'disconnect', label: 'Bei Verbindungsabbruch', config: [] },
+  { type: 'world', de: 'Bei Weltwechsel', en: 'On world change', config: [] },
+  { type: 'death', de: 'Bei Tod', en: 'On death', config: [] },
+  { type: 'disconnect', de: 'Bei Verbindungsabbruch', en: 'On disconnect', config: [] },
 ];
 
 class MacroEngine {
@@ -92,10 +132,9 @@ class MacroEngine {
     const slot = this.slot(bot);
 
     for (const macro of this.macrosFor(bot, 'timer')) {
+      if (this.handledByClient(bot, macro)) continue;
       const config = JSON.parse(macro.config || '{}');
       const seconds = Math.max(5, Number(config.interval_sec) || 300);
-      // Die einfachen Fälle laufen schon im Client (--cmd 300:/afk) – hier nur der Rest.
-      if (this.handledByClient(macro)) continue;
       const timer = setInterval(() => {
         if (bot.online) this.run(bot, macro);
       }, seconds * 1000);
@@ -122,9 +161,9 @@ class MacroEngine {
   }
 
   /**
-   * Anti-AFK: gegen Server, die zusätzlich zum Zeitüberschreitungs-Kick auf Bewegung prüfen.
-   * Der Befehl-Takt geht immer; Umsehen, Springen und Laufen nur mit der Bewegungs-Bauform.
-   * Damit nicht alle Bots im selben Moment zappeln, bekommt jeder einen eigenen Versatz.
+   * Anti-AFK aus dem Panel: ein Befehl im Takt, gegen Plugins, die auf Aktivität schauen.
+   * Die *Bewegung* dagegen macht der Premium-Client selbst (`--antiafk`) – dort gehört sie hin,
+   * weil sie zwischen zwei Paketen liegen muss und nicht zwischen zwei HTTP-Aufrufen.
    */
   attachAntiAfk(bot, slot) {
     let settings;
@@ -133,40 +172,15 @@ class MacroEngine {
     } catch {
       return;
     }
+    if (!settings.command || !settings.command_text) return;
     const seconds = Math.min(3600, Math.max(30, Number(settings.interval_sec) || 240));
-    const movement = binaries.supportsMovement(bot.profile);
-    const steps = [];
-
-    if (settings.command && settings.command_text) {
-      steps.push(() => bot.send(String(settings.command_text)));
-    }
-    if (movement && settings.look) {
-      // Ein kleiner Schwenk hin und zurück – kein Kreiseln, das auffiele.
-      let flip = false;
-      steps.push(() => {
-        bot.move('look', flip ? 'links 25' : 'rechts 25');
-        flip = !flip;
-      });
-    }
-    if (movement && settings.jump) steps.push(() => bot.move('jump'));
-    if (movement && settings.walk) {
-      let forward = true;
-      steps.push(() => {
-        bot.move('go', forward ? 'vor 1' : 'zurück 1');
-        forward = !forward;
-      });
-    }
-    if (!steps.length) return;
-
-    let index = 0;
     const timer = setInterval(() => {
       if (!bot.online) return;
       try {
-        steps[index % steps.length]();
+        bot.send(String(settings.command_text));
       } catch {
         /* Bot gerade weg */
       }
-      index += 1;
     }, seconds * 1000);
     timer.unref();
     slot.timers.add(timer);
@@ -179,7 +193,7 @@ class MacroEngine {
     slot.timers.clear();
   }
 
-  /** Nach dem Ändern von Macros/Spam die Takte eines Profils neu aufziehen. */
+  /** Nach dem Ändern von Macros/Spam die Takte eines Serverplatzes neu aufziehen. */
   reload(profileId) {
     for (const bot of supervisor.bots.values()) {
       if (bot.profile.id !== profileId) continue;
@@ -187,9 +201,21 @@ class MacroEngine {
     }
   }
 
-  handledByClient(macro) {
+  /**
+   * Erledigt das schon der Client? Beitritt und Zeittakt immer (über `--cmd`), Weltwechsel, Tod
+   * und einfache Chat-Treffer nur, wenn seine Bauform `--on` versteht.
+   */
+  handledByClient(bot, macro) {
     const actions = JSON.parse(macro.actions || '[]');
-    return actions.length > 0 && actions.every((action) => action.type === 'chat' && !action.delay);
+    if (!simpleChatMacro(actions)) return false;
+    if (macro.event === 'join' || macro.event === 'timer') return true;
+    if (!bot.caps.macros) return false;
+    if (macro.event === 'world' || macro.event === 'death') return true;
+    if (macro.event === 'chat') {
+      const config = JSON.parse(macro.config || '{}');
+      return Boolean(config.contains && !config.regex);
+    }
+    return false;
   }
 
   macrosFor(bot, event) {
@@ -217,7 +243,7 @@ class MacroEngine {
   onJoin(bot) {
     this.attach(bot);
     for (const macro of this.macrosFor(bot, 'join')) {
-      if (this.handledByClient(macro)) continue; // erledigt der Client per --cmd
+      if (this.handledByClient(bot, macro)) continue;
       this.run(bot, macro);
     }
   }
@@ -226,6 +252,7 @@ class MacroEngine {
     const macros = this.macrosFor(bot, 'chat');
     if (!macros.length) return;
     for (const macro of macros) {
+      if (this.handledByClient(bot, macro)) continue;
       const config = JSON.parse(macro.config || '{}');
       let hit = false;
       if (config.contains) hit = line.toLowerCase().includes(String(config.contains).toLowerCase());
@@ -240,19 +267,22 @@ class MacroEngine {
     }
   }
 
-  /**
-   * Wechsel auf einen Unterserver. Anders als beim Beitritt schickt der Client hier nichts von
-   * selbst – die Befehle kommen also immer aus dem Panel, auch die einfachen.
-   */
   onWorldChange(bot) {
-    for (const macro of this.macrosFor(bot, 'world')) this.run(bot, macro);
+    for (const macro of this.macrosFor(bot, 'world')) {
+      if (this.handledByClient(bot, macro)) continue;
+      this.run(bot, macro);
+    }
   }
 
   onDeath(bot) {
-    for (const macro of this.macrosFor(bot, 'death')) this.run(bot, macro);
+    for (const macro of this.macrosFor(bot, 'death')) {
+      if (this.handledByClient(bot, macro)) continue;
+      this.run(bot, macro);
+    }
   }
 
   onDisconnect(bot) {
+    // Den Abbruch sieht der Client zwar auch, aber `--on` kennt ihn nicht – also immer hier.
     for (const macro of this.macrosFor(bot, 'disconnect')) this.run(bot, macro);
   }
 
@@ -280,7 +310,6 @@ class MacroEngine {
   }
 
   async step(bot, action, context) {
-    const movement = binaries.supportsMovement(bot.profile);
     switch (action.type) {
       case 'chat': {
         const text = String(action.text || '').replace(/\{line\}/g, context.line || '');
@@ -291,24 +320,37 @@ class MacroEngine {
         await wait(Math.min(3600, Math.max(1, Number(action.seconds) || 1)) * 1000);
         break;
       case 'move':
-        if (!movement) throw new Error('Bewegung ist für dieses Profil nicht aktiv.');
-        bot.move('go', `${action.direction || 'vor'} ${Number(action.blocks) || 1}`);
+        bot.local('go', `${action.direction || 'vor'} ${Number(action.blocks) || 1}`);
         break;
       case 'look':
-        if (!movement) throw new Error('Bewegung ist für dieses Profil nicht aktiv.');
-        bot.move('look', `${Number(action.yaw) || 0} ${Number(action.pitch) || 0}`);
+        bot.local('look', `${Number(action.yaw) || 0} ${Number(action.pitch) || 0}`);
         break;
       case 'jump':
-        if (!movement) throw new Error('Bewegung ist für dieses Profil nicht aktiv.');
-        bot.move('jump');
+        bot.local('jump');
         break;
       case 'home':
-        if (!movement) throw new Error('Bewegung ist für dieses Profil nicht aktiv.');
-        bot.move('home', 'go');
+        bot.local('home', 'go');
         break;
       case 'stop':
-        if (!movement) throw new Error('Bewegung ist für dieses Profil nicht aktiv.');
-        bot.move('stop');
+        bot.local('stop');
+        break;
+      case 'sneak':
+        bot.local('sneak', '', 'sneak');
+        break;
+      case 'swing':
+        bot.local('swing', '', 'sneak');
+        break;
+      case 'use':
+        bot.local('use', '', 'sneak');
+        break;
+      case 'hand':
+        bot.local('hand', String(Math.min(9, Math.max(1, Number(action.slot) || 1))), 'sneak');
+        break;
+      case 'click':
+        bot.local('click', `${Number(action.slot) || 0}${action.button ? ` ${action.button}` : ''}`, 'menu');
+        break;
+      case 'close':
+        bot.local('close', '', 'menu');
         break;
       case 'disconnect':
         supervisor.stop(bot.profile.id, bot.account.id);
@@ -320,6 +362,42 @@ class MacroEngine {
 }
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** ACTIONS/EVENTS in einer Sprache, wie das Frontend sie braucht. */
+export function actionsFor(lang = 'de') {
+  const key = lang === 'en' ? 'en' : 'de';
+  return ACTIONS.map((action) => ({
+    type: action.type,
+    label: action[key],
+    needs: action.needs || null,
+    fields: (action.fields || []).map((field) => ({
+      key: field.key,
+      label: field[key],
+      type: field.type,
+      min: field.min,
+      max: field.max,
+      options: field.options,
+      option_labels: field.labels?.[key] || field.options,
+    })),
+  }));
+}
+
+export function eventsFor(lang = 'de') {
+  const key = lang === 'en' ? 'en' : 'de';
+  return EVENTS.map((event) => ({
+    type: event.type,
+    label: event[key],
+    config: (event.config || []).map((field) => ({
+      key: field.key,
+      label: field[key],
+      type: field.type,
+      min: field.min,
+      max: field.max,
+    })),
+  }));
+}
+
+export const EVENT_TYPES = EVENTS.map((event) => event.type);
 
 export const macros = new MacroEngine();
 supervisor.macros = macros;

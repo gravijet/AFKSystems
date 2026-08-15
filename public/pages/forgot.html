@@ -1,0 +1,32 @@
+{{> head}}
+    <main class="auth" id="main">
+      <div class="auth-box">
+        <a class="brand" href="/{{lang}}">
+          <img class="logo" src="/assets/img/logo.svg" alt="" />
+          <span>{{brand}}</span>
+        </a>
+
+        <div class="auth-card">
+          <h1>{{auth.forgot.title}}</h1>
+          <p class="auth-lead">{{auth.forgot.lead}}</p>
+
+          <p id="off" class="note warn hide">{{auth.forgot.off}}</p>
+
+          <form id="form" class="stack" novalidate>
+            <div class="field">
+              <label for="email">{{auth.register.email}}</label>
+              <input id="email" name="email" type="email" autocomplete="email" required />
+            </div>
+            <p id="error" class="form-error hide" role="alert"></p>
+            <button class="btn btn-primary btn-block" type="submit">{{auth.forgot.submit}}</button>
+          </form>
+
+          <p id="done" class="note hide">{{auth.forgot.done}}</p>
+        </div>
+
+        <p class="auth-alt"><a href="/{{lang}}/login">{{common.back}}</a></p>
+      </div>
+    </main>
+    <script type="module" src="/assets/js/auth.js"></script>
+  </body>
+</html>

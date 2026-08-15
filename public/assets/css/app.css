@@ -723,51 +723,7 @@ select {
   color: #6b7280;
 }
 
-/* ---------------------------------------------------------------- Kopf / Fuß */
-
-.topbar {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  background: color-mix(in oklab, var(--background) 88%, transparent);
-  backdrop-filter: blur(12px);
-  box-shadow: inset 0 -1px 0 var(--line-soft);
-}
-.topbar .util {
-  box-shadow: inset 0 -1px 0 var(--line-soft);
-  background: color-mix(in oklab, var(--text) 2%, transparent);
-}
-.topbar .util .page {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-block: 0.4rem;
-  color: var(--text-2);
-  font-size: 0.75rem;
-  font-weight: 500;
-}
-.topbar nav.main {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding-block: 0.9rem;
-}
-.topbar nav.main .links {
-  display: none;
-  gap: 1.5rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-}
-@media (min-width: 900px) {
-  .topbar nav.main .links {
-    display: flex;
-  }
-}
-.topbar nav.main .links a:hover {
-  color: var(--primary);
-}
+/* ---------------------------------------------------------------- Marke und Aussehen */
 
 .brand {
   display: inline-flex;
@@ -810,170 +766,991 @@ select {
   height: 0.8rem;
 }
 
-footer.site {
-  margin-top: 5rem;
-  padding-block: 3rem 2.5rem;
-  box-shadow: inset 0 1px 0 var(--line-soft);
-  color: var(--text-2);
+/* ---------------------------------------------------------------- Startseite: eigene Marken
+ *
+ * Das Panel bleibt, wie es ist. Die öffentlichen Seiten bekommen eine eigene Handschrift:
+ * kühles Papier statt Weiß, Haarlinien statt Karten, Zahlen und Etiketten in
+ * Schreibmaschinenschrift – und genau eine laute Farbe, das Fackel-Orange, das ausschließlich
+ * dort auftaucht, wo etwas lebt. Deshalb ein eigener Satz Marken mit --l- davor.
+ */
+
+:root {
+  --l-paper: #eef1f6;
+  --l-paper-2: #e6ebf2;
+  --l-ink: #0f1c2e;
+  --l-ink-2: #4c5c72;
+  --l-rule: rgba(15, 28, 46, 0.18);
+  --l-rule-soft: rgba(15, 28, 46, 0.09);
+  --l-block: #21406a;
+  --l-block-off: rgba(15, 28, 46, 0.1);
+  --l-live: #f2661a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --l-paper: #0b1017;
+    --l-paper-2: #111924;
+    --l-ink: #e9eef6;
+    --l-ink-2: #8ea1b9;
+    --l-rule: rgba(233, 238, 246, 0.2);
+    --l-rule-soft: rgba(233, 238, 246, 0.1);
+    --l-block: #6b9fe4;
+    --l-block-off: rgba(233, 238, 246, 0.09);
+    --l-live: #ff8a3c;
+  }
+}
+:root[data-theme='dark'] {
+  --l-paper: #0b1017;
+  --l-paper-2: #111924;
+  --l-ink: #e9eef6;
+  --l-ink-2: #8ea1b9;
+  --l-rule: rgba(233, 238, 246, 0.2);
+  --l-rule-soft: rgba(233, 238, 246, 0.1);
+  --l-block: #6b9fe4;
+  --l-block-off: rgba(233, 238, 246, 0.09);
+  --l-live: #ff8a3c;
+}
+
+body.site {
+  background: var(--l-paper);
+  color: var(--l-ink);
+}
+
+/* Das Etikett: Schreibmaschine, weit gesperrt, klein. Kommt auf der ganzen Seite wieder. */
+body.site .eyebrow,
+body.site .mono-label {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+body.site .lead {
+  color: var(--l-ink-2);
+  font-weight: 400;
+}
+body.site h1,
+body.site h2,
+body.site h3 {
+  color: var(--l-ink);
+}
+body.site a:hover {
+  color: var(--l-live);
+}
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 100;
+  padding: 0.6rem 1rem;
+  background: var(--l-ink);
+  color: var(--l-paper);
+}
+.skip:focus {
+  left: 0;
+}
+
+/* ---------------------------------------------------------------- Kopfleiste */
+
+.site-head {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: color-mix(in oklab, var(--l-paper) 85%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--l-rule-soft);
+}
+.site-head > .page {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding-block: 0.85rem;
+}
+.site-links {
+  display: none;
+  flex: 1;
+  justify-content: center;
+  gap: 1.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--l-ink-2);
+}
+@media (min-width: 940px) {
+  .site-links {
+    display: flex;
+  }
+}
+.site-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-inline-start: auto;
+}
+.head-auth {
+  display: none;
+  gap: 0.5rem;
+}
+@media (min-width: 560px) {
+  .head-auth {
+    display: inline-flex;
+  }
+}
+
+.langs {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid var(--l-rule);
+  border-radius: 999px;
+}
+.langs a {
+  padding: 0.2rem 0.55rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--l-ink-2);
+}
+.langs a[aria-current] {
+  background: var(--l-ink);
+  color: var(--l-paper);
+}
+.langs a:hover:not([aria-current]) {
+  background: var(--l-rule-soft);
+  color: var(--l-ink);
+}
+
+body.site .brand {
+  color: var(--l-ink);
+}
+body.site .themes {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--l-rule);
+}
+body.site .themes button {
+  color: var(--l-ink-2);
+}
+body.site .themes button[aria-pressed='true'] {
+  background: var(--l-ink);
+  box-shadow: none;
+  color: var(--l-paper);
+}
+
+/* ---------------------------------------------------------------- Hero */
+
+.hero {
+  padding-block: clamp(3rem, 7vw, 5.5rem) 0;
+}
+.hero-grid {
+  display: grid;
+  gap: clamp(2.5rem, 5vw, 4rem);
+  align-items: center;
+}
+@media (min-width: 1000px) {
+  .hero-grid {
+    grid-template-columns: 1.15fr 0.85fr;
+  }
+}
+.hero .eyebrow .dot {
+  color: var(--l-live);
+}
+.hero h1 {
+  margin-top: 1.5rem;
+  font-size: clamp(2.35rem, 1rem + 4.6vw, 4.15rem);
+  font-weight: 700;
+  line-height: 0.98;
+  letter-spacing: -0.038em;
+  text-wrap: pretty;
+}
+/* Das Wort, um das es geht, liegt auf einem Streifen Fackellicht – kein blinkender Cursor mehr. */
+.hero h1 .hl {
+  background: linear-gradient(
+    to top,
+    color-mix(in oklab, var(--l-live) 42%, transparent) 0 0.26em,
+    transparent 0.26em
+  );
+}
+.hero .lead {
+  max-width: 34rem;
+  margin-top: 1.6rem;
+  font-size: 1.0625rem;
+  line-height: 1.6;
+}
+@media (min-width: 640px) {
+  .hero .lead {
+    font-size: 1.125rem;
+  }
+}
+.hero-cta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 2.25rem;
+}
+.hero-note {
+  margin-top: 1.1rem;
+  font-size: 0.8125rem;
+  color: var(--l-ink-2);
+}
+body.site .btn-ghost {
+  color: var(--l-ink);
+  box-shadow: inset 0 0 0 1px var(--l-rule);
+}
+body.site .btn-ghost:hover:not(:disabled) {
+  background: var(--l-rule-soft);
+}
+
+/* Das Erkennungszeichen: ein Monat als Fläche. 30 Spalten (Tage) mal 24 Zeilen (Stunden),
+   720 Blöcke – genau das, was ein Serverplatz ist. Die laufende Stunde leuchtet. */
+.month {
+  margin: 0;
+  padding: 1rem;
+  border: 1px solid var(--l-rule);
+  border-radius: var(--r-lg);
+  background: var(--l-paper-2);
+}
+.month-head,
+.month-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+.month-head {
+  padding-bottom: 0.85rem;
+}
+.month-foot {
+  padding-top: 0.85rem;
+}
+.month-foot b {
+  color: var(--l-ink);
+  font-size: 0.8125rem;
+}
+.month-slot {
+  color: var(--l-ink);
+}
+.month-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--l-live);
+}
+.month-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-columns: repeat(30, 1fr);
+  grid-template-rows: repeat(24, 1fr);
+  gap: clamp(1px, 0.28vw, 3px);
+  aspect-ratio: 30 / 24;
+  /* Ohne JavaScript steht hier trotzdem ein Block – die Fläche bleibt lesbar. */
+  background: var(--l-block-off);
+  border-radius: 2px;
+}
+.month-grid i {
+  border-radius: 1px;
+  background: var(--l-block-off);
+  transition: background-color 0.45s ease;
+}
+.month-grid i.on {
+  background: var(--l-block);
+}
+.month-grid i.now {
+  background: var(--l-live);
+  box-shadow: 0 0 0 1px var(--l-live);
+}
+
+/* Die Zahlenleiste unter dem Hero: die vier Größen, nach denen hier alles läuft. */
+.rail {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  margin: clamp(3rem, 6vw, 4.5rem) 0 0;
+  border-top: 1px solid var(--l-rule);
+}
+@media (min-width: 780px) {
+  .rail {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+.rail > div {
+  padding: 1.4rem 1.25rem 1.4rem 0;
+  border-bottom: 1px solid var(--l-rule-soft);
+}
+@media (min-width: 780px) {
+  .rail > div + div {
+    padding-left: 1.5rem;
+    border-left: 1px solid var(--l-rule-soft);
+  }
+}
+.rail dt {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+.rail dd {
+  margin: 0.5rem 0 0;
+  font-size: clamp(1.35rem, 1rem + 1vw, 1.75rem);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+/* ---------------------------------------------------------------- Abschnitte */
+
+.band {
+  padding-block: clamp(3.5rem, 7vw, 5.5rem);
+}
+.band.alt {
+  background: var(--l-paper-2);
+  border-block: 1px solid var(--l-rule-soft);
+}
+.band-head {
+  max-width: 42rem;
+  margin-bottom: clamp(2rem, 4vw, 3rem);
+}
+.band-head h2 {
+  margin-top: 0.9rem;
+  font-size: clamp(1.7rem, 1.2rem + 1.8vw, 2.5rem);
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+.band-head .lead {
+  margin-top: 1rem;
+}
+
+/* Funktionen als Datenblatt: Name, ein Satz, Zustand. Kein Kachelmeer. */
+.spec {
+  display: grid;
+  gap: 2.75rem;
+}
+@media (min-width: 900px) {
+  .spec {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 2.75rem 3.5rem;
+  }
+}
+.spec-group h3 {
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--l-rule);
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+.spec-group ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.spec-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 0.95rem 0;
+  border-bottom: 1px solid var(--l-rule-soft);
+}
+.spec-name {
+  font-weight: 600;
+}
+.spec-text {
+  margin: 0.3rem 0 0;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--l-ink-2);
+}
+.spec-status {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.spec-status i {
+  width: 0.5rem;
+  height: 0.5rem;
+  flex: none;
+  border: 1px solid currentColor;
+}
+/* Schmal: der Zustand gehört über die Zeile, nicht in eine zweite Spalte, die dann bricht. */
+@media (max-width: 560px) {
+  .spec-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.3rem;
+  }
+  .spec-status {
+    order: -1;
+  }
+  .slot-row {
+    grid-template-columns: 1fr auto;
+  }
+  .slot-what {
+    grid-column: 1 / -1;
+  }
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  margin: 2.5rem 0 0;
+  padding: 1rem 0 0;
+  border-top: 1px solid var(--l-rule-soft);
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.5625rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.legend i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border: 1px solid currentColor;
+}
+
+/* Der Zustand steckt in der Form des Quadrats, nicht nur in der Farbe. */
+.spec [data-status='ready'],
+.legend [data-status='ready'] {
+  color: var(--l-block);
+}
+.spec [data-status='ready'] i,
+.legend [data-status='ready'] i {
+  background: currentColor;
+}
+.spec [data-status='premium'],
+.legend [data-status='premium'] {
+  color: var(--l-live);
+}
+.spec [data-status='premium'] i,
+.legend [data-status='premium'] i {
+  background: linear-gradient(135deg, currentColor 0 50%, transparent 50% 100%);
+}
+.spec [data-status='soon'],
+.legend [data-status='soon'] {
+  color: var(--l-ink-2);
+}
+.spec [data-status='soon'] i,
+.legend [data-status='soon'] i {
+  border-style: dashed;
+}
+.spec [data-status='no'],
+.legend [data-status='no'] {
+  color: var(--l-ink-2);
+}
+.spec [data-status='no'] i,
+.legend [data-status='no'] i {
+  height: 0;
+  border-width: 1px 0 0;
+  align-self: center;
+}
+.spec [data-status='missing'],
+.legend [data-status='missing'] {
+  color: var(--l-ink-2);
+  opacity: 0.6;
+}
+.spec [data-status='missing'] i,
+.legend [data-status='missing'] i {
+  border-style: dotted;
+}
+
+/* ---------------------------------------------------------------- Tarife */
+
+.slots {
+  margin-bottom: clamp(2rem, 4vw, 3rem);
+  border-top: 1px solid var(--l-rule);
+}
+.slot-row {
+  display: grid;
+  grid-template-columns: 5.5rem 1fr auto;
+  gap: 0.75rem 1.25rem;
+  align-items: baseline;
+  padding: 1.05rem 0;
+  border-bottom: 1px solid var(--l-rule-soft);
+}
+.slot-no {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+.slot-what {
+  color: var(--l-ink-2);
+  font-size: 0.9375rem;
+}
+.slot-price {
+  font-weight: 700;
+  white-space: nowrap;
+}
+.slot-row:first-child .slot-price {
+  color: var(--l-live);
+}
+
+.plans {
+  display: grid;
+  gap: 1px;
+  border: 1px solid var(--l-rule);
+  background: var(--l-rule);
+}
+@media (min-width: 860px) {
+  .plans {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.plan {
+  padding: 1.85rem 1.6rem;
+  background: var(--l-paper);
+}
+.band.alt .plan {
+  background: var(--l-paper-2);
+}
+.plan h3 {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+.plan-price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.85rem 0 0;
+}
+.plan-price b {
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.04em;
+}
+.plan-price span {
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+.plan.is-free .plan-price b {
+  color: var(--l-live);
+}
+.plan-blurb {
+  margin: 0.9rem 0 0;
+  font-size: 0.875rem;
+  color: var(--l-ink-2);
+}
+.plan-list {
+  margin: 1.4rem 0 0;
+  padding: 0;
+  list-style: none;
   font-size: 0.875rem;
 }
-footer.site .cols {
+.plan-list li {
+  padding: 0.45rem 0 0.45rem 1.1rem;
+  border-top: 1px solid var(--l-rule-soft);
+  background: no-repeat 0 0.95rem / 0.4rem 1px linear-gradient(var(--l-ink-2), var(--l-ink-2));
+}
+.plan-euro {
+  margin: 1.2rem 0 0;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.1em;
+  color: var(--l-ink-2);
+}
+
+.topup {
+  display: grid;
+  gap: 1.75rem;
+  margin-top: clamp(2.5rem, 5vw, 3.5rem);
+  padding-top: clamp(2rem, 4vw, 2.75rem);
+  border-top: 1px solid var(--l-rule);
+}
+@media (min-width: 860px) {
+  .topup {
+    grid-template-columns: 20rem 1fr;
+    gap: 3rem;
+  }
+}
+.topup-copy h3 {
+  font-size: 1.125rem;
+}
+.topup-copy p {
+  margin-top: 0.6rem;
+  font-size: 0.875rem;
+  color: var(--l-ink-2);
+}
+.topup-list {
+  display: grid;
+  gap: 0.75rem;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  align-content: start;
+}
+.pack {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--l-rule);
+  border-radius: var(--r-md);
+}
+.pack-euro {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.pack-credits {
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  color: var(--l-ink-2);
+}
+.pack-bonus {
+  min-height: 1rem;
+  font-family: var(--mono);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  color: var(--l-live);
+}
+
+/* ---------------------------------------------------------------- Ablauf */
+
+.steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-width: 52rem;
+}
+.steps li {
+  display: grid;
+  grid-template-columns: 3rem 1fr;
+  gap: 0.35rem 1.5rem;
+  padding: 1.6rem 0;
+  border-top: 1px solid var(--l-rule-soft);
+}
+.steps li:first-child {
+  border-top-color: var(--l-rule);
+}
+.steps li:last-child {
+  border-bottom: 1px solid var(--l-rule-soft);
+}
+.step-no {
+  grid-row: span 2;
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  color: var(--l-live);
+}
+.steps h3 {
+  font-size: 1.0625rem;
+}
+.steps p {
+  margin: 0.4rem 0 0;
+  color: var(--l-ink-2);
+  font-size: 0.9375rem;
+  max-width: 40rem;
+}
+@media (max-width: 560px) {
+  .steps li {
+    grid-template-columns: 1fr;
+  }
+  .step-no {
+    grid-row: auto;
+  }
+}
+
+/* ---------------------------------------------------------------- Versionen */
+
+.versions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.versions li {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--l-rule);
+  border-radius: var(--r-md);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.versions:empty::after {
+  content: '–';
+  color: var(--l-ink-2);
+}
+
+/* ---------------------------------------------------------------- Fragen */
+
+body.site .faq {
+  max-width: 48rem;
+  border-top: 1px solid var(--l-rule);
+}
+body.site .faq details {
+  border-bottom: 1px solid var(--l-rule-soft);
+  padding: 0;
+}
+body.site .faq summary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.1rem 0;
+  cursor: pointer;
+  font-weight: 600;
+  list-style: none;
+}
+body.site .faq summary::-webkit-details-marker {
+  display: none;
+}
+body.site .faq summary::after {
+  content: '+';
+  font-family: var(--mono);
+  font-size: 1.1rem;
+  color: var(--l-live);
+  transition: transform 0.15s ease;
+}
+body.site .faq details[open] summary::after {
+  content: '−';
+}
+body.site .faq p {
+  margin: 0 0 1.25rem;
+  max-width: 42rem;
+  color: var(--l-ink-2);
+  font-size: 0.9375rem;
+}
+
+/* ---------------------------------------------------------------- Schluss */
+
+.closing {
+  padding-block: clamp(3.5rem, 7vw, 5rem);
+  background: var(--l-ink);
+  color: var(--l-paper);
+}
+body.site .closing h2 {
+  color: var(--l-paper);
+  font-size: clamp(1.7rem, 1.2rem + 1.8vw, 2.4rem);
+  letter-spacing: -0.03em;
+  max-width: 30rem;
+}
+.closing p {
+  margin-top: 0.9rem;
+  max-width: 34rem;
+  color: color-mix(in oklab, var(--l-paper) 72%, transparent);
+}
+body.site .closing .btn-ghost {
+  color: var(--l-paper);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--l-paper) 35%, transparent);
+}
+body.site .closing .btn-ghost:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--l-paper) 12%, transparent);
+}
+
+/* ---------------------------------------------------------------- Fußzeile */
+
+.site-foot {
+  padding-block: 3rem 2rem;
+  border-top: 1px solid var(--l-rule-soft);
+  font-size: 0.875rem;
+  color: var(--l-ink-2);
+}
+.foot-cols {
   display: grid;
   gap: 2rem;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   margin-bottom: 2.5rem;
 }
-footer.site h4 {
-  margin-bottom: 0.75rem;
-  color: var(--text);
-  font-size: 0.8125rem;
-  font-weight: 600;
+.foot-brand p {
+  margin-top: 0.8rem;
+  max-width: 20rem;
 }
-footer.site li {
-  margin-bottom: 0.4rem;
-  list-style: none;
+.site-foot h2 {
+  margin-bottom: 0.8rem;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
 }
-footer.site ul {
+.site-foot ul {
   margin: 0;
   padding: 0;
-}
-footer.site a:hover {
-  color: var(--primary);
-}
-footer.site .legal {
-  padding-top: 1.5rem;
-  box-shadow: inset 0 1px 0 var(--line-soft);
-  font-size: 0.75rem;
-}
-
-/* ---------------------------------------------------------------- Startseite */
-
-.hero {
-  position: relative;
-  isolation: isolate;
-  overflow-x: clip;
-  padding-block: 5rem 4rem;
-}
-.hero .grid-bg {
-  position: absolute;
-  inset: 0;
-  z-index: -20;
-  background-image: linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px);
-  background-size: 96px 96px;
-  mask-image: radial-gradient(ellipse 80% 70% at 50% 40%, #000 40%, transparent 100%);
-}
-.hero .blob {
-  position: absolute;
-  bottom: -14rem;
-  left: -8rem;
-  z-index: -10;
-  width: 38rem;
-  height: 38rem;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--primary) 20%, transparent);
-  filter: blur(140px);
-  pointer-events: none;
-}
-.hero .cols {
-  display: grid;
-  gap: 3rem;
-  align-items: center;
-}
-@media (min-width: 1024px) {
-  .hero {
-    padding-block: 7rem 5rem;
-  }
-  .hero .cols {
-    grid-template-columns: 1fr 1fr;
-    gap: 3.5rem;
-  }
-}
-
-.section {
-  padding-block: 4rem;
-}
-.section-head {
-  max-width: 46rem;
-  margin-bottom: 2.5rem;
-}
-.section-head h2 {
-  margin-top: 0.75rem;
-}
-.section-head p {
-  margin-top: 1rem;
-  color: var(--text-2);
-  font-weight: 300;
-}
-
-.feature {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 1.1rem;
-  border-radius: var(--r-2xl);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
-  transition: box-shadow 0.15s;
-}
-.feature:hover {
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 50%, var(--line));
-}
-.feature .icon {
-  width: 1.15rem;
-  height: 1.15rem;
-  color: var(--primary);
-}
-.feature h3 {
-  font-size: 0.9375rem;
-}
-.feature p {
-  color: var(--text-2);
-  font-size: 0.875rem;
-  font-weight: 300;
-}
-
-.price {
-  display: flex;
-  align-items: baseline;
-  gap: 0.4rem;
-}
-.price .amount {
-  font-family: var(--mono);
-  font-size: 2rem;
-  font-weight: 600;
-  letter-spacing: -0.03em;
-}
-
-.faq details {
-  padding: 1rem 0;
-  box-shadow: inset 0 -1px 0 var(--line-soft);
-}
-.faq summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  cursor: pointer;
-  font-weight: 600;
   list-style: none;
 }
-.faq summary::-webkit-details-marker {
-  display: none;
+.site-foot li {
+  margin-bottom: 0.4rem;
 }
-.faq summary::after {
-  content: '+';
-  color: var(--primary);
-  font-size: 1.25rem;
-  font-weight: 400;
+.foot-legal {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  justify-content: space-between;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--l-rule-soft);
+  font-size: 0.75rem;
 }
-.faq details[open] summary::after {
-  content: '−';
+.foot-legal .mono {
+  font-family: var(--mono);
 }
-.faq p {
+
+/* ---------------------------------------------------------------- Anmeldeseiten */
+
+.auth {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 2.5rem 1.25rem;
+}
+.auth-box {
+  width: 100%;
+  max-width: 24rem;
+}
+.auth .brand {
+  justify-content: center;
+  display: flex;
+  margin-bottom: 1.75rem;
+}
+.auth-card {
+  padding: 1.85rem 1.6rem;
+  border: 1px solid var(--l-rule);
+  border-radius: var(--r-xl);
+  background: var(--l-paper-2);
+}
+.auth-card h1 {
+  font-size: 1.375rem;
+  letter-spacing: -0.02em;
+}
+.auth-lead {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--l-ink-2);
+}
+.auth-card form {
+  margin-top: 1.6rem;
+}
+.auth-alt {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  margin-top: 1rem;
+  font-size: 0.8125rem;
+  color: var(--l-ink-2);
+}
+.auth-alt a {
+  color: var(--l-ink);
+  font-weight: 600;
+}
+.form-error {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--bad);
+}
+.or {
+  position: relative;
+  margin: 1.25rem 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--l-ink-2);
+}
+.or::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  border-top: 1px solid var(--l-rule-soft);
+}
+.or span {
+  position: relative;
+  padding: 0 0.6rem;
+  background: var(--l-paper-2);
+}
+
+/* Eingabefelder auf den öffentlichen Seiten folgen dem Papier, nicht dem Panel. */
+body.site input,
+body.site select,
+body.site textarea {
+  background: var(--l-paper);
+  color: var(--l-ink);
+  box-shadow: inset 0 0 0 1px var(--l-rule);
+}
+body.site .field > label {
+  color: var(--l-ink);
+}
+body.site .field .hint {
+  color: var(--l-ink-2);
+}
+
+/* ---------------------------------------------------------------- Hinweisseiten */
+
+.notice {
+  padding-block: clamp(4rem, 10vw, 7rem);
+  min-height: 60vh;
+}
+.notice .brand {
+  margin-bottom: 2rem;
+}
+.notice h1 {
   margin-top: 0.75rem;
-  color: var(--text-2);
-  font-weight: 300;
+  font-size: clamp(2rem, 1.4rem + 2.4vw, 3rem);
+  letter-spacing: -0.035em;
+}
+.notice .lead {
+  margin-top: 1rem;
+  max-width: 34rem;
+}
+.notice p + p {
+  margin-top: 2rem;
+}
+
+.prose {
+  padding-block: clamp(3rem, 7vw, 4.5rem);
+  max-width: 44rem;
+}
+.prose h1 {
+  font-size: clamp(1.9rem, 1.4rem + 2vw, 2.6rem);
+  letter-spacing: -0.035em;
+  margin-bottom: 1.75rem;
+}
+.prose p {
+  margin: 0 0 1.1rem;
+  color: var(--l-ink-2);
+  line-height: 1.65;
+}
+body.site .note {
+  background: color-mix(in oklab, var(--l-live) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--l-live) 30%, transparent);
+  color: var(--l-ink);
 }
 
 /* ---------------------------------------------------------------- Dashboard */
@@ -1020,6 +1797,13 @@ footer.site .legal {
   .side.open {
     transform: none;
   }
+}
+
+#side-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .side .nav {
@@ -1296,22 +2080,6 @@ dialog footer {
   }
 }
 
-/* ---------------------------------------------------------------- Anmeldeseiten */
-
-.auth {
-  display: grid;
-  place-items: center;
-  min-height: 100svh;
-  padding: 2rem 1.25rem;
-}
-.auth .box {
-  width: min(26rem, 100%);
-}
-.auth .card {
-  background: var(--surface);
-  padding: 1.5rem;
-}
-
 /* ---------------------------------------------------------------- Bewegung */
 
 .padgrid {
@@ -1332,4 +2100,125 @@ dialog footer {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* ---------------------------------------------------------------- Dashboard: Ergänzungen */
+
+/* Die Unterreiter eines Serverplatzes in der Seitenleiste. */
+.subtabs {
+  margin: 0.15rem 0 0.5rem 0.95rem;
+  padding-left: 0.6rem;
+  box-shadow: inset 1px 0 0 var(--line);
+}
+.subtabs .profile-link {
+  padding-block: 0.3rem;
+  font-size: 0.8125rem;
+}
+
+.side .nav .count,
+.profile-link .count {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+.side .nav .count.primary {
+  min-width: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-weight: 700;
+  text-align: center;
+}
+
+.tabs.wrap {
+  flex-wrap: wrap;
+}
+
+/* Der Streifen, wenn ein Administrator ein fremdes Konto ansieht. */
+.impersonate {
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--warn);
+  color: #1a1400;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+/* Ticket-Nachrichten. */
+.msg {
+  padding: 0.9rem 1rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.msg.staff {
+  background: color-mix(in oklab, var(--primary) 8%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 25%, transparent);
+}
+.msg.internal {
+  background: color-mix(in oklab, var(--warn) 10%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 30%, transparent);
+}
+.msg p {
+  margin: 0.5rem 0 0;
+  font-size: 0.9375rem;
+  white-space: pre-wrap;
+}
+
+/* Der Microsoft-Code im Anmeldedialog. */
+.code-box {
+  flex: 1;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 1.5rem;
+  letter-spacing: 0.12em;
+}
+
+/* Aufladepakete als Knopfliste. */
+.pack-button {
+  width: 100%;
+  padding: 0.7rem 0.9rem;
+  border: 0;
+  border-radius: var(--r-xl);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pack-button:hover {
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+/* Tarifauswahl im Serverplatz. */
+.plans-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+}
+.plans-grid .card.is-current {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.price-line {
+  margin: 0.75rem 0 0;
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+
+hr.rule {
+  height: 0;
+  margin: 0.25rem 0;
+  border: 0;
+  border-top: 1px solid var(--line-soft);
 }

@@ -1,0 +1,42 @@
+{{> head}}
+    <main class="auth" id="main">
+      <div class="auth-box">
+        <a class="brand" href="/{{lang}}">
+          <img class="logo" src="/assets/img/logo.svg" alt="" />
+          <span>{{brand}}</span>
+        </a>
+
+        <div class="auth-card">
+          <h1>{{auth.login.title}}</h1>
+          <p class="auth-lead">{{auth.login.lead}}</p>
+
+          <form id="form" class="stack" novalidate>
+            <div class="field">
+              <label for="login">{{auth.login.identifier}}</label>
+              <input id="login" name="login" type="text" autocomplete="username" required />
+            </div>
+            <div class="field">
+              <label for="password">{{auth.login.password}}</label>
+              <input id="password" name="password" type="password" autocomplete="current-password" required />
+            </div>
+            <p id="error" class="form-error hide" role="alert"></p>
+            <button class="btn btn-primary btn-block" type="submit">{{auth.login.submit}}</button>
+          </form>
+
+          <div id="discord" class="hide">
+            <div class="or"><span>{{auth.or}}</span></div>
+            <a class="btn btn-block" href="/api/auth/discord/start?mode=login">{{auth.login.discord}}</a>
+          </div>
+        </div>
+
+        <p class="auth-alt">
+          <a href="/{{lang}}/forgot">{{auth.login.forgot}}</a>
+          <span aria-hidden="true">·</span>
+          <a href="/{{lang}}/register">{{auth.login.noAccount}}</a>
+        </p>
+        <p class="auth-alt"><a href="/{{lang}}">{{common.back}}</a></p>
+      </div>
+    </main>
+    <script type="module" src="/assets/js/auth.js"></script>
+  </body>
+</html>

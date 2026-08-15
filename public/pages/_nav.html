@@ -1,0 +1,28 @@
+    <a class="skip" href="#main">{{nav.skip}}</a>
+    <header class="site-head">
+      <div class="page">
+        <a class="brand" href="/{{lang}}">
+          <img class="logo" src="/assets/img/logo.svg" alt="" />
+          <span>{{brand}}</span>
+        </a>
+
+        <nav class="site-links" aria-label="{{nav.menu}}">
+          <a href="/{{lang}}#features">{{nav.features}}</a>
+          <a href="/{{lang}}#pricing">{{nav.pricing}}</a>
+          <a href="/{{lang}}#how">{{nav.how}}</a>
+          <a href="/{{lang}}#faq">{{nav.faq}}</a>
+        </nav>
+
+        <div class="site-actions">
+          <div class="langs" role="group" aria-label="{{common.language}}">
+            <a href="/en{{path}}" hreflang="en" {{enCurrent}}>EN</a>
+            <a href="/de{{path}}" hreflang="de" {{deCurrent}}>DE</a>
+          </div>
+          <div class="themes" id="themes"></div>
+          <span class="head-auth" id="head-auth">
+            <a class="btn btn-sm" href="/{{lang}}/login">{{nav.login}}</a>
+            <a class="btn btn-primary btn-sm" href="/{{lang}}/register">{{nav.register}}</a>
+          </span>
+        </div>
+      </div>
+    </header>

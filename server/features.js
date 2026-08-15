@@ -1,221 +1,278 @@
 // Was das Panel kann – und was davon der Client heute wirklich hergibt.
 //
 // Diese Liste ist die einzige Wahrheitsquelle: das Dashboard zeichnet daraus die Hinweise an den
-// betroffenen Stellen ("braucht die Bewegungs-Bauform", "kann der Client noch nicht"), die
-// Startseite ihre Feature-Übersicht, und `GET /api/meta` liefert sie ans Frontend. Kommt im Client
-// etwas dazu, wird hier ein Eintrag umgestellt – nicht an zehn Stellen im Frontend.
+// betroffenen Stellen, die Startseite ihre Übersicht, und `GET /api/meta` liefert sie ans
+// Frontend. Der Zustand wird **nicht von Hand gepflegt**, sondern aus den Fähigkeiten der
+// Client-Dateien berechnet (binaries.js liest sie aus `--help`). Kommt im Client etwas dazu,
+// stimmt das Panel nach dem nächsten Abgleich von selbst.
 //
 // status:
-//   ready     – läuft
-//   movement  – läuft, sobald das Profil die Bewegungs-Bauform nutzt (afk-linux-move)
-//   missing   – der Client kann es noch nicht; im Panel sichtbar, aber abgeschaltet
+//   ready    – läuft, für alle
+//   premium  – läuft mit einem bezahlten Serverplatz (Premium-Client)
+//   soon     – geplant, noch nicht da
+//   no       – bewusst nicht gebaut, mit Begründung
+//   missing  – der Client müsste es können, kann es aber gerade nicht (Datei fehlt/veraltet)
 
-export const FEATURES = [
+const list = (caps) => [
   {
     key: 'versions',
-    group: 'Verbindung',
-    title: 'Alle Client-Versionen',
+    group: 'connection',
     status: 'ready',
-    text: 'Jede Minecraft-Version, die der Client spricht, ist im Panel wählbar – die Liste kommt aus dem Client selbst.',
+    de: {
+      title: 'Alle Client-Versionen',
+      text: 'Jede Minecraft-Version, die der Client spricht, ist im Panel wählbar – die Liste kommt aus dem Client selbst.',
+    },
+    en: {
+      title: 'Every client version',
+      text: 'Every Minecraft version the client speaks is selectable in the panel – the list comes from the client itself.',
+    },
   },
   {
     key: 'always-online',
-    group: 'Verbindung',
-    title: '24/7 online',
+    group: 'connection',
     status: 'ready',
-    text: 'Die Bots laufen auf dem Server weiter, auch wenn der eigene Rechner aus ist.',
+    de: { title: '24/7 online', text: 'Die Bots laufen auf unserem Server weiter, auch wenn dein Rechner aus ist.' },
+    en: { title: '24/7 online', text: 'Bots keep running on our server, even with your own machine switched off.' },
   },
   {
     key: 'reconnect',
-    group: 'Verbindung',
-    title: 'Automatischer Reconnect',
+    group: 'connection',
     status: 'ready',
-    text: 'Nach einem Kick oder Abbruch verbindet der Client von selbst neu, mit wachsender Wartezeit.',
+    de: { title: 'Automatischer Reconnect', text: 'Nach Kick oder Abbruch verbindet der Client von selbst neu, mit wachsender Wartezeit.' },
+    en: { title: 'Automatic reconnect', text: 'After a kick or drop the client reconnects on its own, with growing backoff.' },
   },
   {
     key: 'anti-kick',
-    group: 'Verbindung',
-    title: 'Kick-Schutz',
+    group: 'connection',
     status: 'ready',
-    text: 'KeepAlive, Ping/Pong, Teleport-Bestätigung, Resource-Packs, Chat-Quittungen, Respawn und Server-Transfer – alles im Protokoll, ohne Gezappel.',
+    de: {
+      title: 'Kick-Schutz',
+      text: 'KeepAlive, Ping/Pong, Teleport-Bestätigung, Resource-Packs, Chat-Quittungen, Respawn, Verhaltenskodex – alles im Protokoll, ohne Gezappel.',
+    },
+    en: {
+      title: 'Kick protection',
+      text: 'KeepAlive, ping/pong, teleport confirmations, resource packs, chat acknowledgements, respawn, code of conduct – all in-protocol, no twitching.',
+    },
   },
   {
     key: 'transfer',
-    group: 'Verbindung',
-    title: 'Server-Transfer folgen',
+    group: 'connection',
     status: 'ready',
-    text: 'Schickt der Server den Bot weiter, folgt der Client dem neuen Ziel.',
+    de: { title: 'Server-Transfer folgen', text: 'Schickt der Server den Bot weiter, folgt der Client dem neuen Ziel.' },
+    en: { title: 'Follow server transfers', text: 'If the server hands the bot on, the client follows to the new target.' },
   },
   {
     key: 'multi-server',
-    group: 'Verbindung',
-    title: 'Mehrere Server',
+    group: 'connection',
     status: 'ready',
-    text: 'Beliebig viele Serverprofile, dieselben Konten dürfen auf mehreren gleichzeitig laufen.',
+    de: { title: 'Mehrere Server', text: 'Beliebig viele Serverplätze; dieselben Konten dürfen auf mehreren gleichzeitig laufen.' },
+    en: { title: 'Multiple servers', text: 'As many server slots as you like; the same accounts may run on several at once.' },
   },
   {
     key: 'chat-read',
-    group: 'Chat',
-    title: 'Chat mitlesen',
+    group: 'chat',
     status: 'ready',
-    text: 'Jede Nachricht landet live im Panel, mit Farben und Formatierung des Servers.',
+    de: { title: 'Chat mitlesen', text: 'Jede Nachricht landet live im Panel, mit Farben und Formatierung des Servers.' },
+    en: { title: 'Read chat', text: 'Every message lands in the panel live, with the server’s colours and formatting.' },
   },
   {
     key: 'chat-send',
-    group: 'Chat',
-    title: 'Chat schreiben',
+    group: 'chat',
     status: 'ready',
-    text: 'Nachrichten und Befehle an ein Konto oder an alle ausgewählten gleichzeitig.',
+    de: { title: 'Chat schreiben', text: 'Nachrichten und Befehle an ein Konto oder an alle ausgewählten gleichzeitig.' },
+    en: { title: 'Write chat', text: 'Messages and commands to one account or to every selected one at once.' },
   },
   {
     key: 'spam',
-    group: 'Chat',
-    title: 'Wiederholte Nachrichten',
+    group: 'chat',
     status: 'ready',
-    text: 'Nachrichten und Befehle im Zeittakt, jederzeit änderbar ohne Neustart des Bots.',
+    de: { title: 'Wiederholte Nachrichten', text: 'Nachrichten und Befehle im Zeittakt, änderbar ohne Neustart des Bots.' },
+    en: { title: 'Repeating messages', text: 'Messages and commands on a timer, changeable without restarting the bot.' },
   },
   {
     key: 'join-commands',
-    group: 'Chat',
-    title: 'Befehle beim Beitritt',
+    group: 'chat',
     status: 'ready',
-    text: 'Beim Betreten des Servers laufen die hinterlegten Befehle, z. B. /server survival.',
+    de: { title: 'Befehle beim Beitritt', text: 'Beim Betreten laufen die hinterlegten Befehle, etwa /server survival.' },
+    en: { title: 'Join commands', text: 'On joining, your stored commands run – /server survival, for instance.' },
   },
   {
     key: 'macros',
-    group: 'Automatik',
-    title: 'Macros',
+    group: 'automation',
     status: 'ready',
-    text: 'Auslöser (Beitritt, Zeittakt, Chatzeile, Tod, Abbruch) und eine Kette von Schritten.',
-  },
-  {
-    key: 'anti-afk',
-    group: 'Automatik',
-    title: 'Anti-AFK-Aktionen',
-    status: 'movement',
-    text: 'Umsehen, springen und ein Stück laufen gegen den Inaktivitäts-Kick. Der Befehl-Takt (/ping) läuft auch ohne Bewegung.',
-  },
-  {
-    key: 'movement',
-    group: 'Bewegung',
-    title: 'Laufen, springen, umsehen',
-    status: 'movement',
-    text: 'Gehen in vier Richtungen, Blickrichtung setzen, springen, fallen – mit der Bewegungs-Bauform des Clients.',
-  },
-  {
-    key: 'home-route',
-    group: 'Bewegung',
-    title: 'Heimatposition und Route',
-    status: 'movement',
-    text: 'Position merken, Weg aufzeichnen und nach jedem Beitritt automatisch dorthin zurücklaufen.',
-  },
-  {
-    key: 'sneak',
-    group: 'Bewegung',
-    title: 'Schleichen',
-    status: 'missing',
-    text: 'Der Client kennt keinen Schleich-Zustand.',
-  },
-  {
-    key: 'inventory',
-    group: 'Spiel',
-    title: 'Inventar',
-    status: 'missing',
-    text: 'Der Client öffnet keine Container und klickt keine Felder an – er spricht das Fenster-Protokoll nicht.',
-  },
-  {
-    key: 'pov',
-    group: 'Spiel',
-    title: 'Live-Ansicht (POV)',
-    status: 'missing',
-    text: 'Für ein Bild bräuchte der Client Blöcke und Entitäten im Speicher; er hält bewusst nichts davon vor.',
-  },
-  {
-    key: 'scoreboard',
-    group: 'Spiel',
-    title: 'Scoreboard / Tab-Liste',
-    status: 'missing',
-    text: 'Der Client wertet weder Scoreboard- noch Spielerlisten-Pakete aus.',
-  },
-  {
-    key: 'accounts-microsoft',
-    group: 'Konten',
-    title: 'Microsoft-Konten',
-    status: 'ready',
-    text: 'Anmeldung über den Gerätecode – das Passwort sieht das Panel nie, gespeichert wird nur der Token des Clients.',
-  },
-  {
-    key: 'accounts-offline',
-    group: 'Konten',
-    title: 'Offline-/Cracked-Konten',
-    status: 'missing',
-    text: 'Der Client meldet sich immer bei Microsoft an; einen Offline-Modus gibt es nicht.',
-  },
-  {
-    key: 'accounts-bedrock',
-    group: 'Konten',
-    title: 'Bedrock-Konten',
-    status: 'missing',
-    text: 'Der Client spricht nur das Java-Protokoll.',
-  },
-  {
-    key: 'proxies',
-    group: 'Netzwerk',
-    title: 'Proxys je Konto',
-    status: 'missing',
-    text: 'Der Client verbindet immer direkt; SOCKS5/HTTP-Proxys kennt er nicht. Im Panel lassen sich Proxys schon hinterlegen und zuordnen.',
-  },
-  {
-    key: 'fakehost',
-    group: 'Netzwerk',
-    title: 'Fake-Host im Handshake',
-    status: 'missing',
-    text: 'Der Handshake trägt immer die echte Zieladresse.',
+    de: { title: 'Macros', text: 'Auslöser (Beitritt, Zeittakt, Chatzeile, Weltwechsel, Tod, Abbruch) und eine Kette von Schritten.' },
+    en: { title: 'Macros', text: 'Triggers (join, timer, chat line, world change, death, disconnect) and a chain of steps.' },
   },
   {
     key: 'world-change',
-    group: 'Automatik',
-    title: 'Befehle bei Weltwechsel',
+    group: 'automation',
     status: 'ready',
-    text: 'Wechselt ein Bot auf einen Unterserver, meldet der Client das – das Panel hängt daran ein eigenes Macro, etwa um sich neu einzuloggen oder zurück in die richtige Welt zu wechseln.',
+    de: { title: 'Befehle bei Weltwechsel', text: 'Unterserver-Wechsel und Respawn in einer anderen Welt melden sich – daran hängt ein eigenes Macro.' },
+    en: { title: 'Commands on world change', text: 'Sub-server switches and respawns in another world are reported – hang a macro off it.' },
+  },
+  {
+    key: 'anti-afk',
+    group: 'automation',
+    status: caps.antiafk ? 'premium' : 'missing',
+    de: {
+      title: 'Anti-AFK-Bewegung',
+      text: 'Gegen Plugins, die auf echte Bewegung prüfen: Arm schwingen, Kopf drehen, zurückdrehen – zurückhaltend, im Minutenabstand.',
+    },
+    en: {
+      title: 'Anti-AFK movement',
+      text: 'Against plugins that look for real movement: swing arm, turn head, turn back – restrained, minutes apart.',
+    },
+  },
+  {
+    key: 'movement',
+    group: 'movement',
+    status: caps.movement ? 'premium' : 'missing',
+    de: { title: 'Laufen, springen, umsehen', text: 'Gehen in vier Richtungen, Blickrichtung setzen, springen, fallen lassen.' },
+    en: { title: 'Walk, jump, look around', text: 'Walk in four directions, set view direction, jump, drop down.' },
+  },
+  {
+    key: 'home-route',
+    group: 'movement',
+    status: caps.movement ? 'premium' : 'missing',
+    de: { title: 'Heimatposition und Route', text: 'Position merken, Weg aufzeichnen und nach jedem Beitritt automatisch dorthin zurücklaufen.' },
+    en: { title: 'Home position and route', text: 'Remember a spot, record a path, and walk back there automatically after every join.' },
+  },
+  {
+    key: 'sneak',
+    group: 'movement',
+    status: caps.sneak ? 'premium' : 'missing',
+    de: { title: 'Schleichen, Sprinten, Schlagen', text: 'Geduckt bleiben, sprinten, Arm schwingen, Gegenstand benutzen, Schnellleiste wählen.' },
+    en: { title: 'Sneak, sprint, swing', text: 'Stay crouched, sprint, swing your arm, use an item, pick a hotbar slot.' },
+  },
+  {
+    key: 'scoreboard',
+    group: 'game',
+    status: caps.board ? 'premium' : 'missing',
+    de: { title: 'Anzeigetafel und Tab-Liste', text: 'Die Seitenleiste des Servers und die Spielerliste, so wie sie im Spiel stünden.' },
+    en: { title: 'Scoreboard and tab list', text: 'The server’s sidebar and the player list, as they would appear in-game.' },
+  },
+  {
+    key: 'inventory',
+    group: 'game',
+    status: caps.menu ? 'premium' : 'missing',
+    de: {
+      title: 'Menüs anklicken',
+      text: 'Öffnet der Server ein Menü, siehst du Überschrift und Feldzahl und klickst ein Feld an. Was in den Feldern liegt, liest der Client bewusst nicht.',
+    },
+    en: {
+      title: 'Click through menus',
+      text: 'When the server opens a menu you see its title and slot count and can click a slot. What sits in the slots is deliberately not read.',
+    },
+  },
+  {
+    key: 'pov',
+    group: 'game',
+    status: 'no',
+    de: {
+      title: 'Live-Ansicht (POV)',
+      text: 'Gibt es nicht. Für ein Bild müsste der Client Chunks, Blöcke und Entitäten im Speicher halten – aus wenigen MB würden Hunderte.',
+    },
+    en: {
+      title: 'Live view (POV)',
+      text: 'Not offered. Rendering a view would mean holding chunks, blocks and entities in memory – a few MB would become hundreds.',
+    },
+  },
+  {
+    key: 'accounts-microsoft',
+    group: 'accounts',
+    status: 'ready',
+    de: { title: 'Microsoft-Konten', text: 'Anmeldung über den Gerätecode – dein Passwort sieht das Panel nie, gespeichert wird nur der Token des Clients.' },
+    en: { title: 'Microsoft accounts', text: 'Device-code sign-in – the panel never sees your password, only the client’s token is stored.' },
+  },
+  {
+    key: 'accounts-offline',
+    group: 'accounts',
+    status: caps.offline ? 'premium' : 'missing',
+    de: { title: 'Offline-/Cracked-Konten', text: 'Für Server mit online-mode=false: Name eingeben, die UUID rechnet der Client wie der Server aus.' },
+    en: { title: 'Offline / cracked accounts', text: 'For servers with online-mode=false: enter a name, the client derives the UUID exactly as the server does.' },
+  },
+  {
+    key: 'accounts-bedrock',
+    group: 'accounts',
+    status: 'soon',
+    de: { title: 'Bedrock-Konten', text: 'In Arbeit. Bedrock ist ein eigener Protokollstapel (RakNet), also im Grunde ein zweiter Client.' },
+    en: { title: 'Bedrock accounts', text: 'In the works. Bedrock is a separate protocol stack (RakNet) – effectively a second client.' },
+  },
+  {
+    key: 'proxies',
+    group: 'network',
+    status: caps.proxy ? 'premium' : 'missing',
+    de: {
+      title: 'Proxys je Konto',
+      text: 'SOCKS5 oder HTTP je Bot – für mehr Konten auf einem Server. Für bezahlte Plätze, Zuteilung über ein Ticket.',
+    },
+    en: {
+      title: 'Per-account proxies',
+      text: 'SOCKS5 or HTTP per bot – for more accounts on one server. Paid slots only, assigned through a ticket.',
+    },
+  },
+  {
+    key: 'fakehost',
+    group: 'network',
+    status: caps.fakehost ? 'premium' : 'missing',
+    de: { title: 'Fake-Host im Handshake', text: 'Die Adresse im Handshake lässt sich frei setzen; die Verbindung geht trotzdem zum echten Ziel.' },
+    en: { title: 'Fake host in the handshake', text: 'Set the address sent in the handshake freely; the connection still goes to the real target.' },
   },
   {
     key: 'credits',
-    group: 'Panel',
-    title: 'Abrechnung über Guthaben',
+    group: 'panel',
     status: 'ready',
-    text: 'Kein Abo: Guthaben aufladen, im Minutentakt wird nur bezahlt, was wirklich läuft.',
+    de: { title: 'Guthaben statt Abo', text: 'Ein Credit ist ein Cent. Ein Serverplatz ist gratis, jeder weitere kostet seinen Monatspreis.' },
+    en: { title: 'Credits, not subscriptions', text: 'One credit is one cent. One server slot is free, every further one costs its monthly price.' },
   },
   {
-    key: 'mobile',
-    group: 'Panel',
-    title: 'Vom Handy aus',
+    key: 'tickets',
+    group: 'panel',
     status: 'ready',
-    text: 'Das Dashboard ist für kleine Bildschirme gebaut – starten, stoppen, chatten unterwegs.',
+    de: { title: 'Support-Tickets', text: 'Fragen, Proxy-Anfragen und Fehlermeldungen laufen als Ticket im Panel – mit Verlauf.' },
+    en: { title: 'Support tickets', text: 'Questions, proxy requests and bug reports run as tickets in the panel – with history.' },
   },
   {
     key: 'discord',
-    group: 'Panel',
-    title: 'Discord-Benachrichtigungen',
+    group: 'panel',
     status: 'ready',
-    text: 'Webhook hinterlegen und bei Abbruch, Fehler oder knappem Guthaben eine Nachricht bekommen.',
+    de: { title: 'Discord', text: 'Konto verknüpfen und über einen Webhook Bescheid bekommen, wenn ein Bot abbricht oder das Guthaben knapp wird.' },
+    en: { title: 'Discord', text: 'Link your account and get a webhook message when a bot drops or credits run low.' },
   },
   {
-    key: 'downloads',
-    group: 'Panel',
-    title: 'Client zum Mitnehmen',
+    key: 'mobile',
+    group: 'panel',
     status: 'ready',
-    text: 'Dieselben Dateien wie im Panel gibt es als Download für Windows und Linux.',
+    de: { title: 'Vom Handy aus', text: 'Das Dashboard ist für kleine Bildschirme gebaut – starten, stoppen, chatten unterwegs.' },
+    en: { title: 'From your phone', text: 'The dashboard is built for small screens – start, stop and chat on the move.' },
   },
 ];
 
-export const byStatus = (status) => FEATURES.filter((feature) => feature.status === status);
-
-export const groups = () => {
-  const map = new Map();
-  for (const feature of FEATURES) {
-    if (!map.has(feature.group)) map.set(feature.group, []);
-    map.get(feature.group).push(feature);
-  }
-  return [...map].map(([group, items]) => ({ group, items }));
+export const GROUPS = {
+  connection: { de: 'Verbindung', en: 'Connection' },
+  chat: { de: 'Chat', en: 'Chat' },
+  automation: { de: 'Automatik', en: 'Automation' },
+  movement: { de: 'Bewegung', en: 'Movement' },
+  game: { de: 'Im Spiel', en: 'In-game' },
+  accounts: { de: 'Konten', en: 'Accounts' },
+  network: { de: 'Netzwerk', en: 'Network' },
+  panel: { de: 'Panel', en: 'Panel' },
 };
+
+/** Die Feature-Liste für eine Sprache, berechnet aus den Fähigkeiten der vorhandenen Bauformen. */
+export function features(caps = {}, lang = 'de') {
+  const key = lang === 'en' ? 'en' : 'de';
+  return list(caps).map((feature) => ({
+    key: feature.key,
+    group: feature.group,
+    group_label: GROUPS[feature.group][key],
+    status: feature.status,
+    title: feature[key].title,
+    text: feature[key].text,
+  }));
+}
+
+/** Zustand eines einzelnen Schlüssels – für Prüfungen im Backend. */
+export function statusOf(key, caps = {}) {
+  return list(caps).find((feature) => feature.key === key)?.status || 'missing';
+}

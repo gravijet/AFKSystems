@@ -1,83 +1,135 @@
-// Eigene Einstellungen: Aussehen, Chatverlauf, Discord-Benachrichtigungen, Passwort.
+// Eigenes Konto: Sprache, Discord, Benachrichtigungen, Passwort, Sitzungen.
 
-import { api, icon, escapeHtml, $, ok, fail, confirmDialog } from '../ui.js';
+import { api, icon, escapeHtml, datetime, tr, url, $, ok, fail, confirmDialog } from '../ui.js';
 import { state, appbar, refresh, draw } from '../app.js';
 
 export async function render(root) {
   const me = state.me;
+  const sessions = await api('/me/sessions').catch(() => ({ sessions: [] }));
+  const discord = state.meta?.discord || {};
+  const flash = new URLSearchParams(location.hash.split('?')[1] || '').get('discord');
 
   root.innerHTML = `
-    ${appbar('Einstellungen', '', 'Gilt für dein Konto in diesem Panel')}
+    ${appbar(tr('set.title'), '', tr('set.sub'))}
+
+    ${
+      flash
+        ? `<div class="note ${flash === 'ok' ? '' : 'bad'}" style="margin-bottom:1.25rem">${icon(
+            flash === 'ok' ? 'check' : 'alert'
+          )}<div>${escapeHtml(flash === 'ok' ? tr('adm.saved') : flash)}</div></div>`
+        : ''
+    }
 
     <div class="grid two" style="align-items:start">
       <section class="panel">
-        <header><h3>Anzeige</h3></header>
+        <header><h3>${escapeHtml(tr('set.account'))}</h3></header>
         <div class="body stack">
+          <div class="row spread"><span class="muted small">${escapeHtml(tr('auth.register.username'))}</span>
+            <span class="mono">${escapeHtml(me.username)}</span></div>
+          <div class="row spread"><span class="muted small">${escapeHtml(tr('auth.register.email'))}</span>
+            <span class="mono">${escapeHtml(me.email)}</span></div>
+          <div class="row spread"><span class="muted small">${escapeHtml(tr('set.role'))}</span>
+            <span class="pill ${me.role === 'admin' ? 'primary' : ''}">${escapeHtml(
+              tr(me.role === 'admin' ? 'set.role.admin' : 'set.role.user')
+            )}</span></div>
           <div class="field">
-            <label for="chat_limit">Chatverlauf je Bot</label>
-            <input id="chat_limit" type="number" min="20" max="1000" value="${me.chat_limit}">
-            <span class="hint">So viele Zeilen hält der Server je Bot vor. Mehr heißt mehr Arbeitsspeicher.</span>
+            <label for="language">${escapeHtml(tr('set.language'))}</label>
+            <select id="language">
+              <option value="en" ${me.language === 'en' ? 'selected' : ''}>English</option>
+              <option value="de" ${me.language === 'de' ? 'selected' : ''}>Deutsch</option>
+            </select>
+            <span class="hint">${escapeHtml(tr('set.languageHint'))}</span>
           </div>
-          <div class="field">
-            <label>Aussehen</label>
-            <p class="small muted">Hell, dunkel oder wie das System – umzustellen unten links in der Seitenleiste.
-              Die Wahl liegt in diesem Browser.</p>
-          </div>
-          <button class="btn btn-primary" id="save-display">Speichern</button>
+          <button class="btn btn-primary" id="save-language">${escapeHtml(tr('common.save'))}</button>
         </div>
       </section>
 
       <section class="panel">
-        <header><h3>Discord-Benachrichtigungen</h3></header>
+        <header><h3>${escapeHtml(tr('set.discord'))}</h3></header>
         <div class="body stack">
-          <p class="small muted">Trage einen Webhook deines Discord-Servers ein, dann meldet sich das Panel bei
-            Verbindungsabbrüchen, Kontoproblemen und knappem Guthaben. Höchstens eine Nachricht je Thema alle
-            zehn Minuten.</p>
+          ${
+            !discord.available
+              ? `<p class="small muted">${escapeHtml(tr('set.discordOff'))}</p>`
+              : me.discord
+                ? `<div class="row spread">
+                     <span class="row">${icon('message')} ${escapeHtml(
+                       tr('set.discordLinked', { name: me.discord.name })
+                     )}</span>
+                     <button class="btn btn-sm btn-danger" id="unlink">${escapeHtml(tr('set.discordUnlink'))}</button>
+                   </div>`
+                : `<a class="btn" href="/api/auth/discord/start?mode=link">${icon('message')} ${escapeHtml(
+                    tr('set.discordLink')
+                  )}</a>`
+          }
+
+          <hr class="rule">
+
+          <p class="small muted">${escapeHtml(tr('set.webhookHint'))}</p>
           <div class="field">
-            <label for="webhook">Webhook-Adresse</label>
+            <label for="webhook">${escapeHtml(tr('set.webhook'))}</label>
             <input id="webhook" type="url" placeholder="https://discord.com/api/webhooks/…"
               value="${escapeHtml(me.discord_webhook || '')}">
           </div>
           <div class="row">
-            <button class="btn btn-primary" id="save-hook">Speichern</button>
-            <button class="btn" id="test-hook" ${me.discord_webhook ? '' : 'disabled'}>Testnachricht</button>
+            <button class="btn btn-primary" id="save-hook">${escapeHtml(tr('common.save'))}</button>
+            <button class="btn" id="test-hook" ${me.discord_webhook ? '' : 'disabled'}>${escapeHtml(
+              tr('set.webhookTest')
+            )}</button>
           </div>
         </div>
       </section>
 
       <section class="panel">
-        <header><h3>Passwort ändern</h3></header>
+        <header><h3>${escapeHtml(tr('set.password'))}</h3></header>
         <div class="body stack">
-          <div class="field"><label for="old">Aktuelles Passwort</label>
+          <div class="field"><label for="old">${escapeHtml(tr('set.passwordOld'))}</label>
             <input id="old" type="password" autocomplete="current-password"></div>
-          <div class="field"><label for="new">Neues Passwort</label>
-            <input id="new" type="password" autocomplete="new-password" minlength="8">
-            <span class="hint">Mindestens 8 Zeichen. Andere Sitzungen werden abgemeldet.</span></div>
-          <button class="btn btn-primary" id="save-password">Passwort ändern</button>
+          <div class="field"><label for="new">${escapeHtml(tr('set.passwordNew'))}</label>
+            <input id="new" type="password" autocomplete="new-password" minlength="8"></div>
+          <div class="field"><label for="new2">${escapeHtml(tr('set.passwordNew2'))}</label>
+            <input id="new2" type="password" autocomplete="new-password" minlength="8">
+            <span class="hint">${escapeHtml(tr('set.passwordHint'))}</span></div>
+          <button class="btn btn-primary" id="save-password">${escapeHtml(tr('set.password'))}</button>
         </div>
       </section>
 
       <section class="panel">
-        <header><h3>Konto</h3></header>
+        <header><h3>${escapeHtml(tr('set.sessions'))}</h3></header>
         <div class="body stack">
-          <div class="row spread"><span class="muted small">Benutzername</span>
-            <span class="mono">${escapeHtml(me.username)}</span></div>
-          <div class="row spread"><span class="muted small">E-Mail</span>
-            <span class="mono">${escapeHtml(me.email)}</span></div>
-          <div class="row spread"><span class="muted small">Rolle</span>
-            <span class="pill ${me.role === 'admin' ? 'primary' : ''}">${me.role === 'admin' ? 'Administrator' : 'Nutzer'}</span></div>
-          <div class="row spread"><span class="muted small">Tarif</span>
-            <span class="mono">${me.rate_mcr_hour} mcr je Bot und Stunde</span></div>
-          <button class="btn" id="logout-all">Auf allen Geräten abmelden</button>
+          ${
+            (sessions.sessions || [])
+              .map(
+                (session) => `<div class="row spread small">
+                  <span class="mono truncate" title="${escapeHtml(session.agent || '')}">${escapeHtml(
+                    session.ip || '–'
+                  )}</span>
+                  <span class="muted mono">${datetime(session.created_at)}</span>
+                </div>`
+              )
+              .join('') || `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`
+          }
+          <button class="btn" id="logout-all">${escapeHtml(tr('set.logoutAll'))}</button>
         </div>
       </section>
     </div>`;
 
-  $('#save-display').addEventListener('click', async () => {
+  $('#save-language').addEventListener('click', async () => {
+    const next = $('#language').value;
     try {
-      await api('/me', { method: 'PATCH', body: { chat_limit: Number($('#chat_limit').value) } });
+      await api('/me', { method: 'PATCH', body: { language: next } });
+      // Die Sprache steckt in der Adresse – also gleich dorthin wechseln.
+      location.href = `/${next}/app${location.hash}`;
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $('#unlink')?.addEventListener('click', async () => {
+    if (!(await confirmDialog(tr('set.discordUnlink')))) return;
+    try {
+      await api('/auth/discord', { method: 'DELETE' });
       await refresh({ profiles: false, accounts: false });
-      ok('Gespeichert.');
+      draw();
     } catch (error) {
       fail(error);
     }
@@ -87,7 +139,7 @@ export async function render(root) {
     try {
       await api('/me', { method: 'PATCH', body: { discord_webhook: $('#webhook').value } });
       await refresh({ profiles: false, accounts: false });
-      ok('Gespeichert.');
+      ok(tr('srv.saved'));
       draw();
     } catch (error) {
       fail(error);
@@ -98,7 +150,7 @@ export async function render(root) {
     // Der Server schickt die Nachricht – der Browser darf den Webhook nicht direkt ansprechen.
     try {
       await api('/me/discord-test', { method: 'POST' });
-      ok('Testnachricht raus. Schau in deinen Discord-Kanal.');
+      ok(tr('srv.saved'));
     } catch (error) {
       fail(error);
     }
@@ -108,19 +160,22 @@ export async function render(root) {
     try {
       await api('/me/password', {
         method: 'POST',
-        body: { old_password: $('#old').value, new_password: $('#new').value },
+        body: {
+          old_password: $('#old').value,
+          new_password: $('#new').value,
+          new_password2: $('#new2').value,
+        },
       });
-      $('#old').value = '';
-      $('#new').value = '';
-      ok('Passwort geändert.');
+      for (const id of ['#old', '#new', '#new2']) $(id).value = '';
+      ok(tr('set.passwordOk'));
     } catch (error) {
       fail(error);
     }
   });
 
   $('#logout-all').addEventListener('click', async () => {
-    if (!(await confirmDialog('Auf allen Geräten abmelden? Du musst dich danach neu anmelden.'))) return;
+    if (!(await confirmDialog(tr('set.logoutAllAsk')))) return;
     await api('/auth/logout', { method: 'POST' });
-    location.href = '/login.html';
+    location.href = url('/login');
   });
 }

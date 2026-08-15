@@ -4,7 +4,8 @@
 import { db, audit, getSetting } from './db.js';
 import { config } from './config.js';
 import { token, hashPassword, verifyPassword, HttpError, bad } from './util.js';
-import { grant } from './credits.js';
+import { grant, planOf, isPayingUser, monthlyCost } from './billing.js';
+import * as mail from './mail.js';
 
 const COOKIE = 'afk_session';
 
@@ -19,18 +20,21 @@ export function readCookie(req, name) {
   return null;
 }
 
-export function createSession(res, user, req) {
+export function createSession(res, user, req, { impersonatorId = null, parentToken = null } = {}) {
   const value = token(32);
   const expires = Date.now() + config.sessionDays * 86_400_000;
   db.prepare(
-    'INSERT INTO sessions (token, user_id, created_at, expires_at, ip, agent) VALUES (?, ?, ?, ?, ?, ?)'
+    `INSERT INTO sessions (token, user_id, created_at, expires_at, ip, agent, impersonator_id, parent_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     value,
     user.id,
     Date.now(),
     expires,
     req.ip || null,
-    String(req.headers['user-agent'] || '').slice(0, 200)
+    String(req.headers['user-agent'] || '').slice(0, 200),
+    impersonatorId,
+    parentToken
   );
   res.cookie(COOKIE, value, {
     httpOnly: true,
@@ -40,6 +44,17 @@ export function createSession(res, user, req) {
     path: '/',
   });
   return value;
+}
+
+/** Ein vorhandenes Sitzungs-Token wieder ins Cookie schreiben (Rückweg aus "Als Nutzer ansehen"). */
+export function setSessionCookie(res, value) {
+  res.cookie(COOKIE, value, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: config.publicUrl.startsWith('https'),
+    maxAge: config.sessionDays * 86_400_000,
+    path: '/',
+  });
 }
 
 export function destroySession(req, res) {
@@ -54,65 +69,115 @@ export function attachUser(req, _res, next) {
   if (value) {
     const row = db
       .prepare(
-        `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+        `SELECT u.*, s.impersonator_id, s.parent_token FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token = ? AND s.expires_at > ?`
       )
       .get(value, Date.now());
     if (row) {
-      req.user = row;
+      const { impersonator_id: impersonatorId, parent_token: parentToken, ...user } = row;
+      req.user = user;
       req.sessionToken = value;
-      db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), row.id);
+      if (impersonatorId) {
+        req.impersonator = db
+          .prepare('SELECT id, username FROM users WHERE id = ?')
+          .get(impersonatorId);
+        req.parentToken = parentToken;
+      }
+      db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), user.id);
     }
   }
   next();
 }
 
 export function requireUser(req, _res, next) {
-  if (!req.user) return next(new HttpError(401, 'Bitte anmelden.'));
-  if (req.user.blocked) return next(new HttpError(403, 'Dieses Konto ist gesperrt.'));
+  if (!req.user) return next(new HttpError(401, 'Bitte anmelden.', { en: 'Please log in.' }));
+  if (req.user.blocked) {
+    return next(new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' }));
+  }
+  if (mail.verifyRequired() && !req.user.email_verified) {
+    return next(
+      new HttpError(403, 'Bitte zuerst die E-Mail-Adresse bestätigen.', {
+        en: 'Please confirm your email address first.',
+        code: 'email-unverified',
+      })
+    );
+  }
   next();
 }
 
 export function requireAdmin(req, _res, next) {
-  if (!req.user) return next(new HttpError(401, 'Bitte anmelden.'));
-  if (req.user.role !== 'admin') return next(new HttpError(403, 'Nur für Administratoren.'));
+  if (!req.user) return next(new HttpError(401, 'Bitte anmelden.', { en: 'Please log in.' }));
+  if (req.user.role !== 'admin') {
+    return next(new HttpError(403, 'Nur für Administratoren.', { en: 'Administrators only.' }));
+  }
   next();
 }
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 const USERNAME = /^[a-zA-Z0-9_.-]{3,24}$/;
 
-export function register({ email, username, password }) {
-  const mail = String(email || '').trim().toLowerCase();
-  const name = String(username || '').trim();
-  if (!EMAIL.test(mail)) throw bad('Das ist keine gültige E-Mail-Adresse.');
-  if (!USERNAME.test(name)) {
-    throw bad('Benutzername: 3–24 Zeichen, nur Buchstaben, Ziffern, . _ und -');
+export function checkPasswordPair(password, repeat) {
+  if (String(password || '').length < 8) {
+    throw bad('Das Passwort braucht mindestens 8 Zeichen.', {
+      en: 'The password needs at least 8 characters.',
+    });
   }
-  if (String(password || '').length < 8) throw bad('Das Passwort braucht mindestens 8 Zeichen.');
+  if (String(password) !== String(repeat ?? '')) {
+    throw bad('Die beiden Passwörter sind nicht gleich.', {
+      en: 'The two passwords are not the same.',
+      code: 'password-mismatch',
+    });
+  }
+}
 
-  if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(mail)) {
-    throw bad('Diese E-Mail-Adresse ist schon vergeben.');
+export function register({ email, username, password, password2, language = 'en' }) {
+  const mailAddress = String(email || '').trim().toLowerCase();
+  const name = String(username || '').trim();
+  if (!EMAIL.test(mailAddress)) {
+    throw bad('Das ist keine gültige E-Mail-Adresse.', { en: 'That is not a valid email address.' });
+  }
+  if (!USERNAME.test(name)) {
+    throw bad('Benutzername: 3–24 Zeichen, nur Buchstaben, Ziffern, . _ und -', {
+      en: 'Username: 3–24 characters – letters, digits, . _ and - only.',
+    });
+  }
+  checkPasswordPair(password, password2);
+
+  if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(mailAddress)) {
+    throw bad('Diese E-Mail-Adresse ist schon vergeben.', { en: 'That email address is taken.' });
   }
   if (db.prepare('SELECT 1 FROM users WHERE username = ? COLLATE NOCASE').get(name)) {
-    throw bad('Dieser Benutzername ist schon vergeben.');
+    throw bad('Dieser Benutzername ist schon vergeben.', { en: 'That username is taken.' });
   }
 
   // Der Erste ist Admin – oder wer in ADMIN_EMAIL steht.
   const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-  const role = count === 0 || (config.adminEmail && config.adminEmail === mail) ? 'admin' : 'user';
+  const role = count === 0 || (config.adminEmail && config.adminEmail === mailAddress) ? 'admin' : 'user';
+  const needsVerification = mail.verifyRequired() && role !== 'admin';
 
   const info = db
     .prepare(
-      `INSERT INTO users (email, username, password_hash, role, created_at)
-       VALUES (?, ?, ?, ?, ?)`
+      `INSERT INTO users (email, username, password_hash, role, language, email_verified, verify_token,
+                          verify_sent_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(mail, name, hashPassword(password), role, Date.now());
+    .run(
+      mailAddress,
+      name,
+      hashPassword(password),
+      role,
+      language === 'de' ? 'de' : 'en',
+      needsVerification ? 0 : 1,
+      needsVerification ? token(24) : null,
+      needsVerification ? Date.now() : null,
+      Date.now()
+    );
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
-  const bonus = Number(getSetting('signup_bonus_mcr')) || 0;
+  const bonus = Number(getSetting('signup_bonus')) || 0;
   if (bonus > 0) grant(user.id, bonus, 'bonus', 'Startguthaben');
   audit(user.id, 'register', { role });
+  if (needsVerification) mail.sendVerification(user, user.verify_token);
   return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
 }
 
@@ -124,38 +189,112 @@ export function login({ login: identifier, password }) {
   // Immer hashen, damit ein unbekannter Name nicht schneller antwortet als ein falsches Passwort.
   const stored = user ? user.password_hash : hashPassword('platzhalter');
   const ok = verifyPassword(String(password || ''), stored);
-  if (!user || !ok) throw new HttpError(401, 'E-Mail/Benutzername oder Passwort stimmt nicht.');
-  if (user.blocked) throw new HttpError(403, 'Dieses Konto ist gesperrt.');
+  if (!user || !ok) {
+    throw new HttpError(401, 'E-Mail/Benutzername oder Passwort stimmt nicht.', {
+      en: 'That email/username and password do not match.',
+    });
+  }
+  if (user.blocked) throw new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' });
   return user;
 }
 
-export function changePassword(user, oldPassword, newPassword) {
+export function changePassword(user, oldPassword, newPassword, repeat) {
   if (!verifyPassword(String(oldPassword || ''), user.password_hash)) {
-    throw bad('Das alte Passwort stimmt nicht.');
+    throw bad('Das alte Passwort stimmt nicht.', { en: 'The current password is wrong.' });
   }
-  if (String(newPassword || '').length < 8) throw bad('Das neue Passwort braucht 8 Zeichen.');
-  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
-    hashPassword(newPassword),
-    user.id
-  );
-  // Andere Sitzungen fliegen raus, die aktuelle bleibt.
+  checkPasswordPair(newPassword, repeat);
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
+  // Andere Sitzungen fliegen raus, die aktuelle wird vom Aufrufer neu gesetzt.
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
   audit(user.id, 'password-change');
 }
 
+// ---------------------------------------------------------------- E-Mail bestätigen
+
+export function verifyEmail(rawToken) {
+  const value = String(rawToken || '').trim();
+  if (!value) return null;
+  const user = db.prepare('SELECT * FROM users WHERE verify_token = ?').get(value);
+  if (!user) return null;
+  db.prepare('UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?').run(user.id);
+  audit(user.id, 'email-verified');
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+}
+
+export function resendVerification(user) {
+  if (user.email_verified) throw bad('Diese Adresse ist schon bestätigt.', { en: 'That address is already confirmed.' });
+  if (user.verify_sent_at && Date.now() - user.verify_sent_at < 60_000) {
+    throw bad('Gerade erst verschickt. Bitte eine Minute warten.', {
+      en: 'Just sent. Please wait a minute.',
+    });
+  }
+  const value = token(24);
+  db.prepare('UPDATE users SET verify_token = ?, verify_sent_at = ? WHERE id = ?').run(
+    value,
+    Date.now(),
+    user.id
+  );
+  return mail.sendVerification({ ...user, verify_token: value }, value);
+}
+
+// ---------------------------------------------------------------- Passwort vergessen
+
+const RESET_MS = 60 * 60 * 1000;
+
+export async function requestReset(email) {
+  const address = String(email || '').trim().toLowerCase();
+  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(address);
+  // Nach außen sieht es immer gleich aus – sonst ließe sich hier durchprobieren, wer Kunde ist.
+  if (!user || !mail.configured()) return;
+  const value = token(24);
+  db.prepare('UPDATE users SET reset_token = ?, reset_expires = ? WHERE id = ?').run(
+    value,
+    Date.now() + RESET_MS,
+    user.id
+  );
+  await mail.sendReset(user, value);
+}
+
+export function applyReset(rawToken, password, repeat) {
+  const value = String(rawToken || '').trim();
+  const user = value
+    ? db.prepare('SELECT * FROM users WHERE reset_token = ? AND reset_expires > ?').get(value, Date.now())
+    : null;
+  if (!user) throw bad('Dieser Link gilt nicht mehr.', { en: 'This link is no longer valid.', code: 'reset-invalid' });
+  checkPasswordPair(password, repeat);
+  db.prepare(
+    'UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?'
+  ).run(hashPassword(password), user.id);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  audit(user.id, 'password-reset');
+  return user;
+}
+
+// ---------------------------------------------------------------- Darstellung
+
 export function publicUser(user) {
+  const paying = isPayingUser(user.id);
   return {
     id: user.id,
     email: user.email,
     username: user.username,
     role: user.role,
-    credits_mcr: user.credits_mcr,
-    rate_mcr_hour: user.rate_mcr_hour ?? Number(getSetting('rate_mcr_hour')),
+    credits: user.credits,
+    blocked: Boolean(user.blocked),
+    email_verified: Boolean(user.email_verified),
     theme: user.theme,
     language: user.language,
     chat_limit: user.chat_limit,
     discord_webhook: user.discord_webhook || '',
+    discord: user.discord_id
+      ? { id: user.discord_id, name: user.discord_name, avatar: user.discord_avatar }
+      : null,
+    paying,
+    premium_until: user.premium_until || null,
+    proxy_allowance: user.proxy_allowance,
+    monthly_cost: monthlyCost(user.id),
     created_at: user.created_at,
+    last_seen_at: user.last_seen_at,
   };
 }
 
@@ -163,3 +302,12 @@ export function publicUser(user) {
 export function cleanupSessions() {
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
 }
+
+export function sessionsOf(userId) {
+  return db
+    .prepare('SELECT token, created_at, expires_at, ip, agent FROM sessions WHERE user_id = ? ORDER BY created_at DESC')
+    .all(userId)
+    .map((row) => ({ ...row, token: `${row.token.slice(0, 6)}…` }));
+}
+
+export { planOf };

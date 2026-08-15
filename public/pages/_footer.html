@@ -1,0 +1,42 @@
+    <footer class="site-foot">
+      <div class="page">
+        <div class="foot-cols">
+          <div class="foot-brand">
+            <a class="brand" href="/{{lang}}">
+              <img class="logo" src="/assets/img/logo.svg" alt="" />
+              <span>{{brand}}</span>
+            </a>
+            <p>{{footer.about}}</p>
+          </div>
+          <nav aria-labelledby="foot-panel">
+            <h2 id="foot-panel">{{footer.panel}}</h2>
+            <ul>
+              <li><a href="/{{lang}}/app">{{nav.dashboard}}</a></li>
+              <li><a href="/{{lang}}/login">{{nav.login}}</a></li>
+              <li><a href="/{{lang}}/register">{{nav.register}}</a></li>
+            </ul>
+          </nav>
+          <nav aria-labelledby="foot-topics">
+            <h2 id="foot-topics">{{footer.topics}}</h2>
+            <ul>
+              <li><a href="/{{lang}}#features">{{nav.features}}</a></li>
+              <li><a href="/{{lang}}#pricing">{{nav.pricing}}</a></li>
+              <li><a href="/{{lang}}#versions">{{nav.versions}}</a></li>
+              <li><a href="/{{lang}}#faq">{{nav.faq}}</a></li>
+            </ul>
+          </nav>
+          <nav aria-labelledby="foot-legal">
+            <h2 id="foot-legal">{{footer.legal}}</h2>
+            <ul>
+              <li><a href="/{{lang}}/imprint">{{footer.imprint}}</a></li>
+              <li><a href="/{{lang}}/privacy">{{footer.privacy}}</a></li>
+              <li><a href="/{{lang}}/terms">{{footer.terms}}</a></li>
+            </ul>
+          </nav>
+        </div>
+        <div class="foot-legal">
+          <span class="mono">© {{year}} {{brand}}</span>
+          <span>{{footer.disclaimer}}</span>
+        </div>
+      </div>
+    </footer>

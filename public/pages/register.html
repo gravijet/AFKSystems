@@ -1,0 +1,58 @@
+{{> head}}
+    <main class="auth" id="main">
+      <div class="auth-box">
+        <a class="brand" href="/{{lang}}">
+          <img class="logo" src="/assets/img/logo.svg" alt="" />
+          <span>{{brand}}</span>
+        </a>
+
+        <div class="auth-card" id="card">
+          <h1>{{auth.register.title}}</h1>
+          <p class="auth-lead">{{auth.register.lead}}</p>
+
+          <p id="closed" class="note warn hide">{{auth.register.closed}}</p>
+
+          <form id="form" class="stack" novalidate>
+            <div class="field">
+              <label for="email">{{auth.register.email}}</label>
+              <input id="email" name="email" type="email" autocomplete="email" required />
+            </div>
+            <div class="field">
+              <label for="username">{{auth.register.username}}</label>
+              <input id="username" name="username" type="text" autocomplete="username" required />
+              <span class="hint">{{auth.register.usernameHint}}</span>
+            </div>
+            <div class="field">
+              <label for="password">{{auth.register.password}}</label>
+              <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8" />
+              <span class="hint">{{auth.register.passwordHint}}</span>
+            </div>
+            <div class="field">
+              <label for="password2">{{auth.register.password2}}</label>
+              <input id="password2" name="password2" type="password" autocomplete="new-password" required minlength="8" />
+            </div>
+            <label class="check">
+              <input id="terms" type="checkbox" required />
+              <span>{{auth.register.terms}}</span>
+            </label>
+            <p id="error" class="form-error hide" role="alert"></p>
+            <button class="btn btn-primary btn-block" type="submit">{{auth.register.submit}}</button>
+          </form>
+        </div>
+
+        <!-- Nach dem Anlegen, wenn der Betreiber die E-Mail-Bestätigung eingeschaltet hat. -->
+        <div class="auth-card hide" id="sent">
+          <h1>{{auth.register.checkMail.title}}</h1>
+          <p class="auth-lead" id="sent-text"></p>
+          <button class="btn btn-block" id="resend" type="button">{{auth.register.resend}}</button>
+        </div>
+
+        <p class="auth-alt">
+          <a href="/{{lang}}/login">{{auth.register.have}}</a>
+        </p>
+        <p class="auth-alt"><a href="/{{lang}}">{{common.back}}</a></p>
+      </div>
+    </main>
+    <script type="module" src="/assets/js/auth.js"></script>
+  </body>
+</html>

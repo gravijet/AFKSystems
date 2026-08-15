@@ -1,5 +1,26 @@
 // Gemeinsame Bausteine für Startseite und Dashboard: Symbole, API-Aufrufe, Meldungen, Aussehen.
 
+import { t, LANGS, DEFAULT_LANG } from './i18n.js';
+
+// ---------------------------------------------------------------- Sprache
+//
+// Die Sprache steht im <html lang="…">, das der Server schon richtig ausliefert. Von dort holen
+// wir sie – so gibt es keinen zweiten Ort, an dem sie stehen könnte, und nichts blitzt falsch auf.
+
+const documentLang = document.documentElement.lang;
+export const lang = LANGS.includes(documentLang) ? documentLang : DEFAULT_LANG;
+export const locale = lang === 'de' ? 'de-DE' : 'en-GB';
+
+/** Ein Text in der Sprache dieser Seite. */
+export const tr = (key, vars = null) => t(key, lang, vars);
+
+/** Ein Feld, das der Server in beiden Sprachen liefert: {de, en} oder ein fertiger Text. */
+export const pick = (value) =>
+  value && typeof value === 'object' ? value[lang] ?? value[DEFAULT_LANG] ?? '' : value ?? '';
+
+/** Adresse innerhalb der Seite, mit Sprache vorne dran. */
+export const url = (path = '') => `/${lang}${path}`;
+
 // ---------------------------------------------------------------- Symbole (Lucide, eingebettet)
 
 const PATHS = {
@@ -59,10 +80,10 @@ export function applyTheme(value) {
 }
 
 export function themeSwitch() {
-  return `<div class="themes" role="group" aria-label="Aussehen">
-    <button data-theme="light" title="Hell" aria-pressed="false">${icon('sun')}</button>
-    <button data-theme="system" title="Wie das System" aria-pressed="true">${icon('monitor')}</button>
-    <button data-theme="dark" title="Dunkel" aria-pressed="false">${icon('moon')}</button>
+  return `<div class="themes" role="group" aria-label="${escapeHtml(tr('common.appearance'))}">
+    <button data-theme="light" title="${escapeHtml(tr('common.light'))}" aria-pressed="false">${icon('sun')}</button>
+    <button data-theme="system" title="${escapeHtml(tr('common.system'))}" aria-pressed="true">${icon('monitor')}</button>
+    <button data-theme="dark" title="${escapeHtml(tr('common.dark'))}" aria-pressed="false">${icon('moon')}</button>
   </div>`;
 }
 
@@ -74,16 +95,17 @@ document.addEventListener('click', (event) => {
 // ---------------------------------------------------------------- API
 
 export class ApiError extends Error {
-  constructor(message, status) {
+  constructor(message, status, code = null) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
 export async function api(path, { method = 'GET', body, raw = false } = {}) {
   const response = await fetch(`/api${path}`, {
     method,
-    headers: body ? { 'content-type': 'application/json' } : undefined,
+    headers: body ? { 'content-type': 'application/json', 'accept-language': lang } : { 'accept-language': lang },
     body: body ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
   });
@@ -94,7 +116,9 @@ export async function api(path, { method = 'GET', body, raw = false } = {}) {
   } catch {
     data = {};
   }
-  if (!response.ok) throw new ApiError(data.error || `Fehler ${response.status}`, response.status);
+  if (!response.ok) {
+    throw new ApiError(data.error || `${tr('common.error')} (${response.status})`, response.status, data.code || null);
+  }
   return data;
 }
 
@@ -131,16 +155,14 @@ export function escapeHtml(text) {
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
-/** Guthaben: intern Milli-Credits, angezeigt als Credits. */
-export function credits(mcr, digits = 2) {
-  return (mcr / 1000).toLocaleString('de-DE', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: 3,
-  });
+/** Guthaben. Ein Credit ist ein Cent – gezählt wird in ganzen Credits. */
+export function credits(value) {
+  return Math.round(Number(value) || 0).toLocaleString(locale);
 }
 
-export function euro(cent) {
-  return (cent / 100).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+/** Dieselbe Zahl als Geldbetrag: 100 Credits sind ein Euro. */
+export function euro(value) {
+  return ((Number(value) || 0) / 100).toLocaleString(locale, { style: 'currency', currency: 'EUR' });
 }
 
 export function since(timestamp) {
@@ -156,7 +178,7 @@ export function since(timestamp) {
 
 export function datetime(timestamp) {
   if (!timestamp) return '–';
-  return new Date(timestamp).toLocaleString('de-DE', {
+  return new Date(timestamp).toLocaleString(locale, {
     day: '2-digit',
     month: '2-digit',
     year: '2-digit',
@@ -165,28 +187,25 @@ export function datetime(timestamp) {
   });
 }
 
+export function date(timestamp) {
+  if (!timestamp) return '–';
+  return new Date(timestamp).toLocaleDateString(locale, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
+}
+
 export function clock(timestamp) {
-  return new Date(timestamp).toLocaleTimeString('de-DE', {
+  return new Date(timestamp).toLocaleTimeString(locale, {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
   });
 }
 
-const STATE_LABEL = {
-  online: 'Online',
-  auth: 'Anmeldung nötig',
-  starting: 'Startet',
-  connecting: 'Verbindet',
-  reconnecting: 'Neuer Versuch',
-  disconnected: 'Getrennt',
-  stopping: 'Stoppt',
-  offline: 'Offline',
-  error: 'Fehler',
-};
-
 export function stateBadge(state, detail = '') {
-  const label = STATE_LABEL[state] || state;
+  const label = tr(`state.${state}`);
   const live = state === 'online' ? ' live' : '';
   return `<span class="state ${escapeHtml(state)}" title="${escapeHtml(detail || label)}">
     <span class="dot${live}"></span>${escapeHtml(label)}</span>`;
@@ -201,14 +220,14 @@ export function panel(title, bodyHtml, actionsHtml = '') {
 }
 
 /** Bestätigungsdialog, der ein Versprechen zurückgibt. */
-export function confirmDialog(question, { confirm = 'Ja, weiter', danger = true } = {}) {
+export function confirmDialog(question, { confirm = tr('common.yes'), danger = true } = {}) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
     dialog.innerHTML = `
-      <header><h3>Bitte bestätigen</h3></header>
+      <header><h3>${escapeHtml(tr('common.confirm'))}</h3></header>
       <div class="body"><p>${escapeHtml(question)}</p></div>
       <footer>
-        <button class="btn" value="no">Abbrechen</button>
+        <button class="btn" value="no">${escapeHtml(tr('common.cancel'))}</button>
         <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" value="yes">${escapeHtml(confirm)}</button>
       </footer>`;
     document.body.append(dialog);
@@ -224,11 +243,14 @@ export function confirmDialog(question, { confirm = 'Ja, weiter', danger = true 
 }
 
 /** Formular-Dialog: Felder rein, Werte raus (oder null bei Abbruch). */
-export function formDialog(title, fields, { submit = 'Speichern' } = {}) {
+export function formDialog(title, fields, { submit = tr('common.save'), note = '' } = {}) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
     const body = fields
       .map((field) => {
+        if (field.type === 'note') {
+          return `<p class="small muted">${escapeHtml(field.label)}</p>`;
+        }
         const id = `f-${field.key}`;
         const value = escapeHtml(field.value ?? '');
         if (field.type === 'select') {
@@ -257,6 +279,8 @@ export function formDialog(title, fields, { submit = 'Speichern' } = {}) {
         return `<div class="field"><label for="${id}">${escapeHtml(field.label)}</label>
           <input id="${id}" name="${field.key}" type="${field.type || 'text'}" value="${value}"
             placeholder="${escapeHtml(field.placeholder || '')}"
+            ${field.required ? 'required' : ''}
+            ${field.step !== undefined ? `step="${field.step}"` : ''}
             ${field.min !== undefined ? `min="${field.min}"` : ''}
             ${field.max !== undefined ? `max="${field.max}"` : ''}>
           ${field.hint ? `<span class="hint">${escapeHtml(field.hint)}</span>` : ''}</div>`;
@@ -266,29 +290,35 @@ export function formDialog(title, fields, { submit = 'Speichern' } = {}) {
     dialog.innerHTML = `
       <form method="dialog">
         <header><h3>${escapeHtml(title)}</h3></header>
-        <div class="body"><div class="stack">${body}</div></div>
+        <div class="body">
+          ${note ? `<p class="small muted" style="margin: 0 0 1rem">${escapeHtml(note)}</p>` : ''}
+          <div class="stack">${body}</div>
+        </div>
         <footer>
-          <button class="btn" value="cancel" type="submit">Abbrechen</button>
+          <button class="btn" value="cancel" type="submit" formnovalidate>${escapeHtml(tr('common.cancel'))}</button>
           <button class="btn btn-primary" value="ok" type="submit">${escapeHtml(submit)}</button>
         </footer>
       </form>`;
     document.body.append(dialog);
 
+    // Das Ergebnis bleibt hier in der Umgebung stehen. Über dialog.returnValue ginge es nicht:
+    // der Browser überschreibt den Wert nach dem Absenden mit dem des gedrückten Knopfes.
+    let result = null;
     const form = dialog.querySelector('form');
     form.addEventListener('submit', (event) => {
       if (event.submitter?.value !== 'ok') return;
       const data = {};
       for (const field of fields) {
+        if (field.type === 'note') continue;
         const input = form.elements[field.key];
         if (!input) continue;
         data[field.key] = field.type === 'checkbox' ? input.checked : input.value;
       }
-      dialog.returnValue = JSON.stringify(data);
+      result = data;
     });
     dialog.addEventListener('close', () => {
-      const value = dialog.returnValue;
       dialog.remove();
-      resolve(value && value !== 'cancel' ? JSON.parse(value) : null);
+      resolve(result);
     });
     dialog.showModal();
     dialog.querySelector('input, select, textarea')?.focus();
@@ -307,10 +337,25 @@ export function debounce(fn, ms = 300) {
 export async function copy(text) {
   try {
     await navigator.clipboard.writeText(text);
-    ok('Kopiert.');
+    ok(tr('common.copied'));
   } catch {
-    toast('Konnte nicht kopieren – bitte von Hand markieren.');
+    toast(text);
   }
 }
+
+/** Sprache umschalten: Cookie setzen und auf dieselbe Seite in der anderen Sprache gehen. */
+export function switchLang(next) {
+  document.cookie = `lang=${next}; path=/; max-age=${365 * 86400}; samesite=lax`;
+  const rest = location.pathname.replace(/^\/(en|de)/, '');
+  location.href = `/${next}${rest}${location.search}${location.hash}`;
+}
+
+document.addEventListener('click', (event) => {
+  const button = event.target.closest('[data-lang]');
+  if (button && LANGS.includes(button.dataset.lang)) {
+    event.preventDefault();
+    switchLang(button.dataset.lang);
+  }
+});
 
 applyTheme();
