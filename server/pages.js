@@ -70,6 +70,11 @@ export function render(name, lang, vars = {}) {
   // Titel und Beschreibung landen in Attributen – die dürfen keine Anführungszeichen mitbringen.
   values.title = escape(values.title);
   values.description = escape(values.description);
+  // Der Punkt in der Kopfleiste, auf dem man gerade steht.
+  for (const slug of ['features', 'pricing', 'faq']) {
+    const key = `cur${slug[0].toUpperCase()}${slug.slice(1)}`;
+    values[key] = values.path === `/${slug}` ? 'aria-current="page"' : '';
+  }
   return template(name).replace(/\{\{([a-z0-9_.-]+)\}\}/gi, (match, key) => {
     if (key in values) return String(values[key] ?? '');
     const text = t(key, lang);

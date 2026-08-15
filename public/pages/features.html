@@ -1,0 +1,42 @@
+{{> head}}
+{{> nav}}
+
+    <main id="main">
+      <section class="band">
+        <div class="page">
+          <header class="band-head">
+            <h1>{{features.title}}</h1>
+            <p class="lead">{{features.lead}}</p>
+          </header>
+          <div class="spec">{{featuresHtml}}</div>
+        </div>
+      </section>
+
+      <section class="band alt">
+        <div class="page">
+          <header class="band-head">
+            <h2>{{features.versions.title}}</h2>
+            <p class="lead">{{features.versions.lead}}</p>
+          </header>
+          <ul class="versions">{{versionsHtml}}</ul>
+        </div>
+      </section>
+
+      <section class="closing">
+        <div class="page">
+          <div>
+            <h2>{{cta.title}}</h2>
+            <p>{{cta.lead}}</p>
+            <div class="hero-cta">
+              <a class="btn btn-primary btn-lg" href="/{{lang}}/register">{{nav.register}}</a>
+              <a class="btn btn-lg" href="/{{lang}}/pricing">{{nav.pricing}}</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+{{> footer}}
+    <script type="module" src="{{assets}}/js/landing.js"></script>
+  </body>
+</html>

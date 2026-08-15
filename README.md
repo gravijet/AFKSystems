@@ -27,15 +27,29 @@ Liste von Fähigkeiten oder Versionen, die veralten könnte – fehlt etwas, ist
 
 Der **erste registrierte Benutzer wird Administrator** (oder wer in `ADMIN_EMAIL` steht).
 
-## Zwei Sprachen
+## Die öffentlichen Seiten
 
-Englisch ist die Hauptsprache, Deutsch die zweite. Beide sind echte Adressen:
+Nicht alles auf einer Startseite: die Startseite sagt in wenigen Sätzen, was der Dienst tut und was
+er kostet, alles Weitere steht auf eigenen Seiten. Was dort steht, ist bewusst frei von Technik –
+Protokolle, Bauformen und Begründungen für Dinge, die es nicht gibt, gehören ins Panel und in
+dieses README, nicht in den Verkaufstext.
 
 ```
-/en            /de              Startseite
+/en            /de              Startseite: Hero, vier Sätze, Preisrahmen, drei Schritte
+/en/features   /de/features     Funktionsliste nach Gruppen, dazu die Minecraft-Versionen
+/en/pricing    /de/pricing      Tarife aus der Datenbank, Aufladepakete, Abrechnungsfragen
+/en/faq        /de/faq          Fragen und Antworten
 /en/login      /de/login        …und so weiter für alle festen Seiten
 /en/app        /de/app          Dashboard
 ```
+
+Die Funktionsliste steht in `server/features.js`. Ein Eintrag mit `need` fällt weg, wenn die
+Client-Datei auf **diesem** Server das nicht kann – so wird nie etwas versprochen, das gerade
+niemand einlösen kann, ohne dass die Seite darüber redet.
+
+## Zwei Sprachen
+
+Englisch ist die Hauptsprache, Deutsch die zweite. Beide sind echte Adressen (siehe oben).
 
 Alle sichtbaren Texte stehen in **einer** Datei: `public/assets/js/i18n.js`. Sie wird von beiden
 Seiten importiert – Node rendert daraus die festen Seiten, der Browser das Dashboard. Die gewählte
@@ -90,8 +104,8 @@ server/
   auth.js         Sitzungen, Passwörter       billing.js    Credits, Tarife, Gutscheine, Ledger
   binaries.js     Client + Fähigkeiten        supervisor.js ein Prozess je Bot, Zustandsautomat
   mslogin.js      Microsoft-Gerätecode        macros.js     Macros, Spam, Anti-AFK
-  features.js     was der Client kann – einzige Wahrheitsquelle für Panel und Startseite
-  pages.js        Vorlagen                    landing.js    die beweglichen Teile der Startseite
+  features.js     die Funktionsliste der öffentlichen Seiten, gefiltert nach dem echten Client
+  pages.js        Vorlagen                    landing.js    das Bewegliche der öffentlichen Seiten
   mail.js         SMTP                        discord.js    Konto verknüpfen / Anmelden
   tickets.js      Support                     notify.js     Discord-Webhooks
   routes/         core, profiles, billing, admin
@@ -104,16 +118,14 @@ scripts/
 data/                 Datenbank, Client-Dateien, Konten je Nutzer, Logs  (nicht im Repo)
 ```
 
-## Was das Panel bewusst nicht anbietet
+## Was es nicht gibt
 
-Steht an genau einer Stelle: `server/features.js`. Der Zustand wird nicht von Hand gepflegt, sondern
-aus den Fähigkeiten der vorhandenen Client-Dateien berechnet:
+Eine **Live-Ansicht (POV)** ist nicht gebaut und ist auch nicht geplant: Für ein Bild müsste der
+Client Chunks, Blöcke und Entitäten im Speicher halten, aus wenigen MB je Bot würden Hunderte.
+Dasselbe gilt für **Bedrock** – das ist ein eigener Protokollstapel und damit ein zweiter Client.
 
-* `ready` – für alle da
-* `premium` – mit einem bezahlten Serverplatz
-* `soon` – geplant (aktuell: Bedrock-Konten)
-* `no` – bewusst nicht gebaut, mit Begründung (aktuell: Live-Ansicht/POV)
-* `missing` – die Bauform, die es könnte, liegt gerade nicht auf diesem Server
+Beides steht hier und nicht auf der Website: Ein Kunde sucht, was er bekommt, nicht eine Liste
+dessen, was fehlt.
 
 ## Support und Proxys
 
