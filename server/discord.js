@@ -84,7 +84,11 @@ async function identity(accessToken) {
     headers: { authorization: `Bearer ${accessToken}` },
     signal: AbortSignal.timeout(10_000),
   });
-  if (!response.ok) throw bad(`Discord antwortet mit ${response.status}.`);
+  if (!response.ok) {
+    throw bad(`Discord antwortet mit ${response.status}.`, {
+      en: `Discord answered with ${response.status}.`,
+    });
+  }
   const user = await response.json();
   return {
     id: user.id,

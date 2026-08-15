@@ -101,12 +101,66 @@ export const wrap = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);
 };
 
+/**
+ * Feldnamen auf Englisch.
+ *
+ * Die Prüfungen unten werden überall mit dem deutschen Feldnamen aufgerufen. Ohne diese Tabelle
+ * stand der dann auch in der englischen Fassung – Sätze wie "Nachricht is missing." hat jeder
+ * englischsprachige Nutzer bei der ersten falschen Eingabe zu sehen bekommen. Die Tabelle sitzt
+ * hier statt an knapp hundert Aufrufstellen, damit ein neuer Aufruf nichts vergessen kann: fehlt
+ * ein Name, bleibt es beim deutschen Wort, kaputt ist nie etwas.
+ */
+const FIELD_EN = {
+  'Titel (DE)': 'Title (DE)',
+  'Titel (EN)': 'Title (EN)',
+  Ankündigung: 'Announcement',
+  'Anti-AFK': 'Anti-AFK',
+  Anzahl: 'Count',
+  Aufladung: 'Top-up',
+  Bearbeiter: 'Assignee',
+  Benutzer: 'User',
+  Benutzername: 'Username',
+  Betrag: 'Amount',
+  Betreff: 'Subject',
+  Bezeichnung: 'Label',
+  Blöcke: 'Blocks',
+  'Chat-Abstand': 'Chat delay',
+  Chatverlauf: 'Chat history',
+  Einlösungen: 'Redemptions',
+  Eintrag: 'Entry',
+  Feld: 'Slot',
+  Guthaben: 'Credits',
+  Gültigkeit: 'Validity',
+  Intervall: 'Interval',
+  'Join-Delay': 'Join delay',
+  Konto: 'Account',
+  Macro: 'Macro',
+  'Max-Backoff': 'Max backoff',
+  Nachricht: 'Message',
+  Name: 'Name',
+  Nutzer: 'User',
+  Paket: 'Package',
+  Proxy: 'Proxy',
+  Proxys: 'Proxies',
+  'Reconnect-Delay': 'Reconnect delay',
+  Reihenfolge: 'Order',
+  Sekunden: 'Seconds',
+  Server: 'Server',
+  Sperrzeit: 'Cooldown',
+  Tage: 'Days',
+  Tarif: 'Plan',
+  Verzögerung: 'Delay',
+};
+
+const fieldEn = (name) => FIELD_EN[name] ?? name;
+
 export function requireString(value, name, { min = 1, max = 200 } = {}) {
   const text = typeof value === 'string' ? value.trim() : '';
-  if (text.length < min) throw bad(`${name} fehlt.`, { en: `${name} is missing.` });
+  const en = fieldEn(name);
+  if (text.length < min) throw bad(`${name} fehlt.`, { en: `${en} is missing.` });
   if (text.length > max) {
     throw bad(`${name} ist zu lang (max. ${max} Zeichen).`, {
-      en: `${name} is too long (${max} characters max).`,
+      en: `${en} is too long (${max} characters max).`,
     });
   }
   return text;
@@ -114,12 +168,13 @@ export function requireString(value, name, { min = 1, max = 200 } = {}) {
 
 export function requireInt(value, name, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   const number = Math.trunc(Number(value));
+  const en = fieldEn(name);
   if (!Number.isFinite(number)) {
-    throw bad(`${name} muss eine Zahl sein.`, { en: `${name} has to be a number.` });
+    throw bad(`${name} muss eine Zahl sein.`, { en: `${en} has to be a number.` });
   }
   if (number < min || number > max) {
     throw bad(`${name} muss zwischen ${min} und ${max} liegen.`, {
-      en: `${name} has to be between ${min} and ${max}.`,
+      en: `${en} has to be between ${min} and ${max}.`,
     });
   }
   return number;

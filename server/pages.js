@@ -12,7 +12,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { config, paths } from './config.js';
+import { assetVersion, config, paths } from './config.js';
 import { LANGS, DEFAULT_LANG, t, pickLang } from '../public/assets/js/i18n.js';
 
 const DIR = path.join(paths.public, 'pages');
@@ -54,6 +54,8 @@ export function render(name, lang, vars = {}) {
     brand: config.brand,
     year: String(new Date().getFullYear()),
     origin: config.publicUrl,
+    // Vorne an jede CSS-, JS- und Bildadresse. Siehe assetVersion in config.js.
+    assets: `/assets/v/${assetVersion}`,
     // Kopfdaten. Jede Seite darf sie überschreiben; ohne Angabe steht die Startseite da.
     title: t('meta.title', lang),
     description: t('meta.description', lang),

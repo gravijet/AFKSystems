@@ -2,6 +2,7 @@
 // Eine .env wird gelesen, wenn sie neben package.json liegt – ohne Zusatzpaket, das Format ist
 // bewusst simpel (KEY=VALUE je Zeile, # ist ein Kommentar).
 
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,6 +100,46 @@ if (!config.secret) {
     });
   }
   config.secret = fs.readFileSync(file, 'utf8').trim();
+}
+
+/**
+ * Fingerabdruck über alles unter public/assets.
+ *
+ * Warum es ihn gibt: CSS und JS lagen mit `max-age=7d` im Browser und bei Cloudflare. Die Seiten
+ * selbst kommen immer frisch vom Server – nach einem Deployment traf also neues HTML auf altes
+ * CSS und altes JavaScript. Das Ergebnis sah aus wie "das CSS lädt nicht" und "anmelden geht
+ * nicht", war aber nur ein Cache, der eine Woche lang an der alten Fassung festhielt.
+ *
+ * Der Fingerabdruck steht deshalb in jeder Adresse: /assets/v/<fingerabdruck>/css/app.css. Ändert
+ * sich eine Datei, ändert sich die Adresse, und niemand bekommt mehr eine Mischung aus alt und
+ * neu. Erst damit darf man überhaupt lange cachen.
+ *
+ * Die relativen Importe im JavaScript und die Schriften im CSS erben den Fingerabdruck von selbst,
+ * weil sie relativ zur eigenen Adresse aufgelöst werden – ein Bauschritt ist dafür nicht nötig.
+ */
+export const assetVersion = fingerprint(path.join(paths.public, 'assets'));
+
+function fingerprint(dir) {
+  const hash = crypto.createHash('sha256');
+  const walk = (current) => {
+    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const file = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        walk(file);
+        continue;
+      }
+      // Pfad mit hinein: eine umbenannte Datei ist auch eine Änderung.
+      hash.update(path.relative(dir, file));
+      hash.update(fs.readFileSync(file));
+    }
+  };
+  try {
+    walk(dir);
+  } catch {
+    // Kein Verzeichnis, keine Adressen mit Fingerabdruck – die Seite läuft trotzdem.
+    return 'dev';
+  }
+  return hash.digest('base64url').slice(0, 16);
 }
 
 /** Verzeichnis mit den Minecraft-Konten eines Nutzers (wird dem Client als XDG_CONFIG_HOME gegeben). */
