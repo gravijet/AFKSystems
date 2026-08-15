@@ -322,6 +322,43 @@ const migrations = [
       CREATE INDEX mails_time ON mails(created_at DESC);
     `,
   },
+
+  {
+    // Aufräumen nach dem Wechsel von Milli-Credits auf Cent.
+    //
+    // Die Tabellen hat 002 erledigt, die Einstellungen nicht: `packages` ist JSON und stand noch
+    // in Milli-Credits da (1000 mcr = 1 Cent). Ohne diesen Schritt hätte jedes Aufladepaket im
+    // Panel keine Credit-Menge mehr gehabt. Die übrigen Schlüssel gehören zur Stundenabrechnung
+    // und werden nicht mehr gelesen – sie fliegen raus, statt als Karteileichen zu verwirren.
+    name: '003-pakete-in-cent',
+    run() {
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'packages'").get();
+      if (row) {
+        try {
+          const list = JSON.parse(row.value);
+          if (Array.isArray(list)) {
+            const fixed = list.map((entry) => ({
+              cent: Number(entry.cent) || 0,
+              credits:
+                entry.credits !== undefined
+                  ? Number(entry.credits)
+                  : Math.round(Number(entry.credits_mcr || 0) / 1000),
+              label: entry.label || `${((Number(entry.cent) || 0) / 100).toFixed(2)} €`,
+            }));
+            db.prepare("UPDATE settings SET value = ? WHERE key = 'packages'").run(
+              JSON.stringify(fixed)
+            );
+          }
+        } catch {
+          // Kaputtes JSON: lieber weg damit, dann greifen die Vorgabewerte.
+          db.prepare("DELETE FROM settings WHERE key = 'packages'").run();
+        }
+      }
+      for (const key of ['credit_cent', 'rate_mcr_hour', 'low_balance_mcr', 'signup_bonus_mcr', 'grace_minutes']) {
+        db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+      }
+    },
+  },
 ];
 
 db.exec(`CREATE TABLE IF NOT EXISTS migrations (
@@ -333,7 +370,9 @@ const applied = new Set(db.prepare('SELECT name FROM migrations').all().map((row
 for (const migration of migrations) {
   if (applied.has(migration.name)) continue;
   db.transaction(() => {
-    db.exec(migration.sql);
+    if (migration.sql) db.exec(migration.sql);
+    // Manches lässt sich in SQL nicht ausdrücken – etwa JSON in den Einstellungen umrechnen.
+    if (migration.run) migration.run();
     db.prepare('INSERT INTO migrations (name, applied_at) VALUES (?, ?)').run(
       migration.name,
       Date.now()
