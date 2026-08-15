@@ -74,6 +74,14 @@ class Bot {
 
   // ------------------------------------------------------------ Start
 
+  /**
+   * Warten statt aufgeben.
+   *
+   * Fehlt der Token oder die Server-ID, ist das kein Absturz, sondern ein Zustand: Der Betreiber
+   * trägt beides im Panel ein, und der Bot merkt es von selbst. Ein Dienst, der stattdessen alle
+   * zehn Sekunden neu startet, füllt nur das Protokoll – und wer den Token einträgt, müsste sich
+   * merken, dass er danach noch etwas neu starten muss.
+   */
   async start() {
     if (!this.panel.secret) {
       console.error(
@@ -82,27 +90,32 @@ class Bot {
       process.exit(1);
     }
 
-    try {
-      this.config = await this.panel.call('/config');
-    } catch (error) {
-      console.error(`Das Panel antwortet nicht: ${error.message}`);
-      process.exit(1);
-    }
+    let gemeldet = null;
+    for (;;) {
+      let fehlt = null;
+      try {
+        this.config = await this.panel.call('/config');
+        const token = process.env.BOT_TOKEN || this.config.token;
+        if (!token) {
+          fehlt = 'Kein Bot-Token im Panel (Einstellungen → Discord → Bot-Token).';
+        } else if (!this.config.guild_id) {
+          fehlt = 'Keine Server-ID im Panel (Einstellungen → Discord → Server-ID).';
+        } else {
+          this.wire();
+          await this.client.login(token);
+          return;
+        }
+      } catch (error) {
+        fehlt = `Das Panel antwortet nicht: ${error.message}`;
+      }
 
-    const token = process.env.BOT_TOKEN || this.config.token;
-    if (!token) {
-      console.error(
-        'Kein Bot-Token. Trag ihn im Panel unter Einstellungen → Discord ein oder setze BOT_TOKEN.'
-      );
-      process.exit(1);
+      // Dieselbe Meldung nicht jede Minute wiederholen – einmal, und dann still warten.
+      if (fehlt !== gemeldet) {
+        console.warn(`${fehlt} Warte, bis es da ist – Anleitung: docs/discord-bot.md`);
+        gemeldet = fehlt;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 60_000));
     }
-    if (!this.config.guild_id) {
-      console.error('Keine Server-ID im Panel hinterlegt (Einstellungen → Discord).');
-      process.exit(1);
-    }
-
-    this.wire();
-    await this.client.login(token);
   }
 
   wire() {
