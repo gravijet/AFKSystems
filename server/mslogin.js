@@ -11,7 +11,7 @@ import path from 'node:path';
 import { userDir } from './config.js';
 import { db, audit } from './db.js';
 import * as binaries from './binaries.js';
-import { token, HttpError } from './util.js';
+import { token, HttpError, codeUrl } from './util.js';
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 const TIMEOUT_MS = 15 * 60 * 1000;
@@ -20,7 +20,7 @@ const TIMEOUT_MS = 15 * 60 * 1000;
 const pending = new Map();
 
 export function begin(user) {
-  const { command, leading } = binaries.command({ runtime: 'rust', movement: 0, mc_version: null });
+  const { command } = binaries.anyCommand();
   const home = userDir(user.id);
   const id = token(12);
 
@@ -37,7 +37,7 @@ export function begin(user) {
   };
   pending.set(id, entry);
 
-  const proc = spawn(command, [...leading, '--login'], {
+  const proc = spawn(command, ['--login'], {
     cwd: home,
     env: { ...process.env, XDG_CONFIG_HOME: home, HOME: home, TERM: 'dumb' },
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -150,8 +150,8 @@ function saveAccount(userId, name) {
 
 export function status(id, user) {
   const entry = pending.get(id);
-  if (!entry) throw new HttpError(404, 'Diese Anmeldung ist abgelaufen.');
-  if (entry.userId !== user.id) throw new HttpError(403, 'Keine Berechtigung.');
+  if (!entry) throw new HttpError(404, 'Diese Anmeldung ist abgelaufen.', { en: 'That sign-in has expired.' });
+  if (entry.userId !== user.id) throw new HttpError(403, 'Keine Berechtigung.', { en: 'Not allowed.' });
   return publicState(entry);
 }
 
@@ -171,6 +171,7 @@ function publicState(entry) {
     id: entry.id,
     status: entry.status,
     verification_uri: entry.verification_uri,
+    verification_uri_complete: codeUrl(entry.verification_uri, entry.user_code),
     user_code: entry.user_code,
     error: entry.error,
     account: entry.account ? { id: entry.account.id, name: entry.account.name } : null,
@@ -178,12 +179,38 @@ function publicState(entry) {
   };
 }
 
+/**
+ * Offline-/Cracked-Konto anlegen. Es gibt dafür keine Anmeldung und keine Datei – der Client
+ * rechnet die UUID beim Start selbst aus, genau wie ein Server mit online-mode=false.
+ */
+export function addOffline(user, rawName) {
+  const name = String(rawName || '').trim();
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) {
+    throw new HttpError(400, 'Offline-Name: 1–16 Zeichen, nur Buchstaben, Ziffern und _', {
+      en: 'Offline name: 1–16 characters, letters, digits and _ only.',
+    });
+  }
+  if (db.prepare('SELECT 1 FROM mc_accounts WHERE user_id = ? AND name = ?').get(user.id, name)) {
+    throw new HttpError(409, 'Ein Konto mit diesem Namen gibt es schon.', {
+      en: 'You already have an account with that name.',
+    });
+  }
+  const info = db
+    .prepare(
+      `INSERT INTO mc_accounts (user_id, name, kind, status, created_at)
+       VALUES (?, ?, 'offline', 'ok', ?)`
+    )
+    .run(user.id, name, Date.now());
+  audit(user.id, 'account-add-offline', { name });
+  return db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(info.lastInsertRowid);
+}
+
 /** Konto samt Anmeldedatei entfernen. */
 export function removeAccount(user, accountId) {
   const account = db
     .prepare('SELECT * FROM mc_accounts WHERE id = ? AND user_id = ?')
     .get(accountId, user.id);
-  if (!account) throw new HttpError(404, 'Konto gibt es nicht.');
+  if (!account) throw new HttpError(404, 'Konto gibt es nicht.', { en: 'No such account.' });
   const file = path.join(userDir(user.id), 'afksystems', 'accounts', `${account.name}.json`);
   try {
     fs.unlinkSync(file);

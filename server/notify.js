@@ -1,10 +1,11 @@
-// Discord-Benachrichtigungen. Wer im Profil einen Webhook hinterlegt, bekommt Bescheid, wenn ein
-// Bot abbricht, ein Konto seine Anmeldung verliert oder das Guthaben knapp wird.
+// Discord-Benachrichtigungen. Wer in den Einstellungen einen Webhook hinterlegt, bekommt Bescheid,
+// wenn ein Bot abbricht, ein Konto seine Anmeldung verliert, ein Serverplatz abläuft oder das
+// Guthaben knapp wird.
 // Bewusst geräuscharm: dieselbe Nachricht kommt höchstens alle 10 Minuten.
 
 import { db } from './db.js';
 import { config } from './config.js';
-import { formatCredits } from './util.js';
+import { formatCredits, formatEuro } from './util.js';
 
 const lastSent = new Map();
 const QUIET_MS = 10 * 60 * 1000;
@@ -42,19 +43,39 @@ export async function notify(userId, title, text, { key = title, color = 0x206cf
   }
 }
 
-export const lowBalance = (userId, mcr, hours) =>
+export const lowBalance = (userId, credits) =>
   notify(
     userId,
     'Guthaben wird knapp',
-    `Noch ${formatCredits(mcr)} Credits – das reicht etwa ${hours.toFixed(1)} Stunden.`,
+    `Noch ${formatCredits(credits)} Credits (${formatEuro(credits)}). Für die nächste Verlängerung könnte es zu wenig sein.`,
     { key: 'low-balance', color: 0xfcbb00 }
   );
 
-export const outOfCredits = (userId) =>
-  notify(userId, 'Guthaben aufgebraucht', 'Alle Bots wurden gestoppt. Nach dem Aufladen laufen sie wieder.', {
-    key: 'no-credits',
-    color: 0xfb2c36,
+export const planRenewed = (userId, name, price) =>
+  notify(userId, 'Serverplatz verlängert', `"${name}" läuft weitere 30 Tage. Abgebucht: ${price} Credits.`, {
+    key: `renew-${name}`,
+    color: 0x00bb7f,
   });
+
+export const planSuspended = (userId, name, reason) =>
+  notify(
+    userId,
+    'Serverplatz stillgelegt',
+    reason === 'no-credits'
+      ? `"${name}" ließ sich nicht verlängern – das Guthaben reicht nicht. Die Bots sind aus, gelöscht ist nichts.`
+      : `"${name}" ist ausgelaufen, weil die Verlängerung abgeschaltet war. Die Bots sind aus.`,
+    { key: `suspend-${name}`, color: 0xfb2c36 }
+  );
+
+export const planExpiring = (userId, name, days, missing) =>
+  notify(
+    userId,
+    'Serverplatz läuft bald ab',
+    missing > 0
+      ? `"${name}" wird in ${days} Tag(en) verlängert – es fehlen noch ${missing} Credits.`
+      : `"${name}" wird in ${days} Tag(en) automatisch verlängert.`,
+    { key: `expire-${name}`, color: missing > 0 ? 0xfcbb00 : 0x206cfe }
+  );
 
 export const botTrouble = (userId, name, reason) =>
   notify(userId, `Bot "${name}" hat ein Problem`, reason, { key: `bot-${name}`, color: 0xfb2c36 });

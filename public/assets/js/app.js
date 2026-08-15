@@ -4,43 +4,50 @@
 // den Zustand übergeben; neu gezeichnet wird immer die ganze Ansicht – bei dieser Größe ist das
 // einfacher zu verstehen als jede feinere Aktualisierung, und schnell genug.
 
-import { api, icon, themeSwitch, escapeHtml, credits, $, fail, toast } from './ui.js';
+import { api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, $, fail, toast } from './ui.js';
 
 export const state = {
   me: null,
   meta: null,
+  stats: null,
+  impersonator: null,
   profiles: [],
   accounts: [],
   bots: new Map(), // key "profil:konto" -> Zustand
   lines: new Map(), // key -> Chatzeilen (Ringpuffer)
-  route: { name: 'uebersicht', id: null, tab: null },
+  route: { name: 'overview', id: null, tab: null },
   onLive: null, // die aktive Ansicht darf sich für Live-Daten anmelden
 };
 
 // ---------------------------------------------------------------- Router
 
 const ROUTES = [
-  { path: /^$|^\/$/, name: 'uebersicht' },
-  { path: /^\/konten$/, name: 'konten' },
-  { path: /^\/server$/, name: 'server' },
-  { path: /^\/server\/(\d+)(?:\/([a-z]+))?$/, name: 'profil' },
-  { path: /^\/proxys$/, name: 'proxys' },
-  { path: /^\/guthaben$/, name: 'guthaben' },
-  { path: /^\/downloads$/, name: 'downloads' },
-  { path: /^\/einstellungen$/, name: 'einstellungen' },
-  { path: /^\/admin(?:\/([a-z]+))?$/, name: 'admin' },
+  { path: /^$|^\/$/, name: 'overview' },
+  { path: /^\/accounts$/, name: 'accounts' },
+  { path: /^\/servers$/, name: 'servers' },
+  { path: /^\/servers\/(\d+)(?:\/([a-z]+))?$/, name: 'server' },
+  { path: /^\/proxies$/, name: 'proxies' },
+  { path: /^\/credits$/, name: 'credits' },
+  { path: /^\/tickets(?:\/(\d+))?$/, name: 'tickets' },
+  { path: /^\/settings$/, name: 'settings' },
+  { path: /^\/admin(?:\/([a-z-]+))?(?:\/(\d+))?$/, name: 'admin' },
 ];
 
 function parseRoute() {
-  const hash = location.hash.replace(/^#/, '');
+  const hash = location.hash.replace(/^#/, '').split('?')[0];
   for (const route of ROUTES) {
     const match = route.path.exec(hash);
     if (!match) continue;
-    if (route.name === 'profil') return { name: 'profil', id: Number(match[1]), tab: match[2] || 'verbinden' };
-    if (route.name === 'admin') return { name: 'admin', id: null, tab: match[1] || 'uebersicht' };
+    if (route.name === 'server') {
+      return { name: 'server', id: Number(match[1]), tab: match[2] || 'connect' };
+    }
+    if (route.name === 'tickets') return { name: 'tickets', id: match[1] ? Number(match[1]) : null, tab: null };
+    if (route.name === 'admin') {
+      return { name: 'admin', id: match[2] ? Number(match[2]) : null, tab: match[1] || 'overview' };
+    }
     return { name: route.name, id: null, tab: null };
   }
-  return { name: 'uebersicht', id: null, tab: null };
+  return { name: 'overview', id: null, tab: null };
 }
 
 export function go(hash) {
@@ -51,7 +58,15 @@ export function go(hash) {
 
 export async function refresh({ profiles = true, accounts = true, me = true } = {}) {
   const jobs = [];
-  if (me) jobs.push(api('/me').then((data) => { state.me = data.user; state.stats = data.stats; }));
+  if (me) {
+    jobs.push(
+      api('/me').then((data) => {
+        state.me = data.user;
+        state.stats = data.stats;
+        state.impersonator = data.impersonator || null;
+      })
+    );
+  }
   if (profiles) jobs.push(api('/profiles').then((data) => { state.profiles = data.profiles; }));
   if (accounts) jobs.push(api('/accounts').then((data) => { state.accounts = data.accounts; }));
   await Promise.all(jobs);
@@ -72,7 +87,9 @@ export function linesOf(key) {
 function pushLine(key, entry) {
   const list = state.lines.get(key) || [];
   list.push(entry);
-  const limit = state.me?.chat_limit || 200;
+  // Wie viel Verlauf ein Platz behält, hängt an seinem Tarif – der Server sagt es im Profil.
+  const profileId = Number(key.split(':')[0]);
+  const limit = profileById(profileId)?.chat_limit || 200;
   if (list.length > limit) list.splice(0, list.length - limit);
   state.lines.set(key, list);
 }
@@ -83,8 +100,8 @@ let socket = null;
 let retry = 0;
 
 function connect() {
-  const url = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`;
-  socket = new WebSocket(url);
+  const address = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`;
+  socket = new WebSocket(address);
 
   socket.addEventListener('open', () => {
     retry = 0;
@@ -126,10 +143,20 @@ function connect() {
       return;
     }
     if (message.type === 'credits') {
-      if (state.me) state.me.credits_mcr = message.balance_mcr;
+      if (state.me) state.me.credits = message.balance;
       drawSide();
-      if (message.stopped) toast('Guthaben aufgebraucht – die Bots wurden gestoppt.', 'bad');
       state.onLive?.({ type: 'credits' });
+      return;
+    }
+    if (message.type === 'suspended') {
+      const profile = profileById(message.profile_id);
+      if (profile) {
+        profile.suspended = true;
+        profile.active = false;
+      }
+      toast(tr('dash.suspended', { name: message.name }), 'bad');
+      drawSide();
+      state.onLive?.({ type: 'suspended', profile_id: message.profile_id });
     }
   });
 
@@ -145,121 +172,141 @@ function setLive(online) {
   if (node) {
     node.style.color = online ? 'var(--ok)' : 'var(--text-2)';
     node.classList.toggle('live', online);
-    node.title = online ? 'Live verbunden' : 'Verbindung zum Panel unterbrochen';
+    node.title = online ? tr('dash.live') : tr('dash.offline');
   }
 }
 
 // ---------------------------------------------------------------- Seitenleiste
 
 const NAV = [
-  { hash: '#/', label: 'Übersicht', icon: 'chart' },
-  { hash: '#/server', label: 'Serverprofile', icon: 'server' },
-  { hash: '#/konten', label: 'Minecraft-Konten', icon: 'users' },
-  { hash: '#/proxys', label: 'Proxys', icon: 'globe' },
-  { hash: '#/guthaben', label: 'Guthaben', icon: 'wallet' },
-  { hash: '#/downloads', label: 'Downloads', icon: 'download' },
-  { hash: '#/einstellungen', label: 'Einstellungen', icon: 'settings' },
+  { hash: '#/', key: 'dash.overview', icon: 'chart' },
+  { hash: '#/servers', key: 'dash.servers', icon: 'server' },
+  { hash: '#/accounts', key: 'dash.accounts', icon: 'users' },
+  { hash: '#/proxies', key: 'dash.proxies', icon: 'globe' },
+  { hash: '#/credits', key: 'dash.credits', icon: 'wallet' },
+  { hash: '#/tickets', key: 'dash.tickets', icon: 'ticket' },
+  { hash: '#/settings', key: 'dash.settings', icon: 'settings' },
 ];
 
+/**
+ * Die Reiter eines Serverplatzes. `need` ist die Fähigkeit, die der Client dafür mitbringen muss –
+ * fehlt sie (schlanker Client auf dem Gratis-Platz), wird der Reiter gar nicht erst angeboten.
+ */
 export const TABS = [
-  { key: 'verbinden', label: 'Verbinden' },
-  { key: 'chat', label: 'Chat' },
-  { key: 'bewegung', label: 'Bewegung' },
-  { key: 'inventar', label: 'Inventar' },
-  { key: 'pov', label: 'POV' },
-  { key: 'proxys', label: 'Proxys' },
-  { key: 'macros', label: 'Macros' },
-  { key: 'einstellungen', label: 'Einstellungen' },
+  { key: 'connect', label: 'tab.connect' },
+  { key: 'chat', label: 'tab.chat' },
+  { key: 'movement', label: 'tab.movement', need: 'movement' },
+  { key: 'board', label: 'tab.board', need: 'board' },
+  { key: 'menu', label: 'tab.menu', need: 'menu' },
+  { key: 'macros', label: 'tab.macros' },
+  { key: 'proxies', label: 'tab.proxies', need: 'proxy' },
+  { key: 'plan', label: 'tab.plan' },
+  { key: 'settings', label: 'tab.settings' },
 ];
+
+export const tabsFor = (profile) => TABS.filter((tab) => !tab.need || profile?.caps?.[tab.need]);
 
 export function drawSide() {
   const route = state.route;
   const profiles = state.profiles
     .map((profile) => {
-      const active = route.name === 'profil' && route.id === profile.id;
-      const color = profile.online ? 'var(--ok)' : profile.total ? 'var(--text-2)' : 'var(--line)';
-      return `<a class="profile-link ${active ? 'active' : ''}" href="#/server/${profile.id}/verbinden">
+      const active = route.name === 'server' && route.id === profile.id;
+      const color = profile.suspended
+        ? 'var(--warn)'
+        : profile.online
+          ? 'var(--ok)'
+          : profile.total
+            ? 'var(--text-2)'
+            : 'var(--line)';
+      return `<a class="profile-link ${active ? 'active' : ''}" href="#/servers/${profile.id}/connect">
         <span class="dot ${profile.online ? 'live' : ''}" style="color:${color}"></span>
         <span class="grow truncate">${escapeHtml(profile.name)}</span>
         <span class="count muted">${profile.online}/${profile.total}</span>
       </a>${
         active
-          ? `<div style="margin:.15rem 0 .5rem .95rem;padding-left:.6rem;box-shadow:inset 1px 0 0 var(--line)">
-              ${TABS.map(
-                (tab) =>
-                  `<a class="profile-link ${route.tab === tab.key ? 'active' : ''}"
-                      style="padding-block:.3rem;font-size:.8125rem"
-                      href="#/server/${profile.id}/${tab.key}">${tab.label}</a>`
-              ).join('')}
+          ? `<div class="subtabs">
+              ${tabsFor(profile)
+                .map(
+                  (tab) =>
+                    `<a class="profile-link ${route.tab === tab.key ? 'active' : ''}"
+                        href="#/servers/${profile.id}/${tab.key}">${escapeHtml(tr(tab.label))}</a>`
+                )
+                .join('')}
             </div>`
           : ''
       }`;
     })
     .join('');
 
+  const unread = state.stats?.tickets_unread || 0;
+  const staffTickets = state.stats?.staff_tickets || 0;
+
   $('#side').innerHTML = `
-    <a class="brand" href="/" style="padding:.35rem .65rem">
+    <a class="brand" href="/${lang}" style="padding:.35rem .65rem">
       <img class="logo" src="/assets/img/logo.svg" alt="" />AFKSystems
     </a>
 
     <nav class="nav">
       ${NAV.map(
         (item) =>
-          `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}">${icon(item.icon)}${item.label}</a>`
+          `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}">${icon(item.icon)}${escapeHtml(
+            tr(item.key)
+          )}${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
       ).join('')}
       ${
         state.me?.role === 'admin'
-          ? `<a class="${state.route.name === 'admin' ? 'active' : ''}" href="#/admin">${icon('shield')}Administration</a>`
+          ? `<a class="${state.route.name === 'admin' ? 'active' : ''}" href="#/admin">${icon('shield')}${escapeHtml(
+              tr('dash.admin')
+            )}${staffTickets ? `<span class="count primary">${staffTickets}</span>` : ''}</a>`
           : ''
       }
     </nav>
 
     <div class="stack" style="gap:.25rem">
       <div class="row spread">
-        <span class="label">Serverprofile</span>
-        <button class="btn btn-ghost btn-sm" id="new-profile" title="Serverprofil anlegen">${icon('plus')}</button>
+        <span class="label">${escapeHtml(tr('dash.servers'))}</span>
+        <button class="btn btn-ghost btn-sm" id="new-profile" title="${escapeHtml(tr('dash.newServer'))}">${icon('plus')}</button>
       </div>
-      ${profiles || '<p class="small muted" style="padding:.35rem .65rem">Noch keins angelegt.</p>'}
+      ${profiles || `<p class="small muted" style="padding:.35rem .65rem">${escapeHtml(tr('dash.noServers'))}</p>`}
     </div>
 
     <div class="foot stack" style="gap:.6rem">
-      <a class="card tight" href="#/guthaben" style="display:block">
+      <a class="card tight" href="#/credits" style="display:block">
         <div class="row spread">
-          <span class="small muted">Guthaben</span>
+          <span class="small muted">${escapeHtml(tr('dash.credits'))}</span>
           <span class="dot" id="live-dot" style="color:var(--text-2)"></span>
         </div>
-        <div class="mono strong" style="font-size:1.05rem">${credits(state.me?.credits_mcr ?? 0)} Credits</div>
-        <div class="small muted">${hoursLeftText()}</div>
+        <div class="mono strong" style="font-size:1.05rem">${credits(state.me?.credits ?? 0)}</div>
+        <div class="small muted">${escapeHtml(costLine())}</div>
       </a>
       <div class="row spread">
-        <a class="row small grow" href="#/einstellungen" style="gap:.5rem">
+        <a class="row small grow" href="#/settings" style="gap:.5rem">
           ${icon('user')}<span class="truncate">${escapeHtml(state.me?.username || '')}</span>
         </a>
         ${themeSwitch()}
       </div>
-      <button class="btn btn-ghost btn-sm" id="logout">Abmelden</button>
+      <button class="btn btn-ghost btn-sm" id="logout">${escapeHtml(tr('dash.logout'))}</button>
     </div>`;
 
   $('#new-profile').addEventListener('click', () => import('./views/server.js').then((m) => m.newProfile()));
   $('#logout').addEventListener('click', async () => {
     await api('/auth/logout', { method: 'POST' });
-    location.href = '/';
+    location.href = url('');
   });
 }
 
 function routeMatches(hash) {
-  const name = hash.replace('#/', '') || 'uebersicht';
-  if (name === 'server') return state.route.name === 'server' || state.route.name === 'profil';
+  const name = hash.replace('#/', '') || 'overview';
+  if (name === 'servers') return state.route.name === 'servers' || state.route.name === 'server';
   return state.route.name === name;
 }
 
-function hoursLeftText() {
-  const running = [...state.bots.values()].filter((bot) => bot.state && bot.state !== 'offline').length;
-  const rate = (state.me?.rate_mcr_hour || 7) * Math.max(running, 1);
-  const hours = (state.me?.credits_mcr ?? 0) / rate;
-  if (hours < 1) return `reicht noch ${Math.max(0, Math.round(hours * 60))} min`;
-  if (hours < 48) return `reicht ~${hours.toFixed(1)} h bei ${Math.max(running, 1)} Bot(s)`;
-  return `reicht ~${Math.round(hours / 24)} Tage bei ${Math.max(running, 1)} Bot(s)`;
+/** Was der Monat kostet – oder dass er nichts kostet. */
+function costLine() {
+  const cost = state.me?.monthly_cost || 0;
+  if (!cost) return tr('dash.balanceFree');
+  const paid = state.profiles.filter((profile) => !profile.plan?.free_slot).length;
+  return tr('dash.balanceHint', { n: paid, cost: credits(cost) });
 }
 
 // Seitenleiste auf dem Handy ein-/ausblenden.
@@ -276,7 +323,9 @@ document.addEventListener('click', (event) => {
 export function appbar(title, actionsHtml = '', subtitle = '') {
   return `<div class="appbar">
     <div class="row" style="min-width:0">
-      <button class="btn btn-ghost btn-sm" id="side-toggle" style="display:none" aria-label="Menü">${icon('menu')}</button>
+      <button class="btn btn-ghost btn-sm" id="side-toggle" style="display:none" aria-label="${escapeHtml(
+        tr('nav.menu')
+      )}">${icon('menu')}</button>
       <div style="min-width:0">
         <h1 class="truncate">${escapeHtml(title)}</h1>
         ${subtitle ? `<p class="small muted truncate">${subtitle}</p>` : ''}
@@ -289,14 +338,14 @@ export function appbar(title, actionsHtml = '', subtitle = '') {
 // ---------------------------------------------------------------- Zeichnen
 
 const VIEWS = {
-  uebersicht: () => import('./views/overview.js'),
-  konten: () => import('./views/accounts.js'),
+  overview: () => import('./views/overview.js'),
+  accounts: () => import('./views/accounts.js'),
+  servers: () => import('./views/server.js'),
   server: () => import('./views/server.js'),
-  profil: () => import('./views/server.js'),
-  proxys: () => import('./views/proxies.js'),
-  guthaben: () => import('./views/billing.js'),
-  downloads: () => import('./views/downloads.js'),
-  einstellungen: () => import('./views/settings.js'),
+  proxies: () => import('./views/proxies.js'),
+  credits: () => import('./views/billing.js'),
+  tickets: () => import('./views/tickets.js'),
+  settings: () => import('./views/settings.js'),
   admin: () => import('./views/admin.js'),
 };
 
@@ -312,17 +361,40 @@ export async function draw() {
     const module = await VIEWS[state.route.name]();
     await module.render($('#main'), state.route);
   } catch (error) {
-    $('#main').innerHTML = `<div class="empty"><h3>Das ging schief</h3>
+    $('#main').innerHTML = `<div class="empty"><h3>${escapeHtml(tr('common.error'))}</h3>
       <p>${escapeHtml(error.message)}</p>
-      <button class="btn" onclick="location.reload()">Neu laden</button></div>`;
+      <button class="btn" onclick="location.reload()">${escapeHtml(tr('common.retry'))}</button></div>`;
   } finally {
     drawing = false;
+    banner();
     const toggle = $('#side-toggle');
     if (toggle && window.innerWidth < 1000) {
       toggle.style.display = '';
       toggle.addEventListener('click', () => toggleSide(true));
     }
   }
+}
+
+/** Der Streifen ganz oben, wenn ein Administrator dieses Konto gerade nur ansieht. */
+function banner() {
+  const old = $('#impersonate');
+  if (old) old.remove();
+  if (!state.impersonator) return;
+  const bar = document.createElement('div');
+  bar.id = 'impersonate';
+  bar.className = 'impersonate';
+  bar.innerHTML = `<span>${escapeHtml(
+    tr('adm.viewingAs', { user: state.me?.username || '', admin: state.impersonator.username })
+  )}</span><button class="btn btn-sm" id="impersonate-back">${escapeHtml(tr('adm.backToAdmin'))}</button>`;
+  document.body.prepend(bar);
+  $('#impersonate-back').addEventListener('click', async () => {
+    try {
+      await api('/auth/return', { method: 'POST' });
+      location.href = `${url('/app')}#/admin/users`;
+    } catch (error) {
+      fail(error);
+    }
+  });
 }
 
 window.addEventListener('hashchange', draw);
@@ -334,16 +406,18 @@ window.addEventListener('hashchange', draw);
 
 async function boot() {
   try {
+    state.meta = await api('/meta');
     await refresh();
-    if (!state.meta) state.meta = await api('/meta');
     connect();
     await draw();
   } catch (error) {
     if (error.status === 401) {
-      location.href = `/login.html?weiter=${encodeURIComponent(location.pathname + location.hash)}`;
+      location.href = `${url('/login')}?next=${encodeURIComponent(location.pathname + location.hash)}`;
+    } else if (error.code === 'email-unverified') {
+      location.href = url('/verify');
     } else {
       fail(error);
-      $('#main').innerHTML = `<div class="empty"><h3>Keine Verbindung zum Panel</h3>
+      $('#main').innerHTML = `<div class="empty"><h3>${escapeHtml(tr('dash.offline'))}</h3>
         <p>${escapeHtml(error.message)}</p></div>`;
     }
   }

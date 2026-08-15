@@ -1,15 +1,16 @@
 # AFKSystems – Webpanel
 
-Minecraft-AFK-Bots im Browser: Konten verbinden, Serverprofile anlegen, Bots starten, Chat mitlesen
-und schreiben, Befehle automatisieren – bezahlt wird mit **Guthaben**, nicht mit einem Abo.
+Minecraft-AFK-Bots im Browser: Konten verbinden, Serverplätze anlegen, Bots starten, Chat mitlesen
+und schreiben, Befehle automatisieren. Ein Serverplatz ist **dauerhaft gratis**, jeder weitere läuft
+auf einem **Monatstarif**, bezahlt aus dem Guthaben.
 
 Die Bots sind Prozesse des [AFKSystems-Clients](https://github.com/gravijet/HugoAFKClient). Der ist
 bewusst pipe-fähig gebaut, deshalb braucht es zwischen Panel und Client kein eigenes Protokoll:
 
 ```
-Standardausgabe   ->  Chat, eine Zeile je Nachricht      ->  Live-Chat im Panel
-Standardfehler    ->  "Verbunden und im Spiel als …"     ->  Zustandsanzeige im Panel
-Standardeingabe   <-  Chat, Befehle, Bewegung (:go …)    <-  Eingabefeld im Panel
+Standardausgabe   ->  Chat + "@event join name=…"        ->  Live-Chat und Zustand im Panel
+Standardfehler    ->  Verbindungsmeldungen               ->  Zustandsanzeige im Panel
+Standardeingabe   <-  Chat, Befehle, ":go vor 5"         <-  Eingabefeld im Panel
 ```
 
 ## Schnellstart (Entwicklung)
@@ -20,11 +21,26 @@ cp .env.example .env          # GITHUB_TOKEN eintragen – das Client-Repo ist p
 npm start                     # http://127.0.0.1:3010
 ```
 
-Beim Start holt sich das Panel das Release `latest` des Clients nach `data/bin/` und liest die
-unterstützten Minecraft-Versionen direkt aus `afk-linux --help`. Es steht also nirgends im Code eine
-Versionsliste, die veralten könnte.
+Beim Start holt sich das Panel das Release `latest` des Clients nach `data/bin/`, ruft für jede
+Bauform `--help` auf und merkt sich, **was sie wirklich kann**. Es steht also nirgends im Code eine
+Liste von Fähigkeiten oder Versionen, die veralten könnte – fehlt etwas, ist der Knopf dafür aus.
 
 Der **erste registrierte Benutzer wird Administrator** (oder wer in `ADMIN_EMAIL` steht).
+
+## Zwei Sprachen
+
+Englisch ist die Hauptsprache, Deutsch die zweite. Beide sind echte Adressen:
+
+```
+/en            /de              Startseite
+/en/login      /de/login        …und so weiter für alle festen Seiten
+/en/app        /de/app          Dashboard
+```
+
+Alle sichtbaren Texte stehen in **einer** Datei: `public/assets/js/i18n.js`. Sie wird von beiden
+Seiten importiert – Node rendert daraus die festen Seiten, der Browser das Dashboard. Die gewählte
+Sprache liegt im Cookie `lang` und am Konto; ohne beides entscheidet `Accept-Language`.
+Fehlermeldungen der API kommen in derselben Sprache zurück.
 
 ## Betrieb (afksystems.de)
 
@@ -38,57 +54,72 @@ journalctl -u afksystems -f
   laufen sollten, und stoppt sie beim Beenden sauber.
 * `deploy/nginx-afksystems.de.conf` – vHost samt WebSocket-Durchreichung für den Live-Chat.
 
-## Guthaben
+## Geld
 
-Gerechnet wird in **Milli-Credits** (`mcr`), ganzzahlig: `1000 mcr = 1 Credit`. Was ein Credit in
-Euro kostet, steht in den Einstellungen (`credit_cent`), damit der Betreiber es ohne Codeänderung
-ändern kann.
+**1 Credit = 1 Cent**, ganzzahlig. 100 Credits sind ein Euro. Ein Monat sind hier immer **30 Tage**.
 
-* Jede Minute wird für jeden laufenden Bot der anteilige Stundensatz abgebucht.
-* Ein gestoppter Bot kostet nichts; ohne Guthaben werden Bots gestoppt, nie ins Minus.
-* Wartet ein Bot auf eine neue Microsoft-Anmeldung, zählt er nicht mit.
+* Der **erste Serverplatz je Konto ist gratis** und bleibt es (Einstellung `free_slots`).
+* Jeder weitere Platz bucht beim Anlegen den Monatspreis seines Tarifs ab und verlängert sich
+  stündlich geprüft von selbst, solange das Guthaben reicht.
+* Reicht es nicht, wird der Platz **stillgelegt**: Bots gehen aus, gelöscht wird nichts, ins Minus
+  geht es nie. Nach dem Aufladen genügt „Fortsetzen“.
+* Tarifwechsel und Löschen schreiben den ungenutzten Rest des Monats anteilig gut.
 * Aufladen: Gutschein, Überweisung/PayPal (Admin bestätigt), Stripe (mit Schlüssel), oder der Admin
   bucht direkt auf.
 
-Standardtarif: 7 mcr je Bot und Stunde ≈ 5,11 Credits im Monat bei Dauerbetrieb.
+Die Tarife selbst stehen in der Tabelle `plans` und sind im Admin-Bereich änderbar – Preis, Anzahl
+Bots, Chatverlauf, Premium-Client, Proxys, Fake-Host, Offline-Konten, Support-Vorrang.
+
+## Drei Bauformen, ein Tarif entscheidet
+
+| Bauform | Datei | Wer sie bekommt |
+| --- | --- | --- |
+| schlank | `afk-linux` | der Gratis-Platz: verbinden, drinbleiben, Chat, Befehle, Macros |
+| Bewegung | `afk-linux-move` | optional, selbst gebaut (`scripts/build-movement.sh`) |
+| Premium | `premium-afk-linux` | bezahlte Plätze: dazu Anti-AFK, Schleichen, Anzeigetafel, Menüs |
+
+`server/binaries.js` sucht die passende Datei zum Tarif und fällt auf die nächstbeste zurück, wenn
+sie fehlt – ein vergessener Download legt damit keine Bots still.
 
 ## Aufbau
 
 ```
 server/
-  index.js        HTTP, WebSocket, Abrechnungstakt, Aufräumen
-  config.js       Umgebung und Pfade         db.js        SQLite-Schema und Einstellungen
-  auth.js         Sitzungen und Passwörter   credits.js   Guthaben, Ledger, Gutscheine
-  binaries.js     Client aus dem Release     supervisor.js ein Prozess je Bot, Zustandsautomat
-  mslogin.js      Microsoft-Gerätecode       macros.js    Macros, Spam, Anti-AFK
+  index.js        HTTP, Seiten in zwei Sprachen, WebSocket, Verlängerungen
+  config.js       Umgebung und Pfade          db.js         SQLite-Schema, Migrationen, Tarife
+  auth.js         Sitzungen, Passwörter       billing.js    Credits, Tarife, Gutscheine, Ledger
+  binaries.js     Client + Fähigkeiten        supervisor.js ein Prozess je Bot, Zustandsautomat
+  mslogin.js      Microsoft-Gerätecode        macros.js     Macros, Spam, Anti-AFK
   features.js     was der Client kann – einzige Wahrheitsquelle für Panel und Startseite
-  notify.js       Discord-Webhooks           routes/      REST-API
+  pages.js        Vorlagen                    landing.js    die beweglichen Teile der Startseite
+  mail.js         SMTP                        discord.js    Konto verknüpfen / Anmelden
+  tickets.js      Support                     notify.js     Discord-Webhooks
+  routes/         core, profiles, billing, admin
 public/
-  index.html      Startseite                 app.html     Dashboard (eine Seite, eigener Router)
-  assets/js/views/  Übersicht, Konten, Server (alle Registerkarten), Guthaben, Admin …
+  pages/          die festen Seiten als Vorlagen ({{> partial}} und {{schlüssel}})
+  assets/js/i18n.js   alle Texte, beide Sprachen, von Server und Browser genutzt
+  assets/js/views/    Übersicht, Konten, Server, Guthaben, Tickets, Proxys, Admin …
 scripts/
-  build-movement.sh  baut die Bewegungs-Bauform des Clients (liegt nicht im Release)
-data/               Datenbank, Client-Dateien, Konten je Nutzer, Logs  (nicht im Repo)
+  build-movement.sh   baut die Bewegungs-Bauform (liegt nicht im Release)
+data/                 Datenbank, Client-Dateien, Konten je Nutzer, Logs  (nicht im Repo)
 ```
 
-## Bewegung
+## Was das Panel bewusst nicht anbietet
 
-Der schlanke Client bewegt sich **nie** – kein Byte davon ist enthalten. Wer Laufen, Blickrichtung,
-Springen, Heimatposition und Routen will, baut die zweite Bauform einmal:
+Steht an genau einer Stelle: `server/features.js`. Der Zustand wird nicht von Hand gepflegt, sondern
+aus den Fähigkeiten der vorhandenen Client-Dateien berechnet:
 
-```bash
-./scripts/build-movement.sh        # -> data/bin/afk-linux-move
-```
+* `ready` – für alle da
+* `premium` – mit einem bezahlten Serverplatz
+* `soon` – geplant (aktuell: Bedrock-Konten)
+* `no` – bewusst nicht gebaut, mit Begründung (aktuell: Live-Ansicht/POV)
+* `missing` – die Bauform, die es könnte, liegt gerade nicht auf diesem Server
 
-Danach lässt sich jedes Serverprofil in den Einstellungen auf Bewegung umstellen; das Panel erkennt
-die Datei von selbst.
+## Support und Proxys
 
-## Was der Client (noch) nicht kann
-
-Das Panel zeigt solche Stellen offen an, statt Knöpfe anzubieten, die nichts tun. Gepflegt wird das
-an genau einer Stelle: `server/features.js`. Aktuell fehlen im Client Inventar, Live-Ansicht,
-Scoreboard, Schleichen, Proxys, Fake-Host, Offline- und Bedrock-Konten sowie ein Signal beim
-Weltwechsel.
+Proxys gehören dem Betreiber und werden **von Hand zugeteilt**: Ein zahlender Kunde macht ein Ticket
+der Kategorie „Proxy anfragen“ auf, der Admin legt den Proxy an und weist ihn zu. Auf dem Gratis-Platz
+gibt es keine. Danach lässt sich je Konto im Reiter „Proxys“ des Serverplatzes einer auswählen.
 
 ## API
 
@@ -96,14 +127,16 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 
 | Bereich | Endpunkte |
 | --- | --- |
-| Anmeldung | `POST /auth/register`, `/auth/login`, `/auth/logout` |
-| Eigenes | `GET/PATCH /me`, `POST /me/password`, `POST /me/discord-test` |
-| Konten | `GET /accounts`, `POST /accounts/login` (Gerätecode), `GET /accounts/login/:id`, `DELETE /accounts/:id` |
-| Profile | `GET/POST /profiles`, `GET/PATCH/DELETE /profiles/:id`, `…/accounts` |
+| Anmeldung | `POST /auth/register`, `/auth/login`, `/auth/logout`, `/auth/verify`, `/auth/forgot`, `/auth/reset` |
+| Discord | `GET /auth/discord/start`, `/auth/discord/callback`, `DELETE /auth/discord` |
+| Eigenes | `GET/PATCH /me`, `GET/DELETE /me/sessions`, `POST /me/password`, `/me/discord-test` |
+| Konten | `GET /accounts`, `POST /accounts/login` (Gerätecode), `POST /accounts/offline`, `DELETE /accounts/:id` |
+| Serverplätze | `GET/POST /profiles`, `GET/PATCH/DELETE /profiles/:id`, `POST /profiles/:id/plan`, `/resume` |
 | Bots | `POST /profiles/:id/start`, `/stop`, `/restart` |
-| Chat | `GET/POST /profiles/:id/chat` |
-| Bewegung | `POST /profiles/:id/move` |
-| Automatik | `…/macros`, `…/spam` (je GET/POST/PATCH/DELETE, dazu `/test`) |
+| Chat | `GET/POST /profiles/:id/chat`, `…/spam` |
+| Im Spiel | `POST /profiles/:id/command` (`go`, `look`, `home`, `board`, `menu`, `click`, `sneak`, …) |
+| Automatik | `…/macros` (GET/POST/PATCH/DELETE, dazu `/test`) |
 | Guthaben | `GET /billing`, `POST /billing/voucher`, `POST /billing/topup` |
-| Admin | `/admin/overview`, `/users`, `/topups`, `/vouchers`, `/bots`, `/settings`, `/client/sync`, `/audit` |
-| Live | `GET /api/ws` – WebSocket mit Chatzeilen, Zustandswechseln, Guthabenstand |
+| Support | `GET/POST /tickets`, `GET /tickets/:id`, `POST /tickets/:id/reply`, `/close` |
+| Admin | `/admin/overview`, `/users`, `/plans`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/profiles`, `/bots`, `/announcements`, `/settings`, `/client/sync`, `/mails`, `/audit`, `/ledger` |
+| Live | `GET /api/ws` – WebSocket mit Chatzeilen, Zustandswechseln, Guthaben, Stilllegungen |

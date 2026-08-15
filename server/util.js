@@ -63,17 +63,38 @@ export function voucherCode() {
   return out;
 }
 
+/**
+ * Ein Fehler, den der Nutzer zu sehen bekommt – deshalb in beiden Sprachen.
+ *
+ * Die deutsche Fassung steht als `message` (so liest sie sich auch im Log), die englische in
+ * `en`. Welche ausgeliefert wird, entscheidet die Fehlerbehandlung in index.js anhand der
+ * Sprache der Anfrage. Fehlt die englische Fassung, bleibt es bei der deutschen – das ist
+ * hässlich, aber nie kaputt.
+ *
+ *   throw bad('Zu wenig Guthaben.', { en: 'Not enough credits.' })
+ *   throw bad('Die Passwörter sind nicht gleich.', 'password-mismatch')
+ *   throw new HttpError(402, 'Nur mit Tarif.', { en: 'Paid plans only.', code: 'plan' })
+ */
 export class HttpError extends Error {
-  constructor(status, message, code) {
+  constructor(status, message, options) {
     super(message);
+    const extra = typeof options === 'string' ? { code: options } : options || {};
     this.status = status;
-    this.code = code || null;
+    this.code = extra.code || null;
+    this.en = extra.en || null;
+  }
+
+  /** Die Fassung für eine Sprache. */
+  text(lang = 'de') {
+    return lang === 'en' && this.en ? this.en : this.message;
   }
 }
 
-export const bad = (message, code) => new HttpError(400, message, code);
-export const forbidden = (message = 'Keine Berechtigung.') => new HttpError(403, message);
-export const notFound = (message = 'Nicht gefunden.') => new HttpError(404, message);
+export const bad = (message, options) => new HttpError(400, message, options);
+export const forbidden = (message = 'Keine Berechtigung.', options = { en: 'Not allowed.' }) =>
+  new HttpError(403, message, options);
+export const notFound = (message = 'Nicht gefunden.', options = { en: 'Not found.' }) =>
+  new HttpError(404, message, options);
 
 /** Express-Handler, bei dem geworfene Fehler in der Fehlerbehandlung landen. */
 export const wrap = (handler) => (req, res, next) => {
@@ -82,23 +103,38 @@ export const wrap = (handler) => (req, res, next) => {
 
 export function requireString(value, name, { min = 1, max = 200 } = {}) {
   const text = typeof value === 'string' ? value.trim() : '';
-  if (text.length < min) throw bad(`${name} fehlt.`);
-  if (text.length > max) throw bad(`${name} ist zu lang (max. ${max} Zeichen).`);
+  if (text.length < min) throw bad(`${name} fehlt.`, { en: `${name} is missing.` });
+  if (text.length > max) {
+    throw bad(`${name} ist zu lang (max. ${max} Zeichen).`, {
+      en: `${name} is too long (${max} characters max).`,
+    });
+  }
   return text;
 }
 
 export function requireInt(value, name, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
   const number = Math.trunc(Number(value));
-  if (!Number.isFinite(number)) throw bad(`${name} muss eine Zahl sein.`);
-  if (number < min || number > max) throw bad(`${name} muss zwischen ${min} und ${max} liegen.`);
+  if (!Number.isFinite(number)) {
+    throw bad(`${name} muss eine Zahl sein.`, { en: `${name} has to be a number.` });
+  }
+  if (number < min || number > max) {
+    throw bad(`${name} muss zwischen ${min} und ${max} liegen.`, {
+      en: `${name} has to be between ${min} and ${max}.`,
+    });
+  }
   return number;
 }
 
-/** Guthaben in Milli-Credits als lesbaren Betrag ausgeben (1000 mcr = 1 Credit). */
-export function formatCredits(milli) {
-  return (milli / 1000).toLocaleString('de-DE', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 3,
+/** Credits sind ganze Zahlen (1 Credit = 1 Cent) – nur die Tausender bekommen einen Punkt. */
+export function formatCredits(credits) {
+  return Number(credits || 0).toLocaleString('de-DE');
+}
+
+/** Credits als Euro-Betrag – nur zur Anzeige. */
+export function formatEuro(credits, lang = 'de') {
+  return (Number(credits || 0) / 100).toLocaleString(lang === 'en' ? 'en-GB' : 'de-DE', {
+    style: 'currency',
+    currency: 'EUR',
   });
 }
 
@@ -106,10 +142,32 @@ export function formatCredits(milli) {
 export function parseAddress(input) {
   const text = String(input || '').trim();
   const match = /^([A-Za-z0-9._-]+)(?::(\d{1,5}))?$/.exec(text);
-  if (!match) throw bad('Serveradresse sieht nicht wie "host" oder "host:port" aus.');
+  if (!match) {
+    throw bad('Serveradresse sieht nicht wie "host" oder "host:port" aus.', {
+      en: 'That does not look like "host" or "host:port".',
+    });
+  }
   const port = match[2] ? Number(match[2]) : 0;
-  if (port > 65535) throw bad('Port ist zu groß.');
+  if (port > 65535) throw bad('Port ist zu groß.', { en: 'That port number is too large.' });
   return { host: match[1].toLowerCase(), port };
 }
 
 export const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const MS_LINK = 'https://www.microsoft.com/link';
+
+/**
+ * Microsofts Geräteanmeldung nimmt den Code auch als Parameter in der Adresse entgegen. Damit muss
+ * ihn niemand abtippen: ein Klick, und im Browser steht er schon im Feld.
+ */
+export function codeUrl(uri, code) {
+  if (!code) return null;
+  const base = uri || MS_LINK;
+  try {
+    const url = new URL(base);
+    url.searchParams.set('otc', code);
+    return url.toString();
+  } catch {
+    return `${base}${base.includes('?') ? '&' : '?'}otc=${encodeURIComponent(code)}`;
+  }
+}

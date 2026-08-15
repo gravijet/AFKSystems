@@ -1,262 +1,294 @@
-// Guthaben: Stand, Verbrauch, Aufladen, Gutschein einlösen, Kontoauszug.
+// Guthaben: Stand, Serverplätze, Aufladen, Gutschein einlösen, Kontoauszug.
 
-import { api, icon, escapeHtml, credits, euro, datetime, $, $$, ok, fail, copy, formDialog } from '../ui.js';
+import { api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, copy, formDialog } from '../ui.js';
 import { state, appbar, refresh, draw } from '../app.js';
 
-const KINDS = {
-  usage: 'Verbrauch',
-  topup: 'Aufladung',
-  voucher: 'Gutschein',
-  admin: 'Durch Admin',
-  bonus: 'Startguthaben',
-  refund: 'Erstattung',
+const KIND = {
+  topup: 'bill.kind.topup',
+  voucher: 'bill.kind.voucher',
+  plan: 'bill.kind.plan',
+  refund: 'bill.kind.refund',
+  admin: 'bill.kind.admin',
+  bonus: 'bill.kind.bonus',
 };
 
 export async function render(root) {
   const data = await api('/billing');
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const paidSlots = data.slots.filter((slot) => !slot.free_slot).length;
 
   root.innerHTML = `
-    ${appbar('Guthaben', `
-      <button class="btn btn-sm" id="voucher">${icon('ticket')} Gutschein einlösen</button>
-      <button class="btn btn-primary btn-sm" id="topup">${icon('wallet')} Aufladen</button>`,
-      'Kein Abo – du bezahlst nur laufende Bots')}
+    ${appbar(
+      tr('bill.title'),
+      `<button class="btn btn-sm" id="voucher">${icon('ticket')} ${escapeHtml(tr('bill.voucher'))}</button>
+       <button class="btn btn-primary btn-sm" id="topup">${icon('wallet')} ${escapeHtml(tr('bill.topUp'))}</button>`,
+      tr('bill.sub')
+    )}
 
-    ${params.get('bezahlt') ? `<div class="note" style="margin-bottom:1.25rem">${icon('check')}<div>Danke! Sobald die Zahlung bestätigt ist, steht das Guthaben hier.</div></div>` : ''}
+    ${
+      params.get('paid')
+        ? `<div class="note" style="margin-bottom:1.25rem">${icon('check')}<div>${escapeHtml(
+            tr('bill.transferNote')
+          )}</div></div>`
+        : ''
+    }
 
     <div class="grid four" style="margin-bottom:1.5rem">
-      <div class="stat"><div class="k">Guthaben</div><div class="v">${credits(data.balance_mcr)}</div>
-        <div class="s">${euro(Math.round((data.balance_mcr / 1000) * data.credit_cent))} Gegenwert</div></div>
-      <div class="stat"><div class="k">Laufende Bots</div><div class="v">${data.running}</div>
-        <div class="s">${data.rate_mcr_hour} mcr je Bot und Stunde</div></div>
-      <div class="stat"><div class="k">Reicht noch</div>
-        <div class="v">${data.hours_left === null ? '∞' : data.hours_left < 48 ? `${data.hours_left} h` : `${Math.round(data.hours_left / 24)} d`}</div>
-        <div class="s">bei ${Math.max(data.running, 1)} Bot(s)</div></div>
-      <div class="stat"><div class="k">Monat je Bot</div>
-        <div class="v">${((data.rate_mcr_hour * 730) / 1000).toFixed(2).replace('.', ',')}</div>
-        <div class="s">Credits bei Dauerbetrieb</div></div>
+      <div class="stat"><div class="k">${escapeHtml(tr('bill.balance'))}</div>
+        <div class="v">${credits(data.balance)}</div>
+        <div class="s">${escapeHtml(euro(data.balance))}</div></div>
+      <div class="stat"><div class="k">${escapeHtml(tr('bill.monthly'))}</div>
+        <div class="v">${credits(data.monthly_cost)}</div>
+        <div class="s">${escapeHtml(euro(data.monthly_cost))}</div></div>
+      <div class="stat"><div class="k">${escapeHtml(tr('bill.monthsLeft'))}</div>
+        <div class="v">${data.months_left === null ? '∞' : data.months_left}</div>
+        <div class="s">${escapeHtml(
+          data.months_left === null ? tr('ov.monthsPlenty') : tr('bill.months', { n: data.months_left })
+        )}</div></div>
+      <div class="stat"><div class="k">${escapeHtml(tr('bill.slots'))}</div>
+        <div class="v">${data.slots.length}</div>
+        <div class="s">${escapeHtml(
+          tr('bill.slotsLine', { paid: paidSlots, free: data.slots.length - paidSlots })
+        )}</div></div>
     </div>
 
     ${
-      data.balance_mcr <= data.low_balance_mcr
-        ? `<div class="note ${data.balance_mcr <= 0 ? 'bad' : 'warn'}" style="margin-bottom:1.5rem">${icon('alert')}
-            <div>${
-              data.balance_mcr <= 0
-                ? 'Dein Guthaben ist aufgebraucht – Bots lassen sich erst nach dem Aufladen wieder starten.'
-                : 'Dein Guthaben geht zur Neige. Lade nach, damit die Bots nicht mitten in der Nacht stoppen.'
-            }</div></div>`
+      data.monthly_cost > 0 && data.balance <= data.low_balance
+        ? `<div class="note ${data.balance <= 0 ? 'bad' : 'warn'}" style="margin-bottom:1.5rem">${icon('alert')}
+            <div>${escapeHtml(
+              data.balance <= 0
+                ? tr('ov.noCredits')
+                : tr('ov.lowCredits', {
+                    credits: credits(data.balance),
+                    cost: credits(data.monthly_cost),
+                  })
+            )}</div></div>`
         : ''
     }
 
     <div class="grid two" style="align-items:start">
       <section class="panel">
-        <header><h3>Verbrauch der letzten 14 Tage</h3></header>
-        <div class="body">${chart(data.usage)}</div>
+        <header><h3>${escapeHtml(tr('bill.slots'))}</h3></header>
+        <div class="body" style="padding:0">
+          <div class="table-wrap"><table class="table">
+            <thead><tr><th>${escapeHtml(tr('common.name'))}</th><th>${escapeHtml(tr('srv.plan'))}</th>
+              <th>${escapeHtml(tr('common.month'))}</th><th></th></tr></thead>
+            <tbody>${
+              data.slots
+                .map(
+                  (slot) => `<tr>
+                    <td><a href="#/servers/${slot.id}/plan">${escapeHtml(slot.name)}</a></td>
+                    <td class="small muted">${escapeHtml(slot.plan)}</td>
+                    <td class="mono small">${
+                      slot.free_slot ? escapeHtml(tr('common.free')) : credits(slot.price_credits)
+                    }</td>
+                    <td class="small muted">${
+                      slot.suspended
+                        ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
+                        : slot.paid_until
+                          ? `${escapeHtml(tr('srv.daysLeft', { n: slot.days_left }))} · ${date(slot.paid_until)}`
+                          : escapeHtml(tr('pricing.forever'))
+                    }</td>
+                  </tr>`
+                )
+                .join('') ||
+              `<tr><td colspan="4" class="small muted" style="padding:1.25rem">${escapeHtml(
+                tr('dash.noServers')
+              )}</td></tr>`
+            }</tbody>
+          </table></div>
+        </div>
       </section>
 
       <section class="panel">
-        <header><h3>Aufladen</h3></header>
+        <header><h3>${escapeHtml(tr('bill.topUp'))}</h3></header>
         <div class="body stack">
           ${data.packages
             .map(
-              (pack, index) => `<button class="row spread" data-pack="${index}"
-                style="width:100%;text-align:left;padding:.7rem .9rem;border:0;cursor:pointer;
-                border-radius:.75rem;background:var(--surface-2);box-shadow:inset 0 0 0 1px var(--line)">
+              (pack, index) => `<button class="row spread pack-button" data-pack="${index}">
                 <span>
-                  <span class="strong">${credits(pack.credits_mcr, 0)} Credits</span>
+                  <span class="strong">${credits(pack.credits)} ${escapeHtml(tr('common.credits'))}</span>
                   <span class="small muted" style="display:block">
-                    ${pack.bonus_mcr > 0 ? `inkl. ${credits(pack.bonus_mcr, 0)} Bonus · ` : ''}
-                    ${Math.round(pack.credits_mcr / data.rate_mcr_hour / 24)} Bot-Tage</span>
+                    ${pack.bonus > 0 ? `+${credits(pack.bonus)} ${escapeHtml(tr('pricing.topup.bonus'))}` : '&nbsp;'}
+                  </span>
                 </span>
-                <span class="mono strong">${euro(pack.cent)}</span>
+                <span class="strong mono">${escapeHtml(pack.label)}</span>
               </button>`
             )
             .join('')}
-          <p class="small muted">Möglich: ${methods(data)}. Guthaben verfällt nicht.</p>
+          <p class="small muted">${escapeHtml(tr('pricing.topup.lead'))}</p>
         </div>
       </section>
     </div>
 
     ${
-      data.topups.filter((entry) => entry.status === 'open').length
+      data.topups.filter((topup) => topup.status === 'open').length
         ? `<section class="panel" style="margin-top:1.5rem">
-            <header><h3>Offene Aufladungen</h3></header>
-            <div class="body" style="padding:0"><div class="table-wrap"><table class="table">
-              <thead><tr><th>Datum</th><th>Betrag</th><th>Weg</th><th>Verwendungszweck</th><th></th></tr></thead>
-              <tbody>${data.topups
-                .filter((entry) => entry.status === 'open')
+            <header><h3>${escapeHtml(tr('bill.open'))}</h3></header>
+            <div class="body stack">
+              ${data.topups
+                .filter((topup) => topup.status === 'open')
                 .map(
-                  (entry) => `<tr>
-                    <td class="small muted">${datetime(entry.created_at)}</td>
-                    <td class="mono">${euro(entry.amount_cent)}</td>
-                    <td class="small">${escapeHtml(entry.provider)}</td>
-                    <td><span class="mono">${escapeHtml(entry.reference || '–')}</span>
-                      ${entry.reference ? `<button class="btn btn-ghost btn-sm" data-copy="${escapeHtml(entry.reference)}">${icon('copy')}</button>` : ''}</td>
-                    <td style="text-align:right"><button class="btn btn-sm btn-danger" data-cancel="${entry.id}">Abbrechen</button></td>
-                  </tr>`
+                  (topup) => `<div class="row spread">
+                    <span class="small">${escapeHtml(topup.provider)} · ${credits(topup.credits)} ${escapeHtml(
+                      tr('common.credits')
+                    )}</span>
+                    <span class="row small muted mono">${escapeHtml(topup.reference || '')}
+                      ${
+                        topup.reference
+                          ? `<button class="btn btn-ghost btn-sm" data-copy="${escapeHtml(
+                              topup.reference
+                            )}">${icon('copy')}</button>`
+                          : ''
+                      }</span>
+                  </div>`
                 )
-                .join('')}</tbody></table></div></div>
+                .join('')}
+            </div>
           </section>`
         : ''
     }
 
     <section class="panel" style="margin-top:1.5rem">
-      <header><h3>Kontoauszug</h3>
-        <span class="small muted">letzte ${data.history.length} Buchungen</span></header>
+      <header><h3>${escapeHtml(tr('bill.history'))}</h3></header>
       <div class="body" style="padding:0">
         ${
           data.history.length
             ? `<div class="table-wrap"><table class="table">
-                <thead><tr><th>Zeitpunkt</th><th>Art</th><th>Beschreibung</th><th style="text-align:right">Betrag</th><th style="text-align:right">Stand</th></tr></thead>
+                <thead><tr><th>${escapeHtml(tr('common.status'))}</th><th></th>
+                  <th style="text-align:right">${escapeHtml(tr('common.credits'))}</th>
+                  <th style="text-align:right">${escapeHtml(tr('bill.balance'))}</th></tr></thead>
                 <tbody>${data.history
                   .map(
-                    (entry) => `<tr>
-                      <td class="small muted nowrap">${datetime(entry.created_at)}</td>
-                      <td class="small">${escapeHtml(KINDS[entry.kind] || entry.kind)}</td>
-                      <td class="small muted">${escapeHtml(entry.note || '')}</td>
-                      <td class="mono" style="text-align:right;color:${entry.delta_mcr < 0 ? 'var(--text-2)' : 'var(--ok)'}">
-                        ${entry.delta_mcr > 0 ? '+' : ''}${credits(entry.delta_mcr, 3)}</td>
-                      <td class="mono muted" style="text-align:right">${credits(entry.balance_mcr)}</td>
+                    (row) => `<tr>
+                      <td class="small muted mono">${datetime(row.created_at)}</td>
+                      <td>${escapeHtml(tr(KIND[row.kind] || 'bill.kind.admin'))}
+                        ${row.note ? `<span class="small muted">· ${escapeHtml(row.note)}</span>` : ''}</td>
+                      <td class="mono" style="text-align:right;color:${
+                        row.delta >= 0 ? 'var(--ok)' : 'var(--text)'
+                      }">${row.delta >= 0 ? '+' : ''}${credits(row.delta)}</td>
+                      <td class="mono small muted" style="text-align:right">${credits(row.balance)}</td>
                     </tr>`
                   )
-                  .join('')}</tbody></table></div>`
-            : '<p class="muted small" style="padding:1.25rem">Noch keine Buchungen.</p>'
+                  .join('')}</tbody>
+              </table></div>`
+            : `<p class="small muted" style="padding:1.25rem">${escapeHtml(tr('bill.noHistory'))}</p>`
         }
       </div>
     </section>`;
 
+  $$('[data-copy]').forEach((button) =>
+    button.addEventListener('click', () => copy(button.dataset.copy))
+  );
+
+  $$('[data-pack]').forEach((button) =>
+    button.addEventListener('click', () => startTopup(data, Number(button.dataset.pack)))
+  );
+  $('#topup').addEventListener('click', () => startTopup(data, data.packages.length - 1));
+
   $('#voucher').addEventListener('click', async () => {
-    const form = await formDialog(
-      'Gutschein einlösen',
-      [{ key: 'code', label: 'Code', placeholder: 'ABCD-EFGH-JKLM-NPQR', value: '' }],
-      { submit: 'Einlösen' }
+    const answer = await formDialog(
+      tr('bill.voucher'),
+      [{ key: 'code', label: tr('bill.voucherCode'), required: true }],
+      { submit: tr('bill.voucher') }
     );
-    if (!form) return;
+    if (!answer) return;
     try {
-      const result = await api('/billing/voucher', { method: 'POST', body: { code: form.code } });
-      ok(`${credits(result.credits_mcr)} Credits gutgeschrieben.`);
+      const result = await api('/billing/voucher', { method: 'POST', body: { code: answer.code } });
+      ok(tr('bill.voucherOk', { n: credits(result.credits) }));
       await refresh({ profiles: false, accounts: false });
       draw();
     } catch (error) {
       fail(error);
     }
   });
-
-  $('#topup').addEventListener('click', () => startTopup(data, 0));
-  $$('[data-pack]').forEach((button) =>
-    button.addEventListener('click', () => startTopup(data, Number(button.dataset.pack)))
-  );
-  $$('[data-copy]').forEach((button) =>
-    button.addEventListener('click', () => copy(button.dataset.copy))
-  );
-  $$('[data-cancel]').forEach((button) =>
-    button.addEventListener('click', async () => {
-      await api(`/billing/topup/${button.dataset.cancel}`, { method: 'DELETE' });
-      draw();
-    })
-  );
 }
 
-function methods(data) {
-  const list = [];
-  if (data.methods.stripe) list.push('Kreditkarte');
-  if (data.methods.transfer) list.push('Überweisung');
-  if (data.methods.paypal) list.push('PayPal');
-  list.push('Gutscheincode');
-  return list.join(', ');
-}
-
-/** Einfaches Balkendiagramm – 14 Werte brauchen keine Bibliothek. */
-function chart(usage) {
-  const max = Math.max(1, ...usage.map((day) => day.mcr));
-  return `<div style="display:flex;align-items:flex-end;gap:.35rem;height:9rem">
-      ${usage
-        .map(
-          (day) => `<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;height:100%"
-            title="${day.day}: ${credits(day.mcr, 3)} Credits">
-            <div style="height:${Math.max(2, (day.mcr / max) * 100)}%;border-radius:.25rem .25rem 0 0;
-              background:${day.mcr ? 'var(--primary)' : 'var(--line)'};opacity:${day.mcr ? 0.85 : 1}"></div>
-          </div>`
-        )
-        .join('')}
-    </div>
-    <div class="row spread small muted" style="margin-top:.5rem">
-      <span>${usage[0]?.day.slice(5).replace('-', '.') || ''}</span>
-      <span>heute</span>
-    </div>
-    <div class="small muted" style="margin-top:.35rem">Höchster Tag: ${credits(max, 3)} Credits</div>`;
-}
-
+/** Zahlweg wählen, dann je nach Anbieter weiterleiten oder die Anweisung zeigen. */
 async function startTopup(data, index) {
+  const methods = [];
+  if (data.methods.stripe) methods.push({ value: 'stripe', label: tr('bill.card') });
+  if (data.methods.transfer) methods.push({ value: 'transfer', label: tr('bill.transfer') });
+  if (data.methods.paypal) methods.push({ value: 'paypal', label: tr('bill.paypal') });
+  if (!methods.length) return fail(new Error(tr('pricing.onRequest')));
+
   const pack = data.packages[index];
-  const ways = [];
-  if (data.methods.stripe) ways.push({ value: 'stripe', label: 'Kreditkarte (Stripe)' });
-  if (data.methods.transfer) ways.push({ value: 'transfer', label: 'Überweisung' });
-  if (data.methods.paypal) ways.push({ value: 'paypal', label: 'PayPal' });
-
-  if (!ways.length) {
-    return fail(
-      new Error(
-        'Auf diesem Server ist kein Zahlungsweg eingerichtet. Bitte den Betreiber um einen Gutscheincode oder eine Aufbuchung.'
-      )
-    );
-  }
-
-  const form = await formDialog(
-    `${credits(pack.credits_mcr, 0)} Credits für ${euro(pack.cent)}`,
-    [{ key: 'provider', label: 'Zahlungsweg', type: 'select', value: ways[0].value, options: ways }],
-    { submit: 'Weiter' }
+  const answer = await formDialog(
+    tr('bill.topUp'),
+    [
+      {
+        key: 'package',
+        label: tr('bill.topUp'),
+        type: 'select',
+        value: String(index),
+        options: data.packages.map((entry, i) => ({
+          value: String(i),
+          label: `${entry.label} → ${entry.credits} ${tr('common.credits')}`,
+        })),
+      },
+      {
+        key: 'provider',
+        label: tr('bill.method'),
+        type: 'select',
+        value: methods[0].value,
+        options: methods,
+      },
+    ],
+    { submit: tr('bill.topUp'), note: `${pack.label} · ${pack.credits} ${tr('common.credits')}` }
   );
-  if (!form) return;
+  if (!answer) return;
 
   try {
     const result = await api('/billing/topup', {
       method: 'POST',
-      body: { package: index, provider: form.provider },
+      body: { package: Number(answer.package), provider: answer.provider },
     });
-    if (result.redirect) {
-      location.href = result.redirect;
-      return;
-    }
-    showInstructions(result);
+    if (result.redirect) return location.assign(result.redirect);
+    await instructions(result);
+    draw();
   } catch (error) {
     fail(error);
   }
 }
 
-function showInstructions(result) {
-  const info = result.instructions;
-  const dialog = document.createElement('dialog');
-  dialog.innerHTML = `
-    <header><h3>So lädst du auf</h3></header>
-    <div class="body stack">
-      <div class="note">${icon('info')}<div>${escapeHtml(info.note)}</div></div>
-      <div class="field"><label>Betrag</label><div class="mono strong">${escapeHtml(info.amount)} €</div></div>
-      <div class="field"><label>Verwendungszweck (unbedingt angeben)</label>
-        <div class="row"><div class="mono strong grow" style="padding:.5rem .75rem;border-radius:.5rem;
-          background:var(--surface);box-shadow:inset 0 0 0 1px var(--line)">${escapeHtml(info.reference)}</div>
-          <button class="btn btn-sm" id="copy-ref">${icon('copy')}</button></div></div>
-      ${
-        info.bank
-          ? `<div class="field"><label>Bankverbindung</label>
-              <div class="mono small">${escapeHtml(info.bank.holder || '')}<br>
-              ${escapeHtml(info.bank.iban || '')}<br>${escapeHtml(info.bank.bic || '')}</div></div>`
-          : ''
-      }
-      ${
-        info.paypal
-          ? `<a class="btn btn-primary btn-block" href="${escapeHtml(info.paypal)}" target="_blank" rel="noopener">
-              PayPal öffnen ${icon('arrow')}</a>`
-          : ''
-      }
-    </div>
-    <footer><button class="btn btn-primary" id="close">Verstanden</button></footer>`;
-  document.body.append(dialog);
-  dialog.showModal();
-  dialog.addEventListener('close', () => {
-    dialog.remove();
-    draw();
+/** Überweisung und PayPal: Betrag und Verwendungszweck zum Abschreiben. */
+function instructions(result) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = `
+      <header><h3>${escapeHtml(tr('bill.transfer'))}</h3></header>
+      <div class="body stack">
+        <p class="small muted">${escapeHtml(tr('bill.transferNote'))}</p>
+        <div class="row spread"><span class="muted small">${escapeHtml(tr('bill.topUp'))}</span>
+          <span class="mono strong">${escapeHtml(result.instructions?.amount || '')} €</span></div>
+        ${
+          result.instructions?.bank?.iban
+            ? `<div class="row spread"><span class="muted small">IBAN</span>
+                 <span class="mono">${escapeHtml(result.instructions.bank.iban)}</span></div>
+               <div class="row spread"><span class="muted small">${escapeHtml(tr('common.name'))}</span>
+                 <span class="mono">${escapeHtml(result.instructions.bank.holder || '')}</span></div>`
+            : ''
+        }
+        ${
+          result.instructions?.paypal
+            ? `<div class="row spread"><span class="muted small">PayPal</span>
+                 <span class="mono">${escapeHtml(result.instructions.paypal)}</span></div>`
+            : ''
+        }
+        <div class="row spread"><span class="muted small">${escapeHtml(tr('bill.reference'))}</span>
+          <span class="mono strong">${escapeHtml(result.topup?.reference || '')}</span></div>
+      </div>
+      <footer>
+        <button class="btn" id="copy-ref">${icon('copy')} ${escapeHtml(tr('common.copy'))}</button>
+        <button class="btn btn-primary" id="done">${escapeHtml(tr('common.close'))}</button>
+      </footer>`;
+    document.body.append(dialog);
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      resolve();
+    });
+    $('#copy-ref', dialog).addEventListener('click', () => copy(result.topup?.reference || ''));
+    $('#done', dialog).addEventListener('click', () => dialog.close());
+    dialog.showModal();
   });
-  $('#close', dialog).addEventListener('click', () => dialog.close());
-  $('#copy-ref', dialog).addEventListener('click', () => copy(info.reference));
 }

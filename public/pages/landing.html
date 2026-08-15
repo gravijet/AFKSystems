@@ -1,0 +1,187 @@
+{{> head}}
+{{> nav}}
+
+    <main id="main">
+      <!-- Hero. Kein nachgebautes Terminal – das Erkennungszeichen ist der Monat selbst:
+           30 Reihen zu 24 Blöcken, ein Block je Stunde. Genau das kauft man hier. -->
+      <section class="hero">
+        <div class="page hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow"><span class="dot live"></span>{{hero.eyebrow}}</p>
+            <h1>
+              {{hero.title.a}} <span class="hl">{{hero.title.mark}}</span>,<br />
+              {{hero.title.b}}
+            </h1>
+            <p class="lead">{{hero.lead}}</p>
+            <div class="hero-cta">
+              <a class="btn btn-primary btn-lg" href="/{{lang}}/register">{{hero.cta}}</a>
+              <a class="btn btn-lg btn-ghost" href="#how">{{hero.cta2}}</a>
+            </div>
+            <p class="hero-note">{{hero.note}}</p>
+          </div>
+
+          <figure class="month">
+            <figcaption class="month-head">
+              <span>{{hero.strip.title}}</span>
+              <span class="month-slot">{{hero.strip.slot}}</span>
+            </figcaption>
+            <div class="month-grid" id="month-grid" role="img" aria-label="{{hero.strip.legend}}"></div>
+            <div class="month-foot">
+              <span><b>720</b> {{hero.strip.hours}}</span>
+              <span><b>30</b> {{common.days}}</span>
+              <span class="month-now"><span class="dot live"></span>{{hero.strip.now}}</span>
+            </div>
+          </figure>
+        </div>
+
+        <!-- Zahlenleiste: die vier Größen, nach denen hier alles läuft. -->
+        <div class="page">
+          <dl class="rail">
+            <div><dt>{{rail.free}}</dt><dd>{{freeSlots}}</dd></div>
+            <div><dt>{{rail.credit}}</dt><dd>1&thinsp;¢</dd></div>
+            <div><dt>{{rail.month}}</dt><dd>30&thinsp;d</dd></div>
+            <div><dt>{{rail.reconnect}}</dt><dd>{{rail.reconnectValue}}</dd></div>
+          </dl>
+        </div>
+      </section>
+
+      <!-- Funktionen: eine Datenblatt-Liste, keine Kachelwand. Der Zustand rechts kommt aus den
+           echten Fähigkeiten der Client-Datei auf diesem Server. -->
+      <section class="band" id="features">
+        <div class="page">
+          <header class="band-head">
+            <p class="eyebrow">{{features.eyebrow}}</p>
+            <h2>{{features.title}}</h2>
+            <p class="lead">{{features.lead}}</p>
+          </header>
+          <div class="spec">{{featuresHtml}}</div>
+          <ul class="legend">{{legendHtml}}</ul>
+        </div>
+      </section>
+
+      <!-- Tarife -->
+      <section class="band alt" id="pricing">
+        <div class="page">
+          <header class="band-head">
+            <p class="eyebrow">{{pricing.eyebrow}}</p>
+            <h2>{{pricing.title}}</h2>
+            <p class="lead">{{pricing.lead}}</p>
+          </header>
+
+          <div class="slots">
+            <div class="slot-row">
+              <span class="slot-no">{{pricing.slot}} 1</span>
+              <span class="slot-what">{{pricing.slot1}}</span>
+              <span class="slot-price">{{common.free}}</span>
+            </div>
+            <div class="slot-row">
+              <span class="slot-no">{{pricing.slot}} 2+</span>
+              <span class="slot-what">{{pricing.slot2}}</span>
+              <span class="slot-price">{{pricing.fromPrice}}</span>
+            </div>
+          </div>
+
+          <div class="plans">{{plansHtml}}</div>
+
+          <div class="topup">
+            <div class="topup-copy">
+              <h3>{{pricing.topup.title}}</h3>
+              <p>{{pricing.topup.lead}}</p>
+            </div>
+            <div class="topup-list">{{packagesHtml}}</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Ablauf: hier ist die Nummerierung echt, es ist eine Reihenfolge. -->
+      <section class="band" id="how">
+        <div class="page">
+          <header class="band-head">
+            <p class="eyebrow">{{how.eyebrow}}</p>
+            <h2>{{how.title}}</h2>
+            <p class="lead">{{how.lead}}</p>
+          </header>
+          <ol class="steps">
+            <li>
+              <span class="step-no">01</span>
+              <h3>{{how.1.title}}</h3>
+              <p>{{how.1.text}}</p>
+            </li>
+            <li>
+              <span class="step-no">02</span>
+              <h3>{{how.2.title}}</h3>
+              <p>{{how.2.text}}</p>
+            </li>
+            <li>
+              <span class="step-no">03</span>
+              <h3>{{how.3.title}}</h3>
+              <p>{{how.3.text}}</p>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <!-- Versionen -->
+      <section class="band alt" id="versions">
+        <div class="page">
+          <header class="band-head">
+            <p class="eyebrow">{{versions.eyebrow}}</p>
+            <h2>{{versions.title}}</h2>
+            <p class="lead">{{versions.lead}}</p>
+          </header>
+          <ul class="versions">{{versionsHtml}}</ul>
+        </div>
+      </section>
+
+      <!-- Fragen -->
+      <section class="band" id="faq">
+        <div class="page">
+          <header class="band-head">
+            <p class="eyebrow">{{faq.eyebrow}}</p>
+            <h2>{{faq.title}}</h2>
+          </header>
+          <div class="faq">
+            <details>
+              <summary>{{faq.1.q}}</summary>
+              <p>{{faq.1.a}}</p>
+            </details>
+            <details>
+              <summary>{{faq.2.q}}</summary>
+              <p>{{faq.2.a}}</p>
+            </details>
+            <details>
+              <summary>{{faq.3.q}}</summary>
+              <p>{{faq.3.a}}</p>
+            </details>
+            <details>
+              <summary>{{faq.4.q}}</summary>
+              <p>{{faq.4.a}}</p>
+            </details>
+            <details>
+              <summary>{{faq.5.q}}</summary>
+              <p>{{faq.5.a}}</p>
+            </details>
+            <details>
+              <summary>{{faq.6.q}}</summary>
+              <p>{{faq.6.a}}</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
+      <section class="closing">
+        <div class="page">
+          <h2>{{cta.title}}</h2>
+          <p>{{cta.lead}}</p>
+          <div class="hero-cta">
+            <a class="btn btn-primary btn-lg" href="/{{lang}}/register">{{nav.register}}</a>
+            <a class="btn btn-lg btn-ghost" href="/{{lang}}/login">{{cta.have}}</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+{{> footer}}
+    <script type="module" src="/assets/js/landing.js"></script>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+{{> head}}
+    <main class="auth" id="main">
+      <div class="auth-box">
+        <a class="brand" href="/{{lang}}">
+          <img class="logo" src="/assets/img/logo.svg" alt="" />
+          <span>{{brand}}</span>
+        </a>
+
+        <div class="auth-card">
+          <h1>{{auth.verify.title}}</h1>
+          <p class="auth-lead" id="state">{{common.loading}}</p>
+          <a class="btn btn-primary btn-block hide" id="go" href="/{{lang}}/app">{{auth.verify.toDashboard}}</a>
+          <button class="btn btn-block hide" id="resend" type="button">{{auth.register.resend}}</button>
+        </div>
+
+        <p class="auth-alt"><a href="/{{lang}}">{{common.back}}</a></p>
+      </div>
+    </main>
+    <script type="module" src="/assets/js/auth.js"></script>
+  </body>
+</html>

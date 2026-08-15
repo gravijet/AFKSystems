@@ -1,44 +1,65 @@
-// Guthaben aufladen und einsehen – und der Admin-Bereich.
+// Guthaben aufladen und einsehen.
 //
-// Bezahlt wird nie direkt für einen Bot, sondern immer nur Guthaben. Wie das Geld hereinkommt,
-// hängt davon ab, was eingerichtet ist: Stripe (mit Schlüssel), Überweisung/PayPal (der Admin
-// bestätigt den Eingang), Gutschein – oder der Admin bucht direkt auf.
+// Bezahlt wird nie direkt für einen Bot, sondern immer nur Guthaben – ein Credit ist ein Cent.
+// Wie das Geld hereinkommt, hängt davon ab, was eingerichtet ist: Stripe (mit Schlüssel),
+// Überweisung/PayPal (der Admin bestätigt den Eingang), Gutschein – oder der Admin bucht direkt auf.
 
 import express from 'express';
 import { config } from '../config.js';
-import { db, getSetting, setSetting, audit, allSettings } from '../db.js';
-import { requireUser, requireAdmin, publicUser } from '../auth.js';
-import * as credits from '../credits.js';
-import { supervisor } from '../supervisor.js';
-import * as binaries from '../binaries.js';
-import { wrap, requireInt, requireString, bad, notFound, token, formatCredits } from '../util.js';
+import { db, getSetting } from '../db.js';
+import { requireUser } from '../auth.js';
+import * as billing from '../billing.js';
+import { planView } from './core.js';
+import { wrap, requireInt, bad, notFound, token, formatCredits } from '../util.js';
 
 export const router = express.Router();
 
-// ---------------------------------------------------------------- Guthaben (Nutzer)
+const langOf = (req) => (String(req.query.lang || req.user?.language || 'en') === 'de' ? 'de' : 'en');
 
 router.get(
   '/billing',
   requireUser,
   wrap((req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-    const running = supervisor.list(user.id).filter((bot) => bot.state !== 'offline').length;
+    const lang = langOf(req);
+    const slots = db
+      .prepare(
+        `SELECT p.id, p.name, p.paid_until, p.renew, p.suspended, pl.price_credits, pl.free_slot,
+                pl.name_de, pl.name_en
+           FROM profiles p JOIN plans pl ON pl.id = p.plan_id WHERE p.user_id = ? ORDER BY p.ordinal, p.id`
+      )
+      .all(user.id)
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        plan: lang === 'de' ? row.name_de : row.name_en,
+        price_credits: row.price_credits,
+        free_slot: Boolean(row.free_slot),
+        paid_until: row.paid_until,
+        renew: Boolean(row.renew),
+        suspended: Boolean(row.suspended),
+        days_left: row.paid_until
+          ? Math.max(0, Math.ceil((row.paid_until - Date.now()) / 86_400_000))
+          : null,
+      }));
+
+    const monthly = billing.monthlyCost(user.id);
     res.json({
-      balance_mcr: user.credits_mcr,
-      balance: formatCredits(user.credits_mcr),
-      rate_mcr_hour: credits.hourlyRate(user),
-      credit_cent: Number(getSetting('credit_cent')),
-      running,
-      hours_left: Number.isFinite(credits.runtimeHours(user, running || 1))
-        ? Number(credits.runtimeHours(user, running || 1).toFixed(1))
-        : null,
-      low_balance_mcr: Number(getSetting('low_balance_mcr')),
-      packages: credits.packages(),
-      history: credits.history(user.id, 60),
-      usage: credits.usageByDay(user.id, 14),
-      topups: db
-        .prepare('SELECT * FROM topups WHERE user_id = ? ORDER BY id DESC LIMIT 20')
-        .all(user.id),
+      balance: user.credits,
+      balance_text: formatCredits(user.credits),
+      balance_euro: (user.credits / 100).toFixed(2),
+      monthly_cost: monthly,
+      months_left: monthly > 0 ? Math.floor(user.credits / monthly) : null,
+      low_balance: Number(getSetting('low_balance')),
+      month_days: billing.MONTH_DAYS,
+      free_slots: billing.freeSlots(),
+      free_slots_left: Math.max(0, billing.freeSlots() - billing.usedFreeSlots(user.id)),
+      slots,
+      plans: billing.plans().map((plan) => planView(plan, lang)),
+      packages: billing.packages(),
+      history: billing.history(user.id, 80),
+      spend: billing.spendByMonth(user.id, 6),
+      topups: db.prepare('SELECT * FROM topups WHERE user_id = ? ORDER BY id DESC LIMIT 20').all(user.id),
       methods: {
         stripe: Boolean(config.stripeSecret),
         transfer: Boolean(config.bankTransfer.iban),
@@ -46,7 +67,11 @@ router.get(
         voucher: true,
       },
       bank: config.bankTransfer.iban
-        ? { holder: config.bankTransfer.holder, iban: config.bankTransfer.iban, bic: config.bankTransfer.bic }
+        ? {
+            holder: config.bankTransfer.holder,
+            iban: config.bankTransfer.iban,
+            bic: config.bankTransfer.bic,
+          }
         : null,
       paypal: config.bankTransfer.paypal || null,
     });
@@ -57,8 +82,8 @@ router.post(
   '/billing/voucher',
   requireUser,
   wrap((req, res) => {
-    const result = credits.redeemVoucher(req.user.id, req.body?.code);
-    res.json({ ...result, balance: formatCredits(result.balance_mcr) });
+    const result = billing.redeemVoucher(req.user.id, req.body?.code);
+    res.json({ ...result, balance_text: formatCredits(result.balance) });
   })
 );
 
@@ -67,20 +92,24 @@ router.post(
   '/billing/topup',
   requireUser,
   wrap(async (req, res) => {
-    const list = credits.packages();
+    const list = billing.packages();
     const index = requireInt(req.body?.package ?? 0, 'Paket', { min: 0, max: list.length - 1 });
     const chosen = list[index];
     const provider = String(req.body?.provider || (config.stripeSecret ? 'stripe' : 'transfer'));
 
     if (provider === 'stripe') {
-      if (!config.stripeSecret) throw bad('Kartenzahlung ist auf diesem Server nicht eingerichtet.');
-      const topup = credits.createTopup({
+      if (!config.stripeSecret) {
+        throw bad('Kartenzahlung ist auf diesem Server nicht eingerichtet.', {
+          en: 'Card payments are not set up on this server.',
+        });
+      }
+      const topup = billing.createTopup({
         userId: req.user.id,
         provider: 'stripe',
         amountCent: chosen.cent,
-        creditsMcr: chosen.credits_mcr,
+        credits: chosen.credits,
       });
-      const session = await stripeCheckout(req.user, chosen, topup);
+      const session = await stripeCheckout(req.user, chosen, topup, langOf(req));
       db.prepare('UPDATE topups SET external_id = ? WHERE id = ?').run(session.id, topup.id);
       res.json({ topup, redirect: session.url });
       return;
@@ -88,11 +117,11 @@ router.post(
 
     if (provider === 'transfer' || provider === 'paypal') {
       const reference = `AFK-${req.user.id}-${token(4).toUpperCase().slice(0, 6)}`;
-      const topup = credits.createTopup({
+      const topup = billing.createTopup({
         userId: req.user.id,
         provider,
         amountCent: chosen.cent,
-        creditsMcr: chosen.credits_mcr,
+        credits: chosen.credits,
         reference,
       });
       res.json({
@@ -102,13 +131,12 @@ router.post(
           reference,
           bank: provider === 'transfer' ? config.bankTransfer : null,
           paypal: provider === 'paypal' ? config.bankTransfer.paypal : null,
-          note: 'Nach dem Eingang schaltet ein Administrator das Guthaben frei.',
         },
       });
       return;
     }
 
-    throw bad('Unbekannte Zahlungsart.');
+    throw bad('Unbekannte Zahlungsart.', { en: 'Unknown payment method.' });
   })
 );
 
@@ -118,25 +146,25 @@ router.delete(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Aufladung');
     const topup = db.prepare('SELECT * FROM topups WHERE id = ? AND user_id = ?').get(id, req.user.id);
-    if (!topup) throw notFound('Aufladung gibt es nicht.');
-    credits.cancelTopup(id);
+    if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
+    billing.cancelTopup(id);
     res.json({ ok: true });
   })
 );
 
 /** Stripe-Checkout ohne SDK – die API nimmt ein Formular entgegen. */
-async function stripeCheckout(user, chosen, topup) {
+async function stripeCheckout(user, chosen, topup, lang) {
   const body = new URLSearchParams({
     mode: 'payment',
     'payment_method_types[0]': 'card',
     client_reference_id: String(topup.id),
     customer_email: user.email,
-    success_url: `${config.publicUrl}/app/#/guthaben?bezahlt=${topup.id}`,
-    cancel_url: `${config.publicUrl}/app/#/guthaben?abbruch=${topup.id}`,
+    success_url: `${config.publicUrl}/${lang}/app#/credits?paid=${topup.id}`,
+    cancel_url: `${config.publicUrl}/${lang}/app#/credits?cancelled=${topup.id}`,
     'line_items[0][quantity]': '1',
     'line_items[0][price_data][currency]': 'eur',
     'line_items[0][price_data][unit_amount]': String(chosen.cent),
-    'line_items[0][price_data][product_data][name]': `${config.brand} Guthaben ${chosen.credits} Credits`,
+    'line_items[0][price_data][product_data][name]': `${config.brand} · ${chosen.credits} Credits`,
     'metadata[topup_id]': String(topup.id),
     'metadata[user_id]': String(user.id),
   });
@@ -152,263 +180,6 @@ async function stripeCheckout(user, chosen, topup) {
   if (!response.ok) throw bad(`Stripe: ${data?.error?.message || response.status}`);
   return data;
 }
-
-// ---------------------------------------------------------------- Admin
-
-export const admin = express.Router();
-admin.use(requireUser, requireAdmin);
-
-admin.get(
-  '/overview',
-  wrap((req, res) => {
-    const users = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
-    const balance = db.prepare('SELECT COALESCE(SUM(credits_mcr), 0) AS n FROM users').get().n;
-    const day = Date.now() - 86_400_000;
-    res.json({
-      users,
-      accounts: db.prepare('SELECT COUNT(*) AS n FROM mc_accounts').get().n,
-      profiles: db.prepare('SELECT COUNT(*) AS n FROM profiles').get().n,
-      bots_running: supervisor.runningCount(),
-      bots_online: [...supervisor.bots.values()].filter((bot) => bot.online).length,
-      balance_mcr: balance,
-      revenue_cent: db
-        .prepare("SELECT COALESCE(SUM(amount_cent), 0) AS n FROM topups WHERE status = 'paid'")
-        .get().n,
-      usage_24h_mcr: -db
-        .prepare("SELECT COALESCE(SUM(delta_mcr), 0) AS n FROM ledger WHERE kind = 'usage' AND created_at > ?")
-        .get(day).n,
-      open_topups: db.prepare("SELECT COUNT(*) AS n FROM topups WHERE status = 'open'").get().n,
-      client: {
-        tag: binaries.state.tag,
-        version: binaries.state.clientVersion,
-        versions: binaries.state.versions,
-        movement: binaries.state.movement,
-        checked: binaries.state.checkedAt,
-        error: binaries.state.error,
-      },
-      settings: allSettings(),
-    });
-  })
-);
-
-admin.get(
-  '/users',
-  wrap((req, res) => {
-    const rows = db
-      .prepare(
-        `SELECT u.*,
-                (SELECT COUNT(*) FROM mc_accounts a WHERE a.user_id = u.id) AS accounts,
-                (SELECT COUNT(*) FROM profiles p WHERE p.user_id = u.id) AS profiles
-           FROM users u ORDER BY u.id`
-      )
-      .all();
-    res.json({
-      users: rows.map((row) => ({
-        ...publicUser(row),
-        blocked: Boolean(row.blocked),
-        accounts: row.accounts,
-        profiles: row.profiles,
-        last_seen_at: row.last_seen_at,
-        bots_running: supervisor.list(row.id).filter((bot) => bot.state !== 'offline').length,
-      })),
-    });
-  })
-);
-
-admin.patch(
-  '/users/:id',
-  wrap((req, res) => {
-    const id = requireInt(req.params.id, 'Benutzer');
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!user) throw notFound('Benutzer gibt es nicht.');
-    const body = req.body || {};
-
-    if (body.credits_delta_mcr !== undefined) {
-      const delta = Math.trunc(Number(body.credits_delta_mcr));
-      if (!Number.isFinite(delta) || delta === 0) throw bad('Betrag fehlt.');
-      credits.move(id, delta, 'admin', String(body.note || `durch ${req.user.username}`).slice(0, 200));
-      audit(req.user.id, 'admin-credits', { user: id, delta });
-    }
-    if (body.role !== undefined) {
-      if (!['user', 'admin'].includes(body.role)) throw bad('Unbekannte Rolle.');
-      if (id === req.user.id && body.role !== 'admin') throw bad('Sich selbst kann man nicht herabstufen.');
-      db.prepare('UPDATE users SET role = ? WHERE id = ?').run(body.role, id);
-    }
-    if (body.blocked !== undefined) {
-      db.prepare('UPDATE users SET blocked = ? WHERE id = ?').run(body.blocked ? 1 : 0, id);
-      if (body.blocked) supervisor.stopUser(id, 'Konto wurde gesperrt.');
-    }
-    if (body.rate_mcr_hour !== undefined) {
-      const rate = body.rate_mcr_hour === null ? null : requireInt(body.rate_mcr_hour, 'Tarif', { max: 100000 });
-      db.prepare('UPDATE users SET rate_mcr_hour = ? WHERE id = ?').run(rate, id);
-    }
-    res.json({ user: publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
-  })
-);
-
-admin.delete(
-  '/users/:id',
-  wrap((req, res) => {
-    const id = requireInt(req.params.id, 'Benutzer');
-    if (id === req.user.id) throw bad('Das eigene Konto lässt sich hier nicht löschen.');
-    supervisor.stopUser(id, 'Konto wurde gelöscht.');
-    db.prepare('DELETE FROM users WHERE id = ?').run(id);
-    audit(req.user.id, 'admin-user-delete', { user: id });
-    res.json({ ok: true });
-  })
-);
-
-// ------------------------------------------------ Gutscheine und Aufladungen
-
-admin.get(
-  '/vouchers',
-  wrap((req, res) => {
-    res.json({ vouchers: db.prepare('SELECT * FROM vouchers ORDER BY created_at DESC LIMIT 200').all() });
-  })
-);
-
-admin.post(
-  '/vouchers',
-  wrap((req, res) => {
-    const creditsMcr = requireInt(req.body?.credits_mcr, 'Guthaben', { min: 1, max: 10_000_000 });
-    const uses = requireInt(req.body?.uses ?? 1, 'Einlösungen', { min: 1, max: 1000 });
-    const count = requireInt(req.body?.count ?? 1, 'Anzahl', { min: 1, max: 50 });
-    const list = [];
-    for (let i = 0; i < count; i++) {
-      list.push(
-        credits.createVoucher({
-          creditsMcr,
-          uses,
-          note: String(req.body?.note || '').slice(0, 200),
-          createdBy: req.user.id,
-          expiresAt: req.body?.expires_at ? Number(req.body.expires_at) : null,
-        })
-      );
-    }
-    audit(req.user.id, 'voucher-create', { count, credits_mcr: creditsMcr });
-    res.json({ vouchers: list });
-  })
-);
-
-admin.delete(
-  '/vouchers/:code',
-  wrap((req, res) => {
-    db.prepare('DELETE FROM vouchers WHERE code = ?').run(String(req.params.code).toUpperCase());
-    res.json({ ok: true });
-  })
-);
-
-admin.get(
-  '/topups',
-  wrap((req, res) => {
-    const rows = db
-      .prepare(
-        `SELECT t.*, u.username, u.email FROM topups t JOIN users u ON u.id = t.user_id
-         ORDER BY t.status = 'open' DESC, t.id DESC LIMIT 200`
-      )
-      .all();
-    res.json({ topups: rows });
-  })
-);
-
-admin.post(
-  '/topups/:id/settle',
-  wrap((req, res) => {
-    const topup = credits.settleTopup(requireInt(req.params.id, 'Aufladung'), `bestätigt von ${req.user.username}`);
-    res.json({ topup });
-  })
-);
-
-admin.post(
-  '/topups/:id/cancel',
-  wrap((req, res) => {
-    credits.cancelTopup(requireInt(req.params.id, 'Aufladung'));
-    res.json({ ok: true });
-  })
-);
-
-// ------------------------------------------------ Einstellungen, Client, Bots
-
-admin.get(
-  '/settings',
-  wrap((req, res) => {
-    res.json({ settings: allSettings() });
-  })
-);
-
-admin.patch(
-  '/settings',
-  wrap((req, res) => {
-    const allowed = [
-      'rate_mcr_hour',
-      'credit_cent',
-      'signup_bonus_mcr',
-      'low_balance_mcr',
-      'grace_minutes',
-      'packages',
-    ];
-    for (const [key, value] of Object.entries(req.body || {})) {
-      if (!allowed.includes(key)) continue;
-      if (key === 'packages') {
-        if (!Array.isArray(value)) throw bad('Pakete müssen eine Liste sein.');
-        setSetting(key, value.map((entry) => ({
-          cent: requireInt(entry.cent, 'Betrag', { min: 100, max: 1_000_000 }),
-          credits_mcr: requireInt(entry.credits_mcr, 'Guthaben', { min: 1, max: 100_000_000 }),
-          label: String(entry.label || `${(entry.cent / 100).toFixed(2)} €`).slice(0, 40),
-        })));
-      } else {
-        setSetting(key, requireInt(value, key, { max: 10_000_000 }));
-      }
-    }
-    audit(req.user.id, 'admin-settings', req.body);
-    res.json({ settings: allSettings() });
-  })
-);
-
-admin.post(
-  '/client/sync',
-  wrap(async (req, res) => {
-    const state = await binaries.sync({ force: Boolean(req.body?.force) });
-    audit(req.user.id, 'client-sync', { tag: state.tag });
-    res.json({ client: { ...state, assets: state.assets.map((asset) => asset.name) } });
-  })
-);
-
-admin.get(
-  '/bots',
-  wrap((req, res) => {
-    const rows = [...supervisor.bots.values()].map((bot) => ({
-      ...bot.snapshot(),
-      user_id: bot.userId,
-      profile: bot.profile.name,
-      host: bot.profile.host,
-      version: bot.profile.mc_version,
-    }));
-    res.json({ bots: rows });
-  })
-);
-
-admin.post(
-  '/bots/:profileId/:accountId/stop',
-  wrap((req, res) => {
-    supervisor.stop(requireInt(req.params.profileId, 'Profil'), requireInt(req.params.accountId, 'Konto'));
-    res.json({ ok: true });
-  })
-);
-
-admin.get(
-  '/audit',
-  wrap((req, res) => {
-    res.json({
-      entries: db
-        .prepare(
-          `SELECT a.*, u.username FROM audit a LEFT JOIN users u ON u.id = a.user_id
-           ORDER BY a.id DESC LIMIT 200`
-        )
-        .all(),
-    });
-  })
-);
 
 // ---------------------------------------------------------------- Stripe-Webhook
 
@@ -449,7 +220,7 @@ export const stripeWebhook = wrap(async (req, res) => {
     const id = Number(event.data?.object?.metadata?.topup_id);
     if (id) {
       try {
-        credits.settleTopup(id, 'Stripe');
+        billing.settleTopup(id, 'Stripe');
       } catch {
         /* schon gebucht */
       }

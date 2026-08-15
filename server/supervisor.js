@@ -1,44 +1,45 @@
-// Die Bot-Laufzeit: je Kombination aus Serverprofil und Minecraft-Konto ein Client-Prozess.
+// Die Bot-Laufzeit: je Kombination aus Serverplatz und Minecraft-Konto ein Client-Prozess.
 //
 // Der Client ist bewusst pipe-fähig gebaut, deshalb braucht es hier kein eigenes Protokoll:
 //   * Standardausgabe  -> Chat, eine Zeile je Nachricht
-//   * Standardfehler    -> Verbindungszustand ("Verbinde zu …", "Verbunden und im Spiel als …")
+//   * Standardfehler    -> Zustand; mit `--events` zusätzlich maschinenlesbare `@event`-Zeilen
 //   * Standardeingabe   -> was hier hineingeschrieben wird, geht als Chat/Befehl raus
 //
-// Aus den Zustandszeilen wird der Status im Panel; aus der Standardausgabe der Live-Chat.
+// Wo der Client `--events` beherrscht, hängt das Panel den Zustand daran und nicht mehr an
+// deutschen Fließtextzeilen: Ereignisse sind stabil, Meldungstexte nicht.
 
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, paths, userDir } from './config.js';
-import { db } from './db.js';
+import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
-import { canStart } from './credits.js';
-import { HttpError } from './util.js';
+import { planOf, isActive } from './billing.js';
+import { HttpError, codeUrl, MS_LINK } from './util.js';
 
 const ANSI = /\x1b\[[0-9;]*m/g;
 const stripAnsi = (text) => text.replace(ANSI, '');
 
-/** Zustandszeilen des Clients, aus denen das Panel den Status ableitet. */
+/**
+ * Zustandszeilen des Clients für den Fall, dass `--events` fehlt. Sobald der Client Ereignisse
+ * schickt, gewinnen die – hier bleibt dann nur, was es als Ereignis nicht gibt (Anmeldung).
+ */
 const PATTERNS = [
   { re: /^Verbinde zu (\S+?):(\d+) \(MC ([^)]+)\)/, kind: 'connecting' },
   { re: /^Verbunden und im Spiel als (.+)\.$/, kind: 'online' },
   { re: /^Getrennt: (.*)$/, kind: 'disconnected' },
   { re: /^Reconnect-Versuch (\d+) in (\d+) s/, kind: 'reconnecting' },
   { re: /^Gestorben – respawne automatisch\.$/, kind: 'death' },
-  // Der Wechsel auf einen Unterserver (Velocity/BungeeCord) ist kein neuer Beitritt – der Client
-  // sagt es aber an, und genau daran hängt das Panel die Weltwechsel-Macros.
   { re: /^Unterserver gewechselt/, kind: 'worldchange' },
-  { re: /^Befehl: (.*)$/, kind: 'command' },
   { re: /^Melde Konto '(.+)' an \.\.\.$/, kind: 'auth' },
   { re: /^Login fehlgeschlagen: (.*)$/, kind: 'authfail' },
   { re: /^Konto '(.+)' ließ sich nicht anmelden: (.*)$/, kind: 'authstale' },
   // Der Client fragt mitten im Lauf einen neuen Gerätecode an, wenn der gespeicherte Token nicht
-  // mehr taugt. Ohne diese beiden Zeilen stünde der Bot stumm da und wartete auf jemanden, der vor
-  // keinem Terminal sitzt.
-  { re: /^\s*1\. Öffne im Browser:\s*(\S+)$/, kind: 'authuri' },
-  { re: /^\s*2\. Gib diesen Code ein:\s*(\S+)$/, kind: 'authcode' },
+  // mehr taugt. Ohne diese beiden Zeilen stünde der Bot stumm da und wartete auf jemanden, der
+  // vor keinem Terminal sitzt.
+  { re: /^\s*1\.\s*(?:Öffne im Browser|Oeffne im Browser):\s*(\S+)$/, kind: 'authuri' },
+  { re: /^\s*2\.\s*Gib diesen Code ein:\s*(\S+)$/, kind: 'authcode' },
   { re: /^Auto-Reconnect ist aus – beende\.$/, kind: 'giveup' },
 ];
 
@@ -53,12 +54,38 @@ function classify(line) {
   return null;
 }
 
+/**
+ * "@event world grund=unterserver" -> { type: 'world', grund: 'unterserver' }
+ * "@event disconnect Server startet neu" -> { type: 'disconnect', text: 'Server startet neu' }
+ *
+ * Der Name des Ereignisses heißt hier `type`, nicht `name` – sonst überschriebe ihn das Feld
+ * `name=` aus `@event join name=Steve`.
+ */
+function parseEvent(line) {
+  const rest = line.slice('@event'.length).trim();
+  if (!rest) return null;
+  const space = rest.indexOf(' ');
+  if (space < 0) return { type: rest, text: '' };
+  const event = { type: rest.slice(0, space), text: '' };
+  const tail = rest.slice(space + 1).trim();
+  if (/^[a-zA-Z_]+=/.test(tail)) {
+    for (const part of tail.split(/\s+/)) {
+      const eq = part.indexOf('=');
+      if (eq > 0) event[part.slice(0, eq)] = part.slice(eq + 1);
+    }
+  } else {
+    event.text = tail;
+  }
+  return event;
+}
+
 class Bot extends EventEmitter {
-  constructor(supervisor, { profile, account, user }) {
+  constructor(supervisor, { profile, account, user, plan }) {
     super();
     this.supervisor = supervisor;
     this.profile = profile;
     this.account = account;
+    this.plan = plan;
     this.userId = user.id;
     this.key = `${profile.id}:${account.id}`;
     this.state = 'offline';
@@ -68,11 +95,13 @@ class Bot extends EventEmitter {
     this.connections = 0;
     this.lastError = null;
     this.chat = [];
-    this.chatLimit = Math.min(user.chat_limit || 200, config.chatHistoryMax);
     this.proc = null;
+    this.build = null;
+    this.menu = null;
     this.stopping = false;
     this.timers = new Set();
     this.buffers = { out: '', err: '' };
+    this.usesEvents = false;
     this.logFile = path.join(paths.logs, `bot-${profile.id}-${account.id}.log`);
   }
 
@@ -84,15 +113,23 @@ class Bot extends EventEmitter {
     return Boolean(this.proc) && !this.stopping;
   }
 
+  /** Wie viele Zeilen Chatverlauf dieser Platz vorhält – der Tarif setzt die Obergrenze. */
+  get chatLimit() {
+    return Math.min(this.profile.chat_limit || 200, this.plan.chat_limit, config.chatHistoryMax);
+  }
+
+  /** Fähigkeiten der Bauform, mit der dieser Bot läuft. */
+  get caps() {
+    return binaries.caps(this.build || 'slim');
+  }
+
   // ------------------------------------------------------------ Start / Stopp
 
-  args() {
+  args(caps) {
     const profile = this.profile;
     const target = profile.port ? `${profile.host}:${profile.port}` : profile.host;
     const args = [
       target,
-      '--account',
-      this.account.name,
       '--mc',
       profile.mc_version,
       '--join-delay',
@@ -105,20 +142,65 @@ class Bot extends EventEmitter {
       String(profile.chat_delay),
       '--no-color',
     ];
+
+    if (this.account.kind === 'offline' && caps.offline) args.push('--offline', this.account.name);
+    else args.push('--account', this.account.name);
+
     if (!profile.auto_reconnect) args.push('--no-reconnect');
+    if (caps.events) args.push('--events');
+
+    // Proxy und Fake-Host darf nur, wessen Tarif das hergibt – sonst stünde im Panel eine
+    // Einstellung, die für den Gratis-Platz nichts täte.
+    if (caps.proxy && this.plan.proxy) {
+      const proxy = this.proxy();
+      if (proxy) args.push('--proxy', proxy);
+    }
+    if (caps.fakehost && this.plan.fakehost && profile.fake_host) {
+      args.push('--fakehost', profile.fake_host);
+    }
+    if (caps.antiafk && this.plan.premium && profile.antiafk_sec > 0) {
+      args.push('--antiafk', String(Math.max(15, profile.antiafk_sec)));
+    }
+    if (caps.sneak && this.plan.premium && profile.sneak) args.push('--sneak');
 
     // Befehle, die schon der Client selbst takten kann (Beitritt + Wiederholung). Alles, was
-    // sich zur Laufzeit ändern können soll (Spam, Macros), taktet dagegen das Panel über stdin.
+    // sich zur Laufzeit ändern können soll, taktet dagegen das Panel über die Standardeingabe.
     for (const entry of this.supervisor.joinCommands(profile.id, this.account.id)) {
       args.push('--cmd', entry);
+    }
+    // Reine "Auslöser -> eine Chatzeile"-Macros gibt der Client zuverlässiger selbst ab, weil er
+    // Beitritt, Weltwechsel und Tod im Protokoll sieht statt im Meldungstext.
+    if (caps.macros) {
+      for (const rule of this.supervisor.clientMacros(profile.id, this.account.id)) {
+        args.push('--on', rule);
+      }
+      if (caps.oncooldown && profile.on_cooldown) {
+        args.push('--on-cooldown', String(profile.on_cooldown));
+      }
     }
     return args;
   }
 
+  /** Proxy-Adresse dieses Bots als URL für `--proxy`, oder null. */
+  proxy() {
+    const link = db
+      .prepare('SELECT proxy_id FROM profile_accounts WHERE profile_id = ? AND account_id = ?')
+      .get(this.profile.id, this.account.id);
+    if (!link?.proxy_id) return null;
+    const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(link.proxy_id);
+    if (!row) return null;
+    const auth = row.username
+      ? `${encodeURIComponent(row.username)}:${encodeURIComponent(row.password || '')}@`
+      : '';
+    return `${row.kind === 'http' ? 'http' : 'socks5'}://${auth}${row.host}:${row.port}`;
+  }
+
   start() {
     if (this.proc) return this;
-    const { command, leading } = binaries.command(this.profile);
-    const args = [...leading, ...this.args()];
+    const { command, build, caps } = binaries.command(this.profile, this.plan);
+    this.build = build;
+    const args = this.args(caps);
+    this.usesEvents = Boolean(caps.events);
     const home = userDir(this.userId);
 
     this.stopping = false;
@@ -146,9 +228,7 @@ class Bot extends EventEmitter {
       this.cleanup();
     });
     this.proc.on('exit', (code, signal) => {
-      const reason = this.stopping
-        ? 'gestoppt'
-        : `Client beendet (${signal || `Code ${code}`})`;
+      const reason = this.stopping ? 'gestoppt' : `Client beendet (${signal || `Code ${code}`})`;
       if (!this.stopping && code !== 0) this.lastError = reason;
       this.push('system', reason);
       this.setState(this.stopping ? 'offline' : code === 0 ? 'offline' : 'error', reason);
@@ -198,6 +278,7 @@ class Bot extends EventEmitter {
     this.proc = null;
     this.startedAt = null;
     this.auth = null;
+    this.menu = null;
     clearTimeout(this.authTimer);
     for (const timer of this.timers) clearInterval(timer);
     this.timers.clear();
@@ -220,6 +301,7 @@ class Bot extends EventEmitter {
       const line = stripAnsi(raw).replace(/\r$/, '');
       if (!line.trim()) continue;
       if (stream === 'out') this.onChat(line);
+      else if (line.startsWith('@event ')) this.onEvent(line);
       else this.onStatus(line);
     }
   }
@@ -229,12 +311,72 @@ class Bot extends EventEmitter {
     this.supervisor.macros.onChat(this, line);
   }
 
+  /** Maschinenlesbares Ereignis – das ist der verlässliche Weg. */
+  onEvent(line) {
+    const event = parseEvent(line);
+    if (!event) return;
+    switch (event.type) {
+      case 'connecting':
+        this.setState(
+          'connecting',
+          `${event.host || this.profile.host}${event.port ? `:${event.port}` : ''}`
+        );
+        break;
+      case 'join': {
+        const first = this.state !== 'online';
+        this.setState('online', event.name || this.account.name);
+        this.connections += 1;
+        db.prepare(
+          'UPDATE bots SET connections = connections + 1, state = ? WHERE profile_id = ? AND account_id = ?'
+        ).run('online', this.profile.id, this.account.id);
+        db.prepare('UPDATE mc_accounts SET connections = connections + 1 WHERE id = ?').run(
+          this.account.id
+        );
+        if (first) this.supervisor.macros.onJoin(this);
+        break;
+      }
+      case 'world':
+        this.supervisor.macros.onWorldChange(this);
+        break;
+      case 'death':
+        this.supervisor.macros.onDeath(this);
+        break;
+      case 'disconnect':
+        this.lastError = event.text || null;
+        this.setState('disconnected', event.text || '');
+        this.supervisor.macros.onDisconnect(this);
+        break;
+      case 'reconnect':
+        this.setState('reconnecting', `Versuch ${event.versuch || '?'}, in ${event.in || '?'}`);
+        break;
+      case 'menu': {
+        this.menu = event.text === 'close' ? null : { id: event.id || null, at: Date.now() };
+        this.supervisor.emit('bot-state', {
+          userId: this.userId,
+          key: this.key,
+          state: this.snapshot(),
+        });
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
   onStatus(line) {
     const hit = classify(line);
     if (!hit) {
       this.push('status', line);
       return;
     }
+    // Meldet der Client Ereignisse, zählen hier nur noch Anmeldung und Aufgabe – den Rest hat
+    // `@event` schon gemeldet, und zweimal derselbe Zustandswechsel wäre nur Rauschen.
+    const authOnly = ['auth', 'authfail', 'authstale', 'authuri', 'authcode', 'giveup'];
+    if (this.usesEvents && !authOnly.includes(hit.kind)) {
+      this.push('status', line);
+      return;
+    }
+
     switch (hit.kind) {
       case 'connecting':
         this.setState('connecting', `${hit.match[1]}:${hit.match[2]}`);
@@ -264,7 +406,6 @@ class Bot extends EventEmitter {
         this.supervisor.macros.onDeath(this);
         break;
       case 'worldchange':
-        this.setState('online', 'Unterserver gewechselt');
         this.supervisor.macros.onWorldChange(this);
         break;
       case 'authfail':
@@ -278,16 +419,21 @@ class Bot extends EventEmitter {
         break;
       case 'authuri':
         this.auth = { ...(this.auth || {}), uri: hit.match[1] };
+        // Steht der Code schon fest, gleich die fertige Adresse mitgeben.
+        if (this.auth.code) this.auth.uri_complete = codeUrl(hit.match[1], this.auth.code);
         break;
       case 'authcode':
-        this.auth = { ...(this.auth || {}), code: hit.match[1], since: Date.now() };
+        this.auth = {
+          ...(this.auth || {}),
+          code: hit.match[1],
+          uri_complete: codeUrl(this.auth?.uri || MS_LINK, hit.match[1]),
+          since: Date.now(),
+        };
         this.markAccountBroken('Die Anmeldung ist abgelaufen – bitte neu verbinden.');
         this.setState('auth', `Code ${hit.match[1]}`);
         this.push(
           'error',
-          `Die Anmeldung für "${this.account.name}" ist abgelaufen. Neuer Code: ${hit.match[1]} auf ${
-            this.auth.uri || 'https://www.microsoft.com/link'
-          }`
+          `Die Anmeldung für "${this.account.name}" ist abgelaufen. Neuer Code: ${hit.match[1]}`
         );
         // Wartet niemand auf, wird abgebrochen – sonst hinge der Bot ewig und belegte einen Platz.
         clearTimeout(this.authTimer);
@@ -317,7 +463,8 @@ class Bot extends EventEmitter {
   push(type, text) {
     const entry = { t: Date.now(), type, text };
     this.chat.push(entry);
-    if (this.chat.length > this.chatLimit) this.chat.splice(0, this.chat.length - this.chatLimit);
+    const limit = this.chatLimit;
+    if (this.chat.length > limit) this.chat.splice(0, this.chat.length - limit);
     if (type === 'chat' || type === 'error') {
       fs.appendFile(this.logFile, `${new Date(entry.t).toISOString()} ${type} ${text}\n`, () => {});
     }
@@ -340,7 +487,7 @@ class Bot extends EventEmitter {
   /** Eine Zeile an den Client schicken. Mit '/' vorn ist es ein Serverbefehl. */
   send(text) {
     if (!this.proc || !this.proc.stdin.writable) {
-      throw new HttpError(409, 'Der Bot läuft gerade nicht.');
+      throw new HttpError(409, 'Der Bot läuft gerade nicht.', { en: 'That bot is not running.' });
     }
     const line = String(text).replace(/[\r\n]+/g, ' ').trim();
     if (!line) return false;
@@ -349,12 +496,23 @@ class Bot extends EventEmitter {
     return true;
   }
 
-  /** Bewegungsbefehl (`:go vor 5`) – nur mit der Bewegungs-Bauform. */
-  move(verb, arg = '') {
-    if (!binaries.supportsMovement(this.profile)) {
+  /**
+   * Örtlicher Befehl (`:go vor 5`, `:board`, `:click 13`). Er geht nie an den Server.
+   * `need` sagt, welche Fähigkeit die Bauform dafür mitbringen muss.
+   */
+  local(verb, arg = '', need = 'movement') {
+    if (!this.caps[need]) {
       throw new HttpError(
         409,
-        'Dieses Profil läuft ohne Bewegungs-Bauform. In den Profileinstellungen "Bewegung" einschalten.'
+        need === 'movement'
+          ? 'Bewegung gibt es ab einem bezahlten Serverplatz (Premium-Client).'
+          : 'Dieser Befehl braucht den Premium-Client.',
+        {
+          en:
+            need === 'movement'
+              ? 'Movement needs a paid server slot (premium client).'
+              : 'This command needs the premium client.',
+        }
       );
     }
     return this.send(`:${verb}${arg ? ` ${arg}` : ''}`);
@@ -372,6 +530,8 @@ class Bot extends EventEmitter {
       online: this.online,
       connections: this.connections,
       last_error: this.lastError,
+      build: this.build,
+      menu: this.menu,
       uptime: this.startedAt ? Date.now() - this.startedAt : 0,
       // Nur gesetzt, wenn der Client gerade auf eine neue Microsoft-Anmeldung wartet.
       auth: this.state === 'auth' ? this.auth : null,
@@ -398,19 +558,6 @@ class Supervisor extends EventEmitter {
       .map((bot) => bot.snapshot());
   }
 
-  /**
-   * user_id -> Anzahl abzurechnender Bots. Wartet ein Bot auf eine neue Microsoft-Anmeldung,
-   * zählt er nicht mit: dafür kann der Nutzer nichts, und im Spiel ist er ohnehin nicht.
-   */
-  usage() {
-    const map = new Map();
-    for (const bot of this.bots.values()) {
-      if (!bot.running || bot.state === 'auth') continue;
-      map.set(bot.userId, (map.get(bot.userId) || 0) + 1);
-    }
-    return map;
-  }
-
   runningCount(userId) {
     let count = 0;
     for (const bot of this.bots.values()) {
@@ -419,72 +566,139 @@ class Supervisor extends EventEmitter {
     return count;
   }
 
+  runningOnProfile(profileId) {
+    let count = 0;
+    for (const bot of this.bots.values()) {
+      if (bot.running && bot.profile.id === profileId) count += 1;
+    }
+    return count;
+  }
+
   /** Befehle, die der Client selbst takten soll: Beitrittsbefehle und Dauer-Wiederholungen. */
   joinCommands(profileId, accountId) {
     const out = [];
-    const rows = db
-      .prepare('SELECT * FROM macros WHERE profile_id = ? AND enabled = 1')
-      .all(profileId);
-    for (const macro of rows) {
-      const accounts = JSON.parse(macro.accounts || '[]');
-      if (accounts.length && !accounts.includes(accountId)) continue;
+    for (const macro of this.enabledMacros(profileId, accountId)) {
       const actions = JSON.parse(macro.actions || '[]');
       const settings = JSON.parse(macro.config || '{}');
-      // Nur der einfachste Fall geht an den Client: ein Macro, das nichts als Chatzeilen sendet.
-      // Alles andere (Warten, Bewegung, Bedingungen) taktet das Panel, damit es ohne Neustart
-      // änderbar bleibt.
-      const simple = actions.length > 0 && actions.every((a) => a.type === 'chat' && !a.delay);
-      if (!simple) continue;
+      if (!simpleChatMacro(actions)) continue;
       if (macro.event === 'join') {
         for (const action of actions) out.push(action.text);
       } else if (macro.event === 'timer' && settings.interval_sec) {
-        for (const action of actions) out.push(`${Math.max(5, settings.interval_sec)}:${action.text}`);
+        for (const action of actions) {
+          out.push(`${Math.max(5, settings.interval_sec)}:${action.text}`);
+        }
       }
     }
     return out;
   }
 
+  /**
+   * Macros, die der Client mit `--on` selbst auslösen kann: Weltwechsel, Tod und Chat-Treffer.
+   * Der Client sieht diese Ereignisse im Protokoll, das Panel nur in Meldungstexten – deshalb
+   * bekommt er sie, sobald er sie versteht.
+   */
+  clientMacros(profileId, accountId) {
+    const out = [];
+    for (const macro of this.enabledMacros(profileId, accountId)) {
+      const actions = JSON.parse(macro.actions || '[]');
+      const settings = JSON.parse(macro.config || '{}');
+      if (!simpleChatMacro(actions)) continue;
+      let trigger = null;
+      if (macro.event === 'world') trigger = 'world';
+      else if (macro.event === 'death') trigger = 'death';
+      else if (macro.event === 'chat' && settings.contains && !settings.regex) {
+        trigger = `chat:${settings.contains}`;
+      }
+      if (!trigger) continue;
+      for (const action of actions) out.push(`${trigger}=${action.text}`);
+    }
+    return out;
+  }
+
+  enabledMacros(profileId, accountId) {
+    return db
+      .prepare('SELECT * FROM macros WHERE profile_id = ? AND enabled = 1')
+      .all(profileId)
+      .filter((macro) => {
+        const accounts = JSON.parse(macro.accounts || '[]');
+        return !accounts.length || accounts.includes(accountId);
+      });
+  }
+
   /** Bot anlegen (falls nötig) und starten. */
-  start({ profile, account, user }) {
+  start({ profile, account, user, plan }) {
+    const tariff = plan || planOf(profile);
+    const maxPerUser = Number(getSetting('max_bots_per_user')) || config.maxBotsPerUser;
     if (this.runningCount() >= config.maxBotsTotal) {
-      throw new HttpError(429, 'Der Server ist ausgelastet. Bitte später erneut versuchen.');
+      throw new HttpError(429, 'Der Server ist ausgelastet. Bitte später erneut versuchen.', {
+        en: 'The server is at capacity. Please try again later.',
+      });
     }
-    if (this.runningCount(user.id) >= config.maxBotsPerUser) {
-      throw new HttpError(429, `Mehr als ${config.maxBotsPerUser} Bots gleichzeitig gehen nicht.`);
+    if (this.runningCount(user.id) >= maxPerUser) {
+      throw new HttpError(429, `Mehr als ${maxPerUser} Bots gleichzeitig gehen nicht.`, {
+        en: `More than ${maxPerUser} bots at once is not possible.`,
+      });
     }
-    if (!canStart(user, 1)) {
-      throw new HttpError(402, 'Zu wenig Guthaben. Bitte zuerst aufladen.');
+    if (profile.suspended) {
+      throw new HttpError(
+        402,
+        `"${profile.name}" ist stillgelegt. Laufzeit verlängern, dann geht es weiter.`,
+        { en: `"${profile.name}" is suspended. Renew it and it carries on.` }
+      );
+    }
+    if (!isActive(profile)) {
+      throw new HttpError(402, `Für "${profile.name}" ist die bezahlte Laufzeit abgelaufen.`, {
+        en: `The paid month for "${profile.name}" has run out.`,
+      });
+    }
+    const already = this.get(profile.id, account.id);
+    if (!already?.running && this.runningOnProfile(profile.id) >= tariff.max_accounts) {
+      throw new HttpError(
+        402,
+        `Der Tarif "${tariff.name_de}" erlaubt ${tariff.max_accounts} Bot(s) gleichzeitig auf diesem Server.`,
+        {
+          en: `Plan "${tariff.name_en}" allows ${tariff.max_accounts} bot(s) at once on this server.`,
+        }
+      );
     }
     if (account.status === 'error') {
-      throw new HttpError(409, `Konto "${account.name}" ist nicht angemeldet: ${account.last_error || 'unbekannt'}`);
+      throw new HttpError(
+        409,
+        `Konto "${account.name}" ist nicht angemeldet: ${account.last_error || 'unbekannt'}`,
+        { en: `Account "${account.name}" is not signed in: ${account.last_error || 'unknown'}` }
+      );
+    }
+    if (account.kind === 'offline' && !tariff.offline_accounts) {
+      throw new HttpError(402, 'Offline-Konten gibt es ab einem bezahlten Serverplatz.', {
+        en: 'Offline accounts come with a paid server slot.',
+      });
     }
 
-    const accountFile = path.join(
-      userDir(user.id),
-      'afksystems',
-      'accounts',
-      `${account.name}.json`
-    );
+    const accountFile = path.join(userDir(user.id), 'afksystems', 'accounts', `${account.name}.json`);
     if (account.kind === 'microsoft' && !fs.existsSync(accountFile)) {
-      throw new HttpError(409, `Für "${account.name}" liegt keine Anmeldung vor. Bitte neu verbinden.`);
+      throw new HttpError(409, `Für "${account.name}" liegt keine Anmeldung vor. Bitte neu verbinden.`, {
+        en: `There is no sign-in stored for "${account.name}". Please connect it again.`,
+      });
     }
 
     db.prepare(
       `INSERT INTO bots (profile_id, account_id, state) VALUES (?, ?, 'starting')
        ON CONFLICT(profile_id, account_id) DO UPDATE SET state = 'starting'`
     ).run(profile.id, account.id);
-    db.prepare(
-      'UPDATE profile_accounts SET wanted = 1 WHERE profile_id = ? AND account_id = ?'
-    ).run(profile.id, account.id);
+    db.prepare('UPDATE profile_accounts SET wanted = 1 WHERE profile_id = ? AND account_id = ?').run(
+      profile.id,
+      account.id
+    );
 
-    let bot = this.get(profile.id, account.id);
+    let bot = already;
     if (bot && bot.running) return bot.snapshot();
     if (!bot) {
-      bot = new Bot(this, { profile, account, user });
+      bot = new Bot(this, { profile, account, user, plan: tariff });
       this.bots.set(bot.key, bot);
     } else {
       bot.profile = profile;
       bot.account = account;
+      bot.plan = tariff;
     }
     bot.start();
     this.macros.attach(bot);
@@ -493,9 +707,10 @@ class Supervisor extends EventEmitter {
 
   stop(profileId, accountId, { keepWanted = false } = {}) {
     if (!keepWanted) {
-      db.prepare(
-        'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
-      ).run(profileId, accountId);
+      db.prepare('UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?').run(
+        profileId,
+        accountId
+      );
     }
     const bot = this.get(profileId, accountId);
     if (!bot) return null;
@@ -503,13 +718,28 @@ class Supervisor extends EventEmitter {
     return bot.snapshot();
   }
 
+  /** Alle Bots eines Serverplatzes anhalten – etwa, wenn die Laufzeit abgelaufen ist. */
+  stopProfile(profileId, reason = '', { keepWanted = true } = {}) {
+    for (const bot of this.bots.values()) {
+      if (bot.profile.id !== profileId || !bot.running) continue;
+      if (reason) bot.push('system', reason);
+      if (!keepWanted) {
+        db.prepare(
+          'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
+        ).run(bot.profile.id, bot.account.id);
+      }
+      bot.stop();
+    }
+  }
+
   stopUser(userId, reason = '') {
     for (const bot of this.bots.values()) {
       if (bot.userId !== userId || !bot.running) continue;
       if (reason) bot.push('system', reason);
-      db.prepare(
-        'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
-      ).run(bot.profile.id, bot.account.id);
+      db.prepare('UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?').run(
+        bot.profile.id,
+        bot.account.id
+      );
       bot.stop();
     }
   }
@@ -520,9 +750,10 @@ class Supervisor extends EventEmitter {
     // Nach fünf Fehlversuchen bleibt es aus – sonst dreht sich das ewig im Kreis.
     if (attempts > 5) {
       bot.push('error', 'Fünf Startversuche fehlgeschlagen – bleibt aus.');
-      db.prepare(
-        'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
-      ).run(bot.profile.id, bot.account.id);
+      db.prepare('UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?').run(
+        bot.profile.id,
+        bot.account.id
+      );
       return;
     }
     const delay = Math.min(60_000, 5000 * attempts);
@@ -530,22 +761,23 @@ class Supervisor extends EventEmitter {
     setTimeout(() => {
       if (!bot.wanted()) return;
       const fresh = this.context(bot.profile.id, bot.account.id);
-      if (!fresh) return;
+      if (!fresh || !isActive(fresh.profile)) return;
       bot.profile = fresh.profile;
       bot.account = fresh.account;
+      bot.plan = fresh.plan;
       bot.start();
       this.macros.attach(bot);
     }, delay).unref();
   }
 
-  /** Profil, Konto und Nutzer frisch aus der Datenbank holen. */
+  /** Serverplatz, Konto, Nutzer und Tarif frisch aus der Datenbank holen. */
   context(profileId, accountId) {
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profileId);
     const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(accountId);
     if (!profile || !account) return null;
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.user_id);
     if (!user) return null;
-    return { profile, account, user };
+    return { profile, account, user, plan: planOf(profile) };
   }
 
   /** Nach einem Neustart des Dienstes alles wieder hochfahren, was laufen soll. */
@@ -557,7 +789,7 @@ class Supervisor extends EventEmitter {
     for (const row of rows) {
       const context = this.context(row.profile_id, row.account_id);
       if (!context) continue;
-      if (context.user.blocked || !canStart(context.user, 1)) continue;
+      if (context.user.blocked || !isActive(context.profile)) continue;
       try {
         this.start(context);
         started += 1;
@@ -582,5 +814,10 @@ class Supervisor extends EventEmitter {
   }
 }
 
+/** Ein Macro, das nichts als Chatzeilen ohne Wartezeit sendet – nur das kann der Client selbst. */
+function simpleChatMacro(actions) {
+  return actions.length > 0 && actions.every((action) => action.type === 'chat' && !action.delay);
+}
+
 export const supervisor = new Supervisor();
-export { Bot };
+export { Bot, simpleChatMacro, parseEvent };
