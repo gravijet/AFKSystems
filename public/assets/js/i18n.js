@@ -778,9 +778,19 @@ export const S = {
   'legal.imprint.title': { en: 'Imprint', de: 'Impressum' },
   'legal.privacy.title': { en: 'Privacy notice', de: 'Datenschutzerklärung' },
   'legal.terms.title': { en: 'Terms of use', de: 'Nutzungsbedingungen' },
-  'legal.placeholder': {
+  // Solange im Admin-Bereich unter "Recht" nichts hinterlegt ist, steht hier ein Hinweis. Je Seite
+  // ein eigener: auf der Datenschutz- und der AGB-Seite stand vorher, ein Impressum sei Pflicht.
+  'legal.placeholder.imprint': {
     en: 'This page still has to be filled in by the operator. Under German law an imprint is mandatory – it must be complete before the service is offered publicly.',
     de: 'Diese Seite muss der Betreiber noch ausfüllen. Ein Impressum ist in Deutschland Pflicht – es muss vollständig sein, bevor der Dienst öffentlich angeboten wird.',
+  },
+  'legal.placeholder.privacy': {
+    en: 'This page still has to be filled in by the operator. A privacy notice is mandatory as soon as personal data is processed – and this service processes it.',
+    de: 'Diese Seite muss der Betreiber noch ausfüllen. Eine Datenschutzerklärung ist Pflicht, sobald personenbezogene Daten verarbeitet werden – und das tut dieser Dienst.',
+  },
+  'legal.placeholder.terms': {
+    en: 'This page still has to be filled in by the operator. Until then no terms of use have been agreed.',
+    de: 'Diese Seite muss der Betreiber noch ausfüllen. Bis dahin sind keine Nutzungsbedingungen vereinbart.',
   },
 
   'error.404.title': { en: 'Nothing here', de: 'Hier ist nichts' },
