@@ -1,6 +1,6 @@
 // Minecraft-Konten: verbinden (Microsoft-Gerätecode), auffrischen, entfernen.
 
-import { api, icon, escapeHtml, datetime, tr, $, $$, ok, fail, confirmDialog, copy, formDialog } from '../ui.js';
+import { api, icon, escapeHtml, datetime, tr, $, $$, ok, fail, confirmDialog, formDialog } from '../ui.js';
 import { state, appbar, refresh, draw } from '../app.js';
 
 export async function render(root) {
@@ -77,8 +77,11 @@ export async function render(root) {
       tr('acc.sub')
     )}
 
-    <div class="note" style="margin-bottom:1.5rem">${icon('shield')}
+    <div class="note" style="margin-bottom:1rem">${icon('shield')}
       <div>${escapeHtml(tr('faq.2.a'))}</div></div>
+
+    <div class="note warn" style="margin-bottom:1.5rem">${icon('alert')}
+      <div><strong>${escapeHtml(tr('rules.title'))}</strong><br>${escapeHtml(tr('rules.text'))}</div></div>
 
     ${
       state.accounts.length
@@ -168,23 +171,17 @@ async function startLogin() {
   const paint = (data) => {
     const body = $('#login-body', dialog);
     if (data.status === 'code') {
-      // Microsoft nimmt den Code auch als Parameter in der Adresse an – ein Klick genügt.
+      // Microsoft nimmt den Code als Parameter in der Adresse entgegen: ein Klick, und er steht
+      // drüben schon im Feld. Deshalb gibt es hier keinen Code zum Abschreiben – er wäre nur eine
+      // Zeile, die niemand braucht und die aussieht, als müsste man etwas tun.
       const link = data.verification_uri_complete || data.verification_uri;
       body.innerHTML = `
-        <div class="stack" style="gap:1.25rem">
-          <p class="muted small">${escapeHtml(tr('acc.ms.step'))}</p>
+        <div class="stack center" style="gap:1.25rem;padding:.5rem 0">
           <a class="btn btn-primary btn-block btn-lg" href="${escapeHtml(link)}" target="_blank" rel="noopener">
-            ${escapeHtml(tr('acc.ms.open'))} ${icon('arrow')}</a>
-          <div class="field">
-            <label>${escapeHtml(tr('acc.ms.code'))}</label>
-            <div class="row">
-              <div class="mono strong code-box">${escapeHtml(data.user_code)}</div>
-              <button class="btn" id="copy-code">${icon('copy')} ${escapeHtml(tr('common.copy'))}</button>
-            </div>
-          </div>
+            ${escapeHtml(tr('acc.ms.open'))} ${icon('external')}</a>
+          <p class="muted small" style="text-align:center;margin:0">${escapeHtml(tr('acc.ms.step'))}</p>
           <p class="small muted row" style="gap:.5rem">${icon('clock')} ${escapeHtml(tr('acc.ms.waiting'))}</p>
         </div>`;
-      $('#copy-code', dialog)?.addEventListener('click', () => copy(data.user_code));
       return;
     }
     if (data.status === 'done') {

@@ -1,139 +1,272 @@
-// Eigenes Konto: Sprache, Discord, Benachrichtigungen, Passwort, Sitzungen.
+// Das eigene Konto.
+//
+// Vier Bereiche, jeder mit einem Satz, der sagt, wofür er da ist: Konto, verknüpfte Konten,
+// Nachrichten, Sicherheit. Vorher standen hier vier gleich aussehende Kästen ohne Erklärung, und
+// die wichtigste Frage – "war diese E-Mail wirklich von euch?" – ließ sich gar nicht beantworten.
 
-import { api, icon, escapeHtml, datetime, tr, url, $, ok, fail, confirmDialog } from '../ui.js';
+import {
+  api, icon, escapeHtml, datetime, tr, url, $, $$, ok, fail, confirmDialog,
+} from '../ui.js';
 import { state, appbar, refresh, draw } from '../app.js';
 
 export async function render(root) {
   const me = state.me;
-  const sessions = await api('/me/sessions').catch(() => ({ sessions: [] }));
-  const discord = state.meta?.discord || {};
-  const flash = new URLSearchParams(location.hash.split('?')[1] || '').get('discord');
+  const [sessions, mails] = await Promise.all([
+    api('/me/sessions').catch(() => ({ sessions: [] })),
+    api('/me/mails').catch(() => ({ mails: [], categories: [] })),
+  ]);
+  const providers = state.meta?.oauth || {};
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
 
   root.innerHTML = `
     ${appbar(tr('set.title'), '', tr('set.sub'))}
+    ${flash(params)}
 
-    ${
-      flash
-        ? `<div class="note ${flash === 'ok' ? '' : 'bad'}" style="margin-bottom:1.25rem">${icon(
-            flash === 'ok' ? 'check' : 'alert'
-          )}<div>${escapeHtml(flash === 'ok' ? tr('adm.saved') : flash)}</div></div>`
-        : ''
+    <div class="settings">
+      ${section('user', tr('set.account'), tr('set.appearance'), accountBody(me))}
+      ${section('message', tr('set.linked'), tr('set.linkedSub'), linkedBody(me, providers))}
+      ${section('mail', tr('set.notify'), tr('set.notifySub'), notifyBody(me))}
+      ${section('shield', tr('set.security'), tr('set.securitySub'), securityBody(sessions.sessions || []))}
+      ${section('clock', tr('set.mailsTitle'), tr('set.mailsSub'), mailsBody(mails.mails || []))}
+    </div>`;
+
+  bind(me, mails.mails || []);
+}
+
+/** Ein Bereich: Symbol, Überschrift, ein Satz Erklärung, Inhalt. */
+function section(symbol, title, lead, body) {
+  return `<section class="setting-card">
+    <div class="setting-head">
+      <span class="setting-icon">${icon(symbol)}</span>
+      <div>
+        <h2>${escapeHtml(title)}</h2>
+        <p>${escapeHtml(lead)}</p>
+      </div>
+    </div>
+    <div class="setting-body">${body}</div>
+  </section>`;
+}
+
+function flash(params) {
+  if (params.get('welcome')) {
+    return `<div class="note" style="margin-bottom:1.25rem">${icon('check')}<div>${escapeHtml(
+      tr('set.welcome')
+    )}</div></div>`;
+  }
+  if (params.get('link')) {
+    return `<div class="note" style="margin-bottom:1.25rem">${icon('check')}<div>${escapeHtml(
+      tr('set.linkOk')
+    )}</div></div>`;
+  }
+  if (params.get('error')) {
+    return `<div class="note bad" style="margin-bottom:1.25rem">${icon('alert')}<div>${escapeHtml(
+      params.get('error')
+    )}</div></div>`;
+  }
+  return '';
+}
+
+// ---------------------------------------------------------------- Konto
+
+function accountBody(me) {
+  return `
+    <dl class="facts">
+      <div><dt>${escapeHtml(tr('auth.register.username'))}</dt><dd class="mono">${escapeHtml(me.username)}</dd></div>
+      <div><dt>${escapeHtml(tr('auth.register.email'))}</dt><dd class="mono">${escapeHtml(me.email)}</dd></div>
+      <div><dt>${escapeHtml(tr('set.role'))}</dt>
+        <dd><span class="pill ${me.role === 'admin' ? 'primary' : ''}">${escapeHtml(
+          tr(me.role === 'admin' ? 'set.role.admin' : 'set.role.user')
+        )}</span></dd></div>
+      <div><dt>${escapeHtml(tr('bill.balance'))}</dt>
+        <dd class="mono"><a href="#/credits">${me.credits.toLocaleString()}</a></dd></div>
+    </dl>
+
+    <div class="row wrap" style="gap:1rem;align-items:flex-end">
+      <div class="field" style="max-width:14rem">
+        <label for="language">${escapeHtml(tr('set.language'))}</label>
+        <select id="language">
+          <option value="en" ${me.language === 'en' ? 'selected' : ''}>English</option>
+          <option value="de" ${me.language === 'de' ? 'selected' : ''}>Deutsch</option>
+        </select>
+        <span class="hint">${escapeHtml(tr('set.languageHint'))}</span>
+      </div>
+      <button class="btn btn-primary" id="save-language">${escapeHtml(tr('common.save'))}</button>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- Verknüpfungen
+
+function linkedBody(me, providers) {
+  const row = (key, symbol, label, what, linkedAs, extra = '') => {
+    const provider = providers[key] || {};
+    if (!provider.available) {
+      return `<div class="link-row">
+        <span class="link-icon">${icon(symbol)}</span>
+        <div class="grow"><div class="strong">${escapeHtml(label)}</div>
+          <p class="small muted">${escapeHtml(tr('set.providerOff'))}</p></div>
+      </div>`;
     }
+    return `<div class="link-row ${linkedAs ? 'is-linked' : ''}">
+      <span class="link-icon">${icon(symbol)}</span>
+      <div class="grow" style="min-width:0">
+        <div class="strong">${escapeHtml(label)}</div>
+        <p class="small muted">${escapeHtml(linkedAs ? tr('set.linkedAs', { name: linkedAs }) : what)}</p>
+        ${extra}
+      </div>
+      ${
+        linkedAs
+          ? `<button class="btn btn-sm btn-danger" data-unlink="${key}">${escapeHtml(tr('set.unlink'))}</button>`
+          : `<a class="btn btn-sm btn-primary" href="/api/auth/${key}/start?mode=link">${escapeHtml(
+              tr('set.link')
+            )}</a>`
+      }
+    </div>`;
+  };
 
-    <div class="grid two" style="align-items:start">
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('set.account'))}</h3></header>
-        <div class="body stack">
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('auth.register.username'))}</span>
-            <span class="mono">${escapeHtml(me.username)}</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('auth.register.email'))}</span>
-            <span class="mono">${escapeHtml(me.email)}</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('set.role'))}</span>
-            <span class="pill ${me.role === 'admin' ? 'primary' : ''}">${escapeHtml(
-              tr(me.role === 'admin' ? 'set.role.admin' : 'set.role.user')
-            )}</span></div>
-          <div class="field">
-            <label for="language">${escapeHtml(tr('set.language'))}</label>
-            <select id="language">
-              <option value="en" ${me.language === 'en' ? 'selected' : ''}>English</option>
-              <option value="de" ${me.language === 'de' ? 'selected' : ''}>Deutsch</option>
-            </select>
-            <span class="hint">${escapeHtml(tr('set.languageHint'))}</span>
-          </div>
-          <button class="btn btn-primary" id="save-language">${escapeHtml(tr('common.save'))}</button>
-        </div>
-      </section>
+  return `
+    ${row(
+      'discord',
+      'discord',
+      'Discord',
+      tr('set.discordWhat'),
+      me.discord?.name,
+      me.discord
+        ? `<p class="small" style="margin:.4rem 0 0">
+            <a href="/api/auth/discord/start?mode=verify">${escapeHtml(tr('set.verifyRoles'))}</a>
+            <span class="muted"> — ${escapeHtml(tr('set.verifyRolesHint'))}</span></p>`
+        : ''
+    )}
+    ${row('google', 'google', 'Google', tr('set.googleWhat'), me.google?.email)}
 
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('set.discord'))}</h3></header>
-        <div class="body stack">
+    <hr class="rule">
+
+    <p class="small muted">${escapeHtml(tr('set.webhookWhat'))}</p>
+    <div class="row wrap" style="gap:.75rem;align-items:flex-end">
+      <div class="field grow">
+        <label for="webhook">${escapeHtml(tr('set.webhook'))}</label>
+        <input id="webhook" type="url" placeholder="https://discord.com/api/webhooks/…"
+          value="${escapeHtml(me.discord_webhook || '')}">
+      </div>
+      <button class="btn btn-primary" id="save-hook">${escapeHtml(tr('common.save'))}</button>
+      <button class="btn" id="test-hook" ${me.discord_webhook ? '' : 'disabled'}>${escapeHtml(
+        tr('set.webhookTest')
+      )}</button>
+    </div>`;
+}
+
+// ---------------------------------------------------------------- Nachrichten
+
+function notifyBody(me) {
+  const categories = state.meta?.mail_categories || [];
+  if (!state.meta?.mail_ready) {
+    return `<div class="note warn">${icon('info')}<div>${escapeHtml(tr('set.providerOff'))}</div></div>`;
+  }
+  return `
+    <ul class="switch-list">
+      ${categories
+        .map(
+          (entry) => `<li>
+            <div class="grow">
+              <div class="strong">${escapeHtml(entry.name)}</div>
+              <p class="small muted">${escapeHtml(entry.text)}</p>
+            </div>
+            ${
+              entry.locked
+                ? `<span class="pill" title="${escapeHtml(tr('set.notifySub'))}">${icon('lock')}</span>`
+                : `<span class="switch" role="switch" tabindex="0"
+                     aria-checked="${me.mail_prefs?.[entry.key] !== false}" data-pref="${entry.key}"></span>`
+            }
+          </li>`
+        )
+        .join('')}
+    </ul>`;
+}
+
+// ---------------------------------------------------------------- Sicherheit
+
+function securityBody(sessions) {
+  return `
+    <div class="grid two" style="align-items:start;gap:1.5rem">
+      <div class="stack">
+        <h3 class="small strong" style="margin:0">${escapeHtml(tr('set.password'))}</h3>
+        <div class="field"><label for="old">${escapeHtml(tr('set.passwordOld'))}</label>
+          <input id="old" type="password" autocomplete="current-password"></div>
+        <div class="field"><label for="new">${escapeHtml(tr('set.passwordNew'))}</label>
+          <input id="new" type="password" autocomplete="new-password" minlength="8"></div>
+        <div class="field"><label for="new2">${escapeHtml(tr('set.passwordNew2'))}</label>
+          <input id="new2" type="password" autocomplete="new-password" minlength="8">
+          <span class="hint">${escapeHtml(tr('set.passwordHint'))}</span></div>
+        <button class="btn btn-primary" id="save-password">${escapeHtml(tr('set.password'))}</button>
+      </div>
+
+      <div class="stack">
+        <h3 class="small strong" style="margin:0">${escapeHtml(tr('set.sessions'))}</h3>
+        <ul class="plain-list">
           ${
-            !discord.available
-              ? `<p class="small muted">${escapeHtml(tr('set.discordOff'))}</p>`
-              : me.discord
-                ? `<div class="row spread">
-                     <span class="row">${icon('message')} ${escapeHtml(
-                       tr('set.discordLinked', { name: me.discord.name })
-                     )}</span>
-                     <button class="btn btn-sm btn-danger" id="unlink">${escapeHtml(tr('set.discordUnlink'))}</button>
-                   </div>`
-                : `<a class="btn" href="/api/auth/discord/start?mode=link">${icon('message')} ${escapeHtml(
-                    tr('set.discordLink')
-                  )}</a>`
-          }
-
-          <hr class="rule">
-
-          <p class="small muted">${escapeHtml(tr('set.webhookHint'))}</p>
-          <div class="field">
-            <label for="webhook">${escapeHtml(tr('set.webhook'))}</label>
-            <input id="webhook" type="url" placeholder="https://discord.com/api/webhooks/…"
-              value="${escapeHtml(me.discord_webhook || '')}">
-          </div>
-          <div class="row">
-            <button class="btn btn-primary" id="save-hook">${escapeHtml(tr('common.save'))}</button>
-            <button class="btn" id="test-hook" ${me.discord_webhook ? '' : 'disabled'}>${escapeHtml(
-              tr('set.webhookTest')
-            )}</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('set.password'))}</h3></header>
-        <div class="body stack">
-          <div class="field"><label for="old">${escapeHtml(tr('set.passwordOld'))}</label>
-            <input id="old" type="password" autocomplete="current-password"></div>
-          <div class="field"><label for="new">${escapeHtml(tr('set.passwordNew'))}</label>
-            <input id="new" type="password" autocomplete="new-password" minlength="8"></div>
-          <div class="field"><label for="new2">${escapeHtml(tr('set.passwordNew2'))}</label>
-            <input id="new2" type="password" autocomplete="new-password" minlength="8">
-            <span class="hint">${escapeHtml(tr('set.passwordHint'))}</span></div>
-          <button class="btn btn-primary" id="save-password">${escapeHtml(tr('set.password'))}</button>
-        </div>
-      </section>
-
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('set.sessions'))}</h3></header>
-        <div class="body stack">
-          ${
-            (sessions.sessions || [])
+            sessions
               .map(
-                (session) => `<div class="row spread small">
+                (session) => `<li class="row spread small">
                   <span class="mono truncate" title="${escapeHtml(session.agent || '')}">${escapeHtml(
                     session.ip || '–'
                   )}</span>
                   <span class="muted mono">${datetime(session.created_at)}</span>
-                </div>`
+                </li>`
               )
-              .join('') || `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`
+              .join('') || `<li class="small muted">${escapeHtml(tr('common.none'))}</li>`
           }
-          <button class="btn" id="logout-all">${escapeHtml(tr('set.logoutAll'))}</button>
-        </div>
-      </section>
+        </ul>
+        <button class="btn" id="logout-all">${escapeHtml(tr('set.logoutAll'))}</button>
+      </div>
     </div>`;
+}
 
+// ---------------------------------------------------------------- Postfach
+
+function mailsBody(mails) {
+  if (!mails.length) return `<p class="small muted">${escapeHtml(tr('set.mailsNone'))}</p>`;
+  return `<ul class="plain-list mail-list">
+    ${mails
+      .map(
+        (entry) => `<li class="row spread" data-mail="${entry.id}">
+          <span class="grow truncate">${escapeHtml(entry.subject)}
+            ${
+              entry.status !== 'sent'
+                ? `<span class="pill missing">${escapeHtml(tr('set.mailFailed'))}</span>`
+                : ''
+            }</span>
+          <span class="small muted mono nowrap">${datetime(entry.created_at)}</span>
+        </li>`
+      )
+      .join('')}
+  </ul>`;
+}
+
+// ---------------------------------------------------------------- Verhalten
+
+function bind(me, mails) {
   $('#save-language').addEventListener('click', async () => {
     const next = $('#language').value;
     try {
       await api('/me', { method: 'PATCH', body: { language: next } });
       // Die Sprache steckt in der Adresse – also gleich dorthin wechseln.
-      location.href = `/${next}/app${location.hash}`;
+      location.href = `/${next}/app${location.hash.split('?')[0]}`;
     } catch (error) {
       fail(error);
     }
   });
 
-  $('#unlink')?.addEventListener('click', async () => {
-    if (!(await confirmDialog(tr('set.discordUnlink')))) return;
-    try {
-      await api('/auth/discord', { method: 'DELETE' });
-      await refresh({ profiles: false, accounts: false });
-      draw();
-    } catch (error) {
-      fail(error);
-    }
-  });
+  $$('[data-unlink]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('set.unlink')))) return;
+      try {
+        await api(`/auth/${button.dataset.unlink}`, { method: 'DELETE' });
+        await refresh({ profiles: false, accounts: false });
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
 
   $('#save-hook').addEventListener('click', async () => {
     try {
@@ -156,6 +289,30 @@ export async function render(root) {
     }
   });
 
+  // Die Schalter speichern sofort. Ein "Speichern"-Knopf für fünf Ja/Nein-Fragen wäre eine Hürde
+  // ohne Zweck – und wer eine Sorte abbestellt, will das jetzt und nicht nach einem Klick mehr.
+  $$('[data-pref]').forEach((node) => {
+    const toggle = async () => {
+      const next = node.getAttribute('aria-checked') !== 'true';
+      node.setAttribute('aria-checked', String(next));
+      const prefs = { ...(me.mail_prefs || {}), [node.dataset.pref]: next };
+      try {
+        await api('/me', { method: 'PATCH', body: { mail_prefs: prefs } });
+        me.mail_prefs = prefs;
+      } catch (error) {
+        node.setAttribute('aria-checked', String(!next));
+        fail(error);
+      }
+    };
+    node.addEventListener('click', toggle);
+    node.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggle();
+      }
+    });
+  });
+
   $('#save-password').addEventListener('click', async () => {
     try {
       await api('/me/password', {
@@ -175,9 +332,8 @@ export async function render(root) {
 
   $('#logout-all').addEventListener('click', async () => {
     if (!(await confirmDialog(tr('set.logoutAllAsk')))) return;
-    // Erst alle anderen Sitzungen, dann die eigene. Vorher wurde nur die eigene beendet – der
-    // Knopf heißt aber "auf allen Geräten abmelden", und genau darauf verlässt sich, wer ihn
-    // drückt, weil ihm ein fremdes Gerät nicht mehr geheuer ist.
+    // Erst alle anderen Sitzungen, dann die eigene. Der Knopf heißt "auf allen Geräten abmelden",
+    // und genau darauf verlässt sich, wer ihn drückt, weil ihm ein fremdes Gerät nicht geheuer ist.
     try {
       await api('/me/sessions', { method: 'DELETE' });
     } catch (error) {
@@ -187,4 +343,40 @@ export async function render(root) {
     await api('/auth/logout', { method: 'POST' }).catch(() => {});
     location.href = url('/login');
   });
+
+  $$('[data-mail]').forEach((row) =>
+    row.addEventListener('click', async () => {
+      const entry = mails.find((item) => item.id === Number(row.dataset.mail));
+      try {
+        const data = await api(`/me/mails/${row.dataset.mail}`);
+        showMail(data.mail, entry);
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
+}
+
+/** Eine verschickte Nachricht im Wortlaut. */
+function showMail(mail, meta) {
+  const dialog = document.createElement('dialog');
+  dialog.innerHTML = `
+    <header><h3>${escapeHtml(mail.subject)}</h3></header>
+    <div class="body stack">
+      <div class="row spread small muted">
+        <span class="mono">${escapeHtml(mail.recipient)}</span>
+        <span class="mono">${datetime(mail.created_at)}</span>
+      </div>
+      ${
+        mail.status !== 'sent'
+          ? `<div class="note bad">${icon('alert')}<div>${escapeHtml(mail.error || tr('set.mailFailed'))}</div></div>`
+          : ''
+      }
+      <pre class="mail-body">${escapeHtml(mail.body || '')}</pre>
+    </div>
+    <footer><button class="btn btn-primary" id="close">${escapeHtml(tr('common.close'))}</button></footer>`;
+  document.body.append(dialog);
+  dialog.addEventListener('close', () => dialog.remove());
+  $('#close', dialog).addEventListener('click', () => dialog.close());
+  dialog.showModal();
 }

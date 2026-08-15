@@ -6,6 +6,8 @@
 //            `--help`). Fehlt sie auf diesem Server, fällt der Eintrag weg – dann steht dort auch
 //            kein Versprechen, das gerade niemand einlösen kann.
 //   premium  ob es einen bezahlten Serverplatz braucht. Das steht als Etikett dahinter.
+//   tag      ein genaueres Etikett, wenn "bezahlter Platz" zu grob wäre: 'ultra' heißt, dass es
+//            im Ultra-Tarif steckt und sich auf Premium dazubuchen lässt.
 //
 // Absichtlich steht hier nirgends, *wie* etwas gemacht ist: keine Protokollnamen, keine
 // Dateigrößen, keine Begründungen für Dinge, die es nicht gibt. Wer einen AFK-Bot sucht, will
@@ -190,6 +192,7 @@ const LIST = [
     group: 'game',
     need: 'board',
     premium: true,
+    tag: 'ultra',
     de: {
       title: 'Anzeigetafel und Spielerliste',
       text: 'Die Seitenleiste des Servers und wer gerade online ist, direkt im Panel.',
@@ -204,6 +207,7 @@ const LIST = [
     group: 'game',
     need: 'menu',
     premium: true,
+    tag: 'ultra',
     de: { title: 'Menüs bedienen', text: 'Öffnet der Server ein Menü, siehst du es im Panel und klickst ein Feld an.' },
     en: { title: 'Use menus', text: 'When the server opens a menu you see it in the panel and can click a slot.' },
   },
@@ -295,6 +299,7 @@ export function features(caps = {}, lang = 'de') {
     group: feature.group,
     group_label: GROUPS[feature.group][key],
     premium: Boolean(feature.premium),
+    tag: feature.tag || null,
     title: feature[key].title,
     text: feature[key].text,
   }));

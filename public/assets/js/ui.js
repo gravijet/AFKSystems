@@ -1,6 +1,7 @@
 // Gemeinsame Bausteine für Startseite und Dashboard: Symbole, API-Aufrufe, Meldungen, Aussehen.
 
 import { t, LANGS, DEFAULT_LANG } from './i18n.js';
+import { parseFormatting } from './chatlog.js';
 
 // ---------------------------------------------------------------- Sprache
 //
@@ -59,6 +60,20 @@ const PATHS = {
   ticket: '<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
   chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
+  cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
+  disk: '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
+  activity: '<path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2"/>',
+  lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  unlock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
+  mail: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  send: '<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>',
+  eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.8 10.8 0 0 1-1.899 2.982"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>',
+  pin: '<path d="M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/>',
+  layers: '<path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83z"/><path d="M2 12.18a1 1 0 0 0 .6.9l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 .58-.91"/><path d="M2 17.18a1 1 0 0 0 .6.9l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 .58-.91"/>',
+  external: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  discord: '<path d="M18.9 5.6A16.6 16.6 0 0 0 14.8 4.4l-.2.4a12.5 12.5 0 0 1 3.7 1.9 15.7 15.7 0 0 0-12.6 0 12.5 12.5 0 0 1 3.7-1.9l-.2-.4A16.6 16.6 0 0 0 5.1 5.6C2.5 9.5 1.8 13.3 2.1 17a16.7 16.7 0 0 0 5.1 2.6l.9-1.3a10.9 10.9 0 0 1-1.7-.8l.4-.3a11.9 11.9 0 0 0 10.4 0l.4.3a10.9 10.9 0 0 1-1.7.8l.9 1.3a16.7 16.7 0 0 0 5.1-2.6c.4-4.3-.7-8.1-3-11.4Z"/><ellipse cx="9" cy="13" rx="1.4" ry="1.7"/><ellipse cx="15" cy="13" rx="1.4" ry="1.7"/>',
+  google: '<path d="M21.6 12.2c0-.7-.1-1.3-.2-1.9H12v3.7h5.4a4.6 4.6 0 0 1-2 3v2.5h3.2a9.7 9.7 0 0 0 3-7.3"/><path d="M12 22a9.5 9.5 0 0 0 6.6-2.4l-3.2-2.5a6 6 0 0 1-8.9-3.1H3.2v2.6A10 10 0 0 0 12 22"/><path d="M6.5 14a5.9 5.9 0 0 1 0-3.8V7.6H3.2a10 10 0 0 0 0 8.9z"/><path d="M12 5.9a5.4 5.4 0 0 1 3.8 1.5l2.8-2.8A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.8 5.6L6.5 10A6 6 0 0 1 12 5.9"/>',
 };
 
 export function icon(name, klass = 'icon') {
@@ -202,6 +217,58 @@ export function clock(timestamp) {
     minute: '2-digit',
     second: '2-digit',
   });
+}
+
+/**
+ * Text mit Minecraft-Farbcodes (§) als HTML.
+ *
+ * Damit sieht die Anzeigetafel im Panel aus wie im Spiel, statt "§t§?" zwischen den Wörtern zu
+ * zeigen. Das Zerlegen macht chatlog.js – hier wird nur gezeichnet.
+ */
+export function mcText(raw) {
+  return parseFormatting(raw)
+    .map((part) => {
+      const style = [
+        part.color ? `color:${part.color}` : '',
+        part.bold ? 'font-weight:700' : '',
+        part.italic ? 'font-style:italic' : '',
+        part.underline || part.strike
+          ? `text-decoration:${[part.underline && 'underline', part.strike && 'line-through']
+              .filter(Boolean)
+              .join(' ')}`
+          : '',
+      ]
+        .filter(Boolean)
+        .join(';');
+      // "obfuscated" ist im Spiel flackernder Zeichensalat. Hier bleibt der Text lesbar und wird
+      // nur gedämpft – wer eine Anzeigetafel im Panel liest, will sie lesen.
+      const klass = part.obfuscated ? ' class="mc-obf"' : '';
+      return `<span${klass}${style ? ` style="${style}"` : ''}>${escapeHtml(part.text)}</span>`;
+    })
+    .join('');
+}
+
+/** Byte in etwas, das man vorlesen kann. */
+export function bytes(value) {
+  const number = Number(value) || 0;
+  if (number < 1024) return `${number} B`;
+  const units = ['kB', 'MB', 'GB', 'TB'];
+  let size = number / 1024;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit += 1;
+  }
+  return `${size.toLocaleString(locale, { maximumFractionDigits: size < 10 ? 1 : 0 })} ${units[unit]}`;
+}
+
+/** Ein Balken für eine Auslastung in Prozent. */
+export function meter(percent, { label = '', tone = '' } = {}) {
+  const value = Math.max(0, Math.min(100, Number(percent) || 0));
+  const level = tone || (value >= 90 ? 'bad' : value >= 70 ? 'warn' : 'ok');
+  return `<div class="meter ${level}" role="img" aria-label="${escapeHtml(label || `${Math.round(value)} %`)}">
+    <span style="width:${value.toFixed(1)}%"></span>
+  </div>`;
 }
 
 export function stateBadge(state, detail = '') {

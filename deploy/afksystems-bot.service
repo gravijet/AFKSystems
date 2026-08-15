@@ -1,0 +1,52 @@
+# systemd-Unit für den Discord-Bot.
+#
+#   sudo cp deploy/afksystems-bot.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now afksystems-bot
+#   journalctl -u afksystems-bot -f
+#
+# Der Bot ist ein eigener Dienst und nicht Teil des Panels: Er darf abstürzen, neu starten oder
+# ganz fehlen, ohne dass ein einziger Minecraft-Bot davon etwas merkt. Umgekehrt wartet er, bis
+# das Panel wieder da ist – seine Verbindung baut er von selbst neu auf.
+#
+# Die Einrichtung steht in docs/discord-bot.md.
+
+[Unit]
+Description=AFKSystems Discord-Bot
+Documentation=https://afksystems.de
+After=network-online.target afksystems.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=afksystems
+Group=afksystems
+WorkingDirectory=/opt/afksystems/bot
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/afksystems/bot/.env
+ExecStart=/usr/bin/node index.js
+
+Restart=always
+RestartSec=10
+# Discord sperrt einen Token, der zu oft hintereinander eine Verbindung aufbaut. Startet der
+# Dienst also dauernd neu, ist es besser, er hört auf – im Protokoll steht dann, warum.
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=afksystems-bot
+
+[Install]
+WantedBy=multi-user.target

@@ -3,23 +3,30 @@
 // Der Grundsatz hier: nichts verstecken, was der Betreiber braucht, und nichts anbieten, was das
 // Backend nicht kann. Jede Tabelle zeigt echte Werte aus der Datenbank, jede Änderung geht sofort
 // hin und kommt frisch zurück.
+//
+// Tickets stehen **nicht** mehr hier, sondern haben einen eigenen Punkt in der Seitenleiste: Sie
+// sind die Arbeit, die täglich anfällt, und die soll nicht zwei Klicks tief unter "Verwaltung"
+// liegen. Wer hierher kommt, verwaltet – wer dorthin geht, antwortet.
 
 import {
-  api, icon, escapeHtml, credits, euro, datetime, date, since, tr, $, $$, ok, fail, toast,
-  confirmDialog, formDialog, copy, debounce,
+  api, icon, escapeHtml, credits, euro, datetime, date, since, bytes, meter, mcText, tr, $, $$,
+  ok, fail, toast, confirmDialog, formDialog, copy, debounce,
 } from '../ui.js';
-import { state, appbar, refresh, draw, go } from '../app.js';
+import { mergeLines } from '../chatlog.js';
+import { state, appbar, draw, go } from '../app.js';
 
 const TABS = [
   { key: 'overview', label: 'adm.overview' },
+  { key: 'system', label: 'adm.system' },
   { key: 'users', label: 'adm.users' },
-  { key: 'profiles', label: 'adm.profiles' },
+  { key: 'servers', label: 'adm.servers' },
   { key: 'bots', label: 'adm.bots' },
+  { key: 'nodes', label: 'adm.nodes' },
   { key: 'plans', label: 'adm.plans' },
+  { key: 'addons', label: 'adm.addons' },
   { key: 'topups', label: 'adm.topups' },
   { key: 'vouchers', label: 'adm.vouchers' },
   { key: 'proxies', label: 'adm.proxies' },
-  { key: 'tickets', label: 'adm.tickets' },
   { key: 'announcements', label: 'adm.announce' },
   { key: 'settings', label: 'adm.settings' },
   { key: 'client', label: 'adm.client' },
@@ -29,6 +36,11 @@ const TABS = [
 ];
 
 export async function render(root, route) {
+  // Der alte Ticket-Reiter lebt in Lesezeichen weiter – er führt jetzt an die richtige Stelle.
+  if (route.tab === 'tickets') {
+    location.hash = route.id ? `#/tickets/${route.id}` : '#/tickets?view=staff';
+    return;
+  }
   const tab = TABS.some((entry) => entry.key === route.tab) ? route.tab : 'overview';
 
   root.innerHTML = `
@@ -44,14 +56,16 @@ export async function render(root, route) {
   const body = $('#admin-body');
   const views = {
     overview,
+    system,
     users: route.id ? (node) => userDetail(node, route.id) : users,
-    profiles,
+    servers: route.id ? (node) => serverDetail(node, route.id) : servers,
     bots,
+    nodes,
     plans,
+    addons,
     topups,
     vouchers,
     proxies,
-    tickets: route.id ? (node) => ticketDetail(node, route.id) : ticketList,
     announcements,
     settings,
     client,
@@ -65,6 +79,8 @@ export async function render(root, route) {
     body.innerHTML = `<div class="note bad">${icon('alert')}<div>${escapeHtml(error.message)}</div></div>`;
   }
 }
+
+// ---------------------------------------------------------------- Bausteine
 
 const stat = (label, value, sub = '') =>
   `<div class="stat"><div class="k">${escapeHtml(label)}</div><div class="v">${value}</div>
@@ -84,6 +100,18 @@ const panel = (title, inner, actions = '') => `<section class="panel" style="mar
   <div class="body" style="padding:0">${inner}</div>
 </section>`;
 
+/** Zahlen aus einem Dialog kommen als Text zurück – hier wieder zu Zahlen machen. */
+function numbers(answer, extra = []) {
+  const out = { ...answer };
+  for (const key of [
+    'price_credits', 'max_accounts', 'chat_limit', 'max_macros', 'sort', 'credits', 'uses',
+    'count', 'expires_days', 'amount', 'max_qty', 'max_bots', 'max_profiles', 'qty', ...extra,
+  ]) {
+    if (out[key] !== undefined && out[key] !== '') out[key] = Number(out[key]);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------- Überblick
 
 async function overview(root) {
@@ -101,10 +129,14 @@ async function overview(root) {
       ${stat('MRR', credits(data.mrr_credits), euro(data.mrr_credits))}
       ${stat(tr('bill.balance'), credits(data.credits_outstanding), euro(data.credits_outstanding))}
       ${stat(tr('adm.topups'), euro(data.revenue_30d_cent), tr('adm.revenueAll', { total: euro(data.revenue_cent) }))}
-      ${stat(tr('adm.tickets'), data.open_tickets, tr('adm.unread', { n: data.unread_tickets }))}
+      ${stat(
+        tr('adm.tickets'),
+        data.tickets?.open ?? data.open_tickets,
+        tr('adm.unread', { n: data.tickets?.unread ?? data.unread_tickets })
+      )}
       ${stat(
         tr('adm.attention'),
-        data.users_blocked + data.users_unverified,
+        data.users_blocked + data.users_unverified + (data.open_topups || 0),
         tr('adm.attentionLine', { blocked: data.users_blocked, unverified: data.users_unverified })
       )}
     </div>
@@ -136,35 +168,20 @@ async function overview(root) {
       </section>
 
       <section class="panel">
-        <header><h3>${escapeHtml(tr('adm.settings'))}</h3></header>
+        <header><h3>${escapeHtml(tr('adm.settings'))}</h3>
+          <a class="btn btn-sm" href="#/admin/settings">${escapeHtml(tr('common.edit'))}</a></header>
         <div class="body stack">
-          <div class="row spread"><span class="muted small">SMTP</span>
-            <span class="pill ${data.mail.configured ? 'primary' : 'missing'}">${
-              data.mail.configured ? 'ok' : '–'
-            }</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(
-            tr('auth.verify.title')
-          )}</span><span class="pill ${data.mail.verify ? 'primary' : ''}">${
-            data.mail.verify ? tr('srv.on') : tr('srv.off')
-          }</span></div>
-          <div class="row spread"><span class="muted small">Discord</span>
-            <span class="pill ${data.discord.configured ? 'primary' : 'missing'}">${
-              data.discord.configured ? 'ok' : '–'
-            }</span></div>
-          <div class="row spread"><span class="muted small">Redirect</span>
-            <span class="mono small truncate" title="${escapeHtml(data.discord.redirect)}">${escapeHtml(
-              data.discord.redirect
-            )}</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(
-            tr('error.maintenance.title')
-          )}</span><span class="pill ${Number(data.settings.maintenance) ? 'missing' : ''}">${
-            Number(data.settings.maintenance) ? tr('srv.on') : tr('srv.off')
-          }</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(
-            tr('auth.register.title')
-          )}</span><span class="pill ${Number(data.settings.registration_open) ? 'primary' : 'missing'}">${
-            Number(data.settings.registration_open) ? tr('srv.on') : tr('srv.off')
-          }</span></div>
+          ${health('SMTP', data.mail.configured, data.mail.configured ? tr('adm.mailsFailed', { n: data.mail.failed_24h }) : '')}
+          ${health(tr('auth.verify.title'), data.mail.verify)}
+          ${health('Discord', data.oauth?.discord?.available, data.oauth?.discord?.login ? tr('set.link') : '')}
+          ${health('Google', data.oauth?.google?.available, data.oauth?.google?.login ? tr('set.link') : '')}
+          ${health(
+            tr('adm.botStatus'),
+            data.bot?.connected > 0,
+            data.bot?.connected > 0 ? tr('adm.botConnected') : tr('adm.botAway')
+          )}
+          ${health(tr('error.maintenance.title'), !Number(data.settings.maintenance), '', true)}
+          ${health(tr('auth.register.title'), Number(data.settings.registration_open))}
         </div>
       </section>
     </div>`;
@@ -182,6 +199,134 @@ async function overview(root) {
   });
 }
 
+const health = (label, good, note = '') => `<div class="row spread">
+  <span class="muted small">${escapeHtml(label)}</span>
+  <span class="row" style="gap:.5rem">
+    ${note ? `<span class="small muted">${escapeHtml(note)}</span>` : ''}
+    <span class="pill ${good ? 'primary' : 'missing'}">${good ? 'ok' : '–'}</span>
+  </span></div>`;
+
+// ---------------------------------------------------------------- System
+//
+// Was die Maschine tut und was davon auf uns geht. Die Werte kommen aus zwei Messungen im
+// Abstand, deshalb wird die Seite hier von selbst nachgeladen statt einmal beim Öffnen.
+
+async function system(root) {
+  let timer = null;
+
+  const paint = (data) => {
+    const host = data.host;
+    const own = data.afksystems;
+    root.innerHTML = `
+      <div class="grid three" style="margin-bottom:1.5rem">
+        <div class="usage-card">
+          <div class="row spread"><span class="k">${escapeHtml(tr('adm.cpu'))}</span>
+            <span class="small muted">${escapeHtml(tr('adm.cores', { n: host.cores }))}</span></div>
+          <div class="v">${host.cpu_percent === null ? '…' : `${host.cpu_percent.toFixed(1)} %`}</div>
+          ${meter(host.cpu_percent || 0)}
+          <div class="s">${escapeHtml(tr('adm.ofThat'))}: <strong>${own.cpu_percent.toFixed(1)} %</strong>
+            · ${escapeHtml(tr('adm.load'))} ${host.load.join(' / ')}</div>
+        </div>
+
+        <div class="usage-card">
+          <div class="row spread"><span class="k">${escapeHtml(tr('adm.ram'))}</span>
+            <span class="small muted">${bytes(host.memory.total)}</span></div>
+          <div class="v">${bytes(host.memory.used)}</div>
+          ${meter(host.memory.percent)}
+          <div class="s">${escapeHtml(tr('adm.ofThat'))}: <strong>${bytes(own.memory_bytes)}</strong>
+            (${own.memory_percent.toFixed(1)} %) · ${own.bots} ${escapeHtml(tr('adm.botProc'))}</div>
+        </div>
+
+        <div class="usage-card">
+          <div class="row spread"><span class="k">${escapeHtml(tr('adm.disk'))}</span>
+            <span class="small muted">${host.disk ? bytes(host.disk.total) : '–'}</span></div>
+          <div class="v">${host.disk ? bytes(host.disk.used) : '–'}</div>
+          ${host.disk ? meter(host.disk.percent) : ''}
+          <div class="s">${escapeHtml(tr('adm.ofThat'))}: <strong>${bytes(own.disk.data)}</strong>
+            · ${escapeHtml(tr('adm.logs'))} ${bytes(own.disk.logs)} · Client ${bytes(own.disk.binaries)}</div>
+        </div>
+      </div>
+
+      <div class="grid two" style="align-items:start;margin-bottom:1.5rem">
+        <section class="panel">
+          <header><h3>${escapeHtml(tr('adm.machine'))}</h3></header>
+          <div class="body stack">
+            <div class="row spread"><span class="muted small">Host</span>
+              <span class="mono">${escapeHtml(host.hostname)}</span></div>
+            <div class="row spread"><span class="muted small">System</span>
+              <span class="mono small">${escapeHtml(host.platform)}</span></div>
+            <div class="row spread"><span class="muted small">${escapeHtml(tr('adm.uptime'))}</span>
+              <span class="mono">${uptime(host.uptime_sec)}</span></div>
+            <div class="row spread"><span class="muted small">${escapeHtml(tr('adm.uptimePanel'))}</span>
+              <span class="mono">${uptime(own.uptime_sec)}</span></div>
+            ${
+              host.memory.swap_total
+                ? `<div class="row spread"><span class="muted small">Swap</span>
+                    <span class="mono">${bytes(host.memory.swap_used)} / ${bytes(host.memory.swap_total)}</span></div>`
+                : ''
+            }
+          </div>
+        </section>
+
+        <section class="panel">
+          <header><h3>${escapeHtml(tr('adm.disk'))} · AFKSystems</h3></header>
+          <div class="body stack">
+            ${Object.entries(own.disk)
+              .map(
+                ([key, value]) => `<div class="row spread">
+                  <span class="muted small mono">${escapeHtml(key)}</span>
+                  <span class="mono">${bytes(value)}</span></div>`
+              )
+              .join('')}
+          </div>
+        </section>
+      </div>
+
+      ${panel(
+        tr('adm.perServer'),
+        table(
+          [tr('common.name'), tr('adm.users'), tr('adm.bots'), tr('adm.cpu'), tr('adm.ram'), tr('adm.disk')],
+          data.profiles
+            .sort((a, b) => b.rss - a.rss)
+            .map(
+              (entry) => `<tr data-server="${entry.profile_id}" style="cursor:pointer">
+                <td>${escapeHtml(entry.name)}</td>
+                <td class="small"><a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.username || '')}</a></td>
+                <td class="small muted">${entry.bots}</td>
+                <td class="mono small">${entry.cpu_percent.toFixed(1)} %</td>
+                <td class="mono small">${bytes(entry.rss)}</td>
+                <td class="mono small muted">${bytes(entry.disk)}</td>
+              </tr>`
+            )
+        )
+      )}`;
+
+    $$('[data-server]').forEach((row) =>
+      row.addEventListener('click', () => go(`/admin/servers/${row.dataset.server}`))
+    );
+  };
+
+  paint(await api('/admin/metrics'));
+  // Der erste CPU-Wert ist immer leer: er braucht eine zweite Messung zum Vergleichen.
+  const tick = async () => {
+    if (state.route.name !== 'admin' || state.route.tab !== 'system') return clearInterval(timer);
+    try {
+      paint(await api('/admin/metrics'));
+    } catch {
+      /* beim nächsten Mal wieder */
+    }
+  };
+  timer = setInterval(tick, 4000);
+  setTimeout(tick, 1200);
+}
+
+function uptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return days ? `${days} d ${hours} h` : hours ? `${hours} h ${minutes} min` : `${minutes} min`;
+}
+
 // ---------------------------------------------------------------- Nutzer
 
 async function users(root) {
@@ -194,7 +339,7 @@ async function users(root) {
     <div class="row wrap" style="margin-bottom:1rem">
       <input id="search" type="search" placeholder="${escapeHtml(tr('common.search'))}"
         value="${escapeHtml(query)}" style="max-width:18rem">
-      <select id="filter" style="max-width:12rem">
+      <select id="filter" class="mini" style="max-width:12rem">
         ${[
           ['all', tr('common.all')],
           ['paying', tr('adm.paying')],
@@ -222,7 +367,8 @@ async function users(root) {
             <td><span class="row" style="gap:.4rem">${escapeHtml(user.username)}
               ${user.role === 'admin' ? `<span class="pill primary">admin</span>` : ''}
               ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}
-              ${!user.email_verified ? `<span class="pill missing">mail</span>` : ''}</span></td>
+              ${!user.email_verified ? `<span class="pill missing">mail</span>` : ''}
+              ${user.discord ? `<span class="pill" title="${escapeHtml(user.discord.name || '')}">${icon('discord')}</span>` : ''}</span></td>
             <td class="small muted">${escapeHtml(user.email)}</td>
             <td class="mono">${credits(user.credits)}</td>
             <td class="mono small">${user.monthly ? credits(user.monthly) : '–'}</td>
@@ -235,8 +381,7 @@ async function users(root) {
     )}`;
 
   const search = debounce(() => {
-    const value = $('#search').value.trim();
-    go(`/admin/users?q=${encodeURIComponent(value)}&filter=${$('#filter').value}`);
+    go(`/admin/users?q=${encodeURIComponent($('#search').value.trim())}&filter=${$('#filter').value}`);
     draw();
   }, 350);
   $('#search').addEventListener('input', search);
@@ -287,10 +432,13 @@ async function userDetail(root, id) {
           ${user.role === 'admin' ? '<span class="pill primary">admin</span>' : ''}
           ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}</h2>
         <p class="small muted mono">${escapeHtml(user.email)} · #${user.id} ·
-          ${escapeHtml(tr('common.status'))}: ${user.last_seen_at ? since(user.last_seen_at) : '–'}</p>
+          ${escapeHtml(tr('common.status'))}: ${user.last_seen_at ? since(user.last_seen_at) : '–'}
+          ${user.discord ? ` · Discord ${escapeHtml(user.discord.name || user.discord.id)}` : ''}</p>
       </div>
       <div class="row wrap">
         <a class="btn btn-sm" href="#/admin/users">${escapeHtml(tr('common.back'))}</a>
+        <button class="btn btn-sm" id="mail">${icon('mail')} ${escapeHtml(tr('adm.sendMail'))}</button>
+        <button class="btn btn-sm" id="ticket">${icon('ticket')} ${escapeHtml(tr('adm.openTicket'))}</button>
         <button class="btn btn-sm" id="impersonate">${escapeHtml(tr('adm.impersonate'))}</button>
         <button class="btn btn-primary btn-sm" id="credits">${escapeHtml(tr('adm.addCredits'))}</button>
       </div>
@@ -325,7 +473,7 @@ async function userDetail(root, id) {
       table(
         [tr('common.name'), tr('srv.address'), tr('srv.plan'), tr('common.month'), tr('common.status'), ''],
         data.profiles.map(
-          (profile) => `<tr>
+          (profile) => `<tr data-server="${profile.id}" style="cursor:pointer">
             <td>${escapeHtml(profile.name)}</td>
             <td class="mono small">${escapeHtml(profile.address)}</td>
             <td class="small">${escapeHtml(profile.plan || '–')}</td>
@@ -377,14 +525,14 @@ async function userDetail(root, id) {
     )}
 
     <section class="panel">
-      <header><h3>${escapeHtml(tr('common.edit'))}</h3></header>
+      <header><h3>${escapeHtml(tr('adm.detail'))}</h3></header>
       <div class="body stack">
         <div class="field"><label for="notes">${escapeHtml(tr('common.edit'))}</label>
-          <textarea id="notes" rows="4">${escapeHtml(user.notes || '')}</textarea></div>
+          <textarea id="notes" rows="4" placeholder="${escapeHtml(tr('adm.everything'))}">${escapeHtml(
+            user.notes || ''
+          )}</textarea></div>
         <div class="row">
-          <div class="field" style="max-width:10rem"><label for="allowance">${escapeHtml(
-            tr('px.title')
-          )}</label>
+          <div class="field" style="max-width:10rem"><label for="allowance">${escapeHtml(tr('px.title'))}</label>
             <input id="allowance" type="number" min="0" max="100" value="${user.proxy_allowance || 0}"></div>
           <button class="btn btn-primary" id="save-notes" style="align-self:flex-end">${escapeHtml(
             tr('common.save')
@@ -392,9 +540,7 @@ async function userDetail(root, id) {
         </div>
         ${
           user.premium_until
-            ? `<p class="small muted">${escapeHtml(tr('adm.premium'))}: ${date(
-                user.premium_until
-              )}</p>`
+            ? `<p class="small muted">${escapeHtml(tr('adm.premium'))}: ${date(user.premium_until)}</p>`
             : ''
         }
       </div>
@@ -420,6 +566,74 @@ async function userDetail(root, id) {
       { submit: tr('common.save'), note: `${tr('bill.balance')}: ${credits(user.credits)}` }
     );
     if (answer) patch({ credits_delta: Number(answer.credits_delta), note: answer.note });
+  });
+
+  $('#mail').addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('adm.sendMail'),
+      [
+        { type: 'note', key: 'note', label: `${user.username} · ${user.email}` },
+        { key: 'subject', label: tr('tk.subject'), required: true },
+        { key: 'body', label: tr('tk.message'), type: 'textarea', required: true },
+        {
+          key: 'category',
+          label: tr('set.notify'),
+          type: 'select',
+          value: 'announcement',
+          options: (state.meta?.mail_categories || [])
+            .filter((entry) => entry.key !== 'account')
+            .map((entry) => ({ value: entry.key, label: entry.name })),
+        },
+        { key: 'force', label: tr('adm.mailForce'), type: 'checkbox', value: false },
+      ],
+      { submit: tr('tk.send') }
+    );
+    if (!answer) return;
+    try {
+      await api(`/admin/users/${id}/mail`, { method: 'POST', body: answer });
+      ok(tr('adm.mailSent'));
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $('#ticket').addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('adm.openTicket'),
+      [
+        { type: 'note', key: 'note', label: user.username },
+        { key: 'subject', label: tr('tk.subject'), required: true },
+        {
+          key: 'category',
+          label: tr('tk.category'),
+          type: 'select',
+          value: 'general',
+          options: (state.meta?.ticket_categories || []).map((entry) => ({
+            value: entry.key,
+            label: entry.label,
+          })),
+        },
+        {
+          key: 'priority',
+          label: tr('tk.priority'),
+          type: 'select',
+          value: 'normal',
+          options: ['low', 'normal', 'high', 'urgent'].map((value) => ({
+            value,
+            label: tr(`tk.priority.${value}`),
+          })),
+        },
+        { key: 'body', label: tr('tk.message'), type: 'textarea', required: true },
+      ],
+      { submit: tr('tk.send') }
+    );
+    if (!answer) return;
+    try {
+      const result = await api(`/admin/users/${id}/ticket`, { method: 'POST', body: answer });
+      go(`/tickets/${result.ticket.id}`);
+    } catch (error) {
+      fail(error);
+    }
   });
 
   $('#edit').addEventListener('click', async () => {
@@ -484,7 +698,8 @@ async function userDetail(root, id) {
   );
 
   $$('[data-extend]').forEach((button) =>
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
       await api(`/admin/profiles/${button.dataset.extend}`, {
         method: 'PATCH',
         body: { extend_days: 30 },
@@ -494,21 +709,24 @@ async function userDetail(root, id) {
     })
   );
 
+  $$('[data-server]').forEach((row) =>
+    row.addEventListener('click', () => go(`/admin/servers/${row.dataset.server}`))
+  );
   $$('[data-ticket]').forEach((row) =>
-    row.addEventListener('click', () => go(`/admin/tickets/${row.dataset.ticket}`))
+    row.addEventListener('click', () => go(`/tickets/${row.dataset.ticket}`))
   );
 }
 
-// ---------------------------------------------------------------- Serverplätze und Bots
+// ---------------------------------------------------------------- Serverplätze
 
-async function profiles(root) {
+async function servers(root) {
   const data = await api('/admin/profiles');
   root.innerHTML = panel(
     `${data.profiles.length} ${tr('adm.profiles')}`,
     table(
       ['#', tr('common.name'), tr('adm.users'), tr('srv.address'), tr('srv.plan'), tr('common.month'), '', ''],
       data.profiles.map(
-        (profile) => `<tr>
+        (profile) => `<tr data-open="${profile.id}" style="cursor:pointer">
           <td class="mono small muted">${profile.id}</td>
           <td>${escapeHtml(profile.name)}</td>
           <td class="small"><a href="#/admin/users/${profile.user_id}">${escapeHtml(profile.username)}</a></td>
@@ -522,9 +740,6 @@ async function profiles(root) {
           }</td>
           <td style="text-align:right;white-space:nowrap">
             <button class="btn btn-sm" data-extend="${profile.id}">+30 d</button>
-            <button class="btn btn-sm" data-suspend="${profile.id}" data-on="${profile.suspended ? 1 : 0}">${
-              profile.suspended ? escapeHtml(tr('srv.resume')) : escapeHtml(tr('tk.status.closed'))
-            }</button>
             <button class="btn btn-ghost btn-sm btn-danger" data-del="${profile.id}">${icon('trash')}</button>
           </td>
         </tr>`
@@ -532,28 +747,315 @@ async function profiles(root) {
     )
   );
 
+  $$('[data-open]').forEach((row) =>
+    row.addEventListener('click', () => go(`/admin/servers/${row.dataset.open}`))
+  );
   $$('[data-extend]').forEach((button) =>
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
       await api(`/admin/profiles/${button.dataset.extend}`, { method: 'PATCH', body: { extend_days: 30 } })
         .then(() => ok(tr('adm.saved')))
         .catch(fail);
       draw();
     })
   );
-  $$('[data-suspend]').forEach((button) =>
-    button.addEventListener('click', async () => {
-      await api(`/admin/profiles/${button.dataset.suspend}`, {
-        method: 'PATCH',
-        body: { suspended: button.dataset.on !== '1' },
-      }).catch(fail);
-      draw();
-    })
-  );
   $$('[data-del]').forEach((button) =>
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
       if (!(await confirmDialog(tr('common.delete'), { confirm: tr('common.delete') }))) return;
       await api(`/admin/profiles/${button.dataset.del}`, { method: 'DELETE' }).catch(fail);
       draw();
+    })
+  );
+}
+
+/**
+ * Ein Serverplatz aus der Sicht des Betreibers.
+ *
+ * Dasselbe, was der Kunde sieht – Konten, Zustand, Chat – und dazu, was ihn nichts angeht: wem er
+ * gehört, was er verbraucht, wo er liegt, und die Konsole. Wer meldet, dass ein Bot nicht mehr
+ * mitkommt, ist damit in einer Minute geholfen statt in einem Hin und Her aus Rückfragen.
+ */
+async function serverDetail(root, id) {
+  const data = await api(`/admin/servers/${id}`);
+  const profile = data.profile;
+
+  root.innerHTML = `
+    <div class="row wrap spread" style="margin-bottom:1.25rem">
+      <div>
+        <h2 style="font-size:1.4rem">${escapeHtml(profile.name)}
+          ${profile.locked ? `<span class="pill missing">${escapeHtml(tr('adm.locked'))}</span>` : ''}
+          ${profile.suspended ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>` : ''}</h2>
+        <p class="small muted mono">${escapeHtml(profile.address)} · MC ${escapeHtml(profile.mc_version)} ·
+          <a href="#/admin/users/${data.owner?.id}">${escapeHtml(data.owner?.username || '')}</a></p>
+      </div>
+      <div class="row wrap">
+        <a class="btn btn-sm" href="#/admin/servers">${escapeHtml(tr('common.back'))}</a>
+        <button class="btn btn-sm" id="start">${icon('play')} ${escapeHtml(tr('srv.startAll'))}</button>
+        <button class="btn btn-sm" id="stop">${icon('stop')} ${escapeHtml(tr('srv.stopAll'))}</button>
+        <button class="btn btn-sm" id="restart">${icon('refresh')}</button>
+        <button class="btn btn-sm ${profile.locked ? '' : 'btn-danger'}" id="lock">
+          ${icon(profile.locked ? 'unlock' : 'lock')} ${escapeHtml(profile.locked ? tr('adm.unlock') : tr('adm.lock'))}</button>
+      </div>
+    </div>
+
+    ${
+      profile.locked && profile.lock_reason
+        ? `<div class="note bad" style="margin-bottom:1.25rem">${icon('lock')}
+            <div>${escapeHtml(profile.lock_reason)}</div></div>`
+        : ''
+    }
+
+    <div class="grid four" style="margin-bottom:1.5rem">
+      ${stat(tr('srv.plan'), escapeHtml(data.plan.name), `${credits(data.monthly_credits)} · ${euro(data.monthly_credits)}`)}
+      ${stat(
+        tr('common.status'),
+        profile.days_left === null ? tr('common.forever') : tr('srv.daysLeft', { n: profile.days_left }),
+        profile.paid_until ? date(profile.paid_until) : ''
+      )}
+      ${stat(tr('adm.ram'), bytes(data.usage.rss), `${data.usage.bots} ${tr('adm.botProc')}`)}
+      ${stat(tr('adm.cpu'), `${(data.usage.cpu_percent || 0).toFixed(1)} %`, `${tr('adm.disk')}: ${bytes(data.usage.disk)}`)}
+    </div>
+
+    <div class="split">
+      <section class="panel">
+        <header><h3>${escapeHtml(tr('ov.col.account'))}</h3>
+          <span class="small muted">${data.accounts.filter((a) => a.online).length}/${data.features.max_accounts}</span>
+        </header>
+        <div class="body" style="padding:0">
+          <ul class="botlist">
+            ${
+              data.accounts
+                .map(
+                  (account) => `<li class="botrow ${account.online ? 'is-on' : ''}">
+                    <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy">
+                    <div class="grow" style="min-width:0">
+                      <div class="strong truncate">${escapeHtml(account.name)}</div>
+                      <div class="small muted truncate">${escapeHtml(account.state)}
+                        ${account.detail ? `· ${escapeHtml(account.detail)}` : ''}
+                        ${account.pid ? `· PID ${account.pid}` : ''}</div>
+                    </div>
+                    <span class="small muted mono">${account.since ? since(account.since) : '–'}</span>
+                  </li>`
+                )
+                .join('') ||
+              `<li class="small muted" style="padding:1.25rem">${escapeHtml(tr('srv.noAccounts'))}</li>`
+            }
+          </ul>
+        </div>
+      </section>
+
+      <section class="panel console-panel">
+        <header><h3>${escapeHtml(tr('adm.console'))}</h3>
+          <label class="check small"><input type="checkbox" id="autoscroll" checked> ${escapeHtml(
+            tr('ch.autoscroll')
+          )}</label></header>
+        <div class="body" style="padding:0;display:flex;flex-direction:column;min-height:0">
+          <div class="console grow" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}"></div>
+          <div class="row send-row">
+            <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))} — :board, :tab, /list"
+              autocomplete="off">
+            <button class="btn btn-primary" id="send">${icon('send')}</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="grid two" style="align-items:start;margin-top:1.5rem">
+      <section class="panel">
+        <header><h3>${escapeHtml(tr('nd.title'))}</h3></header>
+        <div class="body stack">
+          <div class="row spread">
+            <span class="row" style="gap:.5rem">${icon('pin')}${escapeHtml(data.node?.name || '–')}</span>
+            <button class="btn btn-sm" id="move">${escapeHtml(tr('nd.change'))}</button>
+          </div>
+          <hr class="rule">
+          <div class="row spread">
+            <span class="muted small">${escapeHtml(tr('srv.plan'))}</span>
+            <select id="plan" class="mini" style="max-width:12rem">
+              ${data.plans
+                .map(
+                  (plan) =>
+                    `<option value="${plan.id}" ${plan.id === data.plan.id ? 'selected' : ''}>${escapeHtml(
+                      plan.name
+                    )}</option>`
+                )
+                .join('')}
+            </select>
+          </div>
+          <div class="row">
+            <button class="btn btn-sm" id="extend">+30 ${escapeHtml(tr('common.days'))}</button>
+            <button class="btn btn-sm" id="suspend">${escapeHtml(
+              profile.suspended ? tr('srv.resume') : tr('tk.status.closed')
+            )}</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <header><h3>${escapeHtml(tr('ad.title'))}</h3></header>
+        <div class="body stack">
+          ${data.all_addons
+            .map((addon) => {
+              const booked = data.addons.find((entry) => entry.id === addon.id);
+              return `<div class="row spread">
+                <span>${escapeHtml(addon.name_de)}
+                  <span class="small muted">· ${credits(addon.price_credits)}</span></span>
+                <input type="number" class="mini" min="0" max="${addon.max_qty}" value="${booked?.qty || 0}"
+                  data-addon="${addon.id}" style="max-width:5rem">
+              </div>`;
+            })
+            .join('')}
+          <p class="small muted">${escapeHtml(tr('adm.detail'))}: ${escapeHtml(tr('ad.sub'))}</p>
+        </div>
+      </section>
+    </div>`;
+
+  // ------------------------------------------------------------ Konsole
+
+  const box = $('#chat');
+  const autoscroll = $('#autoscroll');
+  const names = Object.fromEntries(data.accounts.map((account) => [account.account_id, account.name]));
+  let lines = [];
+
+  const paint = () => {
+    box.innerHTML = mergeLines(lines)
+      .slice(-500)
+      .map(
+        (entry) => `<div class="line ${entry.type}"><span class="t">${new Date(entry.t).toLocaleTimeString()}</span>
+          ${
+            data.accounts.length > 1 && entry.account_id
+              ? `<span class="who">${escapeHtml(names[entry.account_id] || '')}</span>`
+              : ''
+          }
+          <span class="msg">${
+            entry.type === 'sent' ? `<span class="tag">${escapeHtml(tr('ch.sent'))}:</span> ` : ''
+          }${mcText(entry.text)}</span></div>`
+      )
+      .join('');
+    if (autoscroll.checked) box.scrollTop = box.scrollHeight;
+  };
+
+  const load = async () => {
+    try {
+      const fresh = await api(`/admin/servers/${id}/chat`);
+      lines = fresh.lines;
+      paint();
+    } catch {
+      /* beim nächsten Mal wieder */
+    }
+  };
+  await load();
+
+  const send = async () => {
+    const text = $('#msg').value.trim();
+    if (!text) return;
+    $('#msg').value = '';
+    try {
+      const result = await api(`/admin/servers/${id}/send`, { method: 'POST', body: { text } });
+      const failed = (result.results || []).filter((entry) => !entry.ok);
+      if (failed.length === (result.results || []).length && failed.length) toast(failed[0].error, 'bad');
+      setTimeout(load, 600);
+    } catch (error) {
+      fail(error);
+    }
+  };
+  $('#send').addEventListener('click', send);
+  $('#msg').addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') send();
+  });
+
+  // Die Konsole hängt am selben Live-Kanal wie beim Kunden – aber nur für dessen eigene Bots.
+  // Für fremde Serverplätze kommt hier nichts an, deshalb wird zusätzlich nachgeladen.
+  const poll = setInterval(() => {
+    if (state.route.name !== 'admin' || state.route.tab !== 'servers') return clearInterval(poll);
+    load();
+  }, 5000);
+
+  // ------------------------------------------------------------ Knöpfe
+
+  for (const [selector, action] of [['#start', 'start'], ['#stop', 'stop'], ['#restart', 'restart']]) {
+    $(selector).addEventListener('click', async () => {
+      await api(`/admin/servers/${id}/${action}`, { method: 'POST' }).catch(fail);
+      ok(tr('adm.saved'));
+    });
+  }
+
+  $('#lock').addEventListener('click', async () => {
+    if (profile.locked) {
+      await api(`/admin/servers/${id}/lock`, { method: 'POST', body: { locked: false } }).catch(fail);
+      draw();
+      return;
+    }
+    const answer = await formDialog(
+      tr('adm.lock'),
+      [{ key: 'reason', label: tr('adm.lockReason'), required: true }],
+      { submit: tr('adm.lock') }
+    );
+    if (!answer) return;
+    await api(`/admin/servers/${id}/lock`, {
+      method: 'POST',
+      body: { locked: true, reason: answer.reason },
+    }).catch(fail);
+    draw();
+  });
+
+  $('#extend').addEventListener('click', async () => {
+    await api(`/admin/profiles/${id}`, { method: 'PATCH', body: { extend_days: 30 } }).catch(fail);
+    ok(tr('adm.saved'));
+    draw();
+  });
+
+  $('#suspend').addEventListener('click', async () => {
+    await api(`/admin/profiles/${id}`, {
+      method: 'PATCH',
+      body: { suspended: !profile.suspended },
+    }).catch(fail);
+    draw();
+  });
+
+  $('#plan').addEventListener('change', async (event) => {
+    await api(`/admin/profiles/${id}`, {
+      method: 'PATCH',
+      body: { plan_id: Number(event.target.value) },
+    }).catch(fail);
+    ok(tr('adm.saved'));
+    draw();
+  });
+
+  $('#move').addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('nd.change'),
+      [
+        {
+          key: 'node_id',
+          label: tr('nd.title'),
+          type: 'select',
+          value: String(data.node?.id || ''),
+          options: data.nodes.map((node) => ({ value: String(node.id), label: node.name })),
+        },
+      ],
+      { submit: tr('nd.change') }
+    );
+    if (!answer) return;
+    await api(`/admin/servers/${id}/node`, {
+      method: 'POST',
+      body: { node_id: Number(answer.node_id) },
+    }).catch(fail);
+    draw();
+  });
+
+  $$('[data-addon]').forEach((input) =>
+    input.addEventListener('change', async () => {
+      try {
+        await api(`/admin/servers/${id}/addons`, {
+          method: 'POST',
+          body: { addon_id: Number(input.dataset.addon), qty: Number(input.value) },
+        });
+        ok(tr('adm.saved'));
+      } catch (error) {
+        fail(error);
+      }
     })
   );
 }
@@ -568,7 +1070,9 @@ async function bots(root) {
         (bot) => `<tr>
           <td class="small"><a href="#/admin/users/${bot.user_id}">${escapeHtml(bot.username || '')}</a></td>
           <td>${escapeHtml(bot.account || '')}</td>
-          <td class="small muted mono">${escapeHtml(bot.profile || '')} · ${escapeHtml(bot.host || '')}</td>
+          <td class="small muted mono">
+            <a href="#/admin/servers/${bot.profile_id}">${escapeHtml(bot.profile || '')}</a>
+            · ${escapeHtml(bot.host || '')}</td>
           <td class="small">${escapeHtml(bot.state || '')} ${
             bot.plan ? `<span class="pill">${escapeHtml(bot.plan)}</span>` : ''
           }</td>
@@ -590,14 +1094,165 @@ async function bots(root) {
   );
 }
 
+// ---------------------------------------------------------------- Standorte
+
+async function nodes(root) {
+  const data = await api('/admin/nodes');
+  const { users: userList } = await api('/admin/users?filter=all');
+
+  root.innerHTML = `
+    <div class="row wrap spread" style="margin-bottom:1rem;gap:1rem">
+      <p class="small muted" style="margin:0;max-width:46rem">${escapeHtml(tr('nd.sub'))}
+        ${escapeHtml(tr('adm.detail'))}: <span class="mono">docs/standorte.md</span></p>
+      <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
+    </div>
+
+    <div class="grid two">
+      ${data.nodes
+        .map(
+          (node) => `<article class="card node-card ${node.active ? '' : 'is-off'}">
+            <div class="row spread" style="align-items:flex-start">
+              <div style="min-width:0">
+                <div class="row" style="gap:.5rem">${icon('pin')}
+                  <span class="strong">${escapeHtml(node.name)}</span>
+                  ${node.kind === 'local' ? `<span class="pill">${escapeHtml(tr('nd.main'))}</span>` : ''}
+                  ${node.full ? `<span class="pill missing">${escapeHtml(tr('nd.full'))}</span>` : ''}
+                  ${node.active ? '' : `<span class="pill missing">${escapeHtml(tr('srv.off'))}</span>`}</div>
+                <p class="small muted" style="margin:.4rem 0 0">${escapeHtml(node.note || '')}</p>
+              </div>
+              <span class="pill">${escapeHtml(tr(`nd.access.${node.access}`))}</span>
+            </div>
+
+            <dl class="facts" style="margin-top:1rem">
+              <div><dt>${escapeHtml(tr('adm.profiles'))}</dt>
+                <dd>${node.usage.profiles}${node.max_profiles ? ` / ${node.max_profiles}` : ''}</dd></div>
+              <div><dt>${escapeHtml(tr('adm.bots'))}</dt>
+                <dd>${node.usage.bots_running}${node.max_bots ? ` / ${node.max_bots}` : ''}</dd></div>
+              <div><dt>${escapeHtml(tr('px.title'))}</dt>
+                <dd class="mono small">${
+                  node.proxy ? `${escapeHtml(node.proxy.kind)}://${escapeHtml(node.proxy.host)}:${node.proxy.port}` : '–'
+                }</dd></div>
+              <div><dt>${escapeHtml(tr('adm.users'))}</dt>
+                <dd class="small">${
+                  node.access === 'listed'
+                    ? escapeHtml(node.users.map((user) => user.username).join(', ') || '–')
+                    : escapeHtml(tr(`nd.access.${node.access}`))
+                }</dd></div>
+            </dl>
+
+            <div class="row" style="margin-top:1rem">
+              <button class="btn btn-sm" data-edit="${node.id}">${escapeHtml(tr('common.edit'))}</button>
+              ${
+                node.kind === 'local'
+                  ? ''
+                  : `<button class="btn btn-ghost btn-sm btn-danger" data-del="${node.id}">${icon('trash')}</button>`
+              }
+            </div>
+          </article>`
+        )
+        .join('')}
+    </div>`;
+
+  const fields = (node = {}) => [
+    { key: 'name', label: tr('common.name'), value: node.name || '', required: true },
+    { key: 'region', label: 'Region', value: node.region || '', placeholder: 'Falkenstein' },
+    {
+      key: 'proxy_id',
+      label: tr('px.title'),
+      type: 'select',
+      value: String(node.proxy_id || ''),
+      hint: tr('nd.sub'),
+      options: [
+        { value: '', label: '–' },
+        ...data.proxies.map((proxy) => ({
+          value: String(proxy.id),
+          label: `${proxy.label} · ${proxy.kind}://${proxy.host}:${proxy.port}`,
+        })),
+      ],
+    },
+    { key: 'max_profiles', label: tr('adm.profiles'), type: 'number', min: 0, value: node.max_profiles ?? 0 },
+    { key: 'max_bots', label: tr('adm.bots'), type: 'number', min: 0, value: node.max_bots ?? 0 },
+    {
+      key: 'access',
+      label: tr('nd.access.all'),
+      type: 'select',
+      value: node.access || 'all',
+      options: data.access.map((value) => ({ value, label: tr(`nd.access.${value}`) })),
+    },
+    {
+      key: 'users',
+      label: tr('adm.users'),
+      hint: `${tr('nd.access.listed')} — IDs, Komma getrennt`,
+      value: (node.users || []).map((user) => user.id).join(', '),
+    },
+    { key: 'note', label: tr('common.edit'), value: node.note || '' },
+    { key: 'active', label: tr('srv.on'), type: 'checkbox', value: node.active !== false },
+  ];
+
+  const shape = (answer) => ({
+    ...numbers(answer),
+    proxy_id: answer.proxy_id ? Number(answer.proxy_id) : null,
+    users: String(answer.users || '')
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(Number),
+  });
+
+  $('#new').addEventListener('click', async () => {
+    const answer = await formDialog(tr('common.create'), fields(), {
+      submit: tr('common.create'),
+      note: `${tr('nd.sub')} ${userList.length} ${tr('adm.users')}.`,
+    });
+    if (!answer) return;
+    try {
+      await api('/admin/nodes', { method: 'POST', body: shape(answer) });
+      ok(tr('adm.saved'));
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $$('[data-edit]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const node = data.nodes.find((entry) => entry.id === Number(button.dataset.edit));
+      const answer = await formDialog(node.name, fields(node));
+      if (!answer) return;
+      try {
+        await api(`/admin/nodes/${node.id}`, { method: 'PATCH', body: shape(answer) });
+        ok(tr('adm.saved'));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
+
+  $$('[data-del]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('common.delete'), { confirm: tr('common.delete') }))) return;
+      try {
+        await api(`/admin/nodes/${button.dataset.del}`, { method: 'DELETE' });
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
+}
+
 // ---------------------------------------------------------------- Tarife
 
-const PLAN_FLAGS = ['free_slot', 'premium', 'movement', 'proxy', 'offline_accounts', 'fakehost', 'chat_limit_editable', 'priority_support', 'active'];
+const PLAN_FLAGS = [
+  'free_slot', 'premium', 'movement', 'proxy', 'offline_accounts', 'fakehost',
+  'chat_limit_editable', 'priority_support', 'board', 'menus', 'pov', 'addons', 'highlight', 'active',
+];
 
 async function plans(root) {
   const data = await api('/admin/plans');
   root.innerHTML = `
-    <div class="row" style="margin-bottom:1rem">
+    <div class="row wrap spread" style="margin-bottom:1rem;gap:1rem">
+      <p class="small muted" style="margin:0;max-width:46rem">${escapeHtml(tr('pricing.lead'))}</p>
       <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
     </div>
     ${panel(
@@ -607,8 +1262,10 @@ async function plans(root) {
         data.plans.map(
           (plan) => `<tr>
             <td class="mono small muted">${escapeHtml(plan.slug)}</td>
-            <td>${escapeHtml(plan.name_en)} <span class="small muted">/ ${escapeHtml(plan.name_de)}</span></td>
-            <td class="mono">${plan.free_slot ? escapeHtml(tr('common.free')) : credits(plan.price_credits)}</td>
+            <td>${escapeHtml(plan.name_en)} <span class="small muted">/ ${escapeHtml(plan.name_de)}</span>
+              ${plan.highlight ? `<span class="pill primary">★</span>` : ''}</td>
+            <td class="mono">${plan.free_slot ? escapeHtml(tr('common.free')) : credits(plan.price_credits)}
+              <span class="small muted">${plan.free_slot ? '' : euro(plan.price_credits)}</span></td>
             <td class="small">${plan.max_accounts}</td>
             <td class="small">${plan.chat_limit}${plan.chat_limit_editable ? ' ✎' : ''}</td>
             <td class="small">${PLAN_FLAGS.filter((flag) => plan[flag])
@@ -625,14 +1282,27 @@ async function plans(root) {
     )}`;
 
   const fields = (plan = {}) => [
-    { key: 'name_en', label: 'Name (EN)', value: plan.name_en || '', required: true },
     { key: 'name_de', label: 'Name (DE)', value: plan.name_de || '', required: true },
-    { key: 'blurb_en', label: 'Blurb (EN)', value: plan.blurb_en || '' },
-    { key: 'blurb_de', label: 'Blurb (DE)', value: plan.blurb_de || '' },
-    { key: 'price_credits', label: tr('common.credits'), type: 'number', min: 0, value: plan.price_credits ?? 0 },
+    { key: 'name_en', label: 'Name (EN)', value: plan.name_en || '', required: true },
+    {
+      key: 'blurb_de',
+      label: 'Beschreibung (DE)',
+      type: 'textarea',
+      value: plan.blurb_de || '',
+      hint: 'Ein Satz, für wen der Tarif gedacht ist. Steht auf der Preisseite unter dem Namen.',
+    },
+    { key: 'blurb_en', label: 'Beschreibung (EN)', type: 'textarea', value: plan.blurb_en || '' },
+    { key: 'price_credits', label: `${tr('common.credits')} / 30 d`, type: 'number', min: 0, value: plan.price_credits ?? 0 },
     { key: 'max_accounts', label: tr('pricing.bots'), type: 'number', min: 1, value: plan.max_accounts ?? 1 },
     { key: 'chat_limit', label: tr('pricing.chatHistory'), type: 'number', min: 20, value: plan.chat_limit ?? 200 },
-    { key: 'sort', label: '#', type: 'number', min: 0, value: plan.sort ?? 50 },
+    { key: 'max_macros', label: 'Macros', type: 'number', min: 0, value: plan.max_macros ?? 20 },
+    { key: 'sort', label: tr('common.status'), type: 'number', min: 0, value: plan.sort ?? 50 },
+    {
+      key: 'discord_role',
+      label: 'Discord-Rolle',
+      value: plan.discord_role || '',
+      hint: 'Rollen-ID. Leer = die Rolle aus den Einstellungen.',
+    },
     ...PLAN_FLAGS.map((flag) => ({ key: flag, label: flag, type: 'checkbox', value: Boolean(plan[flag]) })),
   ];
 
@@ -646,6 +1316,7 @@ async function plans(root) {
     try {
       await api('/admin/plans', { method: 'POST', body: numbers(answer) });
       ok(tr('adm.saved'));
+      state.meta = await api('/meta');
       draw();
     } catch (error) {
       fail(error);
@@ -660,6 +1331,7 @@ async function plans(root) {
       try {
         await api(`/admin/plans/${plan.id}`, { method: 'PATCH', body: numbers(answer) });
         ok(tr('adm.saved'));
+        state.meta = await api('/meta');
         draw();
       } catch (error) {
         fail(error);
@@ -680,13 +1352,119 @@ async function plans(root) {
   );
 }
 
-/** Zahlen aus dem Dialog kommen als Text zurück – hier wieder zu Zahlen machen. */
-function numbers(answer) {
-  const out = { ...answer };
-  for (const key of ['price_credits', 'max_accounts', 'chat_limit', 'sort', 'credits', 'uses', 'count', 'expires_days']) {
-    if (out[key] !== undefined) out[key] = Number(out[key]);
-  }
-  return out;
+// ---------------------------------------------------------------- Zusätze
+
+async function addons(root) {
+  const data = await api('/admin/addons');
+  root.innerHTML = `
+    <div class="row wrap spread" style="margin-bottom:1rem;gap:1rem">
+      <p class="small muted" style="margin:0;max-width:46rem">${escapeHtml(tr('ad.sub'))}</p>
+      <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
+    </div>
+    ${panel(
+      tr('adm.addons'),
+      table(
+        ['#', tr('common.name'), tr('common.credits'), 'kind', 'flag', tr('common.status'), ''],
+        data.addons.map(
+          (addon) => `<tr>
+            <td class="mono small muted">${escapeHtml(addon.key)}</td>
+            <td>${escapeHtml(addon.name_de)} <span class="small muted">/ ${escapeHtml(addon.name_en)}</span></td>
+            <td class="mono">${credits(addon.price_credits)}
+              <span class="small muted">${euro(addon.price_credits)}</span></td>
+            <td class="small">${escapeHtml(addon.kind)}${addon.max_qty > 1 ? ` ×${addon.max_qty}` : ''}</td>
+            <td class="small mono muted">${escapeHtml(addon.flag || '–')}
+              ${
+                addon.need_cap
+                  ? `<span class="pill ${data.caps[addon.need_cap] ? '' : 'missing'}">${escapeHtml(
+                      addon.need_cap
+                    )}</span>`
+                  : ''
+              }</td>
+            <td>
+              <span class="pill ${addon.active ? '' : 'missing'}">${addon.active ? 'aktiv' : 'aus'}</span>
+              ${addon.available ? '' : `<span class="pill missing">${escapeHtml(tr('ad.soon'))}</span>`}
+              <span class="small muted">${addon.in_use}×</span>
+            </td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-sm" data-edit="${addon.id}">${escapeHtml(tr('common.edit'))}</button>
+              <button class="btn btn-ghost btn-sm btn-danger" data-del="${addon.id}">${icon('trash')}</button>
+            </td>
+          </tr>`
+        )
+      )
+    )}`;
+
+  const fields = (addon = {}) => [
+    { key: 'key', label: 'Kürzel', value: addon.key || '', required: true, hint: 'a–z, 0–9 und -' },
+    { key: 'name_de', label: 'Name (DE)', value: addon.name_de || '', required: true },
+    { key: 'name_en', label: 'Name (EN)', value: addon.name_en || '' },
+    { key: 'text_de', label: 'Text (DE)', type: 'textarea', value: addon.text_de || '' },
+    { key: 'text_en', label: 'Text (EN)', type: 'textarea', value: addon.text_en || '' },
+    { key: 'price_credits', label: `${tr('common.credits')} / 30 d`, type: 'number', min: 0, value: addon.price_credits ?? 0 },
+    {
+      key: 'kind',
+      label: 'Art',
+      type: 'select',
+      value: addon.kind || 'flag',
+      options: [
+        { value: 'flag', label: 'Merkmal einschalten' },
+        { value: 'slot', label: 'Mehr Bots' },
+      ],
+    },
+    {
+      key: 'flag',
+      label: 'Merkmal',
+      value: addon.flag || '',
+      hint: 'board · menus · pov · movement · proxy · fakehost · offline_accounts',
+    },
+    { key: 'amount', label: 'Wie viel je Stück', type: 'number', min: 1, value: addon.amount ?? 1 },
+    { key: 'max_qty', label: 'Höchstens', type: 'number', min: 1, value: addon.max_qty ?? 1 },
+    { key: 'need_cap', label: 'Braucht Client-Fähigkeit', value: addon.need_cap || '' },
+    { key: 'sort', label: tr('common.status'), type: 'number', min: 0, value: addon.sort ?? 50 },
+    { key: 'available', label: 'Buchbar', type: 'checkbox', value: addon.available !== 0 },
+    { key: 'active', label: 'Sichtbar', type: 'checkbox', value: addon.active !== 0 },
+  ];
+
+  $('#new').addEventListener('click', async () => {
+    const answer = await formDialog(tr('common.create'), fields(), { submit: tr('common.create') });
+    if (!answer) return;
+    try {
+      await api('/admin/addons', { method: 'POST', body: numbers(answer) });
+      ok(tr('adm.saved'));
+      state.meta = await api('/meta');
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $$('[data-edit]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const addon = data.addons.find((entry) => entry.id === Number(button.dataset.edit));
+      const answer = await formDialog(addon.key, fields(addon));
+      if (!answer) return;
+      try {
+        await api(`/admin/addons/${addon.id}`, { method: 'PATCH', body: numbers(answer) });
+        ok(tr('adm.saved'));
+        state.meta = await api('/meta');
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
+
+  $$('[data-del]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('common.delete'), { confirm: tr('common.delete') }))) return;
+      try {
+        await api(`/admin/addons/${button.dataset.del}`, { method: 'DELETE' });
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
 }
 
 // ---------------------------------------------------------------- Aufladungen und Gutscheine
@@ -749,16 +1527,21 @@ async function vouchers(root) {
         data.vouchers.map(
           (voucher) => `<tr>
             <td class="mono strong">${escapeHtml(voucher.code)}</td>
-            <td class="mono">${credits(voucher.credits)}</td>
-            <td class="small muted">${voucher.used}/${voucher.uses}${
-              voucher.expires_at ? ` · ${date(voucher.expires_at)}` : ''
-            }</td>
+            <td class="mono">${credits(voucher.credits)}
+              <span class="small muted">${euro(voucher.credits)}</span></td>
+            <td class="small muted">${
+              // In der Datenbank steht, wie viele Einlösungen **übrig** sind – nicht, wie viele
+              // schon waren. Die frühere Anzeige "used/uses" gab es nirgends und blieb leer.
+              voucher.uses_left > 0
+                ? `${voucher.uses_left}× ${tr('common.open')}`
+                : `<span class="pill missing">${tr('bill.voucher')}</span>`
+            }${voucher.expires_at ? ` · ${date(voucher.expires_at)}` : ''}</td>
             <td class="small muted">${escapeHtml(voucher.note || '')}</td>
             <td style="text-align:right;white-space:nowrap">
               <button class="btn btn-ghost btn-sm" data-copy="${escapeHtml(voucher.code)}">${icon('copy')}</button>
-              <button class="btn btn-ghost btn-sm btn-danger" data-del="${escapeHtml(
-                voucher.code
-              )}">${icon('trash')}</button>
+              <button class="btn btn-ghost btn-sm btn-danger" data-del="${escapeHtml(voucher.code)}">${icon(
+                'trash'
+              )}</button>
             </td>
           </tr>`
         )
@@ -770,9 +1553,9 @@ async function vouchers(root) {
       tr('common.create'),
       [
         { key: 'credits', label: tr('common.credits'), type: 'number', min: 1, value: 500, required: true },
-        { key: 'count', label: '×', type: 'number', min: 1, max: 50, value: 1 },
-        { key: 'uses', label: tr('common.all'), type: 'number', min: 1, value: 1 },
-        { key: 'expires_days', label: tr('common.days'), type: 'number', min: 0, value: 0 },
+        { key: 'count', label: 'Wie viele Codes', type: 'number', min: 1, max: 50, value: 1 },
+        { key: 'uses', label: 'Einlösungen je Code', type: 'number', min: 1, value: 1 },
+        { key: 'expires_days', label: `${tr('common.days')} (0 = nie)`, type: 'number', min: 0, value: 0 },
         { key: 'note', label: tr('common.edit'), value: '' },
       ],
       { submit: tr('common.create') }
@@ -804,9 +1587,10 @@ async function proxies(root) {
   const userList = await api('/admin/users?filter=all');
 
   root.innerHTML = `
-    <div class="row wrap" style="margin-bottom:1rem">
+    <div class="row wrap spread" style="margin-bottom:1rem;gap:1rem">
+      <p class="small muted" style="margin:0;max-width:46rem">${escapeHtml(tr('px.requestNote'))}
+        ${escapeHtml(tr('adm.detail'))}: <span class="mono">docs/standorte.md</span></p>
       <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
-      <p class="small muted" style="margin:0;align-self:center">${escapeHtml(tr('px.requestNote'))}</p>
     </div>
     ${panel(
       tr('adm.proxies'),
@@ -848,7 +1632,7 @@ async function proxies(root) {
       options: ['socks5', 'socks4', 'http'],
     },
     { key: 'username', label: tr('auth.register.username'), value: proxy.username || '' },
-    { key: 'password', label: tr('auth.login.password'), value: proxy.password || '' },
+    { key: 'password', label: tr('auth.login.password'), type: 'password', value: '', hint: tr('adm.secretKeep') },
     {
       key: 'assigned_to',
       label: tr('adm.users'),
@@ -862,14 +1646,18 @@ async function proxies(root) {
     { key: 'note', label: tr('common.edit'), value: proxy.note || '' },
   ];
 
+  const shape = (answer) => {
+    const body = { ...answer, assigned_to: answer.assigned_to ? Number(answer.assigned_to) : null };
+    // Leeres Passwortfeld heißt "nicht angefasst" – sonst löschte jedes Speichern die Zugangsdaten.
+    if (!body.password) delete body.password;
+    return body;
+  };
+
   $('#new').addEventListener('click', async () => {
     const answer = await formDialog(tr('common.create'), fields(), { submit: tr('common.create') });
     if (!answer) return;
     try {
-      await api('/admin/proxies', {
-        method: 'POST',
-        body: { ...answer, assigned_to: answer.assigned_to ? Number(answer.assigned_to) : null },
-      });
+      await api('/admin/proxies', { method: 'POST', body: shape(answer) });
       ok(tr('adm.saved'));
       draw();
     } catch (error) {
@@ -883,10 +1671,7 @@ async function proxies(root) {
       const answer = await formDialog(proxy.label, fields(proxy));
       if (!answer) return;
       try {
-        await api(`/admin/proxies/${proxy.id}`, {
-          method: 'PATCH',
-          body: { ...answer, assigned_to: answer.assigned_to ? Number(answer.assigned_to) : null },
-        });
+        await api(`/admin/proxies/${proxy.id}`, { method: 'PATCH', body: shape(answer) });
         ok(tr('adm.saved'));
         draw();
       } catch (error) {
@@ -904,332 +1689,302 @@ async function proxies(root) {
   );
 }
 
-// ---------------------------------------------------------------- Tickets
-
-async function ticketList(root) {
-  const params = new URLSearchParams(location.hash.split('?')[1] || '');
-  const status = params.get('status') || 'open';
-  const data = await api(`/admin/tickets?status=${status}&q=${encodeURIComponent(params.get('q') || '')}`);
-
-  root.innerHTML = `
-    <div class="row wrap" style="margin-bottom:1rem">
-      <select id="status" style="max-width:12rem">
-        <option value="all" ${status === 'all' ? 'selected' : ''}>${escapeHtml(tr('common.all'))}</option>
-        ${data.statuses
-          .map(
-            (entry) =>
-              `<option value="${entry}" ${status === entry ? 'selected' : ''}>${escapeHtml(
-                tr(`tk.status.${entry}`)
-              )}</option>`
-          )
-          .join('')}
-      </select>
-      <input id="q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
-        value="${escapeHtml(params.get('q') || '')}" style="max-width:16rem">
-    </div>
-    ${panel(
-      `${data.tickets.length} ${tr('adm.tickets')}`,
-      table(
-        [tr('tk.subject'), tr('adm.users'), tr('tk.category'), tr('common.status'), ''],
-        data.tickets.map(
-          (ticket) => `<tr data-open="${ticket.id}" style="cursor:pointer">
-            <td><span class="row" style="gap:.5rem">
-              ${ticket.unread_staff ? '<span class="dot live" style="color:var(--primary)"></span>' : ''}
-              ${escapeHtml(ticket.subject)}</span></td>
-            <td class="small">${escapeHtml(ticket.username)}</td>
-            <td class="small muted">${escapeHtml(
-              data.categories.find((entry) => entry.key === ticket.category)?.label || ticket.category
-            )}</td>
-            <td><span class="pill ${ticket.priority === 'high' || ticket.priority === 'urgent' ? 'primary' : ''}">${escapeHtml(
-              tr(`tk.status.${ticket.status}`)
-            )}</span></td>
-            <td class="small muted mono">${datetime(ticket.updated_at)}</td>
-          </tr>`
-        )
-      )
-    )}`;
-
-  const reload = () =>
-    go(`/admin/tickets?status=${$('#status').value}&q=${encodeURIComponent($('#q').value.trim())}`);
-  $('#status').addEventListener('change', () => {
-    reload();
-    draw();
-  });
-  $('#q').addEventListener(
-    'input',
-    debounce(() => {
-      reload();
-      draw();
-    }, 350)
-  );
-  $$('[data-open]').forEach((row) =>
-    row.addEventListener('click', () => go(`/admin/tickets/${row.dataset.open}`))
-  );
-}
-
-async function ticketDetail(root, id) {
-  const data = await api(`/admin/tickets/${id}`);
-  const ticket = data.ticket;
-
-  root.innerHTML = `
-    <div class="row wrap spread" style="margin-bottom:1.25rem">
-      <div>
-        <h2 style="font-size:1.3rem">${escapeHtml(ticket.subject)}</h2>
-        <p class="small muted">${escapeHtml(tr(`tk.status.${ticket.status}`))} ·
-          <a href="#/admin/users/${ticket.user_id}">${escapeHtml(data.user?.username || '')}</a>
-          ${data.paying ? `<span class="pill primary">${escapeHtml(tr('adm.paying'))}</span>` : ''}
-        </p>
-      </div>
-      <div class="row wrap">
-        <a class="btn btn-sm" href="#/admin/tickets">${escapeHtml(tr('common.back'))}</a>
-        <select id="status" style="max-width:10rem">
-          ${['open', 'waiting', 'answered', 'closed']
-            .map(
-              (entry) =>
-                `<option value="${entry}" ${ticket.status === entry ? 'selected' : ''}>${escapeHtml(
-                  tr(`tk.status.${entry}`)
-                )}</option>`
-            )
-            .join('')}
-        </select>
-      </div>
-    </div>
-
-    <section class="panel" style="margin-bottom:1.25rem">
-      <div class="body stack" style="gap:1rem">
-        ${data.messages
-          .map(
-            (message) => `<article class="msg ${message.role === 'staff' ? 'staff' : ''} ${
-              message.internal ? 'internal' : ''
-            }">
-              <header class="row spread">
-                <span class="strong small">${escapeHtml(
-                  message.internal ? tr('tk.internal') : message.username || tr('tk.staff')
-                )}</span>
-                <span class="small muted mono">${datetime(message.created_at)}</span>
-              </header>
-              <p>${escapeHtml(message.body).replace(/\n/g, '<br>')}</p>
-            </article>`
-          )
-          .join('')}
-      </div>
-    </section>
-
-    <section class="panel">
-      <header><h3>${escapeHtml(tr('tk.reply'))}</h3></header>
-      <div class="body stack">
-        <div class="field"><textarea id="reply" rows="5"></textarea></div>
-        <div class="row">
-          <button class="btn btn-primary" id="send">${escapeHtml(tr('tk.send'))}</button>
-          <button class="btn" id="internal">${escapeHtml(tr('tk.internal'))}</button>
-        </div>
-      </div>
-    </section>`;
-
-  const send = async (internal) => {
-    const body = $('#reply').value.trim();
-    if (!body) return;
-    try {
-      await api(`/admin/tickets/${id}/reply`, { method: 'POST', body: { body, internal } });
-      await refresh({ profiles: false, accounts: false });
-      draw();
-    } catch (error) {
-      fail(error);
-    }
-  };
-  $('#send').addEventListener('click', () => send(false));
-  $('#internal').addEventListener('click', () => send(true));
-  $('#status').addEventListener('change', async () => {
-    await api(`/admin/tickets/${id}`, { method: 'PATCH', body: { status: $('#status').value } }).catch(fail);
-    draw();
-  });
-}
-
 // ---------------------------------------------------------------- Ankündigungen
 
 async function announcements(root) {
   const data = await api('/admin/announcements');
   root.innerHTML = `
-    <div class="row" style="margin-bottom:1rem">
+    <div class="row wrap spread" style="margin-bottom:1rem;gap:1rem">
+      <p class="small muted" style="margin:0;max-width:46rem">
+        ${escapeHtml(tr('set.notifySub'))} — ${data.recipients} ${escapeHtml(tr('adm.users'))}.</p>
       <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
     </div>
-    ${panel(
-      tr('adm.announce'),
-      table(
-        [tr('common.name'), '', tr('common.status'), ''],
-        data.announcements.map(
-          (entry) => `<tr>
-            <td>${escapeHtml(entry.title_en)} <span class="small muted">/ ${escapeHtml(entry.title_de)}</span></td>
-            <td class="small muted">${escapeHtml((entry.body_en || '').slice(0, 80))}</td>
-            <td><span class="pill ${entry.active ? 'primary' : ''}">${entry.active ? 'live' : '–'}</span></td>
-            <td style="text-align:right;white-space:nowrap">
-              <button class="btn btn-sm" data-toggle="${entry.id}" data-on="${entry.active ? 1 : 0}">${
-                entry.active ? escapeHtml(tr('srv.off')) : escapeHtml(tr('srv.on'))
-              }</button>
-              <button class="btn btn-ghost btn-sm btn-danger" data-del="${entry.id}">${icon('trash')}</button>
-            </td>
-          </tr>`
-        )
-      )
-    )}`;
+    <div class="stack">
+      ${
+        data.announcements
+          .map(
+            (entry) => `<article class="card">
+              <div class="row spread" style="align-items:flex-start">
+                <div style="min-width:0">
+                  <div class="row" style="gap:.5rem">
+                    <span class="pill ${entry.kind === 'info' ? '' : 'missing'}">${escapeHtml(entry.kind)}</span>
+                    <span class="strong">${escapeHtml(entry.title_de)}</span>
+                    ${entry.active ? `<span class="pill primary">live</span>` : ''}
+                  </div>
+                  <p class="small muted" style="margin:.5rem 0 0">${escapeHtml(entry.body_de || '')}</p>
+                  <p class="small muted" style="margin:.5rem 0 0">
+                    ${datetime(entry.created_at)}
+                    ${entry.created_by_name ? ` · ${escapeHtml(entry.created_by_name)}` : ''}
+                    ${entry.mailed_at ? ` · ${escapeHtml(tr('adm.announceMail'))}: ${datetime(entry.mailed_at)}` : ''}
+                  </p>
+                </div>
+                <span class="switch" role="switch" tabindex="0" aria-checked="${entry.active}"
+                  data-toggle="${entry.id}"></span>
+              </div>
+              <div class="row wrap" style="margin-top:1rem">
+                <button class="btn btn-sm" data-edit="${entry.id}">${escapeHtml(tr('common.edit'))}</button>
+                <button class="btn btn-sm" data-mail="${entry.id}" ${data.mail_ready ? '' : 'disabled'}>
+                  ${icon('mail')} ${escapeHtml(tr('adm.announceMail'))}</button>
+                <button class="btn btn-sm" data-test="${entry.id}" ${data.mail_ready ? '' : 'disabled'}>
+                  ${escapeHtml(tr('adm.announceTest'))}</button>
+                <div class="grow"></div>
+                <button class="btn btn-ghost btn-sm btn-danger" data-del="${entry.id}">${icon('trash')}</button>
+              </div>
+            </article>`
+          )
+          .join('') || `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`
+      }
+    </div>`;
+
+  const fields = (entry = {}) => [
+    { key: 'title_de', label: 'Titel (DE)', value: entry.title_de || '', required: true },
+    { key: 'title_en', label: 'Title (EN)', value: entry.title_en || '' },
+    { key: 'body_de', label: 'Text (DE)', type: 'textarea', value: entry.body_de || '' },
+    { key: 'body_en', label: 'Text (EN)', type: 'textarea', value: entry.body_en || '' },
+    { key: 'link', label: 'Link', value: entry.link || '', placeholder: 'https://…' },
+    {
+      key: 'kind',
+      label: 'Typ',
+      type: 'select',
+      value: entry.kind || 'info',
+      options: ['info', 'warn', 'bad'],
+    },
+    { key: 'active', label: 'Sichtbar im Panel', type: 'checkbox', value: entry.active !== false },
+  ];
 
   $('#new').addEventListener('click', async () => {
-    const answer = await formDialog(
-      tr('common.create'),
-      [
-        { key: 'title_en', label: 'Title (EN)', required: true },
-        { key: 'title_de', label: 'Titel (DE)', required: true },
-        { key: 'body_en', label: 'Text (EN)', type: 'textarea' },
-        { key: 'body_de', label: 'Text (DE)', type: 'textarea' },
-        {
-          key: 'kind',
-          label: 'Typ',
-          type: 'select',
-          value: 'info',
-          options: ['info', 'warn', 'bad'],
-        },
-      ],
-      { submit: tr('common.create') }
-    );
+    const answer = await formDialog(tr('common.create'), fields(), { submit: tr('common.create') });
     if (!answer) return;
     await api('/admin/announcements', { method: 'POST', body: answer }).catch(fail);
+    state.meta = await api('/meta');
     draw();
   });
 
-  $$('[data-toggle]').forEach((button) =>
+  $$('[data-edit]').forEach((button) =>
     button.addEventListener('click', async () => {
-      await api(`/admin/announcements/${button.dataset.toggle}`, {
-        method: 'PATCH',
-        body: { active: button.dataset.on !== '1' },
-      }).catch(fail);
+      const entry = data.announcements.find((item) => item.id === Number(button.dataset.edit));
+      const answer = await formDialog(entry.title_de, fields(entry));
+      if (!answer) return;
+      await api(`/admin/announcements/${entry.id}`, { method: 'PATCH', body: answer }).catch(fail);
+      state.meta = await api('/meta');
       draw();
     })
   );
+
+  $$('[data-mail]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const entry = data.announcements.find((item) => item.id === Number(button.dataset.mail));
+      const question = entry.mailed_at
+        ? tr('adm.announceAgain')
+        : `${tr('adm.announceMail')} — ${data.recipients} ${tr('adm.users')}?`;
+      if (!(await confirmDialog(question, { confirm: tr('adm.announceMail'), danger: false }))) return;
+      button.disabled = true;
+      try {
+        const result = await api(`/admin/announcements/${entry.id}/mail`, {
+          method: 'POST',
+          body: { again: Boolean(entry.mailed_at) },
+        });
+        ok(tr('adm.announceSent', { n: result.sent }));
+        draw();
+      } catch (error) {
+        fail(error);
+        button.disabled = false;
+      }
+    })
+  );
+
+  $$('[data-test]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      try {
+        await api(`/admin/announcements/${button.dataset.test}/mail`, {
+          method: 'POST',
+          body: { test: true, again: true },
+        });
+        ok(tr('adm.mailSent'));
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
+
   $$('[data-del]').forEach((button) =>
     button.addEventListener('click', async () => {
       if (!(await confirmDialog(tr('common.delete'), { confirm: tr('common.delete') }))) return;
       await api(`/admin/announcements/${button.dataset.del}`, { method: 'DELETE' }).catch(fail);
+      state.meta = await api('/meta');
       draw();
     })
   );
+
+  $$('[data-toggle]').forEach((node) => {
+    const toggle = async () => {
+      const next = node.getAttribute('aria-checked') !== 'true';
+      node.setAttribute('aria-checked', String(next));
+      try {
+        await api(`/admin/announcements/${node.dataset.toggle}`, {
+          method: 'PATCH',
+          body: { active: next },
+        });
+        state.meta = await api('/meta');
+      } catch (error) {
+        node.setAttribute('aria-checked', String(!next));
+        fail(error);
+      }
+    };
+    node.addEventListener('click', toggle);
+    node.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        toggle();
+      }
+    });
+  });
 }
 
 // ---------------------------------------------------------------- Einstellungen
-
-const SETTING_GROUPS = [
-  {
-    title: 'Guthaben',
-    fields: [
-      ['free_slots', 'number'],
-      ['signup_bonus', 'number'],
-      ['low_balance', 'number'],
-      ['renew_warn_days', 'number'],
-    ],
-  },
-  {
-    title: 'Registrierung',
-    fields: [
-      ['registration_open', 'switch'],
-      ['email_verify', 'switch'],
-      ['max_bots_per_user', 'number'],
-    ],
-  },
-  {
-    title: 'SMTP',
-    fields: [
-      ['smtp_host', 'text'],
-      ['smtp_port', 'number'],
-      ['smtp_secure', 'switch'],
-      ['smtp_user', 'text'],
-      ['smtp_pass', 'text'],
-      ['smtp_from', 'text'],
-      ['smtp_from_name', 'text'],
-    ],
-  },
-  {
-    title: 'Discord',
-    fields: [
-      ['discord_client_id', 'text'],
-      ['discord_client_secret', 'text'],
-      ['discord_login', 'switch'],
-      ['discord_staff_webhook', 'text'],
-    ],
-  },
-  {
-    title: 'Betrieb',
-    fields: [
-      ['maintenance', 'switch'],
-      ['maintenance_text', 'text'],
-      ['support_hours', 'text'],
-    ],
-  },
-  {
-    title: 'Recht',
-    fields: [
-      ['legal_imprint', 'area'],
-      ['legal_imprint_en', 'area'],
-      ['legal_privacy', 'area'],
-      ['legal_privacy_en', 'area'],
-      ['legal_terms', 'area'],
-      ['legal_terms_en', 'area'],
-    ],
-  },
-];
+//
+// Das Formular kommt aus der Beschreibung, die der Server mitschickt (settings-schema.js). Damit
+// steht jede Beschriftung und jede Erklärung an genau einer Stelle – vorher stand im Frontend eine
+// Liste aus Schlüsselnamen ("smtp_pass" als Überschrift) und im Backend eine zweite daneben.
 
 async function settings(root) {
   const data = await api('/admin/settings');
+  const { groups, settings: schema } = data.schema;
   const value = (key) => data.settings[key] ?? '';
+  const packages = structuredClone(data.settings.packages || []);
 
   root.innerHTML = `
-    <div class="grid two" style="align-items:start">
-      ${SETTING_GROUPS.map(
-        (group) => `<section class="panel">
-          <header><h3>${escapeHtml(group.title)}</h3></header>
-          <div class="body stack">
-            ${group.fields
-              .map(([key, kind]) => {
-                if (kind === 'switch') {
-                  return `<label class="check"><input type="checkbox" data-set="${key}"
-                    ${Number(value(key)) ? 'checked' : ''}> <span class="mono small">${key}</span></label>`;
-                }
-                if (kind === 'area') {
-                  return `<div class="field"><label class="mono small" for="s-${key}">${key}</label>
-                    <textarea id="s-${key}" data-set="${key}" rows="4">${escapeHtml(value(key))}</textarea></div>`;
-                }
-                return `<div class="field"><label class="mono small" for="s-${key}">${key}</label>
-                  <input id="s-${key}" data-set="${key}" type="${kind === 'number' ? 'number' : 'text'}"
-                    value="${escapeHtml(value(key))}"></div>`;
-              })
-              .join('')}
-          </div>
-        </section>`
-      ).join('')}
-
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('bill.topUp'))}</h3></header>
-        <div class="body stack">
-          <p class="small muted">${escapeHtml(tr('pricing.topup.lead'))}</p>
-          <div id="packages" class="stack"></div>
-          <button class="btn btn-sm" id="add-package">${icon('plus')}</button>
-        </div>
-      </section>
+    <div class="settings">
+      ${groups
+        .map((group) => {
+          const fields = schema.filter((entry) => entry.group === group.key);
+          return `<section class="setting-card">
+            <div class="setting-head">
+              <span class="setting-icon">${icon(group.icon)}</span>
+              <div>
+                <h2>${escapeHtml(group.title)}</h2>
+                <p>${escapeHtml(group.text)}</p>
+              </div>
+            </div>
+            <div class="setting-body stack">
+              ${fields.map(field).join('')}
+              ${group.key === 'money' ? packageEditor() : ''}
+              ${group.key === 'mail' ? mailTools(data) : ''}
+              ${group.key === 'discord' ? discordTools(data) : ''}
+            </div>
+          </section>`;
+        })
+        .join('')}
     </div>
 
-    <div class="row" style="margin-top:1.25rem">
-      <button class="btn btn-primary" id="save">${escapeHtml(tr('common.save'))}</button>
-      <button class="btn" id="mail-test">${escapeHtml(tr('set.webhookTest'))}</button>
+    <div class="save-bar">
+      <button class="btn btn-primary btn-lg" id="save">${escapeHtml(tr('common.save'))}</button>
+      <span class="small muted" id="save-hint"></span>
     </div>`;
 
-  const packages = structuredClone(data.settings.packages || []);
+  function field(entry) {
+    const id = `s-${entry.key}`;
+    const help = entry.help ? `<span class="hint">${escapeHtml(entry.help)}</span>` : '';
+
+    if (entry.type === 'switch') {
+      return `<label class="switch-row">
+        <span class="grow">
+          <span class="strong">${escapeHtml(entry.label)}</span>
+          ${entry.help ? `<span class="small muted">${escapeHtml(entry.help)}</span>` : ''}
+        </span>
+        <input type="checkbox" class="visually-hidden" data-set="${entry.key}" ${
+          Number(value(entry.key)) ? 'checked' : ''
+        }>
+        <span class="switch" aria-hidden="true"></span>
+      </label>`;
+    }
+
+    if (entry.type === 'password') {
+      // Ein Geheimnis kommt nie zurück – das Feld ist deshalb immer leer und sagt nur, ob eines
+      // hinterlegt ist. So steht ein Bot-Token nicht im HTML einer Seite, die offen liegen bleibt.
+      const set = data.settings.secrets?.[entry.key];
+      return `<div class="field">
+        <label for="${id}">${escapeHtml(entry.label)}
+          <span class="pill ${set ? 'primary' : 'missing'}">${escapeHtml(
+            set ? tr('adm.secretSet') : tr('adm.secretUnset')
+          )}</span></label>
+        <div class="row" style="gap:.4rem">
+          <input id="${id}" data-set="${entry.key}" type="password" class="grow" autocomplete="new-password"
+            placeholder="${escapeHtml(set ? tr('adm.secretKeep') : '')}">
+          <button type="button" class="btn btn-ghost btn-sm" data-peek="${id}"
+            title="${escapeHtml(tr('adm.reveal'))}">${icon('eye')}</button>
+          ${
+            set
+              ? `<button type="button" class="btn btn-ghost btn-sm btn-danger" data-clear="${entry.key}"
+                  title="${escapeHtml(tr('adm.secretClear'))}">${icon('trash')}</button>`
+              : ''
+          }
+        </div>
+        ${help}
+      </div>`;
+    }
+
+    if (entry.type === 'textarea') {
+      return `<div class="field"><label for="${id}">${escapeHtml(entry.label)}</label>
+        <textarea id="${id}" data-set="${entry.key}" rows="5">${escapeHtml(value(entry.key))}</textarea>
+        ${help}</div>`;
+    }
+
+    return `<div class="field"><label for="${id}">${escapeHtml(entry.label)}</label>
+      <input id="${id}" data-set="${entry.key}" type="${entry.type === 'number' ? 'number' : 'text'}"
+        value="${escapeHtml(value(entry.key))}"
+        ${entry.min !== undefined ? `min="${entry.min}"` : ''}
+        ${entry.max !== undefined ? `max="${entry.max}"` : ''}
+        ${entry.placeholder ? `placeholder="${escapeHtml(entry.placeholder)}"` : ''}>
+      ${help}</div>`;
+  }
+
+  function packageEditor() {
+    return `<div class="field">
+      <label>${escapeHtml(tr('bill.topUp'))}</label>
+      <div id="packages" class="stack"></div>
+      <button type="button" class="btn btn-sm" id="add-package" style="align-self:flex-start;margin-top:.5rem">
+        ${icon('plus')}</button>
+    </div>`;
+  }
+
+  function mailTools(data) {
+    return `<div class="row wrap" style="gap:.5rem">
+      <button type="button" class="btn btn-sm" id="mail-test">${icon('send')} ${escapeHtml(
+        tr('adm.testMail')
+      )}</button>
+      <a class="btn btn-sm" href="#/admin/mails">${escapeHtml(tr('adm.mails'))}</a>
+    </div>`;
+  }
+
+  function discordTools(data) {
+    const bot = data.bot || {};
+    return `<div class="note ${bot.connected ? '' : 'warn'}" style="margin:0">
+      ${icon(bot.connected ? 'check' : 'info')}
+      <div class="small">
+        <strong>${escapeHtml(tr('adm.botStatus'))}:</strong>
+        ${escapeHtml(bot.connected ? tr('adm.botConnected') : tr('adm.botAway'))}
+        ${
+          bot.last_heartbeat
+            ? ` · ${escapeHtml(tr('adm.when'))} ${datetime(bot.last_heartbeat.at)}`
+            : ''
+        }
+        <br>${escapeHtml(tr('adm.detail'))}: <span class="mono">docs/discord-bot.md</span>
+      </div>
+    </div>`;
+  }
+
   const paintPackages = () => {
     $('#packages').innerHTML = packages
       .map(
         (pack, index) => `<div class="row" style="gap:.5rem">
-          <input type="number" data-pack="${index}" data-key="cent" value="${pack.cent}" style="max-width:7rem">
-          <input type="number" data-pack="${index}" data-key="credits" value="${pack.credits}" style="max-width:7rem">
+          <input type="number" data-pack="${index}" data-key="cent" value="${pack.cent}"
+            style="max-width:7rem" aria-label="Cent">
+          <input type="number" data-pack="${index}" data-key="credits" value="${pack.credits}"
+            style="max-width:7rem" aria-label="Credits">
           <input type="text" data-pack="${index}" data-key="label" value="${escapeHtml(pack.label || '')}"
-            style="max-width:7rem">
-          <button class="btn btn-ghost btn-sm btn-danger" data-pack-del="${index}">${icon('x')}</button>
+            style="max-width:7rem" aria-label="Label">
+          <button type="button" class="btn btn-ghost btn-sm btn-danger" data-pack-del="${index}">${icon('x')}</button>
         </div>`
       )
       .join('');
@@ -1253,10 +2008,34 @@ async function settings(root) {
     paintPackages();
   });
 
+  $$('[data-peek]').forEach((button) =>
+    button.addEventListener('click', () => {
+      const input = $(`#${button.dataset.peek}`);
+      const shown = input.type === 'text';
+      input.type = shown ? 'password' : 'text';
+      button.innerHTML = icon(shown ? 'eye' : 'eyeOff');
+    })
+  );
+
+  $$('[data-clear]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('adm.secretClear'), { confirm: tr('common.delete') }))) return;
+      try {
+        await api(`/admin/settings/${button.dataset.clear}`, { method: 'DELETE' });
+        ok(tr('adm.saved'));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
+
   $('#save').addEventListener('click', async () => {
     const body = { packages };
     for (const input of $$('[data-set]')) {
-      body[input.dataset.set] = input.type === 'checkbox' ? (input.checked ? 1 : 0) : input.value;
+      if (input.type === 'checkbox') body[input.dataset.set] = input.checked ? 1 : 0;
+      else if (input.type === 'password' && !input.value) continue; // leer = nicht angefasst
+      else body[input.dataset.set] = input.value;
     }
     try {
       await api('/admin/settings', { method: 'PATCH', body });
@@ -1269,20 +2048,20 @@ async function settings(root) {
   });
 
   $('#mail-test').addEventListener('click', async () => {
-    const answer = await formDialog(tr('set.webhookTest'), [
+    const answer = await formDialog(tr('adm.testMail'), [
       { key: 'to', label: tr('auth.register.email'), value: state.me.email },
     ]);
     if (!answer) return;
     try {
       await api('/admin/settings/mail-test', { method: 'POST', body: answer });
-      ok(tr('adm.saved'));
+      ok(tr('adm.mailSent'));
     } catch (error) {
       fail(error);
     }
   });
 }
 
-// ---------------------------------------------------------------- Client, Mails, Protokolle
+// ---------------------------------------------------------------- Client, Post, Protokolle
 
 async function client(root) {
   const data = (await api('/admin/client')).client;
@@ -1328,7 +2107,7 @@ async function client(root) {
         (data.files || []).map(
           (file) => `<tr>
             <td class="mono small">${escapeHtml(file.name)}</td>
-            <td class="mono small muted">${file.size.toLocaleString()}</td>
+            <td class="mono small muted">${bytes(file.size)}</td>
             <td class="small muted mono">${datetime(file.changed)}</td>
           </tr>`
         )
@@ -1349,22 +2128,87 @@ async function client(root) {
 }
 
 async function mails(root) {
-  const data = await api('/admin/mails');
-  root.innerHTML = panel(
-    tr('adm.mails'),
-    table(
-      ['', tr('auth.register.email'), tr('tk.subject'), tr('common.status')],
-      data.mails.map(
-        (mail) => `<tr>
-          <td class="small muted mono">${datetime(mail.created_at)}</td>
-          <td class="small">${escapeHtml(mail.to_address)}</td>
-          <td class="small">${escapeHtml(mail.subject)}</td>
-          <td><span class="pill ${mail.ok ? '' : 'missing'}">${
-            mail.ok ? 'ok' : escapeHtml(mail.error || 'error')
-          }</span></td>
-        </tr>`
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const status = params.get('status') || 'all';
+  const query = params.get('q') || '';
+  const data = await api(`/admin/mails?status=${status}&q=${encodeURIComponent(query)}`);
+
+  root.innerHTML = `
+    <div class="row wrap" style="margin-bottom:1rem">
+      <select id="status" class="mini" style="max-width:12rem">
+        <option value="all" ${status === 'all' ? 'selected' : ''}>${escapeHtml(tr('common.all'))}</option>
+        <option value="sent" ${status === 'sent' ? 'selected' : ''}>ok</option>
+        <option value="failed" ${status === 'failed' ? 'selected' : ''}>${escapeHtml(
+          tr('set.mailFailed')
+        )}</option>
+      </select>
+      <input id="q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
+        value="${escapeHtml(query)}" style="max-width:16rem">
+      ${
+        data.failed
+          ? `<span class="pill missing" style="align-self:center">${escapeHtml(
+              tr('adm.mailsFailed', { n: data.failed })
+            )}</span>`
+          : ''
+      }
+    </div>
+    ${panel(
+      tr('adm.mails'),
+      // Die Spalten hießen früher to_address und ok – beides gibt es in der Tabelle nicht, die
+      // Anzeige blieb deshalb leer. Sie heißen recipient und status.
+      table(
+        ['', tr('auth.register.email'), tr('tk.subject'), 'kind', tr('common.status')],
+        data.mails.map(
+          (mail) => `<tr data-mail="${mail.id}" style="cursor:pointer">
+            <td class="small muted mono">${datetime(mail.created_at)}</td>
+            <td class="small">${escapeHtml(mail.recipient)}
+              ${
+                mail.username
+                  ? `<a class="small muted" href="#/admin/users/${mail.user_id}">${escapeHtml(mail.username)}</a>`
+                  : ''
+              }</td>
+            <td class="small">${escapeHtml(mail.subject)}</td>
+            <td class="small muted mono">${escapeHtml(mail.kind)}</td>
+            <td><span class="pill ${mail.status === 'sent' ? '' : 'missing'}"
+              title="${escapeHtml(mail.error || '')}">${escapeHtml(
+                mail.status === 'sent' ? 'ok' : mail.error || 'error'
+              )}</span></td>
+          </tr>`
+        )
       )
-    )
+    )}`;
+
+  const reload = debounce(() => {
+    go(`/admin/mails?status=${$('#status').value}&q=${encodeURIComponent($('#q').value.trim())}`);
+    draw();
+  }, 300);
+  $('#status').addEventListener('change', reload);
+  $('#q').addEventListener('input', reload);
+
+  $$('[data-mail]').forEach((row) =>
+    row.addEventListener('click', async () => {
+      const { mail } = await api(`/admin/mails/${row.dataset.mail}`);
+      const dialog = document.createElement('dialog');
+      dialog.innerHTML = `
+        <header><h3>${escapeHtml(mail.subject)}</h3></header>
+        <div class="body stack">
+          <div class="row spread small muted">
+            <span class="mono">${escapeHtml(mail.recipient)}</span>
+            <span class="mono">${datetime(mail.created_at)}</span>
+          </div>
+          ${
+            mail.status !== 'sent'
+              ? `<div class="note bad">${icon('alert')}<div>${escapeHtml(mail.error || '')}</div></div>`
+              : ''
+          }
+          <pre class="mail-body">${escapeHtml(mail.body || '')}</pre>
+        </div>
+        <footer><button class="btn btn-primary" id="close">${escapeHtml(tr('common.close'))}</button></footer>`;
+      document.body.append(dialog);
+      dialog.addEventListener('close', () => dialog.remove());
+      $('#close', dialog).addEventListener('click', () => dialog.close());
+      dialog.showModal();
+    })
   );
 }
 
@@ -1391,46 +2235,104 @@ async function ledger(root) {
   );
 }
 
+// ---------------------------------------------------------------- Protokoll
+//
+// Eine Zeile im Protokoll ist eine Handlung, keine JSON-Zeile. Was passiert ist, steht als Satz
+// da; wer es genau wissen will, klappt die Einzelheiten auf und bekommt Feld für Feld mit
+// Beschriftung – und dort, wo etwas auf einen Nutzer oder einen Serverplatz zeigt, einen Link.
+
 async function audit(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const action = params.get('action') || '';
-  const data = await api(`/admin/audit?action=${encodeURIComponent(action)}`);
+  const query = params.get('q') || '';
+  const data = await api(`/admin/audit?action=${encodeURIComponent(action)}&q=${encodeURIComponent(query)}`);
 
   root.innerHTML = `
-    <div class="row" style="margin-bottom:1rem">
-      <select id="action" style="max-width:16rem">
+    <div class="row wrap" style="margin-bottom:1rem">
+      <select id="action" class="mini" style="max-width:18rem">
         <option value="">${escapeHtml(tr('common.all'))}</option>
         ${data.actions
           .map(
             (entry) =>
-              `<option value="${escapeHtml(entry)}" ${action === entry ? 'selected' : ''}>${escapeHtml(
-                entry
-              )}</option>`
+              `<option value="${escapeHtml(entry.action)}" ${action === entry.action ? 'selected' : ''}>${escapeHtml(
+                entry.action
+              )} (${entry.n})</option>`
           )
           .join('')}
       </select>
+      <input id="q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
+        value="${escapeHtml(query)}" style="max-width:16rem">
     </div>
-    ${panel(
-      tr('adm.audit'),
-      table(
-        ['', tr('adm.users'), 'action', ''],
-        data.entries.map(
-          (entry) => `<tr>
-            <td class="small muted mono">${datetime(entry.created_at)}</td>
-            <td class="small">${
-              entry.user_id
-                ? `<a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.username || '')}</a>`
-                : '<span class="muted">–</span>'
-            }</td>
-            <td class="mono small">${escapeHtml(entry.action)}</td>
-            <td class="small muted mono truncate" style="max-width:22rem">${escapeHtml(entry.detail || '')}</td>
-          </tr>`
-        )
-      )
-    )}`;
 
-  $('#action').addEventListener('change', () => {
-    go(`/admin/audit?action=${encodeURIComponent($('#action').value)}`);
+    <section class="panel">
+      <div class="body" style="padding:0">
+        <ul class="log">
+          ${
+            data.entries
+              .map(
+                (entry) => `<li class="log-row ${entry.detail_parsed?.fields?.length ? 'has-detail' : ''}"
+                  data-entry="${entry.id}">
+                  <div class="log-head">
+                    <span class="log-when small muted mono">${datetime(entry.created_at)}</span>
+                    <span class="log-who">${
+                      entry.user_id
+                        ? `<a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.username || `#${entry.user_id}`)}</a>`
+                        : '<span class="muted">System</span>'
+                    }</span>
+                    <span class="log-action mono">${escapeHtml(entry.action)}</span>
+                    <span class="log-summary small muted truncate">${escapeHtml(entry.summary || '')}</span>
+                    ${
+                      entry.detail_parsed?.fields?.length
+                        ? `<span class="log-caret">${icon('arrow')}</span>`
+                        : ''
+                    }
+                  </div>
+                  ${
+                    entry.detail_parsed?.fields?.length
+                      ? `<div class="log-detail hide">
+                          <dl class="facts">
+                            ${entry.detail_parsed.fields
+                              .map(
+                                (field) => `<div>
+                                  <dt>${escapeHtml(field.label)}</dt>
+                                  <dd>${
+                                    field.flag !== null
+                                      ? `<span class="pill ${field.flag ? 'primary' : 'missing'}">${
+                                          field.flag ? tr('common.yes') : '–'
+                                        }</span>`
+                                      : field.link
+                                        ? `<a href="${escapeHtml(field.link)}">${escapeHtml(field.value)}</a>`
+                                        : escapeHtml(field.value)
+                                  }</dd>
+                                </div>`
+                              )
+                              .join('')}
+                          </dl>
+                          ${entry.ip ? `<p class="small muted mono">IP ${escapeHtml(entry.ip)}</p>` : ''}
+                        </div>`
+                      : ''
+                  }
+                </li>`
+              )
+              .join('') ||
+            `<li class="small muted" style="padding:1.5rem;text-align:center">${escapeHtml(tr('common.none'))}</li>`
+          }
+        </ul>
+      </div>
+    </section>`;
+
+  const reload = debounce(() => {
+    go(`/admin/audit?action=${encodeURIComponent($('#action').value)}&q=${encodeURIComponent($('#q').value.trim())}`);
     draw();
-  });
+  }, 300);
+  $('#action').addEventListener('change', reload);
+  $('#q').addEventListener('input', reload);
+
+  $$('.log-row.has-detail .log-head').forEach((head) =>
+    head.addEventListener('click', () => {
+      const row = head.parentElement;
+      row.classList.toggle('open');
+      row.querySelector('.log-detail').classList.toggle('hide');
+    })
+  );
 }

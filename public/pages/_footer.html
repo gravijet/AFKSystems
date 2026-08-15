@@ -3,7 +3,7 @@
         <div class="foot-cols">
           <div class="foot-brand">
             <a class="brand" href="/{{lang}}">
-              <img class="logo" src="{{assets}}/img/logo.svg" alt="" />
+              <img class="logo" src="{{assets}}/img/logo-128.webp" width="32" height="32" alt="" />
               <span>{{brand}}</span>
             </a>
             <p>{{footer.about}}</p>
@@ -22,6 +22,7 @@
               <li><a href="/{{lang}}/login">{{nav.login}}</a></li>
               <li><a href="/{{lang}}/register">{{nav.register}}</a></li>
               <li><a href="/{{lang}}/app">{{nav.dashboard}}</a></li>
+              {{footerDiscord}}
             </ul>
           </nav>
           <nav aria-labelledby="foot-legal">
@@ -36,6 +37,7 @@
         <div class="foot-legal">
           <span>© {{year}} {{brand}}</span>
           <span>{{footer.disclaimer}}</span>
+          <span>{{rules.short}}</span>
         </div>
       </div>
     </footer>
