@@ -15,7 +15,7 @@
 // bezahlte Serverplätze, und zugeteilt werden sie von Hand, weil dahinter echte IP-Adressen
 // stehen, die jemand kaufen und pflegen muss.
 
-import { db, getSetting, audit } from './db.js';
+import { db, audit } from './db.js';
 import { config } from './config.js';
 import { bad, notFound, forbidden, requireString } from './util.js';
 import { isPayingUser } from './billing.js';

@@ -4,7 +4,7 @@
 
 import express from 'express';
 import { config, paths } from '../config.js';
-import { db, getSetting, setSetting, allSettings, audit, settingDefaults } from '../db.js';
+import { db, setSetting, allSettings, audit, settingDefaults } from '../db.js';
 import * as auth from '../auth.js';
 import * as billing from '../billing.js';
 import * as binaries from '../binaries.js';
@@ -13,9 +13,8 @@ import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
 import * as nodes from '../nodes.js';
 import * as metrics from '../metrics.js';
-import * as notify from '../notify.js';
 import { supervisor } from '../supervisor.js';
-import { planView, addonView, announcementView, ticketView } from './core.js';
+import { planView, ticketView } from './core.js';
 import { botState } from './bot.js';
 import { bridge } from '../bridge.js';
 import { SETTINGS, byKey as settingSchema, schemaFor } from '../settings-schema.js';
