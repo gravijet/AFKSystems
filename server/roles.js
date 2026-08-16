@@ -28,11 +28,11 @@ export function managed() {
     ultra: setting('discord_role_ultra'),
     partner: setting('discord_role_partner'),
     vip: setting('discord_role_vip'),
-    // Team ist die einzige Discord Linked Role. Der Bot fasst diese Rolle deshalb nicht an;
-    // Discord vergibt sie nach erfolgreicher Rollen-Verknüpfung selbst.
+    // Team ist eine normale Rolle und wird automatisch an Administratoren und Moderatoren
+    // vergeben. Die beiden Statusrollen selbst bleiben Discord Linked Roles.
     team: setting('discord_role_team'),
-    // Administrator und Discord-Moderator sind dagegen ganz normale, vom Bot synchronisierte
-    // Rollen. So erhalten beide sie wie Customer, Premium und Ultra direkt im Server.
+    // Diese beiden Rollen werden als Linked Roles von Discord vergeben; der Bot braucht ihre IDs
+    // für Ticket-Kanalrechte und die Team-Kanalregel, synchronisiert sie aber nicht direkt.
     admin: setting('discord_role_admin'),
     mod: setting('discord_role_mod'),
     plans: Object.fromEntries(planRoles.map((plan) => [plan.id, String(plan.discord_role).trim()])),
@@ -48,8 +48,7 @@ export function managedIds() {
     roles.ultra,
     roles.partner,
     roles.vip,
-    roles.admin,
-    roles.mod,
+    roles.team,
     ...Object.values(roles.plans),
   ].filter(Boolean);
 }
@@ -100,8 +99,7 @@ export function targetFor(user) {
   if (linked && user.discord_vip && roles.vip) wanted.add(roles.vip);
   const staff = user.role === 'admin';
   const moderator = Boolean(user.discord_moderator);
-  if (linked && staff && roles.admin) wanted.add(roles.admin);
-  if (linked && moderator && roles.mod) wanted.add(roles.mod);
+  if (linked && (staff || moderator) && roles.team) wanted.add(roles.team);
 
   return {
     discord_id: user.discord_id,

@@ -65,8 +65,8 @@ Unter *Administration → Einstellungen → Discord* und *→ Discord-Rollen*:
 | Customer | normale Rolle für jedes verknüpfte Konto |
 | Premium / Ultra | Rollen für die Tarife |
 | Partner / VIP | normale Rollen, die im Benutzerprofil vergeben werden |
-| Administrator / Discord Moderator | normale Rollen, die der Bot anhand des Benutzerprofils vergibt |
-| Team | die einzige Discord Linked Role; Discord vergibt sie nach der Verknüpfung für Admins und Discord-Mods |
+| Administrator / Discord Moderator | Discord Linked Roles; Discord vergibt sie nach der Verknüpfung anhand des Benutzerprofils |
+| Team | normale Rolle; der Bot vergibt sie automatisch an Admins und Discord-Mods |
 
 Für das Geheimnis:
 
@@ -95,7 +95,7 @@ Beim ersten Start sollte im Protokoll stehen:
 ```
 [discord] signed in as AFKSystems#1234
 [discord] commands registered
-[linked roles] registered 1 metadata field(s)
+[linked roles] registered 2 metadata field(s)
 [panel] connected
 [roles] initial sync: updated N member(s)
 ```
@@ -136,7 +136,8 @@ Stündlich und bei jeder Änderung:
 * verknüpftes Konto → **Customer**
 * laufender bezahlter Tarif → **Premium** bzw. **Ultra** (Ultra erhält zusätzlich immer Premium; eine Tarifrolle kommt bei Bedarf dazu)
 * im Panel gesetztes Kennzeichen → **Partner** beziehungsweise **VIP**
-* **Admin** → Administrator, **Discord-Mod** → Discord Moderator; **Team** vergibt Discord als Linked Role nach der Verknüpfung
+* **Admin** → Linked Role Administrator, **Discord-Mod** → Linked Role Discord Moderator; beide erhalten zusätzlich automatisch **Team**
+* **Team** darf alle öffentlichen und rollenbasierten Kanäle sehen. Rein für Admins oder einzelne Nutzer geschützte Kanäle bleiben ausgeschlossen.
 
 Bei jedem Beitritt oder Austritt und beim stündlichen Vollabgleich meldet der Bot außerdem die
 Mitgliedschaft an das Panel. Ohne Mitgliedschaft im Pflichtserver wird jeder Gratis-Platz sofort
@@ -147,18 +148,19 @@ Selbstbedienungsrollen – bleibt unberührt.
 
 ### Linked Roles
 
-Der Bot meldet beim Start genau ein Merkmal an, mit dem Discord die Teamrolle an eine Bedingung
-knüpfen kann:
+Der Bot meldet beim Start zwei Merkmale an, mit denen Discord die beiden Statusrollen an
+Bedingungen geknüpft werden:
 
 | Feld | Bedeutung |
 | --- | --- |
-| `team` | ist Administrator oder im Panel als Discord Moderator markiert |
+| `administrator` | ist Administrator im AFKSystems-Panel |
+| `discord_moderator` | ist im Panel als Discord Moderator markiert |
 
 Einrichten: *Servereinstellungen → Rollen → Rolle → Links → AFKSystems → Bedingung*. Die Werte
 schreibt das Panel nach der Zustimmung über **Discord-Rollen auffrischen**. Diese Schaltfläche wird
-nur Administratoren und Discord-Moderatoren gezeigt. Customer, Premium, Ultra, Partner, VIP,
-Administrator und Discord Moderator sind normale Rollen und werden vom Bot direkt synchronisiert;
-**Team** ist die einzige Linked Role.
+nur Administratoren und Discord-Moderatoren gezeigt. Customer, Premium, Ultra, Partner, VIP und
+**Team** sind normale Rollen und werden vom Bot direkt synchronisiert; Administrator und Discord
+Moderator sind die beiden Linked Roles.
 
 ### Befehle
 

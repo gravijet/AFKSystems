@@ -24,6 +24,7 @@ const tickets = await import('../server/tickets.js');
 const { Bot, simpleChatMacro, parseEvent, parseView } = await import('../server/supervisor.js');
 const { parseFormatting } = await import('../public/assets/js/chatlog.js');
 const { Roles } = await import('../bot/handlers/roles.js');
+const { ChannelAccess } = await import('../bot/handlers/channelAccess.js');
 const { Panel } = await import('../bot/panel.js');
 
 let sequence = 0;
@@ -170,7 +171,7 @@ test('Free access fails closed for link, membership and stale checks', () => {
   );
 });
 
-test('Team is the sole Linked Role; Ultra includes Premium and staff roles are regular roles', () => {
+test('Admin and moderator are Linked Roles; Ultra includes Premium and staff receive Team', () => {
   setSetting('discord_role_customer', '10001');
   setSetting('discord_role_premium', '10002');
   setSetting('discord_role_ultra', '10003');
@@ -190,18 +191,18 @@ test('Team is the sole Linked Role; Ultra includes Premium and staff roles are r
   const profile = createProfile(user, billing.planBySlug('ultra'));
   const target = roles.targetFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
 
-  assert.deepEqual(new Set(target.roles), new Set(['10001', '10002', '10003', '10004', '10005', '19999']));
+  assert.deepEqual(new Set(target.roles), new Set(['10001', '10002', '10003', '10004', '10005', '10006']));
   assert.equal(target.roles.includes('19998'), false);
-  assert.equal(target.roles.includes('10006'), false);
+  assert.equal(target.roles.includes('19999'), false);
   assert.deepEqual(
     new Set(target.badges),
     new Set(['customer', 'ultra', 'partner', 'vip', 'moderator', 'team'])
   );
-  assert.equal(roles.managedIds().includes('10006'), false);
-  assert.equal(roles.managedIds().includes('19998'), true);
-  assert.equal(roles.managedIds().includes('19999'), true);
-  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.key), ['team']);
-  assert.deepEqual(oauth.roleMetadataFor(user.id), { team: 1 });
+  assert.equal(roles.managedIds().includes('10006'), true);
+  assert.equal(roles.managedIds().includes('19998'), false);
+  assert.equal(roles.managedIds().includes('19999'), false);
+  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.key), ['administrator', 'discord_moderator']);
+  assert.deepEqual(oauth.roleMetadataFor(user.id), { administrator: 0, discord_moderator: 1 });
 
   db.prepare('UPDATE profiles SET locked = 1 WHERE id = ?').run(profile.id);
   const suspended = roles.targetFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
@@ -212,6 +213,26 @@ test('Team is the sole Linked Role; Ultra includes Premium and staff roles are r
   const manualPremium = roles.targetFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
   assert.equal(manualPremium.badges.includes('premium'), true);
   assert.equal(manualPremium.roles.includes('10002'), true);
+});
+
+test('Team may view public and role-based channels, never admin-only or member-only channels', () => {
+  const access = new ChannelAccess({
+    config: { roles: { team: '10006', admin: '19998', mod: '19999' } },
+    client: { user: { id: '90000' } },
+  });
+  const guild = { roles: { everyone: { id: '10000' } } };
+  const channel = ({ publicView = false, overwrites = [] } = {}) => ({
+    permissionOverwrites: { cache: new Map(overwrites.map((entry) => [entry.id, entry])) },
+    permissionsFor: () => ({ has: () => publicView }),
+    isThread: () => false,
+  });
+  const role = (id) => ({ id, type: 0, allow: { has: () => true } }); // OverwriteType.Role
+  const member = (id) => ({ id, type: 1, allow: { has: () => true } }); // OverwriteType.Member
+
+  assert.equal(access.shouldGrant(channel({ publicView: true }), guild), true);
+  assert.equal(access.shouldGrant(channel({ overwrites: [role('10002')] }), guild), true);
+  assert.equal(access.shouldGrant(channel({ overwrites: [role('19998')] }), guild), false);
+  assert.equal(access.shouldGrant(channel({ overwrites: [member('200000000000000002')] }), guild), false);
 });
 
 test('upgrading a Free server applies the full Premium chat-history allowance', () => {

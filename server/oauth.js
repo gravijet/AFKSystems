@@ -419,16 +419,22 @@ export async function refreshDiscordMembership(userId, discordId = null) {
 }
 
 /**
- * Team ist die einzige Discord Linked Role. Customer, Tarife, Partner, VIP, Administrator und
- * Discord Moderator sind normale Serverrollen; sie synchronisiert der Bot ohne OAuth-Zustimmung
- * für `role_connections.write`.
+ * Administrator und Discord Moderator sind die beiden Linked Roles. Customer, Tarife, Partner,
+ * VIP und Team sind normale Serverrollen; sie synchronisiert der Bot ohne OAuth-Zustimmung für
+ * `role_connections.write`.
  */
 export const ROLE_METADATA = [
   {
-    key: 'team',
-    name: 'Team',
+    key: 'administrator',
+    name: 'Administrator',
     type: 7,
-    description: 'AFKSystems team member',
+    description: 'AFKSystems panel administrator',
+  },
+  {
+    key: 'discord_moderator',
+    name: 'Discord Moderator',
+    type: 7,
+    description: 'AFKSystems Discord moderator',
   },
 ];
 
@@ -437,7 +443,8 @@ export function roleMetadataFor(userId) {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) return null;
   return {
-    team: user.role === 'admin' || Boolean(user.discord_moderator) ? 1 : 0,
+    administrator: user.role === 'admin' ? 1 : 0,
+    discord_moderator: user.discord_moderator ? 1 : 0,
   };
 }
 
@@ -446,8 +453,8 @@ async function writeRoleConnection(accessToken, userId) {
   if (!applicationId) throw bad('Discord ist nicht eingerichtet.', { en: 'Discord is not set up.' });
   const user = db.prepare('SELECT username, role, discord_moderator FROM users WHERE id = ?').get(userId);
   if (!user || (user.role !== 'admin' && !user.discord_moderator)) {
-    throw new HttpError(403, 'Die Linked Role Team ist nur für Administratoren und Discord-Moderatoren.', {
-      en: 'The Team linked role is only available to administrators and Discord moderators.',
+    throw new HttpError(403, 'Linked Roles sind nur für Administratoren und Discord-Moderatoren.', {
+      en: 'Linked Roles are only available to administrators and Discord moderators.',
     });
   }
   const response = await fetch(
