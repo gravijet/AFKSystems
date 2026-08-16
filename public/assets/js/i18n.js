@@ -104,14 +104,6 @@ export const S = {
     en: 'The first server slot costs nothing while your linked Discord account is in AFKSystems.',
     de: 'Der erste Serverplatz kostet nichts, solange dein verknüpftes Discord-Konto bei AFKSystems ist.',
   },
-  'home.preview.label': { en: 'AFKSystems panel preview', de: 'Vorschau des AFKSystems-Panels' },
-  'home.preview.live': { en: 'Online', de: 'Online' },
-  'home.preview.server': { en: 'Your server', de: 'Dein Server' },
-  'home.preview.connected': { en: 'Both accounts connected', de: 'Beide Konten verbunden' },
-  'home.preview.chat': { en: 'Chat is available in the panel', de: 'Chat ist im Panel verfügbar' },
-  'home.preview.antiafk': { en: 'Anti-AFK is active', de: 'Anti-AFK ist aktiv' },
-  'home.preview.control': { en: 'Chat', de: 'Chat' },
-  'home.preview.movement': { en: 'Movement', de: 'Bewegung' },
 
   'rail.free': { en: 'Free slots per account', de: 'Gratis-Plätze je Konto' },
   'rail.paid': { en: 'Further slots from', de: 'Weitere Plätze ab' },
@@ -316,7 +308,6 @@ export const S = {
   'footer.panel': { en: 'Panel', de: 'Panel' },
   'footer.topics': { en: 'Product', de: 'Angebot' },
   'footer.legal': { en: 'Legal', de: 'Rechtliches' },
-  'footer.imprint': { en: 'Imprint', de: 'Impressum' },
   'footer.privacy': { en: 'Privacy', de: 'Datenschutz' },
   'footer.terms': { en: 'Terms', de: 'Nutzungsbedingungen' },
   'footer.support': { en: 'Support', de: 'Support' },
@@ -361,10 +352,8 @@ export const S = {
     en: 'The two passwords are not the same.',
     de: 'Die beiden Passwörter sind nicht gleich.',
   },
-  'auth.register.terms': {
-    en: 'I have read the terms and the privacy notice.',
-    de: 'Ich habe die Nutzungsbedingungen und die Datenschutzerklärung gelesen.',
-  },
+  'auth.register.termsBefore': { en: 'I have read the', de: 'Ich habe die' },
+  'auth.register.termsAnd': { en: 'and the', de: 'und die' },
   'auth.register.submit': { en: 'Create account', de: 'Konto anlegen' },
   'auth.register.have': { en: 'Already have an account?', de: 'Schon ein Konto?' },
   'auth.register.closed': {
@@ -427,6 +416,8 @@ export const S = {
   'dash.logout': { en: 'Log out', de: 'Abmelden' },
   'dash.newServer': { en: 'Add a server', de: 'Server anlegen' },
   'dash.noServers': { en: 'No server yet.', de: 'Noch keiner angelegt.' },
+  'dash.collapseNav': { en: 'Collapse navigation', de: 'Navigation einklappen' },
+  'dash.expandNav': { en: 'Expand navigation', de: 'Navigation ausklappen' },
   'dash.live': { en: 'Live connection', de: 'Live verbunden' },
   'dash.offline': { en: 'Connection to the panel lost', de: 'Verbindung zum Panel unterbrochen' },
   'dash.hello': { en: 'Hello, {name}', de: 'Hallo, {name}' },
@@ -1256,15 +1247,9 @@ export const S = {
   },
 
   // ---------------------------------------------------------------- Rechtliches
-  'legal.imprint.title': { en: 'Imprint', de: 'Impressum' },
   'legal.privacy.title': { en: 'Privacy notice', de: 'Datenschutzerklärung' },
   'legal.terms.title': { en: 'Terms of use', de: 'Nutzungsbedingungen' },
-  // Solange im Admin-Bereich unter "Recht" nichts hinterlegt ist, steht hier ein Hinweis. Je Seite
-  // ein eigener: auf der Datenschutz- und der AGB-Seite stand vorher, ein Impressum sei Pflicht.
-  'legal.placeholder.imprint': {
-    en: 'This page still has to be filled in by the operator. Under German law an imprint is mandatory – it must be complete before the service is offered publicly.',
-    de: 'Diese Seite muss der Betreiber noch ausfüllen. Ein Impressum ist in Deutschland Pflicht – es muss vollständig sein, bevor der Dienst öffentlich angeboten wird.',
-  },
+  // Nur relevant, wenn auch die Systemvorgabe einmal fehlen sollte.
   'legal.placeholder.privacy': {
     en: 'This page still has to be filled in by the operator. A privacy notice is mandatory as soon as personal data is processed – and this service processes it.',
     de: 'Diese Seite muss der Betreiber noch ausfüllen. Eine Datenschutzerklärung ist Pflicht, sobald personenbezogene Daten verarbeitet werden – und das tut dieser Dienst.',

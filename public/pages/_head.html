@@ -23,10 +23,6 @@
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="stylesheet" href="{{assets}}/css/app.css" />
-    <script>
-      // Vor dem ersten Bild: gespeichertes Aussehen setzen, damit nichts aufblitzt.
-      const stored = localStorage.getItem('afk-theme');
-      if (stored && stored !== 'system') document.documentElement.setAttribute('data-theme', stored);
-    </script>
+    <script src="{{assets}}/js/theme.js"></script>
   </head>
   <body class="{{bodyClass}}">

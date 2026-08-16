@@ -11,11 +11,13 @@
     "start": "node server/index.js",
     "dev": "node --watch server/index.js",
     "test": "node --test --test-concurrency=1",
+    "assets:protect": "node scripts/protect-assets.mjs",
     "client:update": "node server/binaries.js --update",
     "admin:credits": "node scripts/credits.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
+    "esbuild": "0.28.2",
     "express": "^4.21.2",
     "nodemailer": "^9.0.5",
     "ws": "^8.18.0"

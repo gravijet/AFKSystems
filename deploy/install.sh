@@ -48,6 +48,11 @@ sudo -u "$DIENST" -H npm ci --omit=dev 2>/dev/null || npm ci --omit=dev
 mkdir -p "$ZIEL/data"
 chown -R "$DIENST:$DIENST" "$ZIEL"
 
+# Browser müssen Frontend-Dateien zwangsläufig erhalten. In der Produktionskopie werden sie aber
+# minimiert ausgeliefert: weniger Traffic und deutlich weniger bequem 1:1 zu kopieren, ohne die
+# wartbaren Quellen im Repository zu beschädigen.
+sudo -u "$DIENST" -H npm run assets:protect
+
 echo "== systemd =="
 install -m 0644 "$QUELLE/deploy/afksystems.service" /etc/systemd/system/$DIENST.service
 install -m 0644 "$QUELLE/deploy/afksystems-bot.service" /etc/systemd/system/$DIENST-bot.service

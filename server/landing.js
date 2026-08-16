@@ -10,6 +10,7 @@ import * as binaries from './binaries.js';
 import * as billing from './billing.js';
 import { features } from './features.js';
 import { t } from '../public/assets/js/i18n.js';
+import { PRIVACY_DE, PRIVACY_EN, TERMS_DE, TERMS_EN } from './legal.js';
 
 const escape = (text) =>
   String(text ?? '')
@@ -316,18 +317,36 @@ export function pricingVars(lang) {
 /** Platzhalter, die jede Seite bekommt (Kopfleiste, Fuß). */
 export const commonVars = (lang) => discordVars(lang);
 
-/** Für Impressum, Datenschutz und Nutzungsbedingungen: Text aus den Einstellungen. */
+const LEGAL_DEFAULTS = {
+  privacy: { de: PRIVACY_DE, en: PRIVACY_EN },
+  terms: { de: TERMS_DE, en: TERMS_EN },
+};
+
+function legalHtml(raw) {
+  return String(raw || '')
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => {
+      const lines = block.split('\n').map((line) => line.trim()).filter(Boolean);
+      if (!lines.length) return '';
+      if (lines.length === 1 && lines[0].startsWith('## ')) {
+        return `<h2>${escape(lines[0].slice(3))}</h2>`;
+      }
+      if (lines.every((line) => line.startsWith('- '))) {
+        return `<ul>${lines.map((line) => `<li>${escape(line.slice(2))}</li>`).join('')}</ul>`;
+      }
+      return `<p>${lines.map(escape).join('<br />')}</p>`;
+    })
+    .join('');
+}
+
+/** Für Datenschutz und Nutzungsbedingungen: eigener Text oder vollständige Systemvorgabe. */
 export function legalVars(kind, lang) {
-  const raw =
+  const custom =
     String(getSetting(lang === 'en' ? `legal_${kind}_en` : `legal_${kind}`) || '') ||
     String(getSetting(`legal_${kind}`) || '');
-  const body = raw.trim()
-    ? raw
-        .trim()
-        .split(/\n{2,}/)
-        .map((block) => `<p>${escape(block).replace(/\n/g, '<br />')}</p>`)
-        .join('')
-    : `<p class="note warn">${escape(t(`legal.placeholder.${kind}`, lang))}</p>`;
+  const raw = custom.trim() || LEGAL_DEFAULTS[kind]?.[lang] || LEGAL_DEFAULTS[kind]?.de || '';
+  const body = raw ? legalHtml(raw) : `<p class="note warn">${escape(t(`legal.placeholder.${kind}`, lang))}</p>`;
   return {
     legalTitle: t(`legal.${kind}.title`, lang),
     legalBody: body,

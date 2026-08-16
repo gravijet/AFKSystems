@@ -8,6 +8,7 @@
 
 import Database from 'better-sqlite3';
 import { paths } from './config.js';
+import { PRIVACY_DE, PRIVACY_EN, TERMS_DE, TERMS_EN } from './legal.js';
 
 export const db = new Database(paths.db);
 db.pragma('journal_mode = WAL');
@@ -931,14 +932,12 @@ const defaults = {
   mail_announcement: 1,
   mail_security: 1, // Anmeldung an neuem Gerät, Passwortwechsel – lässt sich nicht abbestellen
 
-  // Rechtstexte. Leer heißt: die Seite sagt, dass der Betreiber sie noch ausfüllen muss.
-  // Die _en-Fassung ist freiwillig; fehlt sie, steht überall der deutsche Text.
-  legal_imprint: '',
-  legal_imprint_en: '',
-  legal_privacy: '',
-  legal_privacy_en: '',
-  legal_terms: '',
-  legal_terms_en: '',
+  // Vollständige Vorgaben statt leerer öffentlicher Seiten. Eigene Texte in der Datenbank gehen
+  // weiterhin vor. Eine separate Anbieterkennzeichnungsseite wird nicht angeboten.
+  legal_privacy: PRIVACY_DE,
+  legal_privacy_en: PRIVACY_EN,
+  legal_terms: TERMS_DE,
+  legal_terms_en: TERMS_EN,
 
   // Betrieb
   maintenance: 0,

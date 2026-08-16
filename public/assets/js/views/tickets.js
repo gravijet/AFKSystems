@@ -157,6 +157,19 @@ async function one(root, id, { staff, backHash }) {
   let messages = data.messages;
   let participants = data.participants || [];
 
+  const statusControls = () =>
+    staff
+      ? ['open', 'waiting', 'answered', 'closed']
+          .map(
+            (entry) => `<button class="status-choice ${entry} ${
+              ticket.status === entry ? 'active' : ''
+            }" data-status="${entry}">${escapeHtml(tr(`tk.status.${entry}`))}</button>`
+          )
+          .join('')
+      : ticket.status === 'closed'
+        ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
+        : `<button class="btn btn-danger btn-block" data-status="closed">${escapeHtml(tr('tk.close'))}</button>`;
+
   root.innerHTML = `
     ${appbar(
       ticket.subject,
@@ -172,11 +185,9 @@ async function one(root, id, { staff, backHash }) {
         <div class="typing" id="typing"></div>
 
         <div class="reply-box">
-          ${
-            ticket.status === 'closed'
-              ? `<p class="small muted" style="margin:0 0 .6rem">${escapeHtml(tr('tk.closedNote'))}</p>`
-              : ''
-          }
+          <p class="small muted" id="closed-note" style="margin:0 0 .6rem" ${
+            ticket.status === 'closed' ? '' : 'hidden'
+          }>${escapeHtml(tr('tk.closedNote'))}</p>
           <textarea id="reply" rows="3" placeholder="${escapeHtml(tr('tk.reply'))}"></textarea>
           <div class="row spread wrap" style="margin-top:.6rem">
             <span class="small muted">${escapeHtml(tr('tk.writeHint'))}</span>
@@ -198,27 +209,11 @@ async function one(root, id, { staff, backHash }) {
           <header><h3>${escapeHtml(tr('tk.setStatus'))}</h3></header>
           <div class="body stack">
             <div class="status-picker" id="status">
-              ${
-                staff
-                  ? ['open', 'waiting', 'answered', 'closed']
-                      .map(
-                        (entry) => `<button class="status-choice ${entry} ${
-                          ticket.status === entry ? 'active' : ''
-                        }" data-status="${entry}">${escapeHtml(tr(`tk.status.${entry}`))}</button>`
-                      )
-                      .join('')
-                  : ticket.status === 'closed'
-                    ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
-                    : `<button class="btn btn-danger btn-block" data-status="closed">${escapeHtml(
-                        tr('tk.close')
-                      )}</button>`
-              }
+              ${statusControls()}
             </div>
-            ${
-              ticket.status === 'closed'
-                ? `<p class="small muted">${escapeHtml(tr('tk.reopenHint'))}</p>`
-                : ''
-            }
+            <p class="small muted" id="status-hint" ${ticket.status === 'closed' ? '' : 'hidden'}>${escapeHtml(
+              tr('tk.reopenHint')
+            )}</p>
           </div>
         </section>
 
@@ -388,7 +383,7 @@ async function one(root, id, { staff, backHash }) {
       messages = result.messages;
       Object.assign(ticket, result.ticket);
       paint();
-      markStatus(result.ticket.status);
+      paintStatus(result.ticket.status);
       await refresh({ profiles: false, accounts: false });
     } catch (error) {
       fail(error);
@@ -419,29 +414,31 @@ async function one(root, id, { staff, backHash }) {
 
   // ------------------------------------------------------------ Zustand und Beteiligte
 
-  function markStatus(status) {
-    $$('[data-status]').forEach((button) =>
-      button.classList.toggle('active', button.dataset.status === status)
-    );
+  function paintStatus(status) {
+    ticket.status = status;
+    $('#status').innerHTML = statusControls();
+    const closed = status === 'closed';
+    $('#closed-note').hidden = !closed;
+    $('#status-hint').hidden = !closed;
   }
 
-  $$('[data-status]').forEach((button) =>
-    button.addEventListener('click', async () => {
-      const wanted = button.dataset.status;
-      if (wanted === ticket.status) return;
-      try {
-        const result = staff
-          ? await api(`/admin/tickets/${id}`, { method: 'PATCH', body: { status: wanted } })
-          : await api(`/tickets/${id}/status`, { method: 'POST', body: { status: wanted } });
-        Object.assign(ticket, result.ticket);
-        markStatus(result.ticket.status);
-        ok(tr('adm.saved'));
-        await refresh({ profiles: false, accounts: false });
-      } catch (error) {
-        fail(error);
-      }
-    })
-  );
+  $('#status').addEventListener('click', async (event) => {
+    const button = event.target.closest('[data-status]');
+    if (!button) return;
+    const wanted = button.dataset.status;
+    if (wanted === ticket.status) return;
+    try {
+      const result = staff
+        ? await api(`/admin/tickets/${id}`, { method: 'PATCH', body: { status: wanted } })
+        : await api(`/tickets/${id}/status`, { method: 'POST', body: { status: wanted } });
+      Object.assign(ticket, result.ticket);
+      paintStatus(result.ticket.status);
+      ok(tr('adm.saved'));
+      await refresh({ profiles: false, accounts: false });
+    } catch (error) {
+      fail(error);
+    }
+  });
 
   for (const [id_, field] of [
     ['#priority', 'priority'],
@@ -514,7 +511,7 @@ async function one(root, id, { staff, backHash }) {
     }
     if (event.event === 'status') {
       ticket.status = message.status;
-      markStatus(message.status);
+      paintStatus(message.status);
       return;
     }
     if (event.event === 'message') {
@@ -530,7 +527,7 @@ async function one(root, id, { staff, backHash }) {
         paint();
       }
       Object.assign(ticket, fresh.ticket);
-      markStatus(fresh.ticket.status);
+      paintStatus(fresh.ticket.status);
     }
   };
 }

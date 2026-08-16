@@ -84,14 +84,14 @@ export const GROUPS = [
   },
   {
     key: 'legal',
-    icon: 'info',
+    icon: 'shield',
     de: {
       title: 'Rechtstexte',
-      text: 'Impressum, Datenschutz und Nutzungsbedingungen. Leer heißt: die Seite sagt, dass der Text noch fehlt – sie ist dann trotzdem erreichbar.',
+      text: 'Datenschutz und Nutzungsbedingungen. Ohne eigenen Text gilt die ausführliche Vorgabe aus dem System.',
     },
     en: {
       title: 'Legal texts',
-      text: 'Imprint, privacy and terms. Empty means the page says the text is still missing – it stays reachable either way.',
+      text: 'Privacy and terms. The complete system default is used when no custom text is stored.',
     },
   },
 ];
@@ -489,46 +489,32 @@ export const SETTINGS = [
 
   // ---------------------------------------------------------------- Recht
   {
-    key: 'legal_imprint',
-    group: 'legal',
-    type: 'textarea',
-    de: { label: 'Impressum (Deutsch)', help: '' },
-    en: { label: 'Imprint (German)', help: '' },
-  },
-  {
-    key: 'legal_imprint_en',
-    group: 'legal',
-    type: 'textarea',
-    de: { label: 'Impressum (Englisch)', help: 'Leer heißt: es steht der deutsche Text da.' },
-    en: { label: 'Imprint (English)', help: 'Empty means the German text is shown.' },
-  },
-  {
     key: 'legal_privacy',
     group: 'legal',
     type: 'textarea',
-    de: { label: 'Datenschutz (Deutsch)', help: '' },
-    en: { label: 'Privacy (German)', help: '' },
+    de: { label: 'Datenschutz (Deutsch)', help: 'Leer lassen, um die Systemvorgabe zu verwenden.' },
+    en: { label: 'Privacy (German)', help: 'Leave empty to use the system default.' },
   },
   {
     key: 'legal_privacy_en',
     group: 'legal',
     type: 'textarea',
-    de: { label: 'Datenschutz (Englisch)', help: '' },
-    en: { label: 'Privacy (English)', help: '' },
+    de: { label: 'Datenschutz (Englisch)', help: 'Leer lassen, um die englische Systemvorgabe zu verwenden.' },
+    en: { label: 'Privacy (English)', help: 'Leave empty to use the English system default.' },
   },
   {
     key: 'legal_terms',
     group: 'legal',
     type: 'textarea',
-    de: { label: 'Nutzungsbedingungen (Deutsch)', help: '' },
-    en: { label: 'Terms (German)', help: '' },
+    de: { label: 'Nutzungsbedingungen (Deutsch)', help: 'Leer lassen, um die Systemvorgabe zu verwenden.' },
+    en: { label: 'Terms (German)', help: 'Leave empty to use the system default.' },
   },
   {
     key: 'legal_terms_en',
     group: 'legal',
     type: 'textarea',
-    de: { label: 'Nutzungsbedingungen (Englisch)', help: '' },
-    en: { label: 'Terms (English)', help: '' },
+    de: { label: 'Nutzungsbedingungen (Englisch)', help: 'Leer lassen, um die englische Systemvorgabe zu verwenden.' },
+    en: { label: 'Terms (English)', help: 'Leave empty to use the English system default.' },
   },
 ];
 

@@ -160,7 +160,6 @@ async function overview(root) {
         data.profiles,
         tr('bill.slotsLine', { paid: data.profiles_paid, free: data.profiles - data.profiles_paid })
       )}
-      ${stat('MRR', credits(data.mrr_credits), euro(data.mrr_credits))}
       ${stat(tr('bill.balance'), credits(data.credits_outstanding), euro(data.credits_outstanding))}
       ${stat(tr('adm.topups'), euro(data.revenue_30d_cent), tr('adm.revenueAll', { total: euro(data.revenue_cent) }))}
       ${stat(
