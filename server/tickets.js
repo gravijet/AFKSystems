@@ -75,6 +75,18 @@ export function get(id, user) {
   return ticket;
 }
 
+/**
+ * Die Kundenseite "Support" bleibt auch für Administratoren eine persönliche Ansicht.
+ * Admin-Rechte gelten ausschließlich unter /admin/tickets; sonst könnte ein Admin durch das
+ * Ändern der URL fremde Tickets samt internen Notizen im eigenen Support öffnen.
+ */
+export function getForParticipant(id, user) {
+  const ticket = ticketRow.get(id);
+  if (!ticket) throw notFound('Dieses Ticket gibt es nicht.', { en: 'No such ticket.' });
+  if (!isParticipant(ticket.id, user.id)) throw forbidden();
+  return ticket;
+}
+
 export function addUser(ticket, userId, by) {
   if (ticket.user_id === userId) return participants(ticket.id);
   const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
@@ -251,9 +263,16 @@ export const create = db.transaction((owner, { subject, category, body, priority
  * "Bitte ein neues aufmachen" – das kostet den Verlauf und macht aus einer Rückfrage ein zweites
  * Ticket, das niemand mit dem ersten in Verbindung bringt.
  */
-export const reply = db.transaction((ticket, user, body, { internal = false, authorName = null, discordId = null } = {}) => {
+export const reply = db.transaction((ticket, user, body, {
+  internal = false,
+  authorName = null,
+  discordId = null,
+  staff: staffOverride = null,
+} = {}) => {
   const text = requireString(body, 'Nachricht', { max: 8000 });
-  const staff = user.role === 'admin' || Boolean(user.discord_moderator);
+  // Ein Administrator kann selbst Kunde eines Tickets sein. In seiner persönlichen Support-
+  // Ansicht schreibt er deshalb als Kunde; nur die Admin-Route setzt die Teamrolle voraus.
+  const staff = staffOverride ?? (user.role === 'admin' || Boolean(user.discord_moderator));
   const now = Date.now();
   const reopened = ticket.status === 'closed' && !internal;
 
@@ -311,9 +330,10 @@ export function setStatus(ticket, status, by) {
   return fresh;
 }
 
-export function markRead(ticket, user) {
-  if (user.role === 'admin') db.prepare('UPDATE tickets SET unread_staff = 0 WHERE id = ?').run(ticket.id);
-  if (isParticipant(ticket.id, user.id)) {
+export function markRead(ticket, user, { staff = user.role === 'admin' } = {}) {
+  if (staff) {
+    db.prepare('UPDATE tickets SET unread_staff = 0 WHERE id = ?').run(ticket.id);
+  } else if (isParticipant(ticket.id, user.id)) {
     db.prepare('UPDATE tickets SET unread_user = 0 WHERE id = ?').run(ticket.id);
   }
 }
@@ -347,7 +367,7 @@ export async function notifyStaff(ticket, user) {
   const paying = isPayingUser(user.id);
   return notify.staff({
     title: `New ticket #${ticket.id}: ${ticket.subject}`,
-    url: `${config.publicUrl}/en/app#/tickets/${ticket.id}`,
+    url: `${config.publicUrl}/en/app#/admin/tickets/${ticket.id}`,
     description: [
       `**From** ${user.username}${paying ? ' · paying customer' : ''}`,
       `**Category** ${CATEGORY_LABEL[ticket.category] || ticket.category}`,
@@ -364,7 +384,7 @@ export async function notifyStaff(ticket, user) {
 export const notifyStaffReply = (ticket, user, body) =>
   notify.staff({
     title: `Reply to #${ticket.id}: ${ticket.subject}`,
-    url: `${config.publicUrl}/en/app#/tickets/${ticket.id}`,
+    url: `${config.publicUrl}/en/app#/admin/tickets/${ticket.id}`,
     description: `**${user.username}**\n${String(body).slice(0, 400)}`,
     color: notify.COLORS.warn,
   });

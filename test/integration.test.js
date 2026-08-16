@@ -448,6 +448,12 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     category: 'general',
     body: 'Close body',
   });
+  const adminOwnTicket = tickets.create(admin, {
+    subject: 'Admin needs support too',
+    category: 'general',
+    body: 'Personal support request',
+  });
+  tickets.reply(adminOwnTicket, admin, 'Internal team context', { internal: true });
   const profile = createProfile(user, billing.freePlan());
   const account = createAccount(user, { name: 'SuspendMe' });
   db.prepare(
@@ -483,6 +489,8 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.match(germanHome, /class="site-menu" id="site-menu"/);
   assert.match(germanHome, /class="hero-product"/);
   assert.match(germanHome, /Vorschau des AFKSystems-Panels/);
+  assert.doesNotMatch(germanHome, /Live-Steuerung|class="hl"/);
+  assert.doesNotMatch(englishHome, /Live control|class="hl"/);
   assert.doesNotMatch(germanHome, /\{\{[^}]+\}\}/);
 
   const appShell = await (await fetch(`${base}/en/app`)).text();
@@ -492,6 +500,7 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.ok(stylesheetPath);
   const stylesheet = await (await fetch(`${base}${stylesheetPath}`)).text();
   assert.match(stylesheet, /\.mobile-nav\s*\{/);
+  assert.match(stylesheet, /\.admin-primary-link/);
   assert.match(stylesheet, /@media \(max-width: 640px\)/);
   assert.match(stylesheet, /\.site-menu\.open/);
 
@@ -500,6 +509,35 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     assert.equal((html.match(/class="oauth-icon"/g) || []).length, 2);
     assert.doesNotMatch(html, /\{\{[^}]+\}\}/);
   }
+
+  // "Support" ist auch für Admins persönlich. Fremde Tickets und interne Teamnotizen sind nur
+  // über den separaten Admin-Bereich erreichbar; eine eigene Antwort bleibt eine Kundenantwort.
+  const adminSupport = await api(base, '/api/tickets', { token: ADMIN_TOKEN });
+  assert.equal(adminSupport.response.status, 200);
+  assert.deepEqual(adminSupport.data.tickets.map((entry) => entry.id), [adminOwnTicket.id]);
+
+  const foreignThroughSupport = await api(base, `/api/tickets/${openTicket.id}`, { token: ADMIN_TOKEN });
+  assert.equal(foreignThroughSupport.response.status, 403);
+
+  const ownThroughSupport = await api(base, `/api/tickets/${adminOwnTicket.id}`, { token: ADMIN_TOKEN });
+  assert.equal(ownThroughSupport.response.status, 200);
+  assert.equal(ownThroughSupport.data.messages.some((message) => message.internal), false);
+  assert.equal(db.prepare('SELECT unread_staff FROM tickets WHERE id = ?').get(adminOwnTicket.id).unread_staff, 1);
+
+  const throughAdminTab = await api(base, `/api/admin/tickets/${openTicket.id}`, { token: ADMIN_TOKEN });
+  assert.equal(throughAdminTab.response.status, 200);
+  assert.equal(throughAdminTab.data.ticket.id, openTicket.id);
+
+  const adminCustomerReply = await api(base, `/api/tickets/${adminOwnTicket.id}/reply`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { body: 'Reply from my personal support view' },
+  });
+  assert.equal(adminCustomerReply.response.status, 200);
+  const lastOwnMessage = db
+    .prepare('SELECT role, internal FROM ticket_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT 1')
+    .get(adminOwnTicket.id);
+  assert.deepEqual(lastOwnMessage, { role: 'user', internal: 0 });
 
   const refusedStatus = await api(base, `/api/tickets/${closingTicket.id}/status`, {
     token: USER_TOKEN,

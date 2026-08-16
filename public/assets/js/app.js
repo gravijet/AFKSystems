@@ -262,6 +262,11 @@ export const ADMIN_GROUPS = [
   },
 ];
 
+// Diese sechs Bereiche werden nicht zwischen Werkzeugen versteckt: Sie sind das tägliche
+// Admin-Menü und stehen in derselben Größe wie die normalen Panel-Seiten ganz oben.
+const ADMIN_PRIMARY_KEYS = ['tickets', 'overview', 'users', 'servers', 'settings', 'system'];
+const ADMIN_ITEMS = ADMIN_GROUPS.flatMap((group) => group.items);
+
 /**
  * Die Reiter eines Serverplatzes. `need` ist die Fähigkeit, die der Client dafür mitbringen muss –
  * fehlt sie (schlanker Client auf dem Gratis-Platz), wird der Reiter gar nicht erst angeboten.
@@ -332,6 +337,8 @@ export function drawSide() {
       )}">${icon('x')}</button>
     </div>
 
+    ${adminPrimarySection()}
+
     <nav class="nav">
       ${NAV.map(
         (item) =>
@@ -349,7 +356,7 @@ export function drawSide() {
       ${profiles || `<p class="small muted" style="padding:.35rem .65rem">${escapeHtml(tr('dash.noServers'))}</p>`}
     </div>
 
-    ${adminSection()}
+    ${adminToolsSection()}
 
     <div class="foot stack" style="gap:.6rem">
       ${
@@ -384,82 +391,76 @@ export function drawSide() {
 }
 
 const MOBILE_NAV = [NAV[0], NAV[1], NAV[2], NAV[5]];
+const ADMIN_MOBILE_NAV = [
+  { hash: '#/admin/overview', key: 'adm.overview', icon: 'chart' },
+  { hash: '#/admin/tickets', key: 'adm.tickets', icon: 'ticket', staffBadge: true },
+  { hash: '#/admin/users', key: 'adm.users', icon: 'users' },
+  { hash: '#/admin/servers', key: 'adm.servers', icon: 'server' },
+];
 
 function drawMobileNav() {
   const root = $('#mobile-nav');
   if (!root) return;
   const unread = state.stats?.tickets_unread || 0;
-  root.innerHTML = `${MOBILE_NAV.map(
-    (item) => `<a href="${item.hash}" ${routeMatches(item.hash) ? 'aria-current="page"' : ''}>
-      <span class="mobile-nav-icon">${icon(item.icon)}${
-        item.hash === '#/tickets' && unread ? `<i>${unread > 99 ? '99+' : unread}</i>` : ''
-      }</span>
+  const waiting = state.stats?.staff_tickets || 0;
+  const items = state.me?.role === 'admin' ? ADMIN_MOBILE_NAV : MOBILE_NAV;
+  root.innerHTML = `${items.map((item) => {
+    const badge = item.staffBadge ? waiting : item.hash === '#/tickets' ? unread : 0;
+    return `<a href="${item.hash}" ${routeMatches(item.hash) ? 'aria-current="page"' : ''}>
+      <span class="mobile-nav-icon">${icon(item.icon)}${badge ? `<i>${badge > 99 ? '99+' : badge}</i>` : ''}</span>
       <span>${escapeHtml(tr(item.hash === '#/accounts' ? 'dash.accountsShort' : item.key))}</span>
-    </a>`
-  ).join('')}
+    </a>`;
+  }).join('')}
     <button type="button" data-open-side>
       <span class="mobile-nav-icon">${icon('menu')}</span>
       <span>${escapeHtml(tr('nav.menu'))}</span>
     </button>`;
 }
 
-/**
- * Der Admin-Bereich in der Seitenleiste – eine eigene Kategorie mit allen Punkten, ganz unten.
- *
- * Vorher war das ein einzelner Punkt "Verwaltung", und dahinter lagen siebzehn Reiter in einer
- * Zeile, die auf jedem normalen Bildschirm umbrachen. Jetzt steht jeder Punkt da, wo man ihn
- * anklickt, und die Gruppen sagen, was zusammengehört. Aufgeklappt wird nur die Gruppe, in der
- * man gerade steht – sonst wäre die Leiste eine Liste aus siebzehn Zeilen.
- */
-function adminSection() {
+function adminLink(item, current, waiting, { primary = false } = {}) {
+  return `<a class="${current === item.key ? 'active' : ''} ${primary ? 'admin-primary-link' : ''} ${
+    item.key === 'tickets' ? 'admin-ticket-link' : ''
+  }" href="#/admin/${item.key}">${icon(item.icon)}
+    <span class="grow truncate">${escapeHtml(tr(item.label))}</span>
+    ${item.key === 'tickets' && waiting ? `<span class="count primary">${waiting}</span>` : ''}</a>`;
+}
+
+/** Die wichtigsten Admin-Seiten stehen direkt unter dem Logo und sind auch mobil direkt da. */
+function adminPrimarySection() {
   if (state.me?.role !== 'admin') return '';
   const requested = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
   const current = requested === 'bots' ? 'accounts' : requested;
-  const openGroup = ADMIN_GROUPS.find((group) => group.items.some((item) => item.key === current));
   const waiting = state.stats?.staff_tickets || 0;
+  const primary = ADMIN_PRIMARY_KEYS.map((key) => ADMIN_ITEMS.find((item) => item.key === key)).filter(Boolean);
 
-  return `<div class="stack admin-nav" style="gap:.25rem">
+  return `<section class="admin-nav admin-primary">
     <span class="label">${escapeHtml(tr('dash.admin'))}</span>
-    ${ADMIN_GROUPS.map((group) => {
-      // Offen ist die Gruppe, in der man gerade steht – und was jemand von Hand aufgeklappt hat.
-      // Die Seitenleiste wird bei jeder Zustandsmeldung eines Bots neu gezeichnet; ohne das
-      // Gedächtnis klappte eine gerade geöffnete Gruppe sekündlich wieder zu.
-      const isOpen =
-        openGroups.has(group.key) ||
-        group === openGroup ||
-        (!openGroup && !openGroups.size && group.key === 'work');
-      return `<details class="admin-group" data-group="${group.key}" ${isOpen ? 'open' : ''}>
-        <summary>${escapeHtml(tr(group.label))}</summary>
-        ${group.items
-          .map(
-            (item) =>
-              `<a class="profile-link ${current === item.key ? 'active' : ''}"
-                  href="#/admin/${item.key}">${icon(item.icon)}
-                <span class="grow truncate">${escapeHtml(tr(item.label))}</span>
-                ${
-                  item.key === 'tickets' && waiting
-                    ? `<span class="count primary">${waiting}</span>`
-                    : ''
-                }</a>`
-          )
-          .join('')}
-      </details>`;
-    }).join('')}
-  </div>`;
+    <nav class="nav">${primary.map((item) => adminLink(item, current, waiting, { primary: true })).join('')}</nav>
+  </section>`;
 }
 
-/** Welche Admin-Gruppen jemand von Hand aufgeklappt hat. Überlebt das Neuzeichnen der Leiste. */
-const openGroups = new Set();
-document.addEventListener('toggle', (event) => {
-  const details = event.target;
-  if (!details.matches?.('.admin-group')) return;
-  const key = details.dataset.group;
-  if (details.open) openGroups.add(key);
-  else openGroups.delete(key);
-}, true);
+/** Alle weiteren Werkzeuge bleiben einzelne, vollwertige Links statt kleiner Klapp-Untertabs. */
+function adminToolsSection() {
+  if (state.me?.role !== 'admin') return '';
+  const requested = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
+  const current = requested === 'bots' ? 'accounts' : requested;
+  const waiting = state.stats?.staff_tickets || 0;
+
+  return `<section class="admin-nav admin-tools">
+    ${ADMIN_GROUPS.map((group) => {
+      const items = group.items.filter((item) => !ADMIN_PRIMARY_KEYS.includes(item.key));
+      if (!items.length) return '';
+      return `<span class="label admin-group-label">${escapeHtml(tr(group.label))}</span>
+        <nav class="nav">${items.map((item) => adminLink(item, current, waiting)).join('')}</nav>`;
+    }).join('')}
+  </section>`;
+}
 
 function routeMatches(hash) {
   const name = hash.replace('#/', '') || 'overview';
+  if (name.startsWith('admin/')) {
+    return state.route.name === 'admin' && state.route.tab === name.slice('admin/'.length);
+  }
   if (name === 'servers') return state.route.name === 'servers' || state.route.name === 'server';
   return state.route.name === name;
 }

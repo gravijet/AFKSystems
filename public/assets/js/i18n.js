@@ -105,7 +105,6 @@ export const S = {
     de: 'Der erste Serverplatz kostet nichts, solange dein verknüpftes Discord-Konto bei AFKSystems ist.',
   },
   'home.preview.label': { en: 'AFKSystems panel preview', de: 'Vorschau des AFKSystems-Panels' },
-  'home.preview.panel': { en: 'Live control', de: 'Live-Steuerung' },
   'home.preview.live': { en: 'Online', de: 'Online' },
   'home.preview.server': { en: 'Your server', de: 'Dein Server' },
   'home.preview.connected': { en: 'Both accounts connected', de: 'Beide Konten verbunden' },

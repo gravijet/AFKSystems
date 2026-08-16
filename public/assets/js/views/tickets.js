@@ -8,9 +8,8 @@
 // Administrator, denn der ist hier als Kunde unterwegs. Die Liste aller Tickets steht im
 // Admin-Bereich unter "Tickets" (views/admin.js) und ist Arbeit, kein Support-Kontakt.
 //
-// Das Gespräch selbst (`one`) bedient beide: wer zum Team gehört, bekommt darin zusätzlich
-// interne Notizen, Dringlichkeit, Zuweisung und die Beteiligten. Ein zweiter, halb gleicher
-// Gesprächsbildschirm wäre die Stelle, an der die beiden mit der Zeit auseinanderlaufen.
+// Das Gespräch selbst (`one`) bedient beide Oberflächen, bekommt den Modus aber ausdrücklich von
+// der Route. Die Rolle allein reicht nicht: Ein Admin ist unter "Support" selbst Kunde.
 
 import {
   api, icon, escapeHtml, datetime, since, tr, $, $$, ok, fail, toast, formDialog, debounce,
@@ -19,12 +18,14 @@ import { state, appbar, refresh, draw, go } from '../app.js';
 
 const STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
 
-const isStaff = () => state.me?.role === 'admin';
-
 export async function render(root, route) {
-  if (route.id) return one(root, route.id);
+  if (route.id) return one(root, route.id, { staff: false, backHash: '#/tickets' });
   return list(root);
 }
+
+/** Detailansicht für den eigenständigen großen Admin-Tab. */
+export const renderStaffTicket = (root, id) =>
+  one(root, id, { staff: true, backHash: '#/admin/tickets' });
 
 // ---------------------------------------------------------------- Liste
 
@@ -148,13 +149,8 @@ async function create(categories, category = 'general') {
 
 // ---------------------------------------------------------------- Ein Ticket
 
-async function one(root, id) {
-  const staff = isStaff();
+async function one(root, id, { staff, backHash }) {
   const base = staff ? `/admin/tickets/${id}` : `/tickets/${id}`;
-  // Woher jemand kam, entscheidet, wohin "Zurück" führt: aus der Arbeitsliste des Teams zurück
-  // dorthin, aus dem eigenen Support zurück in den eigenen Support.
-  const from = new URLSearchParams(location.hash.split('?')[1] || '').get('from');
-  const backHash = from === 'admin' ? '#/admin/tickets' : '#/tickets';
   const data = await api(base);
   const ticket = data.ticket;
   const categories = state.meta?.ticket_categories || [];
@@ -418,7 +414,7 @@ async function one(root, id) {
     const now = Date.now();
     if (now - lastTyping < 2000) return;
     lastTyping = now;
-    api(`/tickets/${id}/typing`, { method: 'POST' }).catch(() => {});
+    api(staff ? `/admin/tickets/${id}/typing` : `/tickets/${id}/typing`, { method: 'POST' }).catch(() => {});
   });
 
   // ------------------------------------------------------------ Zustand und Beteiligte

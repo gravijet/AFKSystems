@@ -856,6 +856,20 @@ admin.post(
   })
 );
 
+admin.post(
+  '/tickets/:id/typing',
+  wrap((req, res) => {
+    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    bridge.emit('ticket.typing', {
+      ticket_id: ticket.id,
+      user_id: req.user.id,
+      name: req.user.username,
+      staff: true,
+    });
+    res.json({ ok: true });
+  })
+);
+
 admin.patch(
   '/tickets/:id',
   wrap((req, res) => {
@@ -1435,7 +1449,7 @@ const DETAIL_LINKS = {
   user: (value) => `#/admin/users/${value}`,
   owner: (value) => `#/admin/users/${value}`,
   profile: (value) => `#/admin/servers/${value}`,
-  ticket: (value) => `#/tickets/${value}`,
+  ticket: (value) => `#/admin/tickets/${value}`,
 };
 
 /** Flags, die als Ja/Nein gemeint sind und nicht als Zahl. */
