@@ -21,6 +21,7 @@ const roles = await import('../server/roles.js');
 const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const tickets = await import('../server/tickets.js');
+const { Tickets } = await import('../bot/handlers/tickets.js');
 const { Bot, simpleChatMacro, parseEvent, parseView } = await import('../server/supervisor.js');
 const { parseFormatting } = await import('../public/assets/js/chatlog.js');
 const { Roles } = await import('../bot/handlers/roles.js');
@@ -461,7 +462,7 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     member: true,
     checkedAt: Date.now(),
   });
-  const admin = createUser({ role: 'admin' });
+  const admin = createUser({ role: 'admin', discordId: '200000000000000004', member: true });
   createSession(user, USER_TOKEN);
   createSession(admin, ADMIN_TOKEN);
   const openTicket = tickets.create(user, {
@@ -586,6 +587,42 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     .prepare('SELECT role, internal FROM ticket_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT 1')
     .get(adminOwnTicket.id);
   assert.deepEqual(lastOwnMessage, { role: 'user', internal: 0 });
+
+  // Ein Admin kann im eigenen Ticket auch aus Discord als Kunde schreiben. Die Discord-ID muss
+  // dabei im Bridge-Ereignis stehen, damit der Bot die bereits vorhandene Nachricht nicht erneut
+  // als Embed in den gleichen Kanal zurückspiegelt.
+  const discordOwnReply = await api(base, `/api/bot/tickets/${adminOwnTicket.id}/messages`, {
+    botSecret: BOT_SECRET,
+    method: 'POST',
+    body: {
+      discord_id: '300000000000000004',
+      discord_user_id: admin.discord_id,
+      author_name: 'Admin test',
+      body: 'Reply from my own Discord ticket',
+    },
+  });
+  assert.equal(discordOwnReply.response.status, 200);
+  const discordOwnMessage = db
+    .prepare('SELECT role, discord_id FROM ticket_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT 1')
+    .get(adminOwnTicket.id);
+  assert.deepEqual(discordOwnMessage, { role: 'user', discord_id: '300000000000000004' });
+  const relayed = [];
+  await Tickets.prototype.onPanelMessage.call(
+    {
+      channelOf: async () => ({ id: 'ticket-channel' }),
+      relayToDiscord: async (_channel, entry) => relayed.push(entry),
+      reopenChannel: async () => {},
+    },
+    {
+      ticket_id: adminOwnTicket.id,
+      role: 'user',
+      author: 'Admin test',
+      body: 'Reply from my own Discord ticket',
+      created_at: Date.now(),
+      discord_id: '300000000000000004',
+    }
+  );
+  assert.equal(relayed[0].discord_id, '300000000000000004');
 
   const refusedStatus = await api(base, `/api/tickets/${closingTicket.id}/status`, {
     token: USER_TOKEN,

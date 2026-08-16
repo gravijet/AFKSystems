@@ -259,14 +259,17 @@ router.post(
         en: 'That Discord account is not linked to an AFKSystems account.',
       });
     }
-    // Nur Panel-Administratoren bearbeiten Tickets. Discord-Moderatoren schreiben im Ausnahme-
-    // fall als Kunde; die Kanalrechte lassen sie bei regulären Tickets ohnehin nicht hinein.
+    // Nur Panel-Administratoren bearbeiten Tickets. Ist ein Administrator selbst Beteiligter,
+    // schreibt er in *seinem* Ticket jedoch als Kunde – genau wie in der persönlichen
+    // Support-Ansicht im Panel. Sonst würden eigene Antworten als Team-Antwort markiert und der
+    // Status/Benachrichtigungen wären widersprüchlich.
+    const staff = user.role === 'admin' && !tickets.isParticipant(ticket.id, user.id);
     const updated = tickets.reply(ticket, user, body.body, {
       authorName: body.author_name || user.username,
       discordId: String(body.discord_id || '') || null,
-      staff: user.role === 'admin',
+      staff,
     });
-    if (user.role !== 'admin') {
+    if (!staff) {
       tickets.notifyStaffReply(updated, user, body.body);
     }
     tickets.notifyParticipants(
