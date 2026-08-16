@@ -341,7 +341,9 @@ export class Tickets {
       author: event.author,
       body: event.body,
       created_at: event.created_at,
-      discord_id: null,
+      // Eine Discord-Nachricht wurde schon als Original im Kanal geschrieben. Nur echte
+      // Panel-Nachrichten bekommen zusätzlich ein lesbares Embed in Discord.
+      discord_id: event.discord_id || null,
     });
     if (event.status && event.status !== 'closed') await this.reopenChannel(channel, event.ticket_id);
     if (event.reopened) {

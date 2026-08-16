@@ -308,6 +308,9 @@ export const reply = db.transaction((ticket, user, body, {
     internal,
     author: authorName || user.username,
     user_id: user.id,
+    // Nachrichten aus Discord stehen dort bereits als Original. Die ID reist mit dem Ereignis
+    // zurück zum Bot, damit er sie nicht noch einmal als Panel-Embed in denselben Kanal spiegelt.
+    discord_id: discordId,
     body: text,
     created_at: now,
     status: fresh.status,
