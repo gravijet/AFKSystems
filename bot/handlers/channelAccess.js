@@ -1,9 +1,8 @@
-// Sichtbarkeit für das AFKSystems-Team.
+// Sichtbarkeit für Discord-Moderatoren.
 //
-// Team bekommt Leserechte in öffentlichen und rollenbasierten Bereichen, nicht aber in
-// Administrator- oder rein personenbezogenen Kanälen. Dadurch sieht ein Discord-Moderator nach
-// der automatischen Team-Rolle überall mit, wo auch eine gewöhnliche Serverrolle mitliest, ohne
-// private Gespräche oder Tickets zu öffnen.
+// Discord-Moderatoren bekommen Leserechte in allen Kanälen, mit einer klaren Ausnahme:
+// Kanäle, die ausschließlich der Admin-Rolle zugänglich sind. Tickets fallen genau in diese
+// Ausnahme. Team bleibt unabhängig davon die automatisch vergebene gemeinsame Rolle.
 
 import { OverwriteType, PermissionFlagsBits } from 'discord.js';
 
@@ -16,42 +15,44 @@ export class ChannelAccess {
     return this.bot.config;
   }
 
-  /** Ist ein Kanal öffentlich oder für mindestens eine gewöhnliche Rolle sichtbar? */
+  /** Ist ein Kanal nicht ausschließlich für Administratoren bestimmt? */
   shouldGrant(channel, guild) {
     if (!channel?.permissionOverwrites || channel.isThread?.()) return false;
-    const team = String(this.config.roles.team || '');
+    const moderator = String(this.config.roles.mod || '');
     const admin = String(this.config.roles.admin || '');
-    if (!team) return false;
+    const team = String(this.config.roles.team || '');
+    if (!moderator) return false;
 
-    // Ein Kanal, den @everyone sehen darf, gehört immer zum moderierbaren Bereich.
+    // Öffentliche Kanäle sind nie admin-only.
     if (channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel)) return true;
 
-    // Bei privaten Kanälen zählt eine zugelassene normale Rolle. Team selbst und die Bot-Rolle
-    // sind kein Auslöser – sonst würde ein einmal gesetztes Recht sich selbst erhalten.
-    return [...channel.permissionOverwrites.cache.values()].some(
+    const allowedRoles = [...channel.permissionOverwrites.cache.values()].filter(
       (overwrite) =>
         overwrite.type === OverwriteType.Role &&
         overwrite.allow.has(PermissionFlagsBits.ViewChannel) &&
         String(overwrite.id) !== String(guild.roles.everyone.id) &&
+        String(overwrite.id) !== moderator &&
         String(overwrite.id) !== team &&
-        String(overwrite.id) !== admin &&
         String(overwrite.id) !== String(this.bot.client.user.id)
     );
+    // Nur die Admin-Rolle (plus der Bot selbst) darf hinein: Mod bleibt draußen. Gibt es keine
+    // Rollenfreigabe oder zusätzlich eine andere Rolle, erhält der Moderator dagegen Zugang.
+    return !(allowedRoles.length === 1 && String(allowedRoles[0].id) === admin);
   }
 
-  /** Team explizit hinzufügen, falls die Zugangsregel es erlaubt. */
+  /** Discord Moderator explizit hinzufügen, falls der Kanal nicht admin-only ist. */
   async sync(channel, guild = null) {
     const targetGuild = guild || (await this.bot.guild());
-    const team = this.config.roles.team;
-    if (!targetGuild || !team || String(channel?.guildId || '') !== String(targetGuild.id)) return false;
+    const moderator = this.config.roles.mod;
+    if (!targetGuild || !moderator || String(channel?.guildId || '') !== String(targetGuild.id)) return false;
     if (!this.shouldGrant(channel, targetGuild)) return false;
 
-    const current = channel.permissionOverwrites.cache.get(String(team));
+    const current = channel.permissionOverwrites.cache.get(String(moderator));
     if (current?.allow.has(PermissionFlagsBits.ViewChannel)) return false;
     await channel.permissionOverwrites.edit(
-      team,
+      moderator,
       { ViewChannel: true },
-      'AFKSystems: Team may view public and role-based channels'
+      'AFKSystems: Discord Moderator may view every non-admin channel'
     );
     return true;
   }
@@ -59,7 +60,7 @@ export class ChannelAccess {
   /** Beim Start sowie nach Konfigurationsänderungen alle vorhandenen Kanäle angleichen. */
   async syncAll() {
     const guild = await this.bot.guild();
-    if (!guild || !this.config.roles.team) return 0;
+    if (!guild || !this.config.roles.mod) return 0;
     const channels = await guild.channels.fetch();
     let changed = 0;
     for (const channel of channels.values()) {

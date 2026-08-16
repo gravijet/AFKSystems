@@ -137,7 +137,7 @@ Stündlich und bei jeder Änderung:
 * laufender bezahlter Tarif → **Premium** bzw. **Ultra** (Ultra erhält zusätzlich immer Premium; eine Tarifrolle kommt bei Bedarf dazu)
 * im Panel gesetztes Kennzeichen → **Partner** beziehungsweise **VIP**
 * **Admin** → Linked Role Administrator, **Discord-Mod** → Linked Role Discord Moderator; beide erhalten zusätzlich automatisch **Team**
-* **Team** darf alle öffentlichen und rollenbasierten Kanäle sehen. Rein für Admins oder einzelne Nutzer geschützte Kanäle bleiben ausgeschlossen.
+* **Discord Moderator** darf alle Kanäle sehen, außer Kanäle, die ausschließlich für Administratoren bestimmt sind. Team bleibt die automatisch vergebene gemeinsame Rolle.
 
 Bei jedem Beitritt oder Austritt und beim stündlichen Vollabgleich meldet der Bot außerdem die
 Mitgliedschaft an das Panel. Ohne Mitgliedschaft im Pflichtserver wird jeder Gratis-Platz sofort
