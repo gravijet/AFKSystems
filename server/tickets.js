@@ -267,12 +267,16 @@ export const reply = db.transaction((ticket, user, body, {
   internal = false,
   authorName = null,
   discordId = null,
-  staff: staffOverride = null,
+  staff = null,
 } = {}) => {
   const text = requireString(body, 'Nachricht', { max: 8000 });
-  // Ein Administrator kann selbst Kunde eines Tickets sein. In seiner persönlichen Support-
-  // Ansicht schreibt er deshalb als Kunde; nur die Admin-Route setzt die Teamrolle voraus.
-  const staff = staffOverride ?? (user.role === 'admin' || Boolean(user.discord_moderator));
+  // Der Absender-Modus ist immer eine Entscheidung der aufrufenden Oberfläche – nie eine
+  // Nebenwirkung der Konto-Rolle. Ein Admin ist unter „Meine Tickets“ Kunde, unter
+  // „Administration → Alle Tickets“ Support.
+  if (typeof staff !== 'boolean') {
+    throw new TypeError('Ticket replies require an explicit customer or staff mode.');
+  }
+  const isStaff = staff;
   const now = Date.now();
   const reopened = ticket.status === 'closed' && !internal;
 
@@ -281,11 +285,11 @@ export const reply = db.transaction((ticket, user, body, {
       `INSERT INTO ticket_messages (ticket_id, user_id, role, body, internal, author_name, discord_id, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(ticket.id, user.id, staff ? 'staff' : 'user', text, internal ? 1 : 0, authorName, discordId, now);
+    .run(ticket.id, user.id, isStaff ? 'staff' : 'user', text, internal ? 1 : 0, authorName, discordId, now);
 
   if (internal) {
     db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(now, ticket.id);
-  } else if (staff) {
+  } else if (isStaff) {
     db.prepare(
       "UPDATE tickets SET status = 'answered', unread_user = 1, unread_staff = 0, closed_at = NULL, updated_at = ? WHERE id = ?"
     ).run(now, ticket.id);
@@ -304,7 +308,7 @@ export const reply = db.transaction((ticket, user, body, {
   bridge.emit('ticket.message', {
     ticket_id: ticket.id,
     message_id: info.lastInsertRowid,
-    role: staff ? 'staff' : 'user',
+    role: isStaff ? 'staff' : 'user',
     internal,
     author: authorName || user.username,
     user_id: user.id,
