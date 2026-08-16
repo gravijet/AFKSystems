@@ -4,10 +4,13 @@
 // wenn das Gegenüber schreibt, und der Zustand steht dort, wo man ihn ändert – nicht als
 // Auswahlfeld in der Ecke.
 //
-// Dieselbe Ansicht bedient Kunden und Team. Wer Administrator ist, bekommt zusätzlich die Liste
-// aller Tickets, interne Notizen und die Knöpfe, die zum Bearbeiten gehören; für alle anderen ist
-// das schlicht nicht da. Ein zweiter, halb gleicher Bildschirm im Admin-Bereich wäre die Stelle,
-// an der die beiden mit der Zeit auseinanderlaufen.
+// **Diese Ansicht gehört dem Kunden.** Sie zeigt seine Tickets und sonst keine – auch einem
+// Administrator, denn der ist hier als Kunde unterwegs. Die Liste aller Tickets steht im
+// Admin-Bereich unter "Tickets" (views/admin.js) und ist Arbeit, kein Support-Kontakt.
+//
+// Das Gespräch selbst (`one`) bedient beide: wer zum Team gehört, bekommt darin zusätzlich
+// interne Notizen, Dringlichkeit, Zuweisung und die Beteiligten. Ein zweiter, halb gleicher
+// Gesprächsbildschirm wäre die Stelle, an der die beiden mit der Zeit auseinanderlaufen.
 
 import {
   api, icon, escapeHtml, datetime, since, tr, $, $$, ok, fail, toast, formDialog, debounce,
@@ -15,7 +18,6 @@ import {
 import { state, appbar, refresh, draw, go } from '../app.js';
 
 const STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
-const PRIORITY_PILL = { urgent: 'missing', high: 'primary', normal: '', low: '' };
 
 const isStaff = () => state.me?.role === 'admin';
 
@@ -28,63 +30,37 @@ export async function render(root, route) {
 
 async function list(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
-  const staffView = isStaff() && params.get('view') !== 'mine';
-  const status = params.get('status') || 'open';
-  const search = params.get('q') || '';
-
-  const data = staffView
-    ? await api(`/admin/tickets?status=${status}&q=${encodeURIComponent(search)}`)
-    : await api('/tickets');
+  const data = await api('/tickets');
   const categories = data.categories || state.meta?.ticket_categories || [];
+  const invite = state.meta?.discord_invite || '';
 
   root.innerHTML = `
     ${appbar(
       tr('tk.title'),
-      `${
-        isStaff()
-          ? `<button class="btn btn-sm" id="new-for">${icon('users')} ${escapeHtml(tr('tk.newFor'))}</button>`
-          : ''
-      }
-       <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('tk.new'))}</button>`,
+      `<button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('tk.new'))}</button>`,
       tr('tk.sub')
     )}
 
     ${
       state.meta?.support_hours
-        ? `<div class="note" style="margin-bottom:1.25rem">${icon('clock')}<div>${escapeHtml(
+        ? `<div class="note" style="margin-bottom:1rem">${icon('clock')}<div>${escapeHtml(
             tr('tk.hours', { hours: state.meta.support_hours })
           )}</div></div>`
         : ''
     }
 
+    <!-- Nicht jede Frage braucht ein Ticket. Wer im Discord schneller eine Antwort bekommt, soll
+         wissen, dass es ihn gibt – deshalb steht der Link hier und nicht nur im Fußbereich. -->
     ${
-      isStaff()
-        ? `<nav class="tabs" style="margin-bottom:1rem">
-            <a class="${staffView ? 'active' : ''}" href="#/tickets?view=staff&status=${status}">${escapeHtml(
-              tr('tk.staffTab')
-            )}</a>
-            <a class="${staffView ? '' : 'active'}" href="#/tickets?view=mine">${escapeHtml(tr('tk.mineTab'))}</a>
-          </nav>`
-        : ''
-    }
-
-    ${
-      staffView
-        ? `<div class="row wrap" style="margin-bottom:1rem">
-            <select id="status" class="mini" style="max-width:12rem">
-              <option value="all" ${status === 'all' ? 'selected' : ''}>${escapeHtml(tr('common.all'))}</option>
-              ${(data.statuses || [])
-                .map(
-                  (entry) =>
-                    `<option value="${entry}" ${status === entry ? 'selected' : ''}>${escapeHtml(
-                      tr(`tk.status.${entry}`)
-                    )}</option>`
-                )
-                .join('')}
-            </select>
-            <input id="q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
-              value="${escapeHtml(search)}" style="max-width:16rem">
-          </div>`
+      invite
+        ? `<a class="ticket-discord" href="${escapeHtml(invite)}" target="_blank" rel="noopener">
+            <span class="ticket-discord-icon">${icon('discord')}</span>
+            <span class="grow">
+              <span class="strong">${escapeHtml(tr('tk.discordTitle'))}</span>
+              <span class="small muted">${escapeHtml(tr('tk.discordText'))}</span>
+            </span>
+            <span class="btn btn-sm">${escapeHtml(tr('discord.join'))}</span>
+          </a>`
         : ''
     }
 
@@ -92,7 +68,7 @@ async function list(root) {
       <div class="body" style="padding:0">
         ${
           data.tickets.length
-            ? `<ul class="ticket-list">${data.tickets.map((ticket) => row(ticket, categories, staffView)).join('')}</ul>`
+            ? `<ul class="ticket-list">${data.tickets.map((ticket) => row(ticket, categories)).join('')}</ul>`
             : `<div class="empty" style="box-shadow:none;background:transparent">
                 <h3>${escapeHtml(tr('tk.none'))}</h3>
                 <p>${escapeHtml(tr('tk.sub'))}</p>
@@ -106,27 +82,18 @@ async function list(root) {
     node.addEventListener('click', () => go(`/tickets/${node.dataset.open}`))
   );
   for (const id of ['#new', '#new-2']) $(id)?.addEventListener('click', () => create(categories));
-  $('#new-for')?.addEventListener('click', () => createFor(categories));
-
-  const reload = debounce(() => {
-    go(`/tickets?view=staff&status=${$('#status').value}&q=${encodeURIComponent($('#q').value.trim())}`);
-    draw();
-  }, 300);
-  $('#status')?.addEventListener('change', reload);
-  $('#q')?.addEventListener('input', reload);
 
   const wanted = params.get('new');
   if (wanted) create(categories, wanted);
 
-  // Kommt ein Ticket herein oder eine Antwort, ist die Liste sofort veraltet.
+  // Kommt eine Antwort herein, ist die Liste sofort veraltet.
   state.onLive = debounce((event) => {
     if (event.type === 'ticket' && state.route.name === 'tickets' && !state.route.id) draw();
   }, 500);
 }
 
-function row(ticket, categories, staffView) {
-  const unread = staffView ? ticket.unread_staff : ticket.unread_user;
-  return `<li class="ticket-row ${unread ? 'is-unread' : ''}" data-open="${ticket.id}">
+function row(ticket, categories) {
+  return `<li class="ticket-row ${ticket.unread_user ? 'is-unread' : ''}" data-open="${ticket.id}">
     <span class="ticket-dot ${ticket.status}"></span>
     <div class="grow" style="min-width:0">
       <div class="row" style="gap:.5rem">
@@ -137,18 +104,9 @@ function row(ticket, categories, staffView) {
       </div>
       <div class="small muted truncate">
         ${escapeHtml(categories.find((entry) => entry.key === ticket.category)?.label || ticket.category)}
-        ${staffView && ticket.username ? ` · ${escapeHtml(ticket.username)}` : ''}
-        ${staffView && ticket.assigned_name ? ` · ${escapeHtml(ticket.assigned_name)}` : ''}
       </div>
     </div>
     <div class="row" style="gap:.4rem">
-      ${
-        ticket.priority && ticket.priority !== 'normal'
-          ? `<span class="pill ${PRIORITY_PILL[ticket.priority] || ''}">${escapeHtml(
-              tr(`tk.priority.${ticket.priority}`)
-            )}</span>`
-          : ''
-      }
       <span class="pill ${STATUS_PILL[ticket.status] || ''}">${escapeHtml(tr(`tk.status.${ticket.status}`))}</span>
       <span class="small muted mono nowrap">${since(ticket.updated_at)}</span>
     </div>
@@ -158,6 +116,10 @@ function row(ticket, categories, staffView) {
 // ---------------------------------------------------------------- Anlegen
 
 async function create(categories, category = 'general') {
+  // Keine Dringlichkeit zur Auswahl. Wer ein Ticket aufmacht, hält es für dringend – die Frage
+  // beantwortet also jeder gleich, und beantwortet wird ohnehin nach Reihenfolge und Tarif.
+  // Die Nachricht ist kein Pflichtfeld: der Betreff sagt schon, worum es geht, und ein Ticket,
+  // das beim Abschicken verschwindet, weil ein Feld leer war, ist schlimmer als eines ohne Text.
   const answer = await formDialog(
     tr('tk.new'),
     [
@@ -169,23 +131,7 @@ async function create(categories, category = 'general') {
         value: category,
         options: categories.map((entry) => ({ value: entry.key, label: entry.label })),
       },
-      ...(state.me?.paying
-        ? [
-            {
-              key: 'priority',
-              label: tr('tk.priority'),
-              type: 'select',
-              value: 'normal',
-              // "urgent" vergibt nur das Team – es hier anzubieten hieße, einen Knopf zu zeigen,
-              // der beim Speichern still auf "normal" zurückfällt.
-              options: ['low', 'normal', 'high'].map((value) => ({
-                value,
-                label: tr(`tk.priority.${value}`),
-              })),
-            },
-          ]
-        : []),
-      { key: 'body', label: tr('tk.message'), type: 'textarea', required: true },
+      { key: 'body', label: `${tr('tk.message')} (${tr('common.optional')})`, type: 'textarea' },
     ],
     { submit: tr('tk.send') }
   );
@@ -200,56 +146,15 @@ async function create(categories, category = 'general') {
   }
 }
 
-/** Ein Ticket für einen Kunden – etwa nach einem Gespräch, das woanders stattgefunden hat. */
-async function createFor(categories) {
-  const { users } = await api('/admin/users?filter=all');
-  const answer = await formDialog(
-    tr('tk.newFor'),
-    [
-      {
-        key: 'user_id',
-        label: tr('adm.users'),
-        type: 'select',
-        value: String(users[0]?.id || ''),
-        options: users.map((user) => ({ value: String(user.id), label: `${user.username} · ${user.email}` })),
-      },
-      { key: 'subject', label: tr('tk.subject'), required: true },
-      {
-        key: 'category',
-        label: tr('tk.category'),
-        type: 'select',
-        value: 'general',
-        options: categories.map((entry) => ({ value: entry.key, label: entry.label })),
-      },
-      {
-        key: 'priority',
-        label: tr('tk.priority'),
-        type: 'select',
-        value: 'normal',
-        options: ['low', 'normal', 'high', 'urgent'].map((value) => ({
-          value,
-          label: tr(`tk.priority.${value}`),
-        })),
-      },
-      { key: 'body', label: tr('tk.message'), type: 'textarea', required: true },
-    ],
-    { submit: tr('tk.send') }
-  );
-  if (!answer) return;
-  try {
-    const result = await api(`/admin/users/${answer.user_id}/ticket`, { method: 'POST', body: answer });
-    ok(tr('tk.created'));
-    go(`/tickets/${result.ticket.id}`);
-  } catch (error) {
-    fail(error);
-  }
-}
-
 // ---------------------------------------------------------------- Ein Ticket
 
 async function one(root, id) {
   const staff = isStaff();
   const base = staff ? `/admin/tickets/${id}` : `/tickets/${id}`;
+  // Woher jemand kam, entscheidet, wohin "Zurück" führt: aus der Arbeitsliste des Teams zurück
+  // dorthin, aus dem eigenen Support zurück in den eigenen Support.
+  const from = new URLSearchParams(location.hash.split('?')[1] || '').get('from');
+  const backHash = from === 'admin' ? '#/admin/tickets' : '#/tickets';
   const data = await api(base);
   const ticket = data.ticket;
   const categories = state.meta?.ticket_categories || [];
@@ -259,7 +164,7 @@ async function one(root, id) {
   root.innerHTML = `
     ${appbar(
       ticket.subject,
-      `<a class="btn btn-sm" href="#/tickets${staff ? '?view=staff' : ''}">${escapeHtml(tr('common.back'))}</a>`,
+      `<a class="btn btn-sm" href="${backHash}">${escapeHtml(tr('common.back'))}</a>`,
       `#${ticket.id} · ${escapeHtml(
         categories.find((entry) => entry.key === ticket.category)?.label || ticket.category
       )} · ${datetime(ticket.created_at)}`
@@ -399,7 +304,11 @@ async function one(root, id) {
 
   const paint = () => {
     const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
-    thread.innerHTML = messages.map(bubble).join('');
+    // Ein Ticket darf ohne Text abgeschickt werden – dann steht hier zunächst nur der Betreff,
+    // und der Kasten sagt das, statt leer zu bleiben wie ein Fehler.
+    thread.innerHTML =
+      messages.map(bubble).join('') ||
+      `<div class="chat-system"><span>${escapeHtml(tr('tk.onlySubject'))}</span></div>`;
     if (atBottom) thread.scrollTop = thread.scrollHeight;
   };
 

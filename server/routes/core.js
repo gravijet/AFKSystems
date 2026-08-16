@@ -84,6 +84,12 @@ export function planView(plan, lang = 'en') {
     slug: plan.slug,
     name: lang === 'de' ? plan.name_de : plan.name_en,
     blurb: lang === 'de' ? plan.blurb_de : plan.blurb_en,
+    // Der Wortlaut der Merkmalsliste, wenn der Betreiber einen hinterlegt hat – eine Zeile je
+    // Punkt. Sonst leer, und das Panel baut die Liste wie bisher aus den Zahlen.
+    features: String((lang === 'de' ? plan.features_de : plan.features_en) || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean),
     price_credits: plan.price_credits,
     price_euro: (plan.price_credits / 100).toFixed(2),
     free_slot: Boolean(plan.free_slot),

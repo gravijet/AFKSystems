@@ -44,12 +44,29 @@ const sameOrError = (a, b) => {
 
 // ---------------------------------------------------------------- Anmelden
 
+/**
+ * Die Knöpfe für Discord und Google einblenden.
+ *
+ * Welche Anbieter es gibt, steht in `meta.oauth` – je Anbieter `available` (eingerichtet) und
+ * `login` (freigeschaltet). Vorher fragte diese Datei `meta.discord`, das es dort nie gab: der
+ * Knopf blieb deshalb immer versteckt, auch wenn Discord vollständig eingerichtet war.
+ *
+ * Derselbe Weg dient dem Anmelden und dem Registrieren: gibt es zu der Identität noch kein Konto,
+ * legt der Server eines an (siehe oauth.js).
+ */
+function showOauth(meta) {
+  const providers = meta.oauth || {};
+  let any = false;
+  for (const key of ['discord', 'google']) {
+    if (!providers[key]?.login) continue;
+    $(`#oauth-${key}`)?.classList.remove('hide');
+    any = true;
+  }
+  if (any) $('#oauth')?.classList.remove('hide');
+}
+
 if (page === 'login') {
-  api('/meta')
-    .then((meta) => {
-      if (meta.discord?.login) $('#discord')?.classList.remove('hide');
-    })
-    .catch(() => {});
+  api('/meta').then(showOauth).catch(() => {});
 
   onSubmit(async () => {
     const result = await api('/auth/login', {
@@ -66,9 +83,12 @@ if (page === 'login') {
 if (page === 'register') {
   api('/meta')
     .then((meta) => {
-      if (meta.registration_open) return;
-      $('#closed')?.classList.remove('hide');
-      form?.classList.add('hide');
+      if (!meta.registration_open) {
+        $('#closed')?.classList.remove('hide');
+        form?.classList.add('hide');
+        return; // ist zu, dann auch über Discord und Google
+      }
+      showOauth(meta);
     })
     .catch(() => {});
 

@@ -12,6 +12,19 @@
 
           <p id="closed" class="note warn hide">{{auth.register.closed}}</p>
 
+          <!-- Ein Konto entsteht auch über Discord oder Google: die E-Mail-Adresse kommt von
+               dort, ein Passwort braucht es dann gar nicht. Steht oben, weil es der kürzere Weg
+               ist – wer lieber tippt, findet das Formular direkt darunter. -->
+          <div id="oauth" class="hide">
+            <div class="stack" style="gap:.5rem">
+              <a class="btn btn-block hide" id="oauth-discord"
+                 href="/api/auth/discord/start?mode=login">{{auth.register.discord}}</a>
+              <a class="btn btn-block hide" id="oauth-google"
+                 href="/api/auth/google/start?mode=login">{{auth.register.google}}</a>
+            </div>
+            <div class="or"><span>{{auth.or}}</span></div>
+          </div>
+
           <form id="form" class="stack" novalidate>
             <div class="field">
               <label for="email">{{auth.register.email}}</label>

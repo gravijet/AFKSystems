@@ -81,7 +81,10 @@ function featuresHtml(lang) {
     groups.get(feature.group).rows.push(feature);
   }
   const tag = escape(t('features.premium', lang));
-  const ultraTag = escape(t('features.ultra', lang));
+  const tags = {
+    ultra: escape(t('features.ultra', lang)),
+    soon: escape(t('features.soon', lang)),
+  };
 
   return [...groups.values()]
     .map(
@@ -95,8 +98,8 @@ function featuresHtml(lang) {
             .map(
               (row) => `<li class="spec-row">
                 <p class="spec-name">${escape(row.title)}${
-                  row.tag === 'ultra'
-                    ? `<span class="spec-tag">${ultraTag}</span>`
+                  tags[row.tag]
+                    ? `<span class="spec-tag">${tags[row.tag]}</span>`
                     : row.premium
                       ? `<span class="spec-tag">${tag}</span>`
                       : ''
@@ -114,19 +117,29 @@ function featuresHtml(lang) {
 /**
  * Was ein Tarif kann, als Liste.
  *
- * Jede Zeile ist etwas, das dieser Tarif hat und der darunter nicht – oder eine Zahl, die sich
- * unterscheidet. Merkmale, die überall gleich sind, stehen auf /features und nicht dreimal
- * nebeneinander in den Preiskästen.
+ * Hat der Betreiber im Admin-Bereich einen eigenen Text hinterlegt (`features_de`/`features_en`,
+ * eine Zeile je Punkt), steht **genau der** hier. Sonst baut die Liste sich aus den Zahlen des
+ * Tarifs zusammen: jede Zeile etwas, das dieser Tarif hat und der darunter nicht. Merkmale, die
+ * überall gleich sind, stehen auf /features und nicht dreimal nebeneinander in den Preiskästen.
  */
 function planLines(plan, lang, addonKeys) {
+  const own = String((lang === 'de' ? plan.features_de : plan.features_en) || '').trim();
+  if (own) {
+    return own
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+  }
   const lines = [];
   lines.push(
     `${plan.max_accounts} ${t(plan.max_accounts === 1 ? 'pricing.bot' : 'pricing.bots', lang)}`
   );
   lines.push(t(plan.premium ? 'pricing.premiumClient' : 'pricing.slimClient', lang));
-  if (plan.board || plan.menus) lines.push(t('pricing.boardMenus', lang));
-  else if (plan.addons && addonKeys.has('board')) {
-    lines.push(`${t('pricing.boardMenus', lang)} — ${t('pricing.addonHint', lang)}`);
+  if (plan.board) lines.push(t('pricing.board', lang));
+  // Menüs sind der Zusatz, der Premium von Ultra trennt: dort enthalten, hier dazubuchbar.
+  if (plan.menus) lines.push(t('pricing.menus', lang));
+  else if (plan.addons && addonKeys.has('menus')) {
+    lines.push(`${t('pricing.menus', lang)} — ${t('pricing.addonHint', lang)}`);
   }
   lines.push(`${number(plan.chat_limit, lang)} ${t('pricing.chatHistory', lang)}`);
   lines.push(t('pricing.macros', lang, { n: number(plan.max_macros, lang) }));
@@ -257,124 +270,6 @@ function discordVars(lang) {
   };
 }
 
-/**
- * Die Vorschau auf der Startseite.
- *
- * Kein Bildschirmfoto, sondern dieselben Bausteine wie im Panel – dieselbe Chatfläche, dieselbe
- * Anzeigetafel, dieselben Farben. Ein Foto wäre nach der nächsten Änderung falsch; das hier ist
- * es nie, weil es aus demselben CSS gebaut ist.
- *
- * Die Zeilen sind erfunden und sagen das auch. Was hier steht, ist genau das, was ein Kunde
- * danach sieht – nicht mehr.
- */
-function demoHtml(lang) {
-  const de = lang === 'de';
-  const chat = de
-    ? [
-        ['20:14:02', 'chat', '§7[§aSurvival§7] §fSteve§7: §fbin gleich zurück'],
-        ['20:14:09', 'chat', '§e[+] §fAlex ist beigetreten'],
-        ['20:14:31', 'sent', '/afk'],
-        ['20:15:00', 'chat', '§7Du bist jetzt im AFK-Modus.'],
-        ['20:18:44', 'status', 'Unterserver gewechselt – Bot ist mitgegangen.'],
-      ]
-    : [
-        ['20:14:02', 'chat', '§7[§aSurvival§7] §fSteve§7: §fbrb'],
-        ['20:14:09', 'chat', '§e[+] §fAlex joined the game'],
-        ['20:14:31', 'sent', '/afk'],
-        ['20:15:00', 'chat', '§7You are now AFK.'],
-        ['20:18:44', 'status', 'Sub-server changed – the bot followed.'],
-      ];
-
-  const board = [
-    ['§b§lSURVIVAL', null],
-    ['§7Rang: §6VIP', 8],
-    ['§7Guthaben: §a12.480', 7],
-    ['§7Spielzeit: §f42 h', 6],
-    ['§7', 5],
-    ['§7Online: §f138', 4],
-  ];
-
-  const sentTag = de ? 'Gesendet' : 'Sent';
-
-  return `<div class="demo">
-    <div class="demo-bar">
-      <span class="dot live" style="color:#00bb7f"></span>
-      <span class="demo-name">anticheat-test.com</span>
-      <span class="demo-tag">MC 26.1</span>
-      <span class="demo-tag">2/5</span>
-    </div>
-    <div class="demo-body">
-      <div class="console">
-        ${chat
-          .map(
-            ([time, kind, text]) => `<div class="line ${kind}">
-              <span class="t">${time}</span>
-              <span class="msg">${
-                kind === 'sent' ? `<span class="tag">${escape(sentTag)}:</span> ` : ''
-              }${mcHtml(text)}</span>
-            </div>`
-          )
-          .join('')}
-      </div>
-      <article class="board">
-        <header>${mcHtml(board[0][0])}</header>
-        <ol class="board-rows">
-          ${board
-            .slice(1)
-            .map(
-              ([text, score]) => `<li><span class="board-text">${mcHtml(text)}</span>
-                <span class="board-score">${score}</span></li>`
-            )
-            .join('')}
-        </ol>
-      </article>
-    </div>
-  </div>`;
-}
-
-/**
- * Minecraft-Farbcodes zu HTML – für die Vorschau.
- *
- * Im Browser macht das ui.js; hier steht die kurze Fassung, weil der Server nur diese eine Stelle
- * hat und ui.js nichts ist, was Node lädt.
- */
-const MC_COLORS = {
-  0: '#000000', 1: '#0000aa', 2: '#00aa00', 3: '#00aaaa', 4: '#aa0000', 5: '#aa00aa',
-  6: '#ffaa00', 7: '#aaaaaa', 8: '#555555', 9: '#5555ff', a: '#55ff55', b: '#55ffff',
-  c: '#ff5555', d: '#ff55ff', e: '#ffff55', f: '#ffffff',
-};
-
-function mcHtml(raw) {
-  const out = [];
-  let color = null;
-  let bold = false;
-  let buffer = '';
-  const flush = () => {
-    if (!buffer) return;
-    const style = [color ? `color:${color}` : '', bold ? 'font-weight:700' : ''].filter(Boolean).join(';');
-    out.push(style ? `<span style="${style}">${escape(buffer)}</span>` : escape(buffer));
-    buffer = '';
-  };
-  for (let i = 0; i < raw.length; i++) {
-    if (raw[i] !== '§' || i + 1 >= raw.length) {
-      buffer += raw[i];
-      continue;
-    }
-    const code = raw[++i].toLowerCase();
-    flush();
-    if (code === 'l') bold = true;
-    else if (code === 'r') {
-      color = null;
-      bold = false;
-    } else if (MC_COLORS[code]) {
-      color = MC_COLORS[code];
-      bold = false;
-    }
-  }
-  flush();
-  return out.join('');
-}
-
 /** Der Hinweis zu Server-Regeln und Banns – er steht auf mehreren Seiten, also an einer Stelle. */
 const rulesNote = (lang) => `<div class="rules-note">
   ${ICON_SVG(ICONS.alert)}
@@ -392,7 +287,6 @@ export function homeVars(lang) {
     ...discordVars(lang),
     freeSlots: String(billing.freeSlots()),
     rulesNote: rulesNote(lang),
-    demoHtml: demoHtml(lang),
   };
 }
 

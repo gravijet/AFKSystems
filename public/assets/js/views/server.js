@@ -8,7 +8,7 @@ import {
   api, icon, escapeHtml, since, clock, credits, euro, date, stateBadge, mcText, tr, $, $$,
   ok, fail, toast, confirmDialog, formDialog, debounce,
 } from '../ui.js';
-import { mergeLines } from '../chatlog.js';
+import { mergeLines, stripFormatting } from '../chatlog.js';
 import { state, appbar, refresh, draw, profileById, tabsFor, linesOf } from '../app.js';
 
 export async function render(root, route) {
@@ -80,7 +80,7 @@ export async function newProfile() {
       {
         key: 'address',
         label: tr('srv.address'),
-        placeholder: 'play.example.net',
+        placeholder: 'gravijet.net',
         hint: tr('srv.addressHint'),
         required: true,
       },
@@ -221,10 +221,6 @@ async function tabConnect(root, profile) {
         <header>
           <h3>${escapeHtml(tr('tab.chat'))}</h3>
           <div class="row">
-            <select id="filter" class="mini" aria-label="${escapeHtml(tr('ch.filter'))}">
-              <option value="all">${escapeHtml(tr('ch.all'))}</option>
-              <option value="chat">${escapeHtml(tr('ch.chatOnly'))}</option>
-            </select>
             <label class="check small" title="${escapeHtml(tr('ch.autoscrollHint'))}">
               <input type="checkbox" id="autoscroll" checked> ${escapeHtml(tr('ch.autoscroll'))}</label>
             <button class="btn btn-ghost btn-sm" id="clear" title="${escapeHtml(tr('ch.clear'))}">${icon('trash')}</button>
@@ -304,20 +300,6 @@ async function tabConnect(root, profile) {
       })
     );
 
-    $$('[data-note]', box).forEach((button) =>
-      button.addEventListener('click', async () => {
-        const accountId = Number(button.dataset.note);
-        const member = members.find((entry) => entry.account_id === accountId);
-        const data = await formDialog(member.name, [
-          { key: 'note', label: tr('common.edit'), value: member.note || '' },
-        ]);
-        if (!data) return;
-        await api(`/profiles/${profile.id}/accounts/${accountId}`, { method: 'PATCH', body: data });
-        await refresh({ accounts: false });
-        draw();
-      })
-    );
-
     $$('[data-detach]', box).forEach((button) =>
       button.addEventListener('click', async () => {
         const accountId = Number(button.dataset.detach);
@@ -349,13 +331,10 @@ async function tabConnect(root, profile) {
           ${stateBadge(bot.state || 'offline', bot.detail || bot.last_error || '')}
           ${running && bot.since ? `<span class="mono">· ${since(bot.since)}</span>` : ''}
         </div>
-        ${member.note ? `<div class="small muted truncate">${escapeHtml(member.note)}</div>` : ''}
       </div>
       <div class="row" style="gap:.25rem">
         <button class="btn btn-sm ${running ? '' : 'btn-primary'}" data-toggle="${member.account_id}"
           ${running || profile.active ? '' : 'disabled'}>${escapeHtml(running ? tr('ov.stop') : tr('ov.start'))}</button>
-        <button class="btn btn-ghost btn-sm" data-note="${member.account_id}"
-          title="${escapeHtml(tr('common.edit'))}">${icon('settings')}</button>
         <button class="btn btn-ghost btn-sm btn-danger" data-detach="${member.account_id}"
           title="${escapeHtml(tr('srv.remove'))}">${icon('x')}</button>
       </div>
@@ -382,7 +361,6 @@ async function tabConnect(root, profile) {
 
   const box = $('#chat');
   const autoscroll = $('#autoscroll');
-  const filter = $('#filter');
   const receiverKey = `afk-chat-recv-${profile.id}`;
   let receivers = JSON.parse(localStorage.getItem(receiverKey) || '[]');
   if (!receivers.length) receivers = members.map((member) => member.account_id);
@@ -398,7 +376,14 @@ async function tabConnect(root, profile) {
       }
     }
     // Drei Bots hören denselben Chat – ohne Zusammenlegen stünde jede Zeile dreimal da.
-    const lines = mergeLines(raw).filter((entry) => filter.value !== 'chat' || entry.type === 'chat');
+    //
+    // Was hier steht, ist der Chat des Servers und was der Bot selbst hineingeschrieben hat –
+    // sonst nichts. Zustandsmeldungen des Clients ("Gehe 3.0 Blöcke vorwärts") und örtliche
+    // Befehle stehen nicht drin: sie sind kein Chat, und dazwischen war der Chat nicht zu lesen.
+    const lines = mergeLines(raw).filter(
+      (entry) =>
+        entry.type === 'chat' || (entry.type === 'sent' && !String(entry.text || '').startsWith(':'))
+    );
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
 
     box.innerHTML = lines.slice(-500).map(chatLine).join('');
@@ -420,9 +405,7 @@ async function tabConnect(root, profile) {
         ? `<span class="tag">${escapeHtml(tr('ch.sent'))}${
             many && entry.account_id ? ` · ${escapeHtml(nameOf(entry.account_id))}` : ''
           }:</span> `
-        : entry.type !== 'chat' && many && entry.account_id
-          ? `<span class="who">${escapeHtml(nameOf(entry.account_id))}</span>`
-          : '';
+        : '';
     return `<div class="line ${entry.type}"><span class="t">${clock(entry.t)}</span>${heardBy}<span class="msg">${prefix}${mcText(
       entry.text
     )}</span></div>`;
@@ -458,7 +441,6 @@ async function tabConnect(root, profile) {
       paintChat();
     })
   );
-  filter.addEventListener('change', paintChat);
   $('#clear').addEventListener('click', () => {
     for (const member of members) state.lines.set(`${profile.id}:${member.account_id}`, []);
     paintChat();
@@ -520,7 +502,6 @@ async function tabConnect(root, profile) {
           value: free[0].id,
           options: free.map((account) => ({ value: account.id, label: account.name })),
         },
-        { key: 'note', label: `${tr('common.edit')} (${tr('common.optional')})`, value: '' },
       ],
       { submit: tr('common.create') }
     );
@@ -528,7 +509,7 @@ async function tabConnect(root, profile) {
     try {
       await api(`/profiles/${profile.id}/accounts`, {
         method: 'POST',
-        body: { account_id: Number(data.account_id), note: data.note },
+        body: { account_id: Number(data.account_id) },
       });
       await refresh({ accounts: false });
       draw();
@@ -795,9 +776,7 @@ async function tabMovement(root, profile) {
             </section>`
           : ''
       }
-    </div>
-
-    ${logPanel()}`;
+    </div>`;
 
   const run = commandRunner(profile);
 
@@ -816,15 +795,14 @@ async function tabMovement(root, profile) {
     })
   );
   $('#hand')?.addEventListener('click', () => run('hand', $('#slot').value));
-
-  bindLog(profile, members);
 }
 
-// ---------------------------------------------------------------- Anzeigetafel und Spielerliste
+// ---------------------------------------------------------------- Anzeigetafel
 //
 // Die Seitenleiste eines Servers ist kein Chat und gehört auch nicht in eine Chatfläche: dreizehn
 // Zeilen mit Punktzahlen hintereinander sind dort nicht zu lesen. Hier steht sie so, wie sie im
-// Spiel aussieht – mit Farben, mit den Punktzahlen rechts, je Bot eine Tafel.
+// Spiel aussieht – der Titel oben in der Mitte, die Zeilen darunter in ihren Farben, die Punktzahl
+// rechts in Rot.
 
 async function tabBoard(root, profile) {
   const members = profile.accounts;
@@ -834,22 +812,19 @@ async function tabBoard(root, profile) {
     ${accountPicker(members)}
     <div class="row wrap" style="margin-bottom:1rem">
       <button class="btn btn-primary btn-sm" id="get-board">${icon('refresh')} ${escapeHtml(tr('vw.board'))}</button>
-      <button class="btn btn-sm" id="get-tab">${icon('users')} ${escapeHtml(tr('vw.tab'))}</button>
       <span class="small muted" style="align-self:center">${escapeHtml(tr('vw.hint'))}</span>
     </div>
     <div class="views" id="views"></div>`;
 
   const run = commandRunner(profile);
   $('#get-board').addEventListener('click', () => run('board'));
-  $('#get-tab').addEventListener('click', () => run('tab'));
 
   const paint = () => {
     const boards = [];
     for (const member of members) {
       const bot = state.bots.get(`${profile.id}:${member.account_id}`);
-      if (!bot) continue;
-      if (bot.views?.board) boards.push(boardCard(member, bot.views.board, bot));
-      if (bot.views?.tab) boards.push(tabCard(member, bot.views.tab, bot));
+      if (!bot?.views?.board) continue;
+      boards.push(boardCard(member, bot.views.board));
     }
     $('#views').innerHTML =
       boards.join('') ||
@@ -860,7 +835,6 @@ async function tabBoard(root, profile) {
   // Beim Öffnen einmal von selbst abrufen – wer den Reiter anklickt, will die Tafel sehen.
   paint();
   run('board');
-  run('tab');
 
   state.onLive = (event) => {
     if (event.type === 'view' && event.key.startsWith(`${profile.id}:`)) paint();
@@ -868,11 +842,11 @@ async function tabBoard(root, profile) {
 }
 
 /** Eine Anzeigetafel, wie Minecraft sie zeichnet: Titel oben, Zeile links, Punktzahl rechts. */
-function boardCard(member, view, bot) {
+function boardCard(member, view) {
   if (view.empty) {
     return `<article class="board is-empty">
       <header>${escapeHtml(member.name)}</header>
-      <p class="small muted" style="padding:1rem">${escapeHtml(tr('vw.empty'))}</p>
+      <p class="board-note">${escapeHtml(tr('vw.empty'))}</p>
     </article>`;
   }
   return `<article class="board">
@@ -885,24 +859,7 @@ function boardCard(member, view, bot) {
         )
         .join('')}
     </ol>
-    <footer class="small muted">${escapeHtml(member.name)}</footer>
-  </article>`;
-}
-
-/** Die Spielerliste – dieselbe Bauart, nur ohne Punktzahlen. */
-function tabCard(member, view, bot) {
-  if (view.empty || !view.players.length) {
-    return `<article class="board is-empty">
-      <header>${escapeHtml(tr('vw.tab'))}</header>
-      <p class="small muted" style="padding:1rem">${escapeHtml(tr('vw.emptyTab'))}</p>
-    </article>`;
-  }
-  return `<article class="board">
-    <header>${escapeHtml(tr('vw.players', { n: view.count }))}</header>
-    <ul class="board-rows players">
-      ${view.players.map((name) => `<li><span class="board-text">${mcText(name)}</span></li>`).join('')}
-    </ul>
-    <footer class="small muted">${escapeHtml(member.name)}</footer>
+    <footer>${escapeHtml(member.name)}</footer>
   </article>`;
 }
 
@@ -943,39 +900,64 @@ async function tabMenu(root, profile) {
     if (view.empty) {
       return `<article class="board is-empty">
         <header>${escapeHtml(member.name)}</header>
-        <p class="small muted" style="padding:1rem">${escapeHtml(tr('vw.emptyMenu'))}</p>
+        <p class="board-note">${escapeHtml(tr('vw.emptyMenu'))}</p>
       </article>`;
     }
-    // Ein Raster wie eine Truhe: neun Felder je Reihe, klickbar. Was drinliegt, weiß der Client
-    // nicht – deshalb steht in jedem Feld nur die Nummer, und die genügt zum Anklicken.
+    // Ein Raster wie eine Truhe: neun Felder je Reihe, klickbar. Was in einem Feld liegt, steht
+    // in `view.items` – meldet der Client dazu nichts, bleibt das Feld leer und behält nur seine
+    // Nummer. Ein leeres Feld ist im Spiel schließlich auch nur ein leeres Feld.
     const slots = Math.max(9, Math.min(120, Number(view.slots) || 27));
+    const items = view.items || {};
     return `<article class="board menu-card">
       <header>${view.title ? mcText(view.title) : escapeHtml(tr('vw.menu'))}</header>
-      <div class="slots">
-        ${Array.from(
-          { length: slots },
-          (_, index) => `<button class="slot" data-slot="${index}" data-account="${member.account_id}"
-            title="${escapeHtml(tr('srv.slot'))} ${index}">${index}</button>`
-        ).join('')}
+      <div class="menu-grid">
+        ${Array.from({ length: slots }, (_, index) => slotButton(member, index, items[index])).join('')}
       </div>
-      <footer class="small muted">${escapeHtml(member.name)} · ${escapeHtml(
-        tr('vw.slots', { n: slots })
-      )} · ${escapeHtml(tr('vw.clickSlot'))}</footer>
+      <footer>${escapeHtml(member.name)} · ${escapeHtml(tr('vw.slots', { n: slots }))} · ${escapeHtml(
+        tr('vw.clickSlot')
+      )}</footer>
     </article>`;
+  }
+
+  /**
+   * Ein Feld des Rasters.
+   *
+   * Liegt etwas darin, steht der Gegenstand im Feld und der Name samt Beschreibungstext im
+   * Aufklapper darüber – mit den Farben, die der Server dafür geschickt hat. Ein Titel-Attribut
+   * täte es nicht: der Browser wirft die Farbcodes weg und zeigt "§a" als Text.
+   */
+  function slotButton(member, index, item) {
+    const count = Number(item?.count) || 0;
+    return `<button class="slot ${item ? 'has-item' : ''}" data-slot="${index}"
+      data-account="${member.account_id}" aria-label="${escapeHtml(`${tr('srv.slot')} ${index}`)}">
+      ${
+        item
+          ? `<span class="slot-item">${escapeHtml(itemGlyph(item))}</span>
+             ${count > 1 ? `<span class="slot-count">${count}</span>` : ''}
+             <span class="slot-tip">
+               <span class="slot-tip-name">${mcText(item.name || item.id || '')}</span>
+               ${(item.lore || [])
+                 .map((line) => `<span class="slot-tip-lore">${mcText(line)}</span>`)
+                 .join('')}
+               ${item.id ? `<span class="slot-tip-id">${escapeHtml(item.id)}</span>` : ''}
+             </span>`
+          : `<span class="slot-index">${index}</span>`
+      }
+    </button>`;
   }
 
   function bindSlots() {
     $$('[data-slot]').forEach((button) =>
       button.addEventListener('click', async (event) => {
-        const button2 = event.currentTarget;
+        const target = event.currentTarget;
         const which = event.shiftKey ? 'shift' : event.ctrlKey || event.metaKey ? 'rechts' : '';
         try {
           await api(`/profiles/${profile.id}/command`, {
             method: 'POST',
             body: {
               verb: 'click',
-              arg: `${button2.dataset.slot}${which ? ` ${which}` : ''}`,
-              accounts: [Number(button2.dataset.account)],
+              arg: `${target.dataset.slot}${which ? ` ${which}` : ''}`,
+              accounts: [Number(target.dataset.account)],
             },
           });
         } catch (error) {
@@ -1496,6 +1478,26 @@ async function editMacro(profile, macro) {
 
 // ---------------------------------------------------------------- Tarif
 
+/**
+ * Die Merkmale eines Tarifs, wie sie im Kasten stehen.
+ *
+ * Hat der Betreiber im Admin-Bereich einen eigenen Text hinterlegt, steht genau der da – wie auf
+ * der Preisseite auch. Sonst baut sich die Liste aus den Zahlen des Tarifs.
+ */
+function planLines(plan) {
+  if (plan.features?.length) return plan.features;
+  const lines = [
+    `${plan.max_accounts} ${tr(plan.max_accounts === 1 ? 'pricing.bot' : 'pricing.bots')}`,
+    tr(plan.premium ? 'pricing.premiumClient' : 'pricing.slimClient'),
+    `${plan.chat_limit} ${tr('pricing.chatHistory')}`,
+  ];
+  if (plan.board) lines.push(tr('pricing.board'));
+  if (plan.menus) lines.push(tr('pricing.menus'));
+  if (plan.proxy) lines.push(tr('pricing.proxyOnRequest'));
+  if (plan.priority_support) lines.push(tr('pricing.prioritySupport'));
+  return lines;
+}
+
 async function tabPlan(root, profile) {
   const plans = state.meta.plans || [];
   const freeLeft = state.stats?.free_slots_left ?? 0;
@@ -1567,17 +1569,9 @@ async function tabPlan(root, profile) {
                   )} ${escapeHtml(tr('common.creditsInline'))}</p>`
             }
             <p class="small muted">${escapeHtml(plan.blurb || '')}</p>
-            <ul class="plan-list grow">
-              <li>${plan.max_accounts} ${escapeHtml(
-                tr(plan.max_accounts === 1 ? 'pricing.bot' : 'pricing.bots')
-              )}</li>
-              <li>${escapeHtml(tr(plan.premium ? 'pricing.premiumClient' : 'pricing.slimClient'))}</li>
-              <li>${plan.chat_limit} ${escapeHtml(tr('pricing.chatHistory'))}</li>
-              ${plan.board ? `<li>${escapeHtml(tr('vw.board'))} + ${escapeHtml(tr('vw.tab'))}</li>` : ''}
-              ${plan.menus ? `<li>${escapeHtml(tr('vw.menu'))}</li>` : ''}
-              ${plan.proxy ? `<li>${escapeHtml(tr('pricing.proxyOnRequest'))}</li>` : ''}
-              ${plan.priority_support ? `<li>${escapeHtml(tr('pricing.prioritySupport'))}</li>` : ''}
-            </ul>
+            <ul class="plan-list grow">${planLines(plan)
+              .map((line) => `<li>${escapeHtml(line)}</li>`)
+              .join('')}</ul>
             ${
               plan.id === profile.plan.id
                 ? ''
@@ -1724,7 +1718,7 @@ async function tabSettings(root, profile) {
   const plan = profile.plan;
 
   root.innerHTML = `
-    <div class="grid two" style="align-items:start">
+    <div class="grid two">
       <section class="panel">
         <header><h3>${escapeHtml(tr('dash.servers'))}</h3></header>
         <div class="body stack">
@@ -1767,6 +1761,9 @@ async function tabSettings(root, profile) {
           </div>
           <div class="field"><label for="chat_delay">${escapeHtml(tr('srv.chatDelay'))}</label>
             <input id="chat_delay" type="number" min="200" max="60000" value="${profile.chat_delay}"></div>
+          <div class="field"><label for="on_cooldown">${escapeHtml(tr('srv.onCooldown'))}</label>
+            <input id="on_cooldown" type="number" min="1" max="3600" value="${profile.on_cooldown || 5}">
+            <span class="hint">${escapeHtml(tr('srv.onCooldownHint'))}</span></div>
         </div>
       </section>
 
@@ -1787,17 +1784,6 @@ async function tabSettings(root, profile) {
         </div>
       </section>
 
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('srv.network'))}</h3></header>
-        <div class="body stack">
-          <div class="field"><label for="fake_host">${escapeHtml(tr('srv.fakehost'))}</label>
-            <input id="fake_host" value="${escapeHtml(profile.fake_host || '')}"
-              ${plan.fakehost ? '' : 'disabled'} placeholder="hub.example.net">
-            <span class="hint">${escapeHtml(tr('srv.fakehostHint'))}</span></div>
-          <div class="field"><label for="on_cooldown">${escapeHtml(tr('srv.onCooldown'))}</label>
-            <input id="on_cooldown" type="number" min="1" max="3600" value="${profile.on_cooldown || 5}"></div>
-        </div>
-      </section>
     </div>
 
     <div class="row" style="margin-top:1.25rem">
@@ -1831,7 +1817,6 @@ async function tabSettings(root, profile) {
       body.antiafk_sec = Number($('#antiafk_sec').value);
       body.sneak = $('#sneak').checked;
     }
-    if (plan.fakehost) body.fake_host = $('#fake_host').value;
 
     try {
       const result = await api(`/profiles/${profile.id}`, { method: 'PATCH', body });
@@ -1854,6 +1839,49 @@ async function tabSettings(root, profile) {
 }
 
 // ---------------------------------------------------------------- Gemeinsames
+
+/**
+ * Ein Zeichen für einen Gegenstand.
+ *
+ * Texturen aus dem Spiel liegen hier nicht und dürften auch nicht mitgeliefert werden. Statt eines
+ * grauen Kastens für alles bekommt jede große Gruppe ein Zeichen, das man auf einen Blick
+ * auseinanderhält; alles Übrige die ersten zwei Buchstaben seines Namens. Das reicht, um ein
+ * Menü wiederzuerkennen – der genaue Name steht ohnehin im Aufklapper.
+ */
+const ITEM_GLYPHS = [
+  [/(sword|blade)/, '🗡'],
+  [/(pickaxe|axe|shovel|hoe)/, '⛏'],
+  [/(helmet|chestplate|leggings|boots|armor)/, '🛡'],
+  [/(bow|arrow|crossbow)/, '🏹'],
+  [/potion/, '🧪'],
+  [/(apple|bread|carrot|potato|beef|porkchop|chicken|fish|cookie|cake|stew|soup|melon)/, '🍖'],
+  [/(diamond|emerald|amethyst)/, '💎'],
+  [/(gold|golden)/, '🥇'],
+  [/(iron|copper|netherite)/, '⚙'],
+  [/(chest|barrel|shulker)/, '📦'],
+  [/(book|paper|map)/, '📕'],
+  [/(_head|skull|player_head)/, '🙂'],
+  [/(torch|lantern|campfire|fire)/, '🔥'],
+  [/(water|bucket)/, '🪣'],
+  [/(pane|glass)/, '🔲'],
+  [/(seeds|sapling|flower|leaves|grass)/, '🌱'],
+  [/(coin|nugget|ingot)/, '🪙'],
+  [/(door|gate|button|lever)/, '🚪'],
+  [/(ender|eye|pearl)/, '🔮'],
+  [/(banner|shield)/, '🚩'],
+];
+
+function itemGlyph(item) {
+  const id = String(item?.id || '').toLowerCase();
+  for (const [pattern, glyph] of ITEM_GLYPHS) {
+    if (pattern.test(id)) return glyph;
+  }
+  const words = (id.split(':').pop() || '').split('_').filter(Boolean);
+  if (words.length) return words[0].slice(0, 2).toUpperCase();
+  // Ohne Kennung bleibt der sichtbare Name – ohne Farbcodes, sonst stünde "§a" im Feld.
+  const plain = stripFormatting(item?.name || '').trim();
+  return plain ? plain.slice(0, 2).toUpperCase() : '•';
+}
 
 function noAccounts(root, profile) {
   root.innerHTML = `<div class="empty"><h3>${escapeHtml(tr('srv.noAccounts'))}</h3>
@@ -1886,42 +1914,6 @@ function commandRunner(profile) {
     } catch (error) {
       fail(error);
     }
-  };
-}
-
-const logPanel = (height = '12rem') => `
-  <section class="panel" style="margin-top:1.25rem">
-    <header><h3>${escapeHtml(tr('srv.answers'))}</h3></header>
-    <div class="body" style="padding:0">
-      <div class="console" id="cmd-log" data-empty="${escapeHtml(tr('srv.logEmpty'))}" style="height:${height};border-radius:0;box-shadow:none"></div>
-    </div>
-  </section>`;
-
-/** Die Antworten des Clients laufen als Zustandszeilen ein – hier gesammelt anzeigen. */
-function bindLog(profile, members) {
-  const log = $('#cmd-log');
-  const paint = () => {
-    const lines = [];
-    for (const member of members) {
-      for (const entry of linesOf(`${profile.id}:${member.account_id}`)) {
-        if (entry.type === 'chat' || entry.type === 'sent') continue;
-        lines.push({ ...entry, who: member.name });
-      }
-    }
-    lines.sort((a, b) => a.t - b.t);
-    log.innerHTML = lines
-      .slice(-120)
-      .map(
-        (entry) => `<div class="line ${entry.type}"><span class="t">${clock(entry.t)}</span>
-          ${members.length > 1 ? `<span class="who">${escapeHtml(entry.who)}</span>` : ''}
-          <span class="msg">${mcText(entry.text)}</span></div>`
-      )
-      .join('');
-    log.scrollTop = log.scrollHeight;
-  };
-  paint();
-  state.onLive = (event) => {
-    if (event.type === 'line' && event.key.startsWith(`${profile.id}:`)) paint();
   };
 }
 

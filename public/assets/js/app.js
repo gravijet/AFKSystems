@@ -130,7 +130,7 @@ function connect() {
       return;
     }
     if (message.type === 'view') {
-      // Anzeigetafel, Spielerliste oder Menü eines Bots. Sie hängen am Bot-Zustand, nicht am Chat.
+      // Anzeigetafel oder Menü eines Bots. Sie hängen am Bot-Zustand, nicht am Chat.
       const bot = state.bots.get(message.key) || {};
       state.bots.set(message.key, {
         ...bot,
@@ -212,6 +212,57 @@ const NAV = [
 ];
 
 /**
+ * Die Punkte des Admin-Bereichs, nach Themen gebündelt.
+ *
+ * Diese Liste ist die einzige Quelle: die Seitenleiste baut daraus ihre Gruppen, dieser Router
+ * seine Ansichten. Was hier nicht steht, gibt es nicht.
+ */
+export const ADMIN_GROUPS = [
+  {
+    key: 'work',
+    label: 'adm.group.work',
+    items: [
+      { key: 'overview', label: 'adm.overview', icon: 'chart' },
+      { key: 'tickets', label: 'adm.tickets', icon: 'ticket' },
+      { key: 'users', label: 'adm.users', icon: 'users' },
+      { key: 'servers', label: 'adm.servers', icon: 'server' },
+      { key: 'bots', label: 'adm.bots', icon: 'bot' },
+    ],
+  },
+  {
+    key: 'money',
+    label: 'adm.group.money',
+    items: [
+      { key: 'plans', label: 'adm.plans', icon: 'package' },
+      { key: 'addons', label: 'adm.addons', icon: 'layers' },
+      { key: 'topups', label: 'adm.topups', icon: 'wallet' },
+      { key: 'vouchers', label: 'adm.vouchers', icon: 'ticket' },
+      { key: 'ledger', label: 'adm.ledger', icon: 'chart' },
+    ],
+  },
+  {
+    key: 'platform',
+    label: 'adm.group.platform',
+    items: [
+      { key: 'settings', label: 'adm.settings', icon: 'settings' },
+      { key: 'nodes', label: 'adm.nodes', icon: 'pin' },
+      { key: 'proxies', label: 'adm.proxies', icon: 'globe' },
+      { key: 'announcements', label: 'adm.announce', icon: 'alert' },
+      { key: 'client', label: 'adm.client', icon: 'download' },
+    ],
+  },
+  {
+    key: 'logs',
+    label: 'adm.group.logs',
+    items: [
+      { key: 'system', label: 'adm.system', icon: 'cpu' },
+      { key: 'mails', label: 'adm.mails', icon: 'mail' },
+      { key: 'audit', label: 'adm.audit', icon: 'terminal' },
+    ],
+  },
+];
+
+/**
  * Die Reiter eines Serverplatzes. `need` ist die Fähigkeit, die der Client dafür mitbringen muss –
  * fehlt sie (schlanker Client auf dem Gratis-Platz), wird der Reiter gar nicht erst angeboten.
  */
@@ -270,7 +321,6 @@ export function drawSide() {
     .join('');
 
   const unread = state.stats?.tickets_unread || 0;
-  const staffTickets = state.stats?.staff_tickets || 0;
 
   $('#side').innerHTML = `
     <a class="brand" href="/${lang}" style="padding:.35rem .65rem">
@@ -284,13 +334,6 @@ export function drawSide() {
             tr(item.key)
           )}${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
       ).join('')}
-      ${
-        state.me?.role === 'admin'
-          ? `<a class="${state.route.name === 'admin' ? 'active' : ''}" href="#/admin">${icon('shield')}${escapeHtml(
-              tr('dash.admin')
-            )}${staffTickets ? `<span class="count primary">${staffTickets}</span>` : ''}</a>`
-          : ''
-      }
     </nav>
 
     <div class="stack" style="gap:.25rem">
@@ -300,6 +343,8 @@ export function drawSide() {
       </div>
       ${profiles || `<p class="small muted" style="padding:.35rem .65rem">${escapeHtml(tr('dash.noServers'))}</p>`}
     </div>
+
+    ${adminSection()}
 
     <div class="foot stack" style="gap:.6rem">
       ${
@@ -331,6 +376,60 @@ export function drawSide() {
     location.href = url('');
   });
 }
+
+/**
+ * Der Admin-Bereich in der Seitenleiste – eine eigene Kategorie mit allen Punkten, ganz unten.
+ *
+ * Vorher war das ein einzelner Punkt "Verwaltung", und dahinter lagen siebzehn Reiter in einer
+ * Zeile, die auf jedem normalen Bildschirm umbrachen. Jetzt steht jeder Punkt da, wo man ihn
+ * anklickt, und die Gruppen sagen, was zusammengehört. Aufgeklappt wird nur die Gruppe, in der
+ * man gerade steht – sonst wäre die Leiste eine Liste aus siebzehn Zeilen.
+ */
+function adminSection() {
+  if (state.me?.role !== 'admin') return '';
+  const current = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
+  const openGroup = ADMIN_GROUPS.find((group) => group.items.some((item) => item.key === current));
+  const waiting = state.stats?.staff_tickets || 0;
+
+  return `<div class="stack admin-nav" style="gap:.25rem">
+    <span class="label">${escapeHtml(tr('dash.admin'))}</span>
+    ${ADMIN_GROUPS.map((group) => {
+      // Offen ist die Gruppe, in der man gerade steht – und was jemand von Hand aufgeklappt hat.
+      // Die Seitenleiste wird bei jeder Zustandsmeldung eines Bots neu gezeichnet; ohne das
+      // Gedächtnis klappte eine gerade geöffnete Gruppe sekündlich wieder zu.
+      const isOpen =
+        openGroups.has(group.key) ||
+        group === openGroup ||
+        (!openGroup && !openGroups.size && group.key === 'work');
+      return `<details class="admin-group" data-group="${group.key}" ${isOpen ? 'open' : ''}>
+        <summary>${escapeHtml(tr(group.label))}</summary>
+        ${group.items
+          .map(
+            (item) =>
+              `<a class="profile-link ${current === item.key ? 'active' : ''}"
+                  href="#/admin/${item.key}">${icon(item.icon)}
+                <span class="grow truncate">${escapeHtml(tr(item.label))}</span>
+                ${
+                  item.key === 'tickets' && waiting
+                    ? `<span class="count primary">${waiting}</span>`
+                    : ''
+                }</a>`
+          )
+          .join('')}
+      </details>`;
+    }).join('')}
+  </div>`;
+}
+
+/** Welche Admin-Gruppen jemand von Hand aufgeklappt hat. Überlebt das Neuzeichnen der Leiste. */
+const openGroups = new Set();
+document.addEventListener('toggle', (event) => {
+  const details = event.target;
+  if (!details.matches?.('.admin-group')) return;
+  const key = details.dataset.group;
+  if (details.open) openGroups.add(key);
+  else openGroups.delete(key);
+}, true);
 
 function routeMatches(hash) {
   const name = hash.replace('#/', '') || 'overview';

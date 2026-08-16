@@ -12,7 +12,7 @@ export async function render(root) {
   root.innerHTML = `
     ${appbar(tr('px.title'), '', tr('px.sub'))}
 
-    <div class="grid two" style="align-items:start">
+    <div class="grid two">
       <section class="panel">
         <header><h3>${escapeHtml(tr('px.title'))}</h3></header>
         <div class="body stack">

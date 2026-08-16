@@ -31,11 +31,11 @@ const LIST = [
     group: 'connection',
     de: {
       title: 'Kommt von selbst zurück',
-      text: 'Nach einem Kick, einem Abbruch oder einem Neustart tritt der Bot wieder bei.',
+      text: 'Bricht die Verbindung ab oder startet der Server neu, tritt der Bot wieder bei. Für einen Kick legst du selbst fest, was passieren soll – ein Macro auf den Rauswurf macht daraus genau die Reaktion, die dein Server braucht.',
     },
     en: {
       title: 'Comes back on its own',
-      text: 'After a kick, a dropped connection or a restart the bot joins again.',
+      text: 'If the connection drops or the server restarts, the bot joins again. For a kick you decide what happens: a macro on being kicked turns it into exactly the reaction your server needs.',
     },
   },
   {
@@ -192,14 +192,13 @@ const LIST = [
     group: 'game',
     need: 'board',
     premium: true,
-    tag: 'ultra',
     de: {
-      title: 'Anzeigetafel und Spielerliste',
-      text: 'Die Seitenleiste des Servers und wer gerade online ist, direkt im Panel.',
+      title: 'Anzeigetafel',
+      text: 'Die Seitenleiste des Servers im Panel – mit denselben Farben und derselben Anordnung wie im Spiel. In jedem bezahlten Tarif enthalten.',
     },
     en: {
-      title: 'Scoreboard and player list',
-      text: 'The server sidebar and who is online right now, straight in the panel.',
+      title: 'Scoreboard',
+      text: 'The server sidebar in the panel – same colours, same layout as in the game. Part of every paid plan.',
     },
   },
   {
@@ -208,8 +207,30 @@ const LIST = [
     need: 'menu',
     premium: true,
     tag: 'ultra',
-    de: { title: 'Menüs bedienen', text: 'Öffnet der Server ein Menü, siehst du es im Panel und klickst ein Feld an.' },
-    en: { title: 'Use menus', text: 'When the server opens a menu you see it in the panel and can click a slot.' },
+    de: {
+      title: 'Menüs bedienen',
+      text: 'Öffnet der Server ein Menü, siehst du es mit seinen Gegenständen und klickst ein Feld an. Name und Beschreibung stehen beim Überfahren dabei. Im Ultra-Tarif enthalten, auf Premium dazubuchbar.',
+    },
+    en: {
+      title: 'Use menus',
+      text: 'When the server opens a menu you see it with its items and can click a slot. Name and description show up when you hover. Part of Ultra, bookable on Premium.',
+    },
+  },
+  {
+    key: 'pov',
+    group: 'game',
+    // Kein `need`: was als "kommt später" ausgeschildert ist, darf dastehen, bevor der Client es
+    // kann. Es verspricht ja nichts für heute.
+    premium: true,
+    tag: 'soon',
+    de: {
+      title: 'Live-Ansicht',
+      text: 'Sehen, was der Bot sieht. Wird je Konto und Serverplatz einzeln gebucht und steckt in keinem Tarif – auch nicht in Ultra.',
+    },
+    en: {
+      title: 'Live view',
+      text: 'See what the bot sees. Booked per account and server slot, and part of no plan – not even Ultra.',
+    },
   },
 
   {
