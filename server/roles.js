@@ -7,9 +7,10 @@
 // Tarif hängen. Alles andere, was jemand in Discord an Rollen trägt, fasst der Bot nicht an –
 // sonst nähme er beim ersten Abgleich jedem seine Farbe weg.
 //
-// Zwei Regeln sind fest verdrahtet, weil sie in Discord und nicht hier zu Hause sind:
-//   * Wer Admin oder Discord-Mod ist, bekommt zusätzlich die Team-Rolle.
-//   * Wer sein Konto verknüpft hat, bekommt die Rolle dafür – unabhängig vom Tarif.
+// Administrator, Discord-Moderator, Partner und VIP sind Zustände des Panel-Kontos. Reguläre
+// Discord-Rollen (Customer, Premium, Ultra, Partner, VIP und Team) werden daraus automatisch für
+// jedes verknüpfte Discord-Konto abgeleitet. Nur Administrator und Discord Moderator werden
+// zusätzlich als Discord Linked-Role-Metadaten veröffentlicht (siehe oauth.js).
 
 import { db, getSetting } from './db.js';
 import { bridge } from './bridge.js';
@@ -22,10 +23,14 @@ export function managed() {
     .prepare("SELECT id, slug, discord_role FROM plans WHERE discord_role IS NOT NULL AND discord_role != ''")
     .all();
   return {
-    linked: setting('discord_role_linked'),
+    customer: setting('discord_role_customer') || setting('discord_role_linked'),
     premium: setting('discord_role_premium'),
     ultra: setting('discord_role_ultra'),
+    partner: setting('discord_role_partner'),
+    vip: setting('discord_role_vip'),
     team: setting('discord_role_team'),
+    // Diese beiden Rollen werden nicht direkt synchronisiert. Sie können Discord Linked Roles
+    // sein und werden nur für die Sichtbarkeit privater Ticket-Kanäle gebraucht.
     admin: setting('discord_role_admin'),
     mod: setting('discord_role_mod'),
     plans: Object.fromEntries(planRoles.map((plan) => [plan.id, String(plan.discord_role).trim()])),
@@ -36,9 +41,11 @@ export function managed() {
 export function managedIds() {
   const roles = managed();
   return [
-    roles.linked,
+    roles.customer,
     roles.premium,
     roles.ultra,
+    roles.partner,
+    roles.vip,
     roles.team,
     ...Object.values(roles.plans),
   ].filter(Boolean);
@@ -54,7 +61,8 @@ export function bestPlan(userId) {
   return db
     .prepare(
       `SELECT pl.* FROM profiles p JOIN plans pl ON pl.id = p.plan_id
-        WHERE p.user_id = ? AND p.suspended = 0 AND pl.free_slot = 0 AND p.paid_until > ?
+        WHERE p.user_id = ? AND p.suspended = 0 AND p.locked = 0
+          AND pl.free_slot = 0 AND p.paid_until > ?
         ORDER BY pl.price_credits DESC, pl.sort DESC LIMIT 1`
     )
     .get(userId, Date.now());
@@ -67,26 +75,45 @@ export function bestPlan(userId) {
 export function targetFor(user) {
   const roles = managed();
   const wanted = new Set();
-  if (!user?.discord_id) return { discord_id: null, roles: [] };
-
-  if (roles.linked) wanted.add(roles.linked);
+  if (!user) return { discord_id: null, roles: [], badges: [] };
 
   const plan = bestPlan(user.id);
-  if (plan) {
+  const manualPremium = Boolean(user.premium_until && user.premium_until > Date.now());
+  const linked = Boolean(user.discord_id);
+  if (linked && roles.customer) wanted.add(roles.customer);
+  if (linked && (plan || manualPremium)) {
     // Am Tarif hinterlegt schlägt die allgemeine Einstellung – so lässt sich ein neuer Tarif mit
     // eigener Rolle anlegen, ohne dass jemand Code anfassen muss.
-    const own = roles.plans[plan.id];
+    const own = plan ? roles.plans[plan.id] : null;
     if (own) wanted.add(own);
-    else if (plan.slug === 'ultra' && roles.ultra) wanted.add(roles.ultra);
+    else if (plan?.slug === 'ultra' && roles.ultra) wanted.add(roles.ultra);
     else if (roles.premium) wanted.add(roles.premium);
   }
+
+  if (linked && user.discord_partner && roles.partner) wanted.add(roles.partner);
+  if (linked && user.discord_vip && roles.vip) wanted.add(roles.vip);
+  const staff = user.role === 'admin';
+  const moderator = Boolean(user.discord_moderator);
+  if (linked && (staff || moderator) && roles.team) wanted.add(roles.team);
 
   return {
     discord_id: user.discord_id,
     user_id: user.id,
     username: user.username,
-    plan: plan ? plan.slug : null,
-    staff: user.role === 'admin',
+    plan: plan ? plan.slug : manualPremium ? 'premium' : null,
+    staff,
+    moderator,
+    partner: Boolean(user.discord_partner),
+    vip: Boolean(user.discord_vip),
+    badges: [
+      ...(linked ? ['customer'] : []),
+      ...(plan || manualPremium ? [plan?.slug === 'ultra' ? 'ultra' : 'premium'] : []),
+      ...(user.discord_partner ? ['partner'] : []),
+      ...(user.discord_vip ? ['vip'] : []),
+      ...(staff ? ['administrator'] : []),
+      ...(moderator ? ['moderator'] : []),
+      ...(staff || moderator ? ['team'] : []),
+    ],
     roles: [...wanted],
   };
 }

@@ -123,6 +123,28 @@ function linkedBody(me, providers) {
     </div>`;
   };
 
+  const invite = state.meta?.free_plan?.invite || state.meta?.discord_invite || '';
+  const access = me.free_access || {};
+  const membership = me.discord
+    ? `<p class="small ${access.ok ? '' : 'muted'}" style="margin:.4rem 0 0">
+        ${icon(access.ok ? 'check' : 'alert')} ${escapeHtml(
+          tr(access.ok ? 'set.freeDiscordOk' : 'set.freeDiscordMissing')
+        )}
+        ${
+          !access.ok && invite
+            ? ` · <a href="${escapeHtml(invite)}" target="_blank" rel="noopener">${escapeHtml(
+                tr('discord.join')
+              )}</a>`
+            : ''
+        }</p>`
+    : `<p class="small muted" style="margin:.4rem 0 0">${escapeHtml(tr('set.freeDiscordLink'))}</p>`;
+  const linkedRoles =
+    me.discord && me.linked_roles_available
+      ? `<p class="small" style="margin:.4rem 0 0">
+          <a href="/api/auth/discord/start?mode=verify">${escapeHtml(tr('set.verifyRoles'))}</a>
+          <span class="muted"> — ${escapeHtml(tr('set.verifyRolesHint'))}</span></p>`
+      : '';
+
   return `
     ${row(
       'discord',
@@ -130,11 +152,7 @@ function linkedBody(me, providers) {
       'Discord',
       tr('set.discordWhat'),
       me.discord?.name,
-      me.discord
-        ? `<p class="small" style="margin:.4rem 0 0">
-            <a href="/api/auth/discord/start?mode=verify">${escapeHtml(tr('set.verifyRoles'))}</a>
-            <span class="muted"> — ${escapeHtml(tr('set.verifyRolesHint'))}</span></p>`
-        : ''
+      `${membership}${linkedRoles}`
     )}
     ${row('google', 'google', 'Google', tr('set.googleWhat'), me.google?.email)}
 

@@ -11,6 +11,7 @@ import * as binaries from '../binaries.js';
 import * as mail from '../mail.js';
 import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
+import * as roles from '../roles.js';
 import * as nodes from '../nodes.js';
 import * as metrics from '../metrics.js';
 import { supervisor } from '../supervisor.js';
@@ -168,6 +169,12 @@ const userRow = (row) => ({
   email_verified: Boolean(row.email_verified),
   language: row.language,
   discord: row.discord_id ? { id: row.discord_id, name: row.discord_name } : null,
+  discord_moderator: Boolean(row.discord_moderator),
+  discord_partner: Boolean(row.discord_partner),
+  discord_vip: Boolean(row.discord_vip),
+  discord_guild_member: Boolean(row.discord_guild_member),
+  discord_guild_checked_at: row.discord_guild_checked_at || null,
+  discord_roles: roles.targetFor(row).badges,
   premium_until: row.premium_until,
   proxy_allowance: row.proxy_allowance,
   notes: row.notes || '',
@@ -245,13 +252,24 @@ admin.get(
           free_slot: Boolean(row.free_slot),
           paid_until: row.paid_until,
           suspended: Boolean(row.suspended),
+          locked: Boolean(row.locked),
+          lock_reason: row.lock_reason || '',
           online: supervisor.runningOnProfile(row.id),
         })),
-      accounts: db.prepare('SELECT * FROM mc_accounts WHERE user_id = ? ORDER BY name').all(id),
+      accounts: db
+        .prepare('SELECT * FROM mc_accounts WHERE user_id = ? ORDER BY name')
+        .all(id)
+        .map((account) => ({
+          ...account,
+          suspended: Boolean(account.suspended),
+          suspend_reason: account.suspend_reason || '',
+        })),
       ledger: billing.history(id, 100),
       topups: db.prepare('SELECT * FROM topups WHERE user_id = ? ORDER BY id DESC LIMIT 30').all(id),
       tickets: db
-        .prepare('SELECT id, subject, status, category, updated_at FROM tickets WHERE user_id = ? ORDER BY updated_at DESC')
+        .prepare(
+          "SELECT id, subject, status, category, updated_at FROM tickets WHERE user_id = ? AND status != 'closed' ORDER BY updated_at DESC"
+        )
         .all(id),
       proxies: db.prepare('SELECT * FROM proxies WHERE assigned_to = ?').all(id),
       sessions: auth.sessionsOf(id),
@@ -287,6 +305,7 @@ admin.patch(
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
     if (!user) throw notFound('Benutzer gibt es nicht.');
     const body = req.body || {};
+    let discordRolesChanged = false;
 
     if (body.credits_delta !== undefined) {
       const delta = Math.trunc(Number(body.credits_delta));
@@ -298,6 +317,7 @@ admin.patch(
       if (!['user', 'admin'].includes(body.role)) throw bad('Unbekannte Rolle.');
       if (id === req.user.id && body.role !== 'admin') throw bad('Sich selbst kann man nicht herabstufen.');
       db.prepare('UPDATE users SET role = ? WHERE id = ?').run(body.role, id);
+      discordRolesChanged = true;
     }
     if (body.blocked !== undefined) {
       db.prepare('UPDATE users SET blocked = ? WHERE id = ?').run(body.blocked ? 1 : 0, id);
@@ -305,6 +325,7 @@ admin.patch(
         supervisor.stopUser(id, 'Konto wurde gesperrt.');
         db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
       }
+      discordRolesChanged = true;
     }
     if (body.email !== undefined) {
       const address = String(body.email).trim().toLowerCase();
@@ -336,6 +357,7 @@ admin.patch(
     if (body.premium_until !== undefined) {
       const until = body.premium_until ? Number(body.premium_until) : null;
       db.prepare('UPDATE users SET premium_until = ? WHERE id = ?').run(until, id);
+      discordRolesChanged = true;
     }
     if (body.premium_days !== undefined) {
       const days = requireInt(body.premium_days, 'Tage', { min: 0, max: 3650 });
@@ -344,6 +366,7 @@ admin.patch(
         days > 0 ? base + days * 86_400_000 : null,
         id
       );
+      discordRolesChanged = true;
       audit(req.user.id, 'admin-premium', { user: id, days });
     }
     if (body.proxy_allowance !== undefined) {
@@ -361,6 +384,12 @@ admin.patch(
     if (body.language !== undefined) {
       db.prepare('UPDATE users SET language = ? WHERE id = ?').run(body.language === 'de' ? 'de' : 'en', id);
     }
+    for (const field of ['discord_moderator', 'discord_partner', 'discord_vip']) {
+      if (body[field] === undefined) continue;
+      db.prepare(`UPDATE users SET ${field} = ? WHERE id = ?`).run(body[field] ? 1 : 0, id);
+      discordRolesChanged = true;
+    }
+    if (discordRolesChanged) roles.changed(id);
     res.json({ user: userRow(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
   })
 );
@@ -519,6 +548,7 @@ admin.post(
       )
       .run({ slug, ...values });
     audit(req.user.id, 'plan-create', { slug });
+    bridge.emit('discord.config', { keys: ['plans'] });
     res.json({ plan: billing.planById(info.lastInsertRowid) });
   })
 );
@@ -543,6 +573,7 @@ admin.patch(
       id: plan.id,
     });
     audit(req.user.id, 'plan-update', { slug: plan.slug, ...values });
+    if (values.discord_role !== undefined) bridge.emit('discord.config', { keys: ['plans'] });
     res.json({ plan: billing.planById(plan.id) });
   })
 );
@@ -557,6 +588,7 @@ admin.delete(
     if (plan.free_slot) throw bad('Der kostenlose Tarif lässt sich nicht löschen.');
     db.prepare('DELETE FROM plans WHERE id = ?').run(plan.id);
     audit(req.user.id, 'plan-delete', { slug: plan.slug });
+    bridge.emit('discord.config', { keys: ['plans'] });
     res.json({ ok: true });
   })
 );
@@ -1070,6 +1102,9 @@ admin.patch(
       changed.push(key);
     }
     audit(req.user.id, 'admin-settings', { keys: changed }, req.ip);
+    if (changed.some((key) => key.startsWith('discord_') || key.startsWith('free_discord_'))) {
+      bridge.emit('discord.config', { keys: changed });
+    }
     res.json({ settings: safeSettings() });
   })
 );
@@ -1082,6 +1117,9 @@ admin.delete(
     if (!entry?.secret) throw notFound('Dieses Feld gibt es nicht.');
     setSetting(entry.key, '');
     audit(req.user.id, 'admin-settings-clear', { key: entry.key }, req.ip);
+    if (entry.key.startsWith('discord_') || entry.key.startsWith('free_discord_')) {
+      bridge.emit('discord.config', { keys: [entry.key] });
+    }
     res.json({ settings: safeSettings() });
   })
 );
@@ -1170,11 +1208,83 @@ admin.get(
   })
 );
 
+/** Alle Minecraft-Konten, nicht nur Prozesse, die seit dem letzten Dienststart einmal liefen. */
+admin.get(
+  '/accounts',
+  wrap((req, res) => {
+    const accounts = db
+      .prepare(
+        `SELECT a.id, a.user_id, a.name, a.kind, a.uuid, a.status, a.last_error,
+                a.connections, a.suspended, a.suspend_reason, a.created_at, u.username
+           FROM mc_accounts a JOIN users u ON u.id = a.user_id
+          ORDER BY a.id DESC LIMIT 1000`
+      )
+      .all();
+    const servers = new Map();
+    for (const row of db
+      .prepare(
+        `SELECT pa.account_id, p.id, p.name
+           FROM profile_accounts pa JOIN profiles p ON p.id = pa.profile_id
+          ORDER BY p.name, p.id`
+      )
+      .all()) {
+      if (!servers.has(row.account_id)) servers.set(row.account_id, []);
+      servers.get(row.account_id).push({ id: row.id, name: row.name });
+    }
+    const processes = new Map();
+    for (const bot of supervisor.bots.values()) {
+      if (!bot.running) continue;
+      const current = processes.get(bot.account.id) || { running: 0, online: 0 };
+      current.running += 1;
+      if (bot.online) current.online += 1;
+      processes.set(bot.account.id, current);
+    }
+    res.json({
+      accounts: accounts.map((account) => ({
+        ...account,
+        suspended: Boolean(account.suspended),
+        suspend_reason: account.suspend_reason || '',
+        servers: servers.get(account.id) || [],
+        ...(processes.get(account.id) || { running: 0, online: 0 }),
+      })),
+    });
+  })
+);
+
 admin.post(
   '/bots/:profileId/:accountId/stop',
   wrap((req, res) => {
     supervisor.stop(requireInt(req.params.profileId, 'Server'), requireInt(req.params.accountId, 'Konto'));
     res.json({ ok: true });
+  })
+);
+
+/** Ein einzelnes Minecraft-Konto stilllegen, ohne Anmeldung oder Zuordnungen zu löschen. */
+admin.post(
+  '/accounts/:id/suspension',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Konto');
+    const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(id);
+    if (!account) throw notFound('Dieses Minecraft-Konto gibt es nicht.');
+    const suspended = req.body?.suspended !== false;
+    const reason = String(req.body?.reason || '').trim().slice(0, 200) || null;
+    db.prepare('UPDATE mc_accounts SET suspended = ?, suspend_reason = ? WHERE id = ?').run(
+      suspended ? 1 : 0,
+      suspended ? reason : null,
+      id
+    );
+    if (suspended) {
+      for (const row of db.prepare('SELECT profile_id FROM profile_accounts WHERE account_id = ?').all(id)) {
+        supervisor.stop(row.profile_id, id, { keepWanted: false });
+      }
+    }
+    audit(
+      req.user.id,
+      suspended ? 'admin-account-suspend' : 'admin-account-resume',
+      { account: id, owner: account.user_id, reason },
+      req.ip
+    );
+    res.json({ ok: true, suspended, reason: suspended ? reason : null });
   })
 );
 
@@ -1204,6 +1314,7 @@ admin.get(
           free_slot: Boolean(row.free_slot),
           paid_until: row.paid_until,
           suspended: Boolean(row.suspended),
+          locked: Boolean(row.locked),
           online: supervisor.runningOnProfile(row.id),
         })),
     });
@@ -1233,13 +1344,23 @@ admin.patch(
     if (body.plan_id !== undefined) {
       const plan = billing.planById(requireInt(body.plan_id, 'Tarif'));
       if (!plan) throw notFound('Diesen Tarif gibt es nicht.');
+      const current = billing.planOf(profile);
+      const chatLimit = current.free_slot
+        ? plan.chat_limit
+        : Math.min(profile.chat_limit || plan.chat_limit, plan.chat_limit);
       // Vom Admin gesetzt heißt: ohne Abbuchung, dafür mit klarer Laufzeit.
-      db.prepare('UPDATE profiles SET plan_id = ?, suspended = 0, paid_until = ? WHERE id = ?').run(
+      db.prepare(
+        'UPDATE profiles SET plan_id = ?, suspended = 0, paid_until = ?, chat_limit = ? WHERE id = ?'
+      ).run(
         plan.id,
         plan.free_slot ? null : Math.max(Date.now(), profile.paid_until || 0) + billing.MONTH_MS,
+        chatLimit,
         id
       );
       audit(req.user.id, 'admin-plan', { profile: id, plan: plan.slug });
+    }
+    if (body.extend_days !== undefined || body.suspended !== undefined || body.plan_id !== undefined) {
+      roles.changed(profile.user_id);
     }
     res.json({ ok: true });
   })
@@ -1249,8 +1370,11 @@ admin.delete(
   '/profiles/:id',
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Server');
+    const profile = db.prepare('SELECT user_id FROM profiles WHERE id = ?').get(id);
+    if (!profile) throw notFound('Diesen Server gibt es nicht.');
     supervisor.stopProfile(id, 'Von der Verwaltung gelöscht.', { keepWanted: false });
     db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
+    roles.changed(profile.user_id);
     audit(req.user.id, 'admin-profile-delete', { profile: id });
     res.json({ ok: true });
   })
@@ -1273,7 +1397,7 @@ const DETAIL_LABELS = {
     blurb_en: 'Text (EN)', price_credits: 'Preis', free_slot: 'Gratis-Platz', max_accounts: 'Bots',
     premium: 'Premium-Client', movement: 'Bewegung', proxy: 'Proxys', offline_accounts: 'Offline-Konten',
     fakehost: 'Fake-Host', chat_limit: 'Chatverlauf', chat_limit_editable: 'Chatverlauf änderbar',
-    priority_support: 'Support mit Vorrang', board: 'Anzeigetafel', menus: 'Menüs', pov: 'Live-Ansicht',
+    priority_support: 'Support mit Vorrang', board: 'Scoreboard', menus: 'Menüs', pov: 'Live-Ansicht',
     max_macros: 'Macros', addons: 'Zusätze buchbar', highlight: 'Hervorgehoben', sort: 'Reihenfolge',
     active: 'Aktiv', user: 'Nutzer', profile: 'Serverplatz', plan: 'Tarif', ticket: 'Ticket',
     node: 'Standort', addon: 'Zusatz', credits: 'Credits', delta: 'Änderung', days: 'Tage',
@@ -1576,7 +1700,7 @@ admin.get(
     const accounts = db
       .prepare(
         `SELECT pa.account_id, pa.note, pa.proxy_id, pa.wanted, a.name, a.uuid, a.kind, a.status,
-                a.last_error, b.state, b.connections, b.uptime_sec
+                a.last_error, a.suspended, a.suspend_reason, b.state, b.connections, b.uptime_sec
            FROM profile_accounts pa JOIN mc_accounts a ON a.id = pa.account_id
       LEFT JOIN bots b ON b.profile_id = pa.profile_id AND b.account_id = pa.account_id
           WHERE pa.profile_id = ? ORDER BY a.name COLLATE NOCASE`
@@ -1586,6 +1710,8 @@ admin.get(
         const live = supervisor.get(profile.id, row.account_id);
         return {
           ...row,
+          suspended: Boolean(row.suspended),
+          suspend_reason: row.suspend_reason || '',
           wanted: Boolean(row.wanted),
           state: live ? live.state : 'offline',
           detail: live ? live.detail : '',
@@ -1604,7 +1730,6 @@ admin.get(
         suspended: Boolean(profile.suspended),
         locked: Boolean(profile.locked),
         renew: Boolean(profile.renew),
-        auto_reconnect: Boolean(profile.auto_reconnect),
         movement: Boolean(profile.movement),
         sneak: Boolean(profile.sneak),
         active: billing.isActive(profile),
@@ -1735,6 +1860,7 @@ admin.post(
       id
     );
     if (locked) supervisor.stopProfile(id, `Gesperrt${reason ? `: ${reason}` : '.'}`, { keepWanted: false });
+    roles.changed(profile.user_id);
     audit(req.user.id, locked ? 'admin-server-lock' : 'admin-server-unlock', { profile: id, reason }, req.ip);
     res.json({ ok: true, locked, reason });
   })

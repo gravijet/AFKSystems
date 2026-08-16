@@ -62,6 +62,7 @@ export const S = {
   'common.optional': { en: 'optional', de: 'optional' },
   'common.forever': { en: 'forever', de: 'dauerhaft' },
   'common.paidSlot': { en: 'Paid server slot', de: 'Bezahlter Serverplatz' },
+  'common.created': { en: 'Added', de: 'Hinzugefügt' },
 
   // ---------------------------------------------------------------- Öffentliche Seiten
   //
@@ -74,16 +75,16 @@ export const S = {
     de: 'AFKSystems – Minecraft-Konten online halten',
   },
   'meta.description': {
-    en: 'We run Minecraft AFK bots on our servers. One server slot is free, every further slot is paid in credits per 30 days. Chat, commands and macros are handled in the panel.',
-    de: 'Wir betreiben Minecraft-AFK-Bots auf unseren Servern. Ein Serverplatz ist gratis, jeder weitere kostet Credits je 30 Tage. Chat, Befehle und Macros laufen im Panel.',
+    en: 'We run Minecraft AFK bots on our servers. One server slot is free with an active AFKSystems Discord membership; further slots are paid in credits.',
+    de: 'Wir betreiben Minecraft-AFK-Bots auf unseren Servern. Ein Serverplatz ist mit aktiver AFKSystems-Discord-Mitgliedschaft gratis; weitere kosten Credits.',
   },
   'meta.features.description': {
     en: 'What AFKSystems can do: staying connected, chat and commands, macros, several accounts on one server.',
     de: 'Was AFKSystems kann: verbunden bleiben, Chat und Befehle, Macros, mehrere Konten auf einem Server.',
   },
   'meta.pricing.description': {
-    en: 'One server slot is free. Every further slot is paid from your credit balance for 30 days at a time. No contract, no direct debit.',
-    de: 'Ein Serverplatz ist gratis. Jeder weitere wird für jeweils 30 Tage aus dem Guthaben bezahlt. Kein Vertrag, keine Abbuchung.',
+    en: 'One server slot is free while your linked Discord account is in AFKSystems. Further slots are paid from your credit balance for 30 days.',
+    de: 'Ein Serverplatz ist gratis, solange dein verknüpftes Discord-Konto bei AFKSystems ist. Weitere werden für 30 Tage aus dem Guthaben bezahlt.',
   },
   'meta.faq.description': {
     en: 'Answers about staying online, signing in with Microsoft, credits and what happens when they run out.',
@@ -100,17 +101,26 @@ export const S = {
   'hero.cta': { en: 'Create a free account', de: 'Kostenloses Konto anlegen' },
   'hero.cta2': { en: 'View plans', de: 'Preise ansehen' },
   'hero.note': {
-    en: 'The first server slot costs nothing and needs no payment details.',
-    de: 'Der erste Serverplatz kostet nichts und braucht keine Zahlungsdaten.',
+    en: 'The first server slot costs nothing while your linked Discord account is in AFKSystems.',
+    de: 'Der erste Serverplatz kostet nichts, solange dein verknüpftes Discord-Konto bei AFKSystems ist.',
   },
+  'home.preview.label': { en: 'AFKSystems panel preview', de: 'Vorschau des AFKSystems-Panels' },
+  'home.preview.panel': { en: 'Live control', de: 'Live-Steuerung' },
+  'home.preview.live': { en: 'Online', de: 'Online' },
+  'home.preview.server': { en: 'Your server', de: 'Dein Server' },
+  'home.preview.connected': { en: 'Both accounts connected', de: 'Beide Konten verbunden' },
+  'home.preview.chat': { en: 'Chat is available in the panel', de: 'Chat ist im Panel verfügbar' },
+  'home.preview.antiafk': { en: 'Anti-AFK is active', de: 'Anti-AFK ist aktiv' },
+  'home.preview.control': { en: 'Chat', de: 'Chat' },
+  'home.preview.movement': { en: 'Movement', de: 'Bewegung' },
 
   'rail.free': { en: 'Free slots per account', de: 'Gratis-Plätze je Konto' },
   'rail.paid': { en: 'Further slots from', de: 'Weitere Plätze ab' },
   'rail.perMonth': { en: 'per 30 days', de: 'je 30 Tage' },
   'rail.month': { en: 'Billing period', de: 'Abrechnung je' },
   'rail.monthValue': { en: '30 days', de: '30 Tage' },
-  'rail.reconnect': { en: 'After a dropout', de: 'Nach einem Abbruch' },
-  'rail.reconnectValue': { en: 'joins again', de: 'tritt wieder bei' },
+  'rail.reconnect': { en: 'After a disconnect', de: 'Nach einem Abbruch' },
+  'rail.reconnectValue': { en: 'stops safely', de: 'stoppt sicher' },
 
   'home.what.title': { en: 'What you can do with it', de: 'Was du damit machen kannst' },
   'home.what.lead': {
@@ -119,8 +129,8 @@ export const S = {
   },
   'home.what.1.title': { en: 'Stay connected', de: 'Verbunden bleiben' },
   'home.what.1.text': {
-    en: 'Your account holds its place on the server. After a kick or a restart the bot joins again by itself.',
-    de: 'Dein Konto hält seinen Platz auf dem Server. Nach einem Kick oder Neustart tritt der Bot von selbst wieder bei.',
+    en: 'Your account holds its place on the server. A kick or broken connection ends that session visibly, so it never reconnects unnoticed.',
+    de: 'Dein Konto hält seinen Platz auf dem Server. Ein Kick oder Verbindungsabbruch beendet die Sitzung sichtbar – ohne unbemerkten Neuversuch.',
   },
   'home.what.2.title': { en: 'Chat and commands', de: 'Chat und Befehle' },
   'home.what.2.text': {
@@ -164,8 +174,8 @@ export const S = {
   },
   'pricing.slot': { en: 'Slot', de: 'Platz' },
   'pricing.slot1': {
-    en: 'One bot, chat, commands and macros. Stays free.',
-    de: 'Ein Bot, Chat, Befehle und Macros. Bleibt gratis.',
+    en: 'One bot, chat, commands and macros while your linked Discord account remains a member.',
+    de: 'Ein Bot, Chat, Befehle und Macros, solange dein verknüpftes Discord-Konto Mitglied bleibt.',
   },
   'pricing.slot2': {
     en: 'One plan per server, paid every 30 days.',
@@ -175,7 +185,7 @@ export const S = {
   'pricing.onRequest': { en: 'on request', de: 'auf Anfrage' },
   'pricing.offlineAccounts': { en: 'Offline accounts', de: 'Offline-Konten' },
   'pricing.perServer': { en: 'per server / 30 days', de: 'je Server / 30 Tage' },
-  'pricing.freeForever': { en: 'forever', de: 'dauerhaft' },
+  'pricing.freeForever': { en: 'with Discord membership', de: 'mit Discord-Mitgliedschaft' },
   'pricing.perMonthEuro': { en: '{amount} credits per 30 days', de: '{amount} Credits je 30 Tage' },
   'pricing.creditsNote': {
     en: 'Paid from credits: 100 credits = 1 €. Nothing is debited from a card on its own.',
@@ -190,7 +200,7 @@ export const S = {
   'pricing.bots': { en: 'bots at once on this server', de: 'Bots gleichzeitig auf diesem Server' },
   'pricing.bot': { en: 'bot on this server', de: 'Bot auf diesem Server' },
   'pricing.premiumClient': { en: 'Movement, anti-AFK, sneaking', de: 'Bewegung, Anti-AFK, Schleichen' },
-  'pricing.board': { en: 'Scoreboard as in the game', de: 'Anzeigetafel wie im Spiel' },
+  'pricing.board': { en: 'Scoreboard as in the game', de: 'Scoreboard wie im Spiel' },
   'pricing.menus': { en: 'Open and use menus', de: 'Menüs öffnen und bedienen' },
   'pricing.macros': { en: '{n} macros per server', de: '{n} Macros je Server' },
   'pricing.addonHint': { en: 'bookable as an add-on', de: 'als Zusatz buchbar' },
@@ -264,8 +274,8 @@ export const S = {
   },
   'faq.3.q': { en: 'What does it cost?', de: 'Was kostet das?' },
   'faq.3.a': {
-    en: 'The first server slot is free and stays free. Every further one is paid from your credit balance, for 30 days at a time. The plans are on the pricing page.',
-    de: 'Der erste Serverplatz ist gratis und bleibt es. Jeder weitere wird für jeweils 30 Tage aus dem Guthaben bezahlt. Die Tarife stehen auf der Preisseite.',
+    en: 'The first server slot is free while your linked Discord account remains in the AFKSystems server. Every further one is paid from your credit balance for 30 days.',
+    de: 'Der erste Serverplatz ist gratis, solange dein verknüpftes Discord-Konto im AFKSystems-Server bleibt. Jeder weitere wird für 30 Tage aus dem Guthaben bezahlt.',
   },
   'faq.4.q': { en: 'What happens when my credits run out?', de: 'Was passiert, wenn mein Guthaben leer ist?' },
   'faq.4.a': {
@@ -295,8 +305,8 @@ export const S = {
 
   'cta.title': { en: 'Start with the free slot', de: 'Fang mit dem Gratis-Platz an' },
   'cta.lead': {
-    en: 'All you need for it is an email address.',
-    de: 'Dafür brauchst du nur eine E-Mail-Adresse.',
+    en: 'Link Discord and stay in the AFKSystems server to keep the free slot active.',
+    de: 'Verknüpfe Discord und bleib im AFKSystems-Server, damit der Gratis-Platz aktiv bleibt.',
   },
   'cta.have': { en: 'I already have an account', de: 'Ich habe schon ein Konto' },
 
@@ -336,8 +346,8 @@ export const S = {
 
   'auth.register.title': { en: 'Create account', de: 'Konto anlegen' },
   'auth.register.lead': {
-    en: 'One server slot is free forever. No payment details needed.',
-    de: 'Ein Serverplatz ist dauerhaft gratis. Zahlungsdaten brauchst du nicht.',
+    en: 'One server slot is free with an active AFKSystems Discord membership. No payment details needed.',
+    de: 'Ein Serverplatz ist mit aktiver AFKSystems-Discord-Mitgliedschaft gratis. Zahlungsdaten brauchst du nicht.',
   },
   'auth.register.email': { en: 'Email address', de: 'E-Mail-Adresse' },
   'auth.register.username': { en: 'Username', de: 'Benutzername' },
@@ -409,6 +419,7 @@ export const S = {
   'dash.overview': { en: 'Overview', de: 'Übersicht' },
   'dash.servers': { en: 'Servers', de: 'Server' },
   'dash.accounts': { en: 'Minecraft accounts', de: 'Minecraft-Konten' },
+  'dash.accountsShort': { en: 'Accounts', de: 'Konten' },
   'dash.proxies': { en: 'Proxies', de: 'Proxys' },
   'dash.credits': { en: 'Credits', de: 'Guthaben' },
   'dash.tickets': { en: 'Support', de: 'Support' },
@@ -436,7 +447,7 @@ export const S = {
   'tab.connect': { en: 'Connect', de: 'Verbinden' },
   'tab.chat': { en: 'Chat', de: 'Chat' },
   'tab.movement': { en: 'Movement', de: 'Bewegung' },
-  'tab.board': { en: 'Scoreboard', de: 'Anzeigetafel' },
+  'tab.board': { en: 'Scoreboard', de: 'Scoreboard' },
   'tab.menu': { en: 'Menus', de: 'Menüs' },
   'tab.proxies': { en: 'Proxies', de: 'Proxys' },
   'tab.macros': { en: 'Macros', de: 'Macros' },
@@ -522,6 +533,11 @@ export const S = {
   },
   'acc.ok': { en: 'Ready', de: 'Bereit' },
   'acc.error': { en: 'Sign-in needed', de: 'Anmeldung nötig' },
+  'acc.suspended': { en: 'Suspended', de: 'Suspendiert' },
+  'acc.suspendedHint': {
+    en: 'This Minecraft account was suspended by an administrator.',
+    de: 'Dieses Minecraft-Konto wurde von einem Administrator suspendiert.',
+  },
   'acc.pending': { en: 'Waiting for confirmation', de: 'Wartet auf Bestätigung' },
   'acc.kind.offline': { en: 'Offline', de: 'Offline' },
   'acc.kind.microsoft': { en: 'Microsoft', de: 'Microsoft' },
@@ -601,21 +617,50 @@ export const S = {
     de: 'Proxys gibt es für bezahlte Serverplätze. Mach ein Ticket auf, dann teilen wir einen zu.',
   },
   'srv.saved': { en: 'Saved.', de: 'Gespeichert.' },
+  'srv.unavailable': { en: 'Unavailable', de: 'Nicht verfügbar' },
+  'srv.commandFailed': { en: 'The command could not be sent.', de: 'Der Befehl konnte nicht gesendet werden.' },
+  'srv.freeDiscordTitle': { en: 'Free slot paused', de: 'Gratis-Platz pausiert' },
+  'srv.freeDiscordAction': {
+    en: 'Link or check Discord in settings.',
+    de: 'Discord in den Einstellungen verknüpfen oder prüfen.',
+  },
+  'srv.freeDiscord.not-configured': {
+    en: 'The Discord membership check is not configured.',
+    de: 'Die Prüfung der Discord-Mitgliedschaft ist nicht eingerichtet.',
+  },
+  'srv.freeDiscord.discord-link': {
+    en: 'Link your Discord account to use the free slot.',
+    de: 'Verknüpfe dein Discord-Konto, um den Gratis-Platz zu nutzen.',
+  },
+  'srv.freeDiscord.discord-check': {
+    en: 'Your Discord membership has not been confirmed recently.',
+    de: 'Deine Discord-Mitgliedschaft wurde zuletzt nicht bestätigt.',
+  },
+  'srv.freeDiscord.discord-join': {
+    en: 'Join the AFKSystems Discord server to use the free slot.',
+    de: 'Tritt dem AFKSystems-Discord-Server bei, um den Gratis-Platz zu nutzen.',
+  },
   'srv.restartNeeded': {
     en: 'Running bots pick this up on their next start.',
     de: 'Laufende Bots übernehmen das erst beim nächsten Start.',
   },
+  'srv.disconnectStops': {
+    en: 'A kick or broken connection ends the client. Start it again from the panel when you want to reconnect.',
+    de: 'Ein Kick oder Verbindungsabbruch beendet den Client. Für eine neue Verbindung startest du ihn bewusst im Panel erneut.',
+  },
   'srv.walk': { en: 'Walk', de: 'Gehen' },
   'srv.blocks': { en: 'Blocks per step', de: 'Blöcke je Schritt' },
   'srv.jump': { en: 'Jump', de: 'Springen' },
-  'srv.fall': { en: 'Let fall', de: 'Fallen lassen' },
   'srv.pos': { en: 'Where am I?', de: 'Wo bin ich?' },
+  'srv.positionMissing': { en: 'No coordinates received.', de: 'Keine Koordinaten empfangen.' },
+  'srv.positionLook': { en: 'View: {yaw}° / {pitch}°', de: 'Blick: {yaw}° / {pitch}°' },
   'srv.look': { en: 'Look', de: 'Blickrichtung' },
   'srv.lookHint': {
     en: 'Yaw as in the F3 screen: 0 south, 90 west, −90 east, 180 north. Negative pitch looks up.',
     de: 'Yaw wie im F3-Bildschirm: 0 Süden, 90 Westen, −90 Osten, 180 Norden. Pitch negativ heißt nach oben.',
   },
   'srv.home': { en: 'Home position', de: 'Heimatposition' },
+  'srv.homeAuto': { en: 'Return home automatically', de: 'Automatisch nach Hause laufen' },
   'srv.homeHint': {
     en: 'The bot remembers a spot and walks back there after every join – handy when the server drops you in a lobby.',
     de: 'Der Bot merkt sich eine Stelle und läuft nach jedem Beitritt dorthin zurück – praktisch, wenn der Server dich in die Lobby setzt.',
@@ -632,11 +677,9 @@ export const S = {
   'srv.on': { en: 'On', de: 'An' },
   'srv.off': { en: 'Off', de: 'Aus' },
   'srv.body': { en: 'Body', de: 'Körper' },
-  'srv.sneakOn': { en: 'Sneak on', de: 'Schleichen an' },
-  'srv.sneakOff': { en: 'Sneak off', de: 'Schleichen aus' },
+  'srv.sneak': { en: 'Sneak', de: 'Schleichen' },
+  'srv.sprint': { en: 'Sprint', de: 'Sprinten' },
   'srv.sneakAlways': { en: 'Stay crouched permanently', de: 'Dauerhaft geduckt bleiben' },
-  'srv.sprintOn': { en: 'Sprint on', de: 'Sprinten an' },
-  'srv.sprintOff': { en: 'Sprint off', de: 'Sprinten aus' },
   'srv.swing': { en: 'Swing arm', de: 'Arm schwingen' },
   'srv.use': { en: 'Use item', de: 'Benutzen' },
   'srv.hand': { en: 'Pick slot', de: 'Feld wählen' },
@@ -848,6 +891,7 @@ export const S = {
   'adm.tickets': { en: 'Tickets', de: 'Tickets' },
   'adm.profiles': { en: 'Server slots', de: 'Serverplätze' },
   'adm.bots': { en: 'Bots', de: 'Bots' },
+  'adm.accounts': { en: 'Accounts', de: 'Accounts' },
   'adm.announce': { en: 'Announcement', de: 'Ankündigung' },
   'adm.settings': { en: 'Settings', de: 'Einstellungen' },
   'adm.mails': { en: 'Mail log', de: 'Mail-Protokoll' },
@@ -909,7 +953,10 @@ export const S = {
   },
   'ad.qty': { en: 'How many', de: 'Wie viele' },
   'ad.monthlyAfter': { en: 'Monthly from now on', de: 'Monatlich ab jetzt' },
-  'ad.confirmBuy': { en: 'Book “{name}” for {credits} credits?', de: '„{name}“ für {credits} Credits buchen?' },
+  'ad.confirmBuy': {
+    en: 'Book {qty} × “{name}” for {credits} credits?',
+    de: '{qty} × „{name}“ für {credits} Credits buchen?',
+  },
   'ad.confirmDrop': {
     en: 'Cancel “{name}”? The unused rest comes back as credits.',
     de: '„{name}“ abbestellen? Der nicht verbrauchte Rest kommt aufs Guthaben zurück.',
@@ -933,25 +980,25 @@ export const S = {
   'nd.access.admin': { en: 'Administrators only', de: 'Nur Administratoren' },
 
   // ---------------------------------------------------------------- Anzeigetafel und Menüs
-  'vw.board': { en: 'Scoreboard', de: 'Anzeigetafel' },
+  'vw.board': { en: 'Scoreboard', de: 'Scoreboard' },
   'vw.menu': { en: 'Menu', de: 'Menü' },
   'vw.fetch': { en: 'Fetch', de: 'Abrufen' },
   'vw.empty': { en: 'The server is not showing one right now.', de: 'Der Server zeigt gerade keine an.' },
   'vw.emptyMenu': { en: 'No menu is open.', de: 'Gerade ist kein Menü offen.' },
   'vw.hint': {
     en: 'The scoreboard is read once when you ask for it – it is not a live feed.',
-    de: 'Die Anzeigetafel wird bei jeder Abfrage einmal gelesen – sie läuft nicht mit.',
+    de: 'Das Scoreboard wird bei jeder Abfrage einmal gelesen – es läuft nicht live mit.',
   },
   'vw.slots': { en: '{n} slots', de: '{n} Felder' },
   'vw.clickSlot': { en: 'Click a slot to use it.', de: 'Klick ein Feld an, um es zu benutzen.' },
   'vw.menuBlind': {
-    en: 'The client does not read what is in the slots – only how many there are. Clicking works regardless.',
-    de: 'Der Client liest nicht, was in den Feldern liegt – nur, wie viele es sind. Klicken geht trotzdem.',
+    en: 'Names, counts and colors come from the server. Hover or focus an item to load its lore.',
+    de: 'Namen, Anzahl und Farben kommen vom Server. Fahre über ein Item oder fokussiere es, um die Lore zu laden.',
   },
   'vw.stale': { en: 'from {time}', de: 'von {time}' },
   'vw.needBoard': {
-    en: 'The scoreboard is part of Ultra. On Premium you can add it as an extra.',
-    de: 'Die Anzeigetafel gehört zu Ultra. Auf Premium lässt sie sich als Zusatz dazubuchen.',
+    en: 'The scoreboard is included in every paid plan.',
+    de: 'Das Scoreboard ist in jedem bezahlten Tarif enthalten.',
   },
   'vw.needMenu': {
     en: 'Menus are part of Ultra. On Premium you can add them as an extra.',
@@ -1007,8 +1054,20 @@ export const S = {
   'set.googleWhat': { en: 'Sign in with one click.', de: 'Anmelden mit einem Klick.' },
   'set.verifyRoles': { en: 'Refresh Discord roles', de: 'Discord-Rollen auffrischen' },
   'set.verifyRolesHint': {
-    en: 'Tells Discord your current plan so linked roles are up to date.',
-    de: 'Sagt Discord deinen aktuellen Tarif, damit die verknüpften Rollen stimmen.',
+    en: 'Refreshes the Administrator or Discord Moderator linked-role status.',
+    de: 'Aktualisiert den Linked-Role-Status für Administrator oder Discord-Moderator.',
+  },
+  'set.freeDiscordOk': {
+    en: 'AFKSystems membership confirmed — the free slot can run.',
+    de: 'AFKSystems-Mitgliedschaft bestätigt – der Gratis-Platz kann laufen.',
+  },
+  'set.freeDiscordMissing': {
+    en: 'Membership not confirmed — the free slot is stopped.',
+    de: 'Mitgliedschaft nicht bestätigt – der Gratis-Platz ist gestoppt.',
+  },
+  'set.freeDiscordLink': {
+    en: 'The free slot needs a linked Discord account in the AFKSystems server.',
+    de: 'Der Gratis-Platz braucht ein verknüpftes Discord-Konto im AFKSystems-Server.',
   },
   'set.webhookWhat': {
     en: 'A private Discord channel of yours that gets a message when a bot drops out or credits run low.',
@@ -1078,10 +1137,71 @@ export const S = {
   'adm.system': { en: 'System', de: 'System' },
   'adm.servers': { en: 'Servers', de: 'Server' },
   'adm.console': { en: 'Console', de: 'Konsole' },
-  'adm.lock': { en: 'Lock', de: 'Sperren' },
-  'adm.unlock': { en: 'Unlock', de: 'Entsperren' },
-  'adm.lockReason': { en: 'Why?', de: 'Warum?' },
-  'adm.locked': { en: 'locked', de: 'gesperrt' },
+  'adm.lock': { en: 'Suspend server', de: 'Server suspendieren' },
+  'adm.unlock': { en: 'Resume server', de: 'Server fortsetzen' },
+  'adm.lockReason': { en: 'Reason for suspension', de: 'Grund der Suspendierung' },
+  'adm.locked': { en: 'Server suspended', de: 'Server suspendiert' },
+  'adm.serverSuspended': { en: 'Server suspended', de: 'Server suspendiert' },
+  'adm.billingSuspended': { en: 'Billing suspended', de: 'Abrechnung ausgesetzt' },
+  'adm.suspendBilling': { en: 'Suspend billing', de: 'Abrechnung aussetzen' },
+  'adm.resumeBilling': { en: 'Resume billing', de: 'Abrechnung fortsetzen' },
+  'adm.discordRoles': { en: 'Discord roles', de: 'Discord-Rollen' },
+  'adm.rolesSynced': {
+    en: 'Calculated for the linked Discord account',
+    de: 'Für das verknüpfte Discord-Konto berechnet',
+  },
+  'adm.rolesNeedLink': {
+    en: 'Waiting for a linked Discord account',
+    de: 'Wartet auf ein verknüpftes Discord-Konto',
+  },
+  'adm.assigned': { en: 'Assigned', de: 'Zugewiesen' },
+  'adm.automatic': { en: 'Automatic', de: 'Automatisch' },
+  'adm.notAssigned': { en: 'Not assigned', de: 'Nicht zugewiesen' },
+  'adm.suspendAccount': { en: 'Suspend account', de: 'Account suspendieren' },
+  'adm.resumeAccount': { en: 'Resume account', de: 'Account fortsetzen' },
+  'adm.resumeAccountAsk': { en: 'Resume “{name}”?', de: '„{name}“ fortsetzen?' },
+  'adm.suspendReason': { en: 'Reason for suspension', de: 'Grund der Suspendierung' },
+
+  'role.customer': { en: 'Customer', de: 'Customer' },
+  'role.customer.hint': {
+    en: 'Automatic for every linked panel account.',
+    de: 'Automatisch für jedes verknüpfte Panel-Konto.',
+  },
+  'role.premium': { en: 'Premium', de: 'Premium' },
+  'role.premium.hint': {
+    en: 'Automatic while a paid Premium slot is active.',
+    de: 'Automatisch, solange ein bezahlter Premium-Platz aktiv ist.',
+  },
+  'role.ultra': { en: 'Ultra', de: 'Ultra' },
+  'role.ultra.hint': {
+    en: 'Automatic while an Ultra slot is active.',
+    de: 'Automatisch, solange ein Ultra-Platz aktiv ist.',
+  },
+  'role.partner': { en: 'Partner', de: 'Partner' },
+  'role.partner.hint': {
+    en: 'Managed manually in the panel and synced as a regular role.',
+    de: 'Im Panel vergeben und als normale Rolle synchronisiert.',
+  },
+  'role.vip': { en: 'VIP', de: 'VIP' },
+  'role.vip.hint': {
+    en: 'Managed manually in the panel and synced as a regular role.',
+    de: 'Im Panel vergeben und als normale Rolle synchronisiert.',
+  },
+  'role.administrator': { en: 'Administrator', de: 'Administrator' },
+  'role.administrator.hint': {
+    en: 'Panel administrator; published as a Discord linked role.',
+    de: 'Panel-Administrator; wird als Discord Linked Role veröffentlicht.',
+  },
+  'role.moderator': { en: 'Discord Moderator', de: 'Discord-Moderator' },
+  'role.moderator.hint': {
+    en: 'Set in the panel; published as a Discord linked role.',
+    de: 'Im Panel gesetzt; wird als Discord Linked Role veröffentlicht.',
+  },
+  'role.team': { en: 'Team', de: 'Team' },
+  'role.team.hint': {
+    en: 'Added automatically for administrators and Discord moderators.',
+    de: 'Wird Administratoren und Discord-Moderatoren automatisch hinzugefügt.',
+  },
   'adm.sendMail': { en: 'Send an email', de: 'E-Mail schicken' },
   'adm.openTicket': { en: 'Open a ticket for them', de: 'Ticket für diesen Kunden' },
   'adm.mailForce': { en: 'Send even if unsubscribed', de: 'Auch senden, wenn abbestellt' },

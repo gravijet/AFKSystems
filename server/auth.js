@@ -4,7 +4,7 @@
 import { db, audit, getSetting } from './db.js';
 import { config } from './config.js';
 import { token, hashPassword, verifyPassword, HttpError, bad } from './util.js';
-import { grant, planOf, isPayingUser, monthlyCost } from './billing.js';
+import { grant, planOf, isPayingUser, monthlyCost, freeAccess } from './billing.js';
 import * as mail from './mail.js';
 
 const COOKIE = 'afk_session';
@@ -312,6 +312,7 @@ export function applyReset(rawToken, password, repeat) {
 
 export function publicUser(user) {
   const paying = isPayingUser(user.id);
+  const free = freeAccess(user.id);
   return {
     id: user.id,
     email: user.email,
@@ -327,6 +328,13 @@ export function publicUser(user) {
     discord: user.discord_id
       ? { id: user.discord_id, name: user.discord_name, avatar: user.discord_avatar }
       : null,
+    discord_moderator: Boolean(user.discord_moderator),
+    discord_partner: Boolean(user.discord_partner),
+    discord_vip: Boolean(user.discord_vip),
+    discord_guild_member: Boolean(user.discord_guild_member),
+    discord_guild_checked_at: user.discord_guild_checked_at || null,
+    linked_roles_available: user.role === 'admin' || Boolean(user.discord_moderator),
+    free_access: free,
     google: user.google_id ? { id: user.google_id, email: user.google_email } : null,
     mail_prefs: mail.prefsOf(user),
     paying,

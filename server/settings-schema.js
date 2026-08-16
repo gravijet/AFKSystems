@@ -337,6 +337,36 @@ export const SETTINGS = [
     en: { label: 'Guild ID', help: 'Right-click the server icon → Copy ID.' },
   },
   {
+    key: 'free_discord_guild_id',
+    group: 'discord',
+    type: 'text',
+    de: {
+      label: 'Pflichtserver für den Gratis-Tarif',
+      help: 'Der Gratis-Platz läuft nur, solange das verknüpfte Discord-Konto Mitglied dieses Servers ist.',
+      placeholder: '1538202840445485126',
+    },
+    en: {
+      label: 'Required guild for the Free plan',
+      help: 'The Free slot runs only while the linked Discord account is a member of this guild.',
+      placeholder: '1538202840445485126',
+    },
+  },
+  {
+    key: 'free_discord_check_minutes',
+    group: 'discord',
+    type: 'number',
+    min: 5,
+    max: 1440,
+    de: {
+      label: 'Mitgliedschaft höchstens so alt (Minuten)',
+      help: 'Ohne frischen Nachweis stoppt der Gratis-Platz. Der Bot gleicht stündlich und bei Beitritt/Austritt ab.',
+    },
+    en: {
+      label: 'Maximum membership age (minutes)',
+      help: 'Without a fresh check the Free slot stops. The bot syncs hourly and on joins/leaves.',
+    },
+  },
+  {
     key: 'discord_ticket_channel',
     group: 'discord',
     type: 'text',
@@ -353,11 +383,11 @@ export const SETTINGS = [
 
   // ---------------------------------------------------------------- Rollen
   {
-    key: 'discord_role_linked',
+    key: 'discord_role_customer',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Konto verknüpft', help: 'Bekommt jeder, der sein AFKSystems-Konto mit Discord verknüpft hat.' },
-    en: { label: 'Account linked', help: 'Everyone who linked their AFKSystems account with Discord gets this.' },
+    de: { label: 'Customer', help: 'Bekommt jeder, der sein AFKSystems-Konto mit Discord verknüpft hat.' },
+    en: { label: 'Customer', help: 'Everyone who linked their AFKSystems account with Discord gets this.' },
   },
   {
     key: 'discord_role_premium',
@@ -374,18 +404,32 @@ export const SETTINGS = [
     en: { label: 'Ultra', help: 'For customers on the Ultra plan.' },
   },
   {
+    key: 'discord_role_partner',
+    group: 'discordroles',
+    type: 'text',
+    de: { label: 'Partner', help: 'Wird im Benutzerprofil von einem Administrator vergeben und anschließend synchronisiert.' },
+    en: { label: 'Partner', help: 'Assigned by an administrator in the user profile and then synced.' },
+  },
+  {
+    key: 'discord_role_vip',
+    group: 'discordroles',
+    type: 'text',
+    de: { label: 'VIP', help: 'Wird im Benutzerprofil von einem Administrator vergeben und anschließend synchronisiert.' },
+    en: { label: 'VIP', help: 'Assigned by an administrator in the user profile and then synced.' },
+  },
+  {
     key: 'discord_role_admin',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Admin', help: 'Wer diese Rolle in Discord trägt, bekommt vom Bot zusätzlich die Team-Rolle.' },
-    en: { label: 'Admin', help: 'Anyone with this role in Discord also gets the team role from the bot.' },
+    de: { label: 'Administrator (Linked Role)', help: 'Diese Linked Role wird nicht direkt synchronisiert. Ihre ID gibt dem Admin Zugriff auf Ticket-Kanäle.' },
+    en: { label: 'Administrator (Linked Role)', help: 'This Linked Role is not synced directly. Its ID grants administrators access to ticket channels.' },
   },
   {
     key: 'discord_role_mod',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Discord-Mod', help: 'Wie Admin: zieht die Team-Rolle nach sich.' },
-    en: { label: 'Discord mod', help: 'Like admin: pulls the team role along.' },
+    de: { label: 'Discord Moderator (Linked Role)', help: 'Diese Linked Role wird nicht direkt synchronisiert. Moderator wird im Benutzerprofil gesetzt.' },
+    en: { label: 'Discord Moderator (Linked Role)', help: 'This Linked Role is not synced directly. Moderator status is set in the user profile.' },
   },
   {
     key: 'discord_role_team',

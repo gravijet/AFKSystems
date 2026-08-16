@@ -61,9 +61,11 @@ Unter *Administration → Einstellungen → Discord* und *→ Discord-Rollen*:
 | Kategorie für Ticket-Kanäle | die Kategorie, unter der die Ticket-Kanäle entstehen |
 | Einladungslink | `https://discord.gg/…` – steht danach auf der Website |
 | Geheimnis Panel ↔ Bot | ein selbst ausgedachtes langes Passwort (siehe unten) |
-| Konto verknüpft | Rolle für jeden mit verknüpftem Konto |
+| Pflichtserver für den Gratis-Tarif | `1538202840445485126` – nur Mitglieder dürfen den Gratis-Platz starten |
+| Customer | normale Rolle für jedes verknüpfte Konto |
 | Premium / Ultra | Rollen für die Tarife |
-| Admin / Discord-Mod | die Rollen, aus denen die Team-Rolle folgt |
+| Partner / VIP | normale Rollen, die im Benutzerprofil vergeben werden |
+| Admin / Discord Moderator | die beiden einzigen Discord Linked Roles; im Benutzerprofil gesetzt |
 | Team | bekommt automatisch, wer Admin oder Discord-Mod ist |
 
 Für das Geheimnis:
@@ -91,11 +93,11 @@ npm start
 Beim ersten Start sollte im Protokoll stehen:
 
 ```
-[discord] angemeldet als AFKSystems#1234
-[discord] Befehle angemeldet
-[linked roles] 4 Felder angemeldet
-[panel] verbunden
-[rollen] erster Abgleich: N Mitglieder angepasst
+[discord] signed in as AFKSystems#1234
+[discord] commands registered
+[linked roles] registered 2 metadata field(s)
+[panel] connected
+[roles] initial sync: updated N member(s)
 ```
 
 Als Dienst dauerhaft laufen lassen:
@@ -130,35 +132,40 @@ samt Zeitpunkt des letzten Lebenszeichens.
 
 Stündlich und bei jeder Änderung:
 
-* verknüpftes Konto → **Konto verknüpft**
+* verknüpftes Konto → **Customer**
 * laufender bezahlter Tarif → **Premium** bzw. **Ultra** (oder die Rolle am Tarif)
+* im Panel gesetztes Kennzeichen → **Partner** beziehungsweise **VIP**
 * **Admin** oder **Discord-Mod** → zusätzlich **Team**
+
+Bei jedem Beitritt oder Austritt und beim stündlichen Vollabgleich meldet der Bot außerdem die
+Mitgliedschaft an das Panel. Ohne Mitgliedschaft im Pflichtserver wird jeder Gratis-Platz sofort
+gestoppt und sein automatischer Startwunsch gelöscht.
 
 Angefasst wird **ausschließlich**, was oben eingetragen ist. Alles andere – Farbrollen,
 Selbstbedienungsrollen – bleibt unberührt.
 
 ### Linked Roles
 
-Der Bot meldet beim Start das Schema an, mit dem Discord Rollen an Bedingungen knüpfen kann:
+Der Bot meldet beim Start genau zwei Merkmale an, mit denen Discord Teamrollen an Bedingungen
+knüpfen kann:
 
 | Feld | Bedeutung |
 | --- | --- |
-| `linked` | hat ein AFKSystems-Konto verknüpft |
-| `plan` | 0 = Gratis, 1 = Premium, 2 = Ultra |
-| `servers` | wie viele Serverplätze laufen |
-| `staff` | gehört zum Team |
+| `administrator` | ist Administrator im AFKSystems-Panel |
+| `discord_moderator` | ist im Panel als Discord Moderator markiert |
 
 Einrichten: *Servereinstellungen → Rollen → Rolle → Links → AFKSystems → Bedingung*. Die Werte
-schreibt das Panel, sobald ein Kunde in seinen Einstellungen auf **Discord-Rollen auffrischen**
-klickt.
+schreibt das Panel nach der Zustimmung über **Discord-Rollen auffrischen**. Diese Schaltfläche wird
+nur Administratoren und Discord-Moderatoren gezeigt. Customer, Premium, Ultra, Partner, VIP und
+Team sind ausdrücklich normale Rollen und werden vom Bot direkt synchronisiert.
 
 ### Befehle
 
 | Befehl | Was er tut |
 | --- | --- |
-| `/konto` | zeigt, ob verknüpft, welcher Tarif, ob Team |
+| `/account` | zeigt, ob verknüpft, welcher Tarif, ob Team |
 | `/ticket` | macht ein Ticket auf, ohne den Umweg über den Kanal |
-| `/rollen` | gleicht alle Mitglieder ab (nur mit „Rollen verwalten“) |
+| `/roles` | gleicht alle Mitglieder ab (nur mit „Rollen verwalten“) |
 
 ---
 
@@ -166,10 +173,11 @@ klickt.
 
 | Meldung | Ursache | Abhilfe |
 | --- | --- | --- |
-| `PANEL_SECRET fehlt` | `.env` nicht ausgefüllt | Geheimnis aus dem Panel eintragen |
-| `Der Bot ist nicht angemeldet` | Geheimnis stimmt nicht überein | beide Seiten vergleichen |
-| `Das Panel antwortet nicht` | `PANEL_URL` falsch oder Panel aus | `curl $PANEL_URL/api/health` |
-| `Kein Bot-Token` | Token weder im Panel noch in der `.env` | im Panel eintragen |
+| `PANEL_SECRET is missing` | `.env` nicht ausgefüllt | Geheimnis aus dem Panel eintragen |
+| `The bot is not signed in` | Geheimnis stimmt nicht überein | beide Seiten vergleichen |
+| `The panel is unavailable` | `PANEL_URL` falsch oder Panel aus | `curl $PANEL_URL/api/health` |
+| `No bot token` | Token weder im Panel noch in der `.env` | im Panel eintragen |
+| `Unexpected server response: 404` | Reverse Proxy reicht `/api/bot/stream` als normales GET durch | mitgelieferte nginx-Konfiguration installieren; Upgrade- und Authorization-Header müssen durchgereicht werden |
 | `Missing Permissions` beim Rollenvergeben | Bot-Rolle steht zu weit unten | in Discord nach oben ziehen |
 | Ticket-Kanäle entstehen nicht | Kategorie-ID falsch oder Rechte fehlen | ID prüfen, „Kanäle verwalten“ prüfen |
 | Nachrichten kommen leer an | Message Content Intent aus | im Developer Portal einschalten |

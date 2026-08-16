@@ -563,6 +563,71 @@ const migrations = [
       db.prepare("UPDATE addons SET available = 0, active = 1 WHERE key = 'pov'").run();
     },
   },
+  {
+    // Discord ist beim Gratis-Tarif keine bloße Zusatzverknüpfung: Der Platz läuft nur, solange
+    // das verknüpfte Konto Mitglied des AFKSystems-Servers ist. Außerdem braucht der Admin-Bereich
+    // eigene Kennzeichen für die regulär synchronisierten Partner-/VIP-Rollen und für Discord-
+    // Moderatoren. Minecraft-Konten lassen sich nun einzeln stilllegen, ohne sie zu löschen.
+    name: '007-discord-rollen-sperren-und-premium-merkmale',
+    sql: `
+      ALTER TABLE users ADD COLUMN discord_moderator    INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN discord_partner      INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN discord_vip          INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN discord_guild_member INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE users ADD COLUMN discord_guild_checked_at INTEGER;
+
+      ALTER TABLE mc_accounts ADD COLUMN suspended     INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE mc_accounts ADD COLUMN suspend_reason TEXT;
+    `,
+    run() {
+      const premiumDe = [
+        '5 Bots gleichzeitig auf diesem Server',
+        'Bewegung, Anti-AFK, Schleichen',
+        '50000 Zeilen Chatverlauf',
+        'Scoreboard wie im Spiel',
+        'Eigene Ausgangsadresse auf Anfrage',
+        'Support mit Vorrang',
+      ].join('\n');
+      const premiumEn = [
+        '5 bots at once on this server',
+        'Movement, anti-AFK, sneaking',
+        '50,000 lines of chat history',
+        'Scoreboard as in the game',
+        'Dedicated outgoing address on request',
+        'Priority support',
+      ].join('\n');
+      db.prepare(
+        `UPDATE plans SET
+           features_de = CASE WHEN trim(features_de) = '' THEN ? ELSE features_de END,
+           features_en = CASE WHEN trim(features_en) = '' THEN ? ELSE features_en END,
+           chat_limit = 50000
+         WHERE slug = 'premium'`
+      ).run(premiumDe, premiumEn);
+      // Bestehende Premium-Plätze standen höchstens auf dem alten Tariflimit von 2000 Zeilen.
+      // Eigene höhere Werte bleiben unangetastet.
+      db.prepare(
+        `UPDATE profiles SET chat_limit = 50000
+          WHERE chat_limit <= 2000 AND plan_id IN (SELECT id FROM plans WHERE slug = 'premium')`
+      ).run();
+
+      // Ultra darf beim Chatverlauf nicht hinter Premium zurückfallen. Der bisherige Standard
+      // waren 10.000 Zeilen; benutzerdefinierte höhere Werte bleiben erhalten.
+      db.prepare(
+        "UPDATE plans SET chat_limit = 50000 WHERE slug = 'ultra' AND chat_limit < 50000"
+      ).run();
+      db.prepare(
+        `UPDATE profiles SET chat_limit = 50000
+          WHERE chat_limit <= 10000 AND plan_id IN (SELECT id FROM plans WHERE slug = 'ultra')`
+      ).run();
+
+      db.prepare(
+        `UPDATE plans SET
+           blurb_de = 'Ein Server ohne Kosten, solange dein verknüpftes Discord-Konto Mitglied bei AFKSystems ist.',
+           blurb_en = 'One server at no cost while your linked Discord account is a member of AFKSystems.'
+         WHERE slug = 'free'`
+      ).run();
+    },
+  },
 ];
 
 /**
@@ -620,8 +685,8 @@ const ADDON_SEED = [
 /** Die Beschreibungen der drei Tarife aus der Erstbefüllung – auch von Migration 004 benutzt. */
 const PLAN_TEXTS = {
   free: {
-    blurb_de: 'Ein Server ohne Kosten. Zahlungsdaten brauchst du dafür nicht.',
-    blurb_en: 'One server at no cost. You do not need payment details for it.',
+    blurb_de: 'Ein Server ohne Kosten, solange dein verknüpftes Discord-Konto Mitglied bei AFKSystems ist.',
+    blurb_en: 'One server at no cost while your linked Discord account is a member of AFKSystems.',
   },
   premium: {
     blurb_de: 'Für Server, auf denen der Bot mehr tun soll, als nur dazustehen.',
@@ -681,6 +746,16 @@ const PLAN_SEED = [
     max_macros: 5,
     addons: 0,
     highlight: 0,
+    features_de: [
+      '1 Bot gleichzeitig auf diesem Server',
+      '200 Zeilen Chatverlauf',
+      'Discord-Konto und Mitgliedschaft bei AFKSystems erforderlich',
+    ].join('\n'),
+    features_en: [
+      '1 bot at once on this server',
+      '200 lines of chat history',
+      'Linked Discord account and AFKSystems membership required',
+    ].join('\n'),
     sort: 0,
   },
   {
@@ -696,7 +771,7 @@ const PLAN_SEED = [
     proxy: 1,
     offline_accounts: 1,
     fakehost: 1,
-    chat_limit: 2000,
+    chat_limit: 50000,
     chat_limit_editable: 1,
     priority_support: 1,
     // Die Anzeigetafel gehört zu jedem bezahlten Platz. Menüs sind der Zusatz, den Premium
@@ -707,6 +782,22 @@ const PLAN_SEED = [
     max_macros: 40,
     addons: 1,
     highlight: 0,
+    features_de: [
+      '5 Bots gleichzeitig auf diesem Server',
+      'Bewegung, Anti-AFK, Schleichen',
+      '50000 Zeilen Chatverlauf',
+      'Scoreboard wie im Spiel',
+      'Eigene Ausgangsadresse auf Anfrage',
+      'Support mit Vorrang',
+    ].join('\n'),
+    features_en: [
+      '5 bots at once on this server',
+      'Movement, anti-AFK, sneaking',
+      '50,000 lines of chat history',
+      'Scoreboard as in the game',
+      'Dedicated outgoing address on request',
+      'Priority support',
+    ].join('\n'),
     sort: 10,
   },
   {
@@ -722,7 +813,7 @@ const PLAN_SEED = [
     proxy: 1,
     offline_accounts: 1,
     fakehost: 1,
-    chat_limit: 10000,
+    chat_limit: 50000,
     chat_limit_editable: 1,
     priority_support: 1,
     board: 1,
@@ -731,6 +822,8 @@ const PLAN_SEED = [
     max_macros: 200,
     addons: 1,
     highlight: 1,
+    features_de: '',
+    features_en: '',
     sort: 20,
   },
 ];
@@ -739,11 +832,11 @@ if (!db.prepare('SELECT COUNT(*) AS n FROM plans').get().n) {
   const insert = db.prepare(`INSERT INTO plans
     (slug, name_de, name_en, blurb_de, blurb_en, price_credits, free_slot, max_accounts, premium,
      movement, proxy, offline_accounts, fakehost, chat_limit, chat_limit_editable, priority_support,
-     board, menus, pov, max_macros, addons, highlight, sort)
+     board, menus, pov, max_macros, addons, highlight, features_de, features_en, sort)
     VALUES (@slug, @name_de, @name_en, @blurb_de, @blurb_en, @price_credits, @free_slot,
      @max_accounts, @premium, @movement, @proxy, @offline_accounts, @fakehost, @chat_limit,
      @chat_limit_editable, @priority_support, @board, @menus, @pov, @max_macros, @addons,
-     @highlight, @sort)`);
+     @highlight, @features_de, @features_en, @sort)`);
   db.transaction(() => PLAN_SEED.forEach((plan) => insert.run(plan)))();
 }
 
@@ -809,10 +902,19 @@ const defaults = {
   discord_bot_secret: '', // gemeinsames Geheimnis zwischen Bot und Panel
   discord_ticket_channel: '', // Kanal mit dem Knopf "Ticket aufmachen"
   discord_ticket_category: '', // Kategorie, unter der Ticket-Kanäle entstehen
-  discord_role_linked: '', // hat sein Konto verknüpft
+  // Der Gratis-Tarif gilt nur für Mitglieder dieses Servers. Die Prüfung kommt vom Bot und wird
+  // nach kurzer Zeit ohne frischen Nachweis absichtlich ungültig (fail closed).
+  free_discord_guild_id: '1538202840445485126',
+  free_discord_check_minutes: 120,
+  discord_role_customer: '',
+  discord_role_linked: '', // alter Name; dient bestehenden Installationen als Fallback
   discord_role_premium: '',
   discord_role_ultra: '',
+  discord_role_partner: '',
+  discord_role_vip: '',
   discord_role_team: '', // bekommt automatisch, wer Admin oder Mod ist
+  // IDs der Discord-Rollen, die an Linked Roles für Administrator/Moderator hängen. Der Bot
+  // synchronisiert sie nicht direkt, braucht sie aber für Ticket-Kanalrechte.
   discord_role_admin: '',
   discord_role_mod: '',
 

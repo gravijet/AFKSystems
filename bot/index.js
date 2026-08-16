@@ -14,7 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client, Events, GatewayIntentBits, Partials, REST, Routes } from 'discord.js';
+import { Client, Events, GatewayIntentBits, MessageFlags, Partials, REST, Routes } from 'discord.js';
 import { Panel } from './panel.js';
 import { Tickets } from './handlers/tickets.js';
 import { Roles } from './handlers/roles.js';
@@ -85,7 +85,7 @@ class Bot {
   async start() {
     if (!this.panel.secret) {
       console.error(
-        'PANEL_SECRET fehlt. Es steht im Panel unter Administration → Einstellungen → Discord.'
+        'PANEL_SECRET is missing. Find it under Administration → Settings → Discord.'
       );
       process.exit(1);
     }
@@ -97,21 +97,21 @@ class Bot {
         this.config = await this.panel.call('/config');
         const token = process.env.BOT_TOKEN || this.config.token;
         if (!token) {
-          fehlt = 'Kein Bot-Token im Panel (Einstellungen → Discord → Bot-Token).';
+          fehlt = 'No bot token in the panel (Settings → Discord → Bot token).';
         } else if (!this.config.guild_id) {
-          fehlt = 'Keine Server-ID im Panel (Einstellungen → Discord → Server-ID).';
+          fehlt = 'No guild ID in the panel (Settings → Discord → Guild ID).';
         } else {
           this.wire();
           await this.client.login(token);
           return;
         }
       } catch (error) {
-        fehlt = `Das Panel antwortet nicht: ${error.message}`;
+        fehlt = `The panel is unavailable: ${error.message}`;
       }
 
       // Dieselbe Meldung nicht jede Minute wiederholen – einmal, und dann still warten.
       if (fehlt !== gemeldet) {
-        console.warn(`${fehlt} Warte, bis es da ist – Anleitung: docs/discord-bot.md`);
+        console.warn(`${fehlt} Waiting for configuration – see docs/discord-bot.md.`);
         gemeldet = fehlt;
       }
       await new Promise((resolve) => setTimeout(resolve, 60_000));
@@ -124,13 +124,25 @@ class Bot {
     this.client.on(Events.MessageCreate, (message) =>
       this.tickets.onMessage(message).catch((error) => console.warn('[tickets]', error.message))
     );
-    // Rollen in Discord geändert: vielleicht ist daraus gerade ein Team-Mitglied geworden.
+    // Rollen werden nur im Hauptserver verwaltet. Die Free-Mitgliedschaft kann dagegen an einen
+    // separat konfigurierten Pflichtserver gebunden sein.
     this.client.on(Events.GuildMemberUpdate, (before, after) => {
-      if (before.roles.cache.size !== after.roles.cache.size) {
+      if (
+        String(after.guild.id) === String(this.config.guild_id) &&
+        before.roles.cache.size !== after.roles.cache.size
+      ) {
         this.roles.sync(after).catch(() => {});
       }
     });
-    this.client.on(Events.GuildMemberAdd, (member) => this.roles.sync(member).catch(() => {}));
+    this.client.on(Events.GuildMemberAdd, (member) => {
+      this.roles.membership(member.id, true, member.guild.id).catch(() => {});
+      if (String(member.guild.id) === String(this.config.guild_id)) {
+        this.roles.sync(member).catch(() => {});
+      }
+    });
+    this.client.on(Events.GuildMemberRemove, (member) => {
+      this.roles.membership(member.id, false, member.guild.id).catch(() => {});
+    });
 
     // Was im Panel passiert, kommt über die offene Leitung herein.
     this.panel.on('ticket.created', (event) =>
@@ -145,11 +157,34 @@ class Bot {
     this.panel.on('roles.changed', (event) =>
       this.roles.syncOne(event.discord_id).catch(() => {})
     );
+    this.panel.on('discord.config', () =>
+      this.refreshDiscordConfig().catch((error) => console.warn('[config]', error.message))
+    );
+  }
+
+  /** Apply role, channel and required-guild changes without restarting the Discord service. */
+  async refreshDiscordConfig() {
+    const previousIds = this.roles.configuredIds();
+    this.config = await this.panel.call('/config');
+    const currentIds = this.roles.configuredIds();
+    this.roles.retire([...previousIds].filter((id) => !currentIds.has(id)));
+    await this.registerCommands();
+    await registerMetadata({
+      applicationId: this.config.application_id,
+      token: this.client.token,
+      fields: this.config.role_metadata,
+    }).catch((error) => console.warn('[linked roles]', error.message));
+    await this.tickets.ensurePanel();
+    const changed = await this.roles.syncAll();
+    // Erst nach einem erfolgreichen Vollabgleich vergessen. Schlägt Discord oder das Panel
+    // vorübergehend fehl, werden die alten IDs beim nächsten Stundenabgleich erneut bereinigt.
+    this.roles.clearRetired();
+    console.log(`[config] refreshed; updated ${changed} member(s)`);
   }
 
   async onReady() {
-    console.log(`[discord] angemeldet als ${this.client.user.tag}`);
-    this.client.user.setActivity(`${this.config.brand} · /konto`);
+    console.log(`[discord] signed in as ${this.client.user.tag}`);
+    this.client.user.setActivity(`${this.config.brand} · /account`);
 
     await this.registerCommands();
     await registerMetadata({
@@ -162,7 +197,7 @@ class Bot {
     this.panel.connect();
 
     const changed = await this.roles.syncAll().catch(() => 0);
-    console.log(`[rollen] erster Abgleich: ${changed} Mitglieder angepasst`);
+    console.log(`[roles] initial sync: updated ${changed} member(s)`);
 
     // Stündlich: Rollen abgleichen (ein Tarif kann auslaufen, ohne dass jemand etwas anklickt)
     // und dem Panel ein Lebenszeichen geben, damit der Admin-Bereich zeigen kann, dass es läuft.
@@ -186,9 +221,9 @@ class Bot {
         Routes.applicationGuildCommands(this.client.user.id, this.config.guild_id),
         { body: commands.definitions() }
       );
-      console.log('[discord] Befehle angemeldet');
+      console.log('[discord] commands registered');
     } catch (error) {
-      console.warn('[discord] Befehle ließen sich nicht anmelden:', error.message);
+      console.warn('[discord] could not register commands:', error.message);
     }
   }
 
@@ -205,10 +240,13 @@ class Bot {
         return await this.tickets.onClose(interaction, interaction.customId.split(':')[2]);
       }
     } catch (error) {
-      console.warn('[interaktion]', error.message);
-      const reply = { content: `Das ging schief: ${error.message}`, ephemeral: true };
-      if (interaction.deferred || interaction.replied) await interaction.editReply(reply).catch(() => {});
-      else await interaction.reply(reply).catch(() => {});
+      console.warn('[interaction]', error.message);
+      const content = `That did not work: ${error.message}`;
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply({ content }).catch(() => {});
+      } else {
+        await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
+      }
     }
   }
 }
@@ -217,13 +255,13 @@ const bot = new Bot();
 
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
-    console.log('Beende ...');
+    console.log('Shutting down ...');
     bot.panel.close();
     bot.client.destroy();
     process.exit(0);
   });
 }
 
-process.on('unhandledRejection', (reason) => console.warn('[unbehandelt]', reason?.message || reason));
+process.on('unhandledRejection', (reason) => console.warn('[unhandled]', reason?.message || reason));
 
 bot.start();

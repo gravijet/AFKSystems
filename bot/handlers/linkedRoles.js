@@ -1,8 +1,7 @@
 // Discords „Linked Roles“.
 //
-// Damit lässt sich in Discord eine Rolle bauen, die eine Bedingung an unsere Anwendung stellt –
-// „hat ein verknüpftes AFKSystems-Konto“, „Tarifstufe mindestens 1“, „gehört zum Team“. Discord
-// fragt dafür nicht bei uns nach, sondern liest, was wir zu diesem Nutzer hinterlegt haben.
+// Hier gibt es nur die beiden Linked-Role-Merkmale Administrator und Discord Moderator. Customer,
+// Premium, Ultra, Partner, VIP und Team sind normale Serverrollen und werden in roles.js abgeglichen.
 //
 // Hier wird nur das **Schema** angemeldet: welche Felder es gibt und wie sie heißen. Die Werte
 // schreibt das Panel, sobald jemand auf „Discord-Rollen auffrischen“ klickt (siehe oauth.js).
@@ -32,9 +31,9 @@ export async function registerMetadata({ applicationId, token, fields }) {
   });
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    console.warn(`[linked roles] Schema abgelehnt (${response.status}): ${text.slice(0, 200)}`);
+    console.warn(`[linked roles] metadata rejected (${response.status}): ${text.slice(0, 200)}`);
     return false;
   }
-  console.log(`[linked roles] ${body.length} Felder angemeldet`);
+  console.log(`[linked roles] registered ${body.length} metadata field(s)`);
   return true;
 }

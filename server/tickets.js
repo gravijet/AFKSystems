@@ -83,7 +83,7 @@ export function addUser(ticket, userId, by) {
     `INSERT INTO ticket_users (ticket_id, user_id, added_by, created_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(ticket_id, user_id) DO NOTHING`
   ).run(ticket.id, userId, by, Date.now());
-  system(ticket, `${user.username} wurde zum Ticket hinzugefügt.`);
+  system(ticket, `${user.username} was added to the ticket.`);
   audit(by, 'ticket-add-user', { ticket: ticket.id, user: userId });
   return participants(ticket.id);
 }
@@ -94,7 +94,7 @@ export function removeUser(ticket, userId, by) {
   }
   const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
   db.prepare('DELETE FROM ticket_users WHERE ticket_id = ? AND user_id = ?').run(ticket.id, userId);
-  if (user) system(ticket, `${user.username} wurde vom Ticket entfernt.`);
+  if (user) system(ticket, `${user.username} was removed from the ticket.`);
   audit(by, 'ticket-remove-user', { ticket: ticket.id, user: userId });
   return participants(ticket.id);
 }
@@ -253,7 +253,7 @@ export const create = db.transaction((owner, { subject, category, body, priority
  */
 export const reply = db.transaction((ticket, user, body, { internal = false, authorName = null, discordId = null } = {}) => {
   const text = requireString(body, 'Nachricht', { max: 8000 });
-  const staff = user.role === 'admin';
+  const staff = user.role === 'admin' || Boolean(user.discord_moderator);
   const now = Date.now();
   const reopened = ticket.status === 'closed' && !internal;
 
@@ -278,7 +278,7 @@ export const reply = db.transaction((ticket, user, body, { internal = false, aut
   if (reopened) {
     db.prepare(
       "INSERT INTO ticket_messages (ticket_id, role, body, created_at) VALUES (?, 'system', ?, ?)"
-    ).run(ticket.id, 'Das Ticket wurde durch eine Antwort wieder geöffnet.', now + 1);
+    ).run(ticket.id, 'The ticket was reopened by a new reply.', now + 1);
   }
 
   const fresh = ticketRow.get(ticket.id);
@@ -340,19 +340,19 @@ export function setChannel(ticketId, channelId) {
 
 // ---------------------------------------------------------------- Bescheid geben
 
-const CATEGORY_LABEL = Object.fromEntries(CATEGORIES.map((entry) => [entry.key, entry.de]));
+const CATEGORY_LABEL = Object.fromEntries(CATEGORIES.map((entry) => [entry.key, entry.en]));
 
 /** Das Team über ein neues Ticket informieren – Webhook und, wenn er läuft, der Bot. */
 export async function notifyStaff(ticket, user) {
   const paying = isPayingUser(user.id);
   return notify.staff({
-    title: `Neues Ticket #${ticket.id}: ${ticket.subject}`,
-    url: `${config.publicUrl}/app#/tickets/${ticket.id}`,
+    title: `New ticket #${ticket.id}: ${ticket.subject}`,
+    url: `${config.publicUrl}/en/app#/tickets/${ticket.id}`,
     description: [
-      `**Von** ${user.username}${paying ? ' · zahlender Kunde' : ''}`,
-      `**Kategorie** ${CATEGORY_LABEL[ticket.category] || ticket.category}`,
-      `**Dringlichkeit** ${ticket.priority}`,
-      ticket.source === 'discord' ? '**Über** Discord' : null,
+      `**From** ${user.username}${paying ? ' · paying customer' : ''}`,
+      `**Category** ${CATEGORY_LABEL[ticket.category] || ticket.category}`,
+      `**Priority** ${ticket.priority}`,
+      ticket.source === 'discord' ? '**Via** Discord' : null,
     ]
       .filter(Boolean)
       .join('\n'),
@@ -363,8 +363,8 @@ export async function notifyStaff(ticket, user) {
 /** Das Team über eine Kundenantwort informieren. */
 export const notifyStaffReply = (ticket, user, body) =>
   notify.staff({
-    title: `Antwort auf #${ticket.id}: ${ticket.subject}`,
-    url: `${config.publicUrl}/app#/tickets/${ticket.id}`,
+    title: `Reply to #${ticket.id}: ${ticket.subject}`,
+    url: `${config.publicUrl}/en/app#/tickets/${ticket.id}`,
     description: `**${user.username}**\n${String(body).slice(0, 400)}`,
     color: notify.COLORS.warn,
   });

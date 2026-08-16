@@ -39,6 +39,10 @@ router.get(
       mail_ready: mail.configured(),
       oauth: oauth.state(),
       discord_invite: String(getSetting('discord_invite') || ''),
+      free_plan: {
+        guild_id: billing.freeGuildId(),
+        invite: String(getSetting('discord_invite') || ''),
+      },
       maintenance: Boolean(Number(getSetting('maintenance'))),
       maintenance_text: String(getSetting('maintenance_text') || ''),
       // Alle sichtbaren Ankündigungen, neueste zuerst. Bisher kam nur eine mit – gab es zwei,
@@ -298,6 +302,19 @@ router.delete(
     // Wer sich über Discord oder Google angemeldet hat, hat hier kein Passwort. Ausgesperrt ist er
     // trotzdem nicht: die E-Mail-Adresse steht am Konto, und "Passwort vergessen" setzt eines.
     oauth.unlink(req.params.provider, req.user.id);
+    if (req.params.provider === 'discord') {
+      const freeProfiles = db
+        .prepare(
+          `SELECT p.id FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+            WHERE p.user_id = ? AND pl.free_slot = 1`
+        )
+        .all(req.user.id);
+      for (const profile of freeProfiles) {
+        supervisor.stopProfile(profile.id, 'Für den Gratis-Tarif muss Discord verknüpft bleiben.', {
+          keepWanted: false,
+        });
+      }
+    }
     res.json({ ok: true });
   })
 );
@@ -468,6 +485,8 @@ const accountView = (row) => ({
   uuid: row.uuid,
   status: row.status,
   last_error: row.last_error,
+  suspended: Boolean(row.suspended),
+  suspend_reason: row.suspend_reason || '',
   connections: row.connections,
   created_at: row.created_at,
   // Kopfbild aus dem öffentlichen Skin-Dienst; ohne UUID nimmt der Dienst den Namen.
@@ -683,8 +702,9 @@ router.post(
 );
 
 /**
- * Zustand ändern. Ein Kunde darf schließen und wieder öffnen – mehr nicht: "in Bearbeitung"
- * setzt das Team, sonst wäre die Anzeige nur noch eine Behauptung.
+ * Zustand ändern. Ein Kunde darf ausschließlich schließen. Eine neue Antwort auf ein bereits
+ * geschlossenes Ticket öffnet es weiterhin automatisch, aber es gibt keinen manuellen "Offen"-
+ * Schalter mehr.
  */
 router.post(
   '/tickets/:id/status',
@@ -692,11 +712,11 @@ router.post(
   wrap((req, res) => {
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
     const wanted = String(req.body?.status || '');
-    if (!['open', 'closed'].includes(wanted)) {
+    if (wanted !== 'closed') {
       throw bad('Diesen Zustand darfst du nicht setzen.', { en: 'You cannot set that status.' });
     }
     const updated = tickets.setStatus(ticket, wanted, req.user.id);
-    if (wanted === 'closed') tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
+    tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
     res.json({ ticket: ticketView(updated) });
   })
 );

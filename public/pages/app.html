@@ -1,11 +1,12 @@
 {{> head}}
     <div class="app">
-      <aside class="side" id="side"></aside>
+      <aside class="side" id="side" aria-label="{{nav.menu}}"></aside>
       <main class="main" id="main">
         <div class="empty"><h3>{{common.loading}}</h3></div>
       </main>
     </div>
-    <div id="side-backdrop" class="hide"></div>
+    <button id="side-backdrop" class="hide" type="button" aria-label="{{common.close}}"></button>
+    <nav class="mobile-nav" id="mobile-nav" aria-label="{{nav.menu}}"></nav>
     <script type="module" src="{{assets}}/js/app.js"></script>
   </body>
 </html>

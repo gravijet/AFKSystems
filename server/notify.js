@@ -2,11 +2,9 @@
 // wenn ein Bot abbricht, ein Konto seine Anmeldung verliert, ein Serverplatz abläuft oder das
 // Guthaben knapp wird.
 //
-// Zwei Dinge halten es leise:
-//   * jede Nachricht kommt in der Sprache des Kontos, nicht immer auf Deutsch;
-//   * gleiche Nachrichten haben eine Sperrzeit. Die Vorgabe von zehn Minuten passt für Ereignisse
-//     (ein Bot fliegt raus). Warnungen, die aus dem Stundentakt kommen, setzen sie höher – sonst
-//     stünden drei Tage vor Ablauf 72 gleichlautende Nachrichten im Kanal.
+// Discord uses English as AFKSystems' primary language. Equal messages have a cooldown; the
+// default ten minutes suits events such as a bot disconnecting, while scheduled warnings use a
+// longer interval.
 
 import { db, getSetting } from './db.js';
 import { config } from './config.js';
@@ -71,7 +69,7 @@ const pick = (value, lang) =>
 export async function notify(userId, title, text, { key = null, color = COLORS.info, quiet = QUIET_MS } = {}) {
   const user = readUser.get(userId);
   if (!user?.discord_webhook) return false;
-  const lang = user.language === 'de' ? 'de' : 'en';
+  const lang = 'en';
 
   const mapKey = `${userId}:${key ?? pick(title, 'de')}`;
   const now = Date.now();
@@ -136,6 +134,9 @@ export const botTrouble = (userId, name, reason) =>
   notify(
     userId,
     { de: `Bot "${name}" hat ein Problem`, en: `Bot "${name}" has a problem` },
-    reason,
+    {
+      de: String(reason || 'Der Client wurde beendet.'),
+      en: 'The client stopped unexpectedly. Open the panel for the full reason.',
+    },
     { key: `bot-${name}`, color: COLORS.bad }
   );
