@@ -421,22 +421,22 @@ export const SETTINGS = [
     key: 'discord_role_admin',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Administrator', help: 'Normale Discord-Rolle; der Bot vergibt sie an Panel-Administratoren.' },
-    en: { label: 'Administrator', help: 'Normal Discord role; the bot gives it to panel administrators.' },
+    de: { label: 'Administrator (Linked Role)', help: 'Discord vergibt diese Linked Role für Panel-Administratoren. Nur sie bearbeiten Tickets.' },
+    en: { label: 'Administrator (Linked Role)', help: 'Discord grants this linked role to panel administrators. Only they handle tickets.' },
   },
   {
     key: 'discord_role_mod',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Discord Moderator', help: 'Normale Discord-Rolle; der Bot vergibt sie, wenn Moderator im Benutzerprofil gesetzt ist.' },
-    en: { label: 'Discord Moderator', help: 'Normal Discord role; the bot gives it when the moderator flag is set in the user profile.' },
+    de: { label: 'Discord Moderator (Linked Role)', help: 'Discord vergibt diese Linked Role, wenn Moderator im Benutzerprofil gesetzt ist.' },
+    en: { label: 'Discord Moderator (Linked Role)', help: 'Discord grants this linked role when the moderator flag is set in the user profile.' },
   },
   {
     key: 'discord_role_team',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Team (Linked Role)', help: 'Die einzige Linked Role. Discord vergibt sie nach der Verknüpfung an Admins und Discord-Mods.' },
-    en: { label: 'Team (Linked Role)', help: 'The only linked role. Discord gives it to admins and Discord moderators after verification.' },
+    de: { label: 'Team', help: 'Normale Rolle; der Bot vergibt sie automatisch an Admins und Discord-Mods und gibt ihr Zugang zu öffentlichen bzw. rollenbasierten Kanälen.' },
+    en: { label: 'Team', help: 'Normal role; the bot gives it to admins and Discord moderators and lets it view public and role-based channels.' },
   },
 
   // ---------------------------------------------------------------- Google

@@ -18,6 +18,7 @@ import { Client, Events, GatewayIntentBits, MessageFlags, Partials, REST, Routes
 import { Panel } from './panel.js';
 import { Tickets } from './handlers/tickets.js';
 import { Roles } from './handlers/roles.js';
+import { ChannelAccess } from './handlers/channelAccess.js';
 import { registerMetadata } from './handlers/linkedRoles.js';
 import * as commands from './handlers/commands.js';
 
@@ -69,6 +70,7 @@ class Bot {
     });
     this.tickets = new Tickets(this);
     this.roles = new Roles(this);
+    this.channelAccess = new ChannelAccess(this);
   }
 
   async guild() {
@@ -128,6 +130,12 @@ class Bot {
     this.client.on(Events.MessageCreate, (message) =>
       this.tickets.onMessage(message).catch((error) => console.warn('[tickets]', error.message))
     );
+    this.client.on(Events.ChannelCreate, (channel) =>
+      this.channelAccess.sync(channel).catch((error) => console.warn('[channels]', error.message))
+    );
+    this.client.on(Events.ChannelUpdate, (_before, after) =>
+      this.channelAccess.sync(after).catch((error) => console.warn('[channels]', error.message))
+    );
     // Rollen werden nur im Hauptserver verwaltet. Die Free-Mitgliedschaft kann dagegen an einen
     // separat konfigurierten Pflichtserver gebunden sein.
     this.client.on(Events.GuildMemberUpdate, (before, after) => {
@@ -184,6 +192,7 @@ class Bot {
       fields: this.config.role_metadata,
     }).catch((error) => console.warn('[linked roles]', error.message));
     await this.tickets.ensurePanel();
+    await this.channelAccess.syncAll();
     await this.tickets.enforceStaffAccess();
     const changed = await this.roles.syncAll();
     // Erst nach einem erfolgreichen Vollabgleich vergessen. Schlägt Discord oder das Panel
@@ -204,6 +213,7 @@ class Bot {
     }).catch(() => {});
 
     await this.tickets.ensurePanel().catch((error) => console.warn('[tickets]', error.message));
+    await this.channelAccess.syncAll().catch((error) => console.warn('[channels]', error.message));
     await this.tickets.enforceStaffAccess().catch((error) => console.warn('[tickets]', error.message));
     this.panel.connect();
 
