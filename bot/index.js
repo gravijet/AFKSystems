@@ -192,8 +192,11 @@ class Bot {
       fields: this.config.role_metadata,
     }).catch((error) => console.warn('[linked roles]', error.message));
     await this.tickets.ensurePanel();
-    await this.channelAccess.syncAll();
     await this.tickets.enforceStaffAccess();
+    this.channelAccess
+      .syncAll()
+      .then((changed) => console.log(`[channels] Team visibility updated in ${changed} channel(s)`))
+      .catch((error) => console.warn('[channels]', error.message));
     const changed = await this.roles.syncAll();
     // Erst nach einem erfolgreichen Vollabgleich vergessen. Schlägt Discord oder das Panel
     // vorübergehend fehl, werden die alten IDs beim nächsten Stundenabgleich erneut bereinigt.
@@ -213,8 +216,11 @@ class Bot {
     }).catch(() => {});
 
     await this.tickets.ensurePanel().catch((error) => console.warn('[tickets]', error.message));
-    await this.channelAccess.syncAll().catch((error) => console.warn('[channels]', error.message));
     await this.tickets.enforceStaffAccess().catch((error) => console.warn('[tickets]', error.message));
+    this.channelAccess
+      .syncAll()
+      .then((changed) => console.log(`[channels] Team visibility updated in ${changed} channel(s)`))
+      .catch((error) => console.warn('[channels]', error.message));
     this.panel.connect();
 
     const changed = await this.roles.syncAll().catch(() => 0);
