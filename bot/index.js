@@ -195,7 +195,7 @@ class Bot {
     await this.tickets.enforceStaffAccess();
     this.channelAccess
       .syncAll()
-      .then((changed) => console.log(`[channels] Team visibility updated in ${changed} channel(s)`))
+      .then((changed) => console.log(`[channels] Moderator visibility updated in ${changed} channel(s)`))
       .catch((error) => console.warn('[channels]', error.message));
     const changed = await this.roles.syncAll();
     // Erst nach einem erfolgreichen Vollabgleich vergessen. Schlägt Discord oder das Panel
@@ -219,7 +219,7 @@ class Bot {
     await this.tickets.enforceStaffAccess().catch((error) => console.warn('[tickets]', error.message));
     this.channelAccess
       .syncAll()
-      .then((changed) => console.log(`[channels] Team visibility updated in ${changed} channel(s)`))
+      .then((changed) => console.log(`[channels] Moderator visibility updated in ${changed} channel(s)`))
       .catch((error) => console.warn('[channels]', error.message));
     this.panel.connect();
 

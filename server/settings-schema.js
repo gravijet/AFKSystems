@@ -435,8 +435,8 @@ export const SETTINGS = [
     key: 'discord_role_team',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Team', help: 'Normale Rolle; der Bot vergibt sie automatisch an Admins und Discord-Mods und gibt ihr Zugang zu öffentlichen bzw. rollenbasierten Kanälen.' },
-    en: { label: 'Team', help: 'Normal role; the bot gives it to admins and Discord moderators and lets it view public and role-based channels.' },
+    de: { label: 'Team', help: 'Normale Rolle; der Bot vergibt sie automatisch an Admins und Discord-Mods.' },
+    en: { label: 'Team', help: 'Normal role; the bot gives it to admins and Discord moderators automatically.' },
   },
 
   // ---------------------------------------------------------------- Google
