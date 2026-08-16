@@ -804,6 +804,7 @@ export const S = {
   // ---------------------------------------------------------------- Tickets
   'tk.title': { en: 'Support', de: 'Support' },
   'tk.sub': { en: 'Questions, proxy requests, bug reports', de: 'Fragen, Proxy-Anfragen, Fehlermeldungen' },
+  'tk.mySub': { en: 'Only tickets where you are a customer are shown here.', de: 'Hier stehen nur Tickets, bei denen du Kunde bist.' },
   'tk.new': { en: 'New ticket', de: 'Neues Ticket' },
   'tk.subject': { en: 'Subject', de: 'Betreff' },
   'tk.category': { en: 'Topic', de: 'Thema' },
@@ -886,6 +887,11 @@ export const S = {
   'adm.topups': { en: 'Top-ups', de: 'Aufladungen' },
   'adm.proxies': { en: 'Proxies', de: 'Proxys' },
   'adm.tickets': { en: 'Tickets', de: 'Tickets' },
+  'adm.allTickets': { en: 'All tickets', de: 'Alle Tickets' },
+  'adm.allTicketsSub': {
+    en: 'Support work queue for every customer ticket.',
+    de: 'Arbeitswarteschlange für alle Kundentickets.',
+  },
   'adm.profiles': { en: 'Server slots', de: 'Serverplätze' },
   'adm.bots': { en: 'Bots', de: 'Bots' },
   'adm.accounts': { en: 'Accounts', de: 'Accounts' },

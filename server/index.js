@@ -488,12 +488,21 @@ for (const type of ['ticket.message', 'ticket.status', 'ticket.typing', 'ticket.
     if (!ticket) return;
     const payload = { ...message, type: 'ticket', event: type.split('.')[1] };
     // Das Team sieht jedes Ticket, die Beteiligten ihres – wer beides ist, bekommt es einmal.
-    const receivers = new Set(db.prepare("SELECT id FROM users WHERE role = 'admin'").all().map((row) => row.id));
+    // Der Browser bekommt zusätzlich die Zielgruppe mit. Ohne diese Trennung konnte ein Admin
+    // beim Eintreffen *fremder* Team-Tickets seinen persönlichen Support-Zähler erhöhen.
+    const staff = new Set(db.prepare("SELECT id FROM users WHERE role = 'admin'").all().map((row) => row.id));
+    const customers = new Set();
     if (!message.internal) {
       // Interne Notizen bleiben beim Team. Der Kunde erfährt nicht einmal, dass es sie gibt.
-      for (const person of tickets.participants(ticket.id)) receivers.add(person.id);
+      for (const person of tickets.participants(ticket.id)) customers.add(person.id);
     }
-    for (const id of receivers) push(id, payload);
+    const receivers = new Set([...staff, ...customers]);
+    for (const id of receivers) {
+      push(id, {
+        ...payload,
+        audience: { customer: customers.has(id), staff: staff.has(id) },
+      });
+    }
   });
 }
 
