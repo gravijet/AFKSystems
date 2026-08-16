@@ -417,6 +417,7 @@ export const S = {
   'dash.proxies': { en: 'Proxies', de: 'Proxys' },
   'dash.credits': { en: 'Credits', de: 'Guthaben' },
   'dash.tickets': { en: 'Support', de: 'Support' },
+  'dash.myTickets': { en: 'My tickets', de: 'Meine Tickets' },
   'dash.settings': { en: 'Settings', de: 'Einstellungen' },
   'dash.admin': { en: 'Administration', de: 'Administration' },
   'dash.logout': { en: 'Log out', de: 'Abmelden' },

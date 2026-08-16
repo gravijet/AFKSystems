@@ -841,7 +841,9 @@ admin.post(
   wrap((req, res) => {
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
     const internal = Boolean(req.body?.internal);
-    const updated = tickets.reply(ticket, req.user, req.body?.body, { internal });
+    // Nur diese Admin-Route schreibt als Support. Unter „Meine Tickets“ schreibt derselbe
+    // Benutzer bewusst als Kunde.
+    const updated = tickets.reply(ticket, req.user, req.body?.body, { internal, staff: true });
     // Interne Notizen sieht nur das Team – dafür gibt es keine Post an den Kunden.
     if (!internal) tickets.notifyUser(updated, req.body?.body || '');
     res.json({

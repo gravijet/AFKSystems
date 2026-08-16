@@ -380,6 +380,29 @@ export class Tickets {
     if (this.config.ticket_category) await channel.setParent(this.config.ticket_category).catch(() => {});
   }
 
+  /**
+   * Alte Kanäle haben bereits einen Verlauf; sie brauchen keinen zweiten Kanal. Beim Start
+   * werden deshalb nur Name und Kategorie an den gespeicherten Ticketstatus angepasst.
+   */
+  async reconcileChannels() {
+    const result = await this.bot.panel.call('/tickets?open=0').catch(() => null);
+    for (const ticket of result?.tickets || []) {
+      if (!ticket.channel_id) continue;
+      const channel = await this.bot.client.channels.fetch(ticket.channel_id).catch(() => null);
+      if (!channel?.isTextBased()) continue;
+      if (ticket.status === 'closed') {
+        if (channel.name !== `closed-${ticket.id}`) await channel.setName(`closed-${ticket.id}`).catch(() => {});
+        if (channel.parentId !== ARCHIVE_CATEGORY_ID) {
+          await channel.setParent(ARCHIVE_CATEGORY_ID).catch((error) =>
+            console.warn(`[tickets] could not archive #${ticket.id}: ${error.message}`)
+          );
+        }
+      } else if (channel.name !== `ticket-${ticket.id}` || channel.parentId !== this.config.ticket_category) {
+        await this.reopenChannel(channel, ticket.id);
+      }
+    }
+  }
+
   /** Entfernt Team-/Mod-Rechte aus bestehenden Kanälen, ohne Kundenzugänge anzutasten. */
   async enforceStaffAccess() {
     const result = await this.bot.panel.call('/tickets?open=0').catch(() => null);
@@ -404,7 +427,11 @@ export class Tickets {
     const result = await this.bot.panel.call('/tickets?open=0').catch(() => null);
     const threshold = Date.now() - ARCHIVE_RETENTION_MS;
     for (const ticket of result?.tickets || []) {
-      if (ticket.status !== 'closed' || !ticket.channel_id || Number(ticket.closed_at || 0) > threshold) continue;
+      // Alte Tickets hatten noch kein `closed_at`. Ihr letzter Änderungszeitpunkt ist die beste
+      // verfügbare Schließzeit; ohne den Rückfall würde ein alter Kanal beim ersten Botstart
+      // sofort gelöscht, selbst wenn er eben erst ins Archiv verschoben wurde.
+      const closedAt = Number(ticket.closed_at || ticket.updated_at || 0);
+      if (ticket.status !== 'closed' || !ticket.channel_id || closedAt > threshold) continue;
       const channel = await this.bot.client.channels.fetch(ticket.channel_id).catch(() => null);
       if (channel) await channel.delete('Archived AFKSystems ticket expired after seven days').catch(() => null);
       await this.bot.panel

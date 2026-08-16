@@ -629,6 +629,49 @@ const migrations = [
       ).run();
     },
   },
+  {
+    // Vor der klaren Trennung der beiden Ticketansichten wurde eine Antwort eines Admins auf
+    // sein eigenes Ticket als Teamantwort gespeichert. Die Historie muss derselben Regel folgen
+    // wie neue Tickets, sonst bleiben alte Gespräche und ihre Warteschlangen-Zustände falsch.
+    name: '008-admin-eigene-tickets-als-kundenverlauf',
+    run() {
+      db.prepare(
+        `UPDATE ticket_messages
+            SET role = 'user'
+          WHERE role = 'staff' AND internal = 0
+            AND EXISTS (
+              SELECT 1 FROM tickets t
+                JOIN users owner ON owner.id = t.user_id
+               WHERE t.id = ticket_messages.ticket_id
+                 AND t.user_id = ticket_messages.user_id
+                 AND owner.role = 'admin'
+            )`
+      ).run();
+
+      // Nur den eindeutig falschen Fall reparieren: Das letzte öffentliche Wort kam vom
+      // Ticketinhaber, stand aber wegen der früheren Einordnung auf „beantwortet“.
+      db.prepare(
+        `UPDATE tickets AS t
+            SET status = 'open', unread_staff = 1, unread_user = 0, closed_at = NULL
+          WHERE t.status = 'answered' AND t.unread_user = 1
+            AND EXISTS (
+              SELECT 1 FROM ticket_messages m
+               WHERE m.ticket_id = t.id
+                 AND m.id = (
+                   SELECT MAX(last.id) FROM ticket_messages last
+                    WHERE last.ticket_id = t.id
+                      AND last.internal = 0
+                      AND last.role != 'system'
+                 )
+                 AND m.role = 'user'
+                 AND m.user_id = t.user_id
+            )
+            AND EXISTS (
+              SELECT 1 FROM users owner WHERE owner.id = t.user_id AND owner.role = 'admin'
+            )`
+      ).run();
+    },
+  },
 ];
 
 /**

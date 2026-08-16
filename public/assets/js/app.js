@@ -213,6 +213,12 @@ const NAV_SERVICE = [
   { hash: '#/settings', key: 'dash.settings', icon: 'settings' },
 ];
 
+function navLabel(item) {
+  // Die persönliche Support-Ansicht ist auch für Admins keine Team-Warteschlange. Der Name
+  // macht sie neben „Administration → Tickets“ sofort unterscheidbar.
+  return item.hash === '#/tickets' && state.me?.role === 'admin' ? tr('dash.myTickets') : tr(item.key);
+}
+
 /**
  * Die Punkte des Admin-Bereichs, nach Themen gebündelt.
  *
@@ -416,8 +422,8 @@ export function drawSide() {
         ${NAV_SERVICE.map(
           (item) =>
             `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}"
-                title="${escapeHtml(tr(item.key))}">${icon(item.icon)}<span class="grow truncate">${escapeHtml(
-                  tr(item.key)
+                title="${escapeHtml(navLabel(item))}">${icon(item.icon)}<span class="grow truncate">${escapeHtml(
+                  navLabel(item)
                 )}</span>${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
         ).join('')}
       </nav>
@@ -474,9 +480,9 @@ const MOBILE_NAV = [
 ];
 const ADMIN_MOBILE_NAV = [
   { hash: '#/admin/overview', key: 'adm.overview', icon: 'chart' },
-  { hash: '#/admin/tickets', key: 'adm.tickets', icon: 'ticket', staffBadge: true },
+  { hash: '#/tickets', key: 'dash.myTickets', icon: 'ticket' },
+  { hash: '#/admin/tickets', key: 'adm.tickets', icon: 'shield', staffBadge: true },
   { hash: '#/admin/users', key: 'adm.users', icon: 'users' },
-  { hash: '#/admin/servers', key: 'adm.servers', icon: 'server' },
 ];
 
 function drawMobileNav() {

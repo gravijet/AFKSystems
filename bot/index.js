@@ -193,6 +193,7 @@ class Bot {
     }).catch((error) => console.warn('[linked roles]', error.message));
     await this.tickets.ensurePanel();
     await this.tickets.enforceStaffAccess();
+    await this.tickets.reconcileChannels();
     this.channelAccess
       .syncAll()
       .then((changed) => console.log(`[channels] Moderator visibility updated in ${changed} channel(s)`))
@@ -217,6 +218,7 @@ class Bot {
 
     await this.tickets.ensurePanel().catch((error) => console.warn('[tickets]', error.message));
     await this.tickets.enforceStaffAccess().catch((error) => console.warn('[tickets]', error.message));
+    await this.tickets.reconcileChannels().catch((error) => console.warn('[tickets]', error.message));
     this.channelAccess
       .syncAll()
       .then((changed) => console.log(`[channels] Moderator visibility updated in ${changed} channel(s)`))

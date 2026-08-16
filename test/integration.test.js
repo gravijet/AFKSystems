@@ -480,7 +480,11 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     category: 'general',
     body: 'Personal support request',
   });
-  tickets.reply(adminOwnTicket, admin, 'Internal team context', { internal: true });
+  tickets.reply(adminOwnTicket, admin, 'Internal team context', { internal: true, staff: true });
+  assert.throws(
+    () => tickets.reply(openTicket, user, 'A reply without an actor mode must fail.'),
+    /explicit customer or staff mode/
+  );
   const profile = createProfile(user, billing.freePlan());
   const account = createAccount(user, { name: 'SuspendMe' });
   db.prepare(
@@ -587,6 +591,17 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     .prepare('SELECT role, internal FROM ticket_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT 1')
     .get(adminOwnTicket.id);
   assert.deepEqual(lastOwnMessage, { role: 'user', internal: 0 });
+
+  const staffReply = await api(base, `/api/admin/tickets/${openTicket.id}/reply`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { body: 'Reply from the support queue' },
+  });
+  assert.equal(staffReply.response.status, 200);
+  assert.equal(
+    db.prepare('SELECT role FROM ticket_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT 1').get(openTicket.id).role,
+    'staff'
+  );
 
   // Ein Admin kann im eigenen Ticket auch aus Discord als Kunde schreiben. Die Discord-ID muss
   // dabei im Bridge-Ereignis stehen, damit der Bot die bereits vorhandene Nachricht nicht erneut
