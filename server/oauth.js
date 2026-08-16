@@ -428,13 +428,13 @@ export const ROLE_METADATA = [
     key: 'administrator',
     name: 'Administrator',
     type: 7,
-    description: 'AFKSystems panel administrator',
+    description: 'Administrator',
   },
   {
     key: 'discord_moderator',
     name: 'Discord Moderator',
     type: 7,
-    description: 'AFKSystems Discord moderator',
+    description: 'Discord Moderator',
   },
 ];
 
