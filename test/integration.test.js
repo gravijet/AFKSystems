@@ -202,6 +202,7 @@ test('Admin and moderator are Linked Roles; Ultra includes Premium and staff rec
   assert.equal(roles.managedIds().includes('19998'), false);
   assert.equal(roles.managedIds().includes('19999'), false);
   assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.key), ['administrator', 'discord_moderator']);
+  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.description), ['Administrator', 'Discord Moderator']);
   assert.deepEqual(oauth.roleMetadataFor(user.id), { administrator: 0, discord_moderator: 1 });
 
   db.prepare('UPDATE profiles SET locked = 1 WHERE id = ?').run(profile.id);
