@@ -406,6 +406,7 @@ export const S = {
   // ---------------------------------------------------------------- Dashboard
   'dash.overview': { en: 'Overview', de: 'Übersicht' },
   'dash.servers': { en: 'Servers', de: 'Server' },
+  'dash.serverAreas': { en: 'Server areas', de: 'Serverbereiche' },
   'dash.accounts': { en: 'Minecraft accounts', de: 'Minecraft-Konten' },
   'dash.accountsShort': { en: 'Accounts', de: 'Konten' },
   'dash.proxies': { en: 'Proxies', de: 'Proxys' },

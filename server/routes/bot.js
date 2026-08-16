@@ -155,6 +155,7 @@ function ticketView(ticket) {
     channel_id: ticket.discord_channel_id,
     created_at: ticket.created_at,
     updated_at: ticket.updated_at,
+    closed_at: ticket.closed_at || null,
     url: `${config.publicUrl}/en/app#/tickets/${ticket.id}`,
     owner,
     participants: tickets.participants(ticket.id),
@@ -258,12 +259,14 @@ router.post(
         en: 'That Discord account is not linked to an AFKSystems account.',
       });
     }
-    // Wer im Panel Administrator ist, ist es auch in Discord – der Bot muss dafür nichts wissen.
+    // Nur Panel-Administratoren bearbeiten Tickets. Discord-Moderatoren schreiben im Ausnahme-
+    // fall als Kunde; die Kanalrechte lassen sie bei regulären Tickets ohnehin nicht hinein.
     const updated = tickets.reply(ticket, user, body.body, {
       authorName: body.author_name || user.username,
       discordId: String(body.discord_id || '') || null,
+      staff: user.role === 'admin',
     });
-    if (user.role !== 'admin' && !user.discord_moderator) {
+    if (user.role !== 'admin') {
       tickets.notifyStaffReply(updated, user, body.body);
     }
     tickets.notifyParticipants(
@@ -290,7 +293,7 @@ router.post(
     const by = req.body?.discord_id ? roles.byDiscordId(req.body.discord_id) : null;
     if (
       !by ||
-      (by.role !== 'admin' && !by.discord_moderator && !tickets.isParticipant(ticket.id, by.id))
+      (by.role !== 'admin' && !tickets.isParticipant(ticket.id, by.id))
     ) {
       throw new HttpError(403, 'Du darfst dieses Ticket nicht schließen.', {
         en: 'You may not close this ticket.',

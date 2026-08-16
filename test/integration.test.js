@@ -18,6 +18,7 @@ process.env.PUBLIC_URL = 'http://127.0.0.1';
 const { db, setSetting } = await import('../server/db.js');
 const billing = await import('../server/billing.js');
 const roles = await import('../server/roles.js');
+const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const tickets = await import('../server/tickets.js');
 const { Bot, simpleChatMacro, parseEvent, parseView } = await import('../server/supervisor.js');
@@ -169,7 +170,7 @@ test('Free access fails closed for link, membership and stale checks', () => {
   );
 });
 
-test('regular Discord roles and Linked Roles stay cleanly separated', () => {
+test('Team is the sole Linked Role; Ultra includes Premium and staff roles are regular roles', () => {
   setSetting('discord_role_customer', '10001');
   setSetting('discord_role_premium', '10002');
   setSetting('discord_role_ultra', '10003');
@@ -189,15 +190,18 @@ test('regular Discord roles and Linked Roles stay cleanly separated', () => {
   const profile = createProfile(user, billing.planBySlug('ultra'));
   const target = roles.targetFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
 
-  assert.deepEqual(new Set(target.roles), new Set(['10001', '10003', '10004', '10005', '10006']));
+  assert.deepEqual(new Set(target.roles), new Set(['10001', '10002', '10003', '10004', '10005', '19999']));
   assert.equal(target.roles.includes('19998'), false);
-  assert.equal(target.roles.includes('19999'), false);
+  assert.equal(target.roles.includes('10006'), false);
   assert.deepEqual(
     new Set(target.badges),
     new Set(['customer', 'ultra', 'partner', 'vip', 'moderator', 'team'])
   );
-  assert.equal(roles.managedIds().includes('19998'), false);
-  assert.equal(roles.managedIds().includes('19999'), false);
+  assert.equal(roles.managedIds().includes('10006'), false);
+  assert.equal(roles.managedIds().includes('19998'), true);
+  assert.equal(roles.managedIds().includes('19999'), true);
+  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.key), ['team']);
+  assert.deepEqual(oauth.roleMetadataFor(user.id), { team: 1 });
 
   db.prepare('UPDATE profiles SET locked = 1 WHERE id = ?').run(profile.id);
   const suspended = roles.targetFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));

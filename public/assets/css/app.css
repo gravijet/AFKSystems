@@ -2079,13 +2079,25 @@ dialog footer {
 
 /* Die Unterreiter eines Serverplatzes in der Seitenleiste. */
 .subtabs {
-  margin: 0.15rem 0 0.5rem 0.95rem;
-  padding-left: 0.6rem;
-  box-shadow: inset 1px 0 0 var(--line);
+  margin: 0.15rem 0 0.65rem 0.85rem;
+  padding: 0.38rem 0.4rem 0.38rem 0.7rem;
+  border-left: 2px solid color-mix(in oklab, var(--primary) 45%, var(--line));
+  border-radius: 0 var(--r-lg) var(--r-lg) 0;
+  background: color-mix(in oklab, var(--primary) 4%, transparent);
 }
 .subtabs .profile-link {
-  padding-block: 0.3rem;
+  min-height: 2rem;
+  padding: 0.35rem 0.45rem;
   font-size: 0.8125rem;
+}
+.side-subtabs-label {
+  display: block;
+  margin: 0.05rem 0.45rem 0.25rem;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 /* Server und Administration bilden gleich große, einklappbare Bereiche. */
@@ -2137,6 +2149,13 @@ dialog footer {
 .side-section-content {
   margin-top: 0.25rem;
 }
+.side-primary {
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--line);
+}
+.side-servers {
+  margin-top: 0.35rem;
+}
 .side-add {
   justify-content: flex-start;
   width: 100%;
@@ -2161,17 +2180,54 @@ dialog footer {
   color: var(--primary);
 }
 .admin-tools {
-  margin-top: 0;
+  margin-top: 0.25rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--line);
 }
-.admin-tools .admin-group-label {
-  display: block;
-  margin-top: 0.9rem;
+.admin-groups {
+  display: grid;
+  gap: 0.18rem;
 }
-.admin-tools .admin-group-label:first-child {
-  margin-top: 0;
+.admin-group {
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
 }
-.admin-tools .nav {
-  margin-top: 0.15rem;
+.admin-group[open] {
+  border-color: color-mix(in oklab, var(--line) 75%, transparent);
+  background: color-mix(in oklab, var(--text) 2.5%, transparent);
+}
+.admin-group > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 2.25rem;
+  padding: 0.35rem 0.55rem;
+  color: var(--text-2);
+  cursor: pointer;
+  font-size: 0.76rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  list-style: none;
+  text-transform: uppercase;
+}
+.admin-group > summary::-webkit-details-marker {
+  display: none;
+}
+.admin-group > summary:hover {
+  color: var(--text);
+}
+.admin-group .side-section-arrow {
+  width: 0.7rem;
+  height: 0.7rem;
+}
+.admin-group[open] > summary .side-section-arrow {
+  transform: rotate(-90deg);
+}
+.admin-group:not([open]) > summary .side-section-arrow {
+  transform: rotate(90deg);
+}
+.admin-group .nav {
+  padding: 0 0.25rem 0.3rem;
 }
 
 .side .nav .count,

@@ -203,7 +203,6 @@ function setLive(online) {
 
 const NAV = [
   { hash: '#/', key: 'dash.overview', icon: 'chart' },
-  { hash: '#/servers', key: 'dash.servers', icon: 'server' },
   { hash: '#/accounts', key: 'dash.accounts', icon: 'users' },
   { hash: '#/proxies', key: 'dash.proxies', icon: 'globe' },
   { hash: '#/credits', key: 'dash.credits', icon: 'wallet' },
@@ -276,8 +275,10 @@ function storedFlag(key, fallback = false) {
 
 let sideCollapsed = storedFlag(SIDE_COLLAPSED_KEY);
 
-function sectionOpen(key, force = false) {
-  return force || storedFlag(`${SIDE_SECTION_PREFIX}${key}`, true);
+function sectionOpen(key, fallback = true) {
+  // Der aktuelle Bereich ist beim allerersten Besuch geöffnet. Danach zählt ausschließlich die
+  // eigene Wahl – sonst würden die vielen Seitenleisten-Updates eingeklappte Gruppen wieder öffnen.
+  return storedFlag(`${SIDE_SECTION_PREFIX}${key}`, fallback);
 }
 
 function applySideLayout() {
@@ -331,6 +332,7 @@ export function drawSide() {
       </a>${
         active
           ? `<div class="subtabs">
+              <span class="side-subtabs-label">${escapeHtml(tr('dash.serverAreas'))}</span>
               ${tabsFor(profile)
                 .map(
                   (tab) =>
@@ -359,7 +361,7 @@ export function drawSide() {
       )}">${icon('x')}</button>
     </div>
 
-    <nav class="nav">
+    <nav class="nav side-primary" aria-label="${escapeHtml(tr('dash.overview'))}">
       ${NAV.map(
         (item) =>
           `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}"
@@ -369,7 +371,7 @@ export function drawSide() {
       ).join('')}
     </nav>
 
-    <details class="side-section" data-side-section="servers" ${
+    <details class="side-section side-servers" data-side-section="servers" ${
       sectionOpen('servers', route.name === 'server') ? 'open' : ''
     }>
       <summary title="${escapeHtml(tr('dash.servers'))}">
@@ -427,7 +429,12 @@ export function drawSide() {
   drawMobileNav();
 }
 
-const MOBILE_NAV = [NAV[0], NAV[1], NAV[2], NAV[5]];
+const MOBILE_NAV = [
+  NAV[0],
+  { hash: '#/servers', key: 'dash.servers', icon: 'server' },
+  NAV[1],
+  NAV[4],
+];
 const ADMIN_MOBILE_NAV = [
   { hash: '#/admin/overview', key: 'adm.overview', icon: 'chart' },
   { hash: '#/admin/tickets', key: 'adm.tickets', icon: 'ticket', staffBadge: true },
@@ -476,10 +483,17 @@ function adminSection() {
       <span class="side-section-title">${icon('shield')}<span>${escapeHtml(tr('dash.admin'))}</span></span>
       ${icon('arrow', 'icon side-section-arrow')}
     </summary>
-    <div class="side-section-content">
+    <div class="side-section-content admin-groups">
     ${ADMIN_GROUPS.map((group) => {
-      return `<span class="label admin-group-label">${escapeHtml(tr(group.label))}</span>
-        <nav class="nav">${group.items.map((item) => adminLink(item, current, waiting)).join('')}</nav>`;
+      const active = group.items.some((item) => item.key === current);
+      return `<details class="admin-group" data-side-section="admin-${group.key}" ${
+        sectionOpen(`admin-${group.key}`, active) ? 'open' : ''
+      }>
+        <summary>
+          <span>${escapeHtml(tr(group.label))}</span>${icon('arrow', 'icon side-section-arrow')}
+        </summary>
+        <nav class="nav">${group.items.map((item) => adminLink(item, current, waiting)).join('')}</nav>
+      </details>`;
     }).join('')}
     </div>
   </details>`;

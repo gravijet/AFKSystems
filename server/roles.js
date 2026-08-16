@@ -28,9 +28,11 @@ export function managed() {
     ultra: setting('discord_role_ultra'),
     partner: setting('discord_role_partner'),
     vip: setting('discord_role_vip'),
+    // Team ist die einzige Discord Linked Role. Der Bot fasst diese Rolle deshalb nicht an;
+    // Discord vergibt sie nach erfolgreicher Rollen-Verknüpfung selbst.
     team: setting('discord_role_team'),
-    // Diese beiden Rollen werden nicht direkt synchronisiert. Sie können Discord Linked Roles
-    // sein und werden nur für die Sichtbarkeit privater Ticket-Kanäle gebraucht.
+    // Administrator und Discord-Moderator sind dagegen ganz normale, vom Bot synchronisierte
+    // Rollen. So erhalten beide sie wie Customer, Premium und Ultra direkt im Server.
     admin: setting('discord_role_admin'),
     mod: setting('discord_role_mod'),
     plans: Object.fromEntries(planRoles.map((plan) => [plan.id, String(plan.discord_role).trim()])),
@@ -46,7 +48,8 @@ export function managedIds() {
     roles.ultra,
     roles.partner,
     roles.vip,
-    roles.team,
+    roles.admin,
+    roles.mod,
     ...Object.values(roles.plans),
   ].filter(Boolean);
 }
@@ -82,6 +85,9 @@ export function targetFor(user) {
   const linked = Boolean(user.discord_id);
   if (linked && roles.customer) wanted.add(roles.customer);
   if (linked && (plan || manualPremium)) {
+    // Ultra schließt Premium ein. Das gilt auch dann, wenn Ultra zusätzlich eine eigene
+    // Tarifrolle hat: der Zugriff, der an Premium hängt, bleibt damit stets vorhanden.
+    if (plan?.slug === 'ultra' && roles.premium) wanted.add(roles.premium);
     // Am Tarif hinterlegt schlägt die allgemeine Einstellung – so lässt sich ein neuer Tarif mit
     // eigener Rolle anlegen, ohne dass jemand Code anfassen muss.
     const own = plan ? roles.plans[plan.id] : null;
@@ -94,7 +100,8 @@ export function targetFor(user) {
   if (linked && user.discord_vip && roles.vip) wanted.add(roles.vip);
   const staff = user.role === 'admin';
   const moderator = Boolean(user.discord_moderator);
-  if (linked && (staff || moderator) && roles.team) wanted.add(roles.team);
+  if (linked && staff && roles.admin) wanted.add(roles.admin);
+  if (linked && moderator && roles.mod) wanted.add(roles.mod);
 
   return {
     discord_id: user.discord_id,
