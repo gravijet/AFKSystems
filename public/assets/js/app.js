@@ -201,9 +201,12 @@ function setLive(online) {
 
 // ---------------------------------------------------------------- Seitenleiste
 
-const NAV = [
+const NAV_MAIN = [
   { hash: '#/', key: 'dash.overview', icon: 'chart' },
   { hash: '#/accounts', key: 'dash.accounts', icon: 'users' },
+];
+
+const NAV_SERVICE = [
   { hash: '#/proxies', key: 'dash.proxies', icon: 'globe' },
   { hash: '#/credits', key: 'dash.credits', icon: 'wallet' },
   { hash: '#/tickets', key: 'dash.tickets', icon: 'ticket' },
@@ -292,15 +295,22 @@ function applySideLayout() {
 export const TABS = [
   // Verbinden und Chat sind ein Reiter. Getrennt hieß das: starten, wechseln, mitlesen, wechseln,
   // stoppen – und das für jeden Handgriff. Wer einen Bot startet, will sehen, was er sagt.
-  { key: 'connect', label: 'tab.connect' },
-  { key: 'movement', label: 'tab.movement', need: 'movement' },
-  { key: 'board', label: 'tab.board', need: 'board' },
-  { key: 'menu', label: 'tab.menu', need: 'menu' },
-  { key: 'macros', label: 'tab.macros' },
-  { key: 'proxies', label: 'tab.proxies', need: 'proxy' },
-  { key: 'plan', label: 'tab.plan' },
-  { key: 'addons', label: 'ad.title', paidOnly: true },
-  { key: 'settings', label: 'tab.settings' },
+  { key: 'connect', label: 'tab.connect', group: 'control' },
+  { key: 'movement', label: 'tab.movement', group: 'automation', need: 'movement' },
+  { key: 'macros', label: 'tab.macros', group: 'automation' },
+  { key: 'board', label: 'tab.board', group: 'views', need: 'board' },
+  { key: 'menu', label: 'tab.menu', group: 'views', need: 'menu' },
+  { key: 'proxies', label: 'tab.proxies', group: 'manage', need: 'proxy' },
+  { key: 'plan', label: 'tab.plan', group: 'manage' },
+  { key: 'addons', label: 'ad.title', group: 'manage', paidOnly: true },
+  { key: 'settings', label: 'tab.settings', group: 'manage' },
+];
+
+const SERVER_TAB_GROUPS = [
+  { key: 'control', label: 'dash.serverGroup.control' },
+  { key: 'automation', label: 'dash.serverGroup.automation' },
+  { key: 'views', label: 'dash.serverGroup.views' },
+  { key: 'manage', label: 'dash.serverGroup.manage' },
 ];
 
 export const tabsFor = (profile) =>
@@ -310,6 +320,24 @@ export const tabsFor = (profile) =>
     if (tab.paidOnly && !profile?.plan?.addons) return false;
     return true;
   });
+
+function serverTabs(profile, activeTab) {
+  const tabs = tabsFor(profile);
+  return SERVER_TAB_GROUPS.map((group) => {
+    const entries = tabs.filter((tab) => tab.group === group.key);
+    if (!entries.length) return '';
+    return `<div class="side-tab-group">
+      <span class="side-subtabs-label">${escapeHtml(tr(group.label))}</span>
+      ${entries
+        .map(
+          (tab) =>
+            `<a class="profile-link ${activeTab === tab.key ? 'active' : ''}"
+                href="#/servers/${profile.id}/${tab.key}">${escapeHtml(tr(tab.label))}</a>`
+        )
+        .join('')}
+    </div>`;
+  }).join('');
+}
 
 export function drawSide() {
   applySideLayout();
@@ -332,14 +360,7 @@ export function drawSide() {
       </a>${
         active
           ? `<div class="subtabs">
-              <span class="side-subtabs-label">${escapeHtml(tr('dash.serverAreas'))}</span>
-              ${tabsFor(profile)
-                .map(
-                  (tab) =>
-                    `<a class="profile-link ${route.tab === tab.key ? 'active' : ''}"
-                        href="#/servers/${profile.id}/${tab.key}">${escapeHtml(tr(tab.label))}</a>`
-                )
-                .join('')}
+              ${serverTabs(profile, route.tab)}
             </div>`
           : ''
       }`;
@@ -361,15 +382,18 @@ export function drawSide() {
       )}">${icon('x')}</button>
     </div>
 
-    <nav class="nav side-primary" aria-label="${escapeHtml(tr('dash.overview'))}">
-      ${NAV.map(
+    <div class="side-nav-block">
+      <span class="side-nav-label">${escapeHtml(tr('dash.group.panel'))}</span>
+      <nav class="nav side-primary" aria-label="${escapeHtml(tr('dash.group.panel'))}">
+      ${NAV_MAIN.map(
         (item) =>
           `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}"
               title="${escapeHtml(tr(item.key))}">${icon(item.icon)}<span class="grow truncate">${escapeHtml(
                 tr(item.key)
               )}</span>${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
       ).join('')}
-    </nav>
+      </nav>
+    </div>
 
     <details class="side-section side-servers" data-side-section="servers" ${
       sectionOpen('servers', route.name === 'server') ? 'open' : ''
@@ -385,6 +409,19 @@ export function drawSide() {
         ${profiles || `<p class="small muted side-empty">${escapeHtml(tr('dash.noServers'))}</p>`}
       </div>
     </details>
+
+    <div class="side-nav-block side-service">
+      <span class="side-nav-label">${escapeHtml(tr('dash.group.service'))}</span>
+      <nav class="nav" aria-label="${escapeHtml(tr('dash.group.service'))}">
+        ${NAV_SERVICE.map(
+          (item) =>
+            `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}"
+                title="${escapeHtml(tr(item.key))}">${icon(item.icon)}<span class="grow truncate">${escapeHtml(
+                  tr(item.key)
+                )}</span>${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
+        ).join('')}
+      </nav>
+    </div>
 
     ${adminSection()}
 
@@ -430,10 +467,10 @@ export function drawSide() {
 }
 
 const MOBILE_NAV = [
-  NAV[0],
+  NAV_MAIN[0],
   { hash: '#/servers', key: 'dash.servers', icon: 'server' },
-  NAV[1],
-  NAV[4],
+  NAV_MAIN[1],
+  NAV_SERVICE[2],
 ];
 const ADMIN_MOBILE_NAV = [
   { hash: '#/admin/overview', key: 'adm.overview', icon: 'chart' },
@@ -485,15 +522,12 @@ function adminSection() {
     </summary>
     <div class="side-section-content admin-groups">
     ${ADMIN_GROUPS.map((group) => {
-      const active = group.items.some((item) => item.key === current);
-      return `<details class="admin-group" data-side-section="admin-${group.key}" ${
-        sectionOpen(`admin-${group.key}`, active) ? 'open' : ''
-      }>
-        <summary>
-          <span>${escapeHtml(tr(group.label))}</span>${icon('arrow', 'icon side-section-arrow')}
-        </summary>
-        <nav class="nav">${group.items.map((item) => adminLink(item, current, waiting)).join('')}</nav>
-      </details>`;
+      return `<section class="admin-group">
+        <div class="admin-group-title">${escapeHtml(tr(group.label))}</div>
+        <nav class="nav" aria-label="${escapeHtml(tr(group.label))}">${group.items
+          .map((item) => adminLink(item, current, waiting))
+          .join('')}</nav>
+      </section>`;
     }).join('')}
     </div>
   </details>`;
