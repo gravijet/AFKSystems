@@ -382,6 +382,7 @@ async function staffTickets(root) {
   const categories = data.categories || state.meta?.ticket_categories || [];
 
   root.innerHTML = `
+    ${appbar(tr('adm.allTickets'), '', tr('adm.allTicketsSub'))}
     <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
       <div class="row wrap">
         <select id="tk-status" class="mini" style="max-width:13rem">
@@ -429,7 +430,12 @@ async function staffTickets(root) {
 
   // Kommt ein Ticket herein oder eine Antwort, ist die Liste sofort veraltet.
   state.onLive = debounce((event) => {
-    if (event.type === 'ticket' && state.route.name === 'admin' && state.route.tab === 'tickets') draw();
+    if (
+      event.type === 'ticket' &&
+      event.message.audience?.staff &&
+      state.route.name === 'admin' &&
+      state.route.tab === 'tickets'
+    ) draw();
   }, 500);
 }
 

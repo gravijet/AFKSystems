@@ -102,6 +102,24 @@ function pushLine(key, entry) {
 
 let socket = null;
 let retry = 0;
+let ticketStatsTimer = null;
+
+/**
+ * Ticketzähler nie aus einzelnen Push-Nachrichten hochzählen: mehrere Antworten an einem
+ * ungelesenen Ticket würden sonst als mehrere Tickets erscheinen. `/me` ist die Quelle für die
+ * echten persönlichen und Team-Zähler.
+ */
+function refreshTicketStats() {
+  clearTimeout(ticketStatsTimer);
+  ticketStatsTimer = setTimeout(() => {
+    api('/me')
+      .then((data) => {
+        state.stats = data.stats;
+        drawSide();
+      })
+      .catch(() => {});
+  }, 180);
+}
 
 function connect() {
   const address = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`;
@@ -142,10 +160,7 @@ function connect() {
     if (message.type === 'ticket') {
       // Der Support-Chat läuft live – die Ticket-Ansicht hängt sich hier ein.
       state.onLive?.({ type: 'ticket', event: message.event, message });
-      if (message.event === 'message' && state.route.name !== 'tickets' && state.stats) {
-        state.stats.tickets_unread = (state.stats.tickets_unread || 0) + 1;
-        drawSide();
-      }
+      if (message.event !== 'typing') refreshTicketStats();
       return;
     }
     if (message.type === 'state') {
@@ -231,7 +246,7 @@ export const ADMIN_GROUPS = [
     label: 'adm.group.work',
     items: [
       { key: 'overview', label: 'adm.overview', icon: 'chart' },
-      { key: 'tickets', label: 'adm.tickets', icon: 'ticket' },
+      { key: 'tickets', label: 'adm.allTickets', icon: 'ticket' },
       { key: 'users', label: 'adm.users', icon: 'users' },
       { key: 'servers', label: 'adm.servers', icon: 'server' },
       { key: 'accounts', label: 'adm.accounts', icon: 'users' },
@@ -481,7 +496,7 @@ const MOBILE_NAV = [
 const ADMIN_MOBILE_NAV = [
   { hash: '#/admin/overview', key: 'adm.overview', icon: 'chart' },
   { hash: '#/tickets', key: 'dash.myTickets', icon: 'ticket' },
-  { hash: '#/admin/tickets', key: 'adm.tickets', icon: 'shield', staffBadge: true },
+  { hash: '#/admin/tickets', key: 'adm.allTickets', icon: 'shield', staffBadge: true },
   { hash: '#/admin/users', key: 'adm.users', icon: 'users' },
 ];
 

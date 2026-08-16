@@ -34,12 +34,15 @@ async function list(root) {
   const data = await api('/tickets');
   const categories = data.categories || state.meta?.ticket_categories || [];
   const invite = state.meta?.discord_invite || '';
+  const personalAdmin = state.me?.role === 'admin';
+  const title = personalAdmin ? tr('dash.myTickets') : tr('tk.title');
+  const subtitle = personalAdmin ? tr('tk.mySub') : tr('tk.sub');
 
   root.innerHTML = `
     ${appbar(
-      tr('tk.title'),
+      title,
       `<button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('tk.new'))}</button>`,
-      tr('tk.sub')
+      subtitle
     )}
 
     ${
@@ -72,7 +75,7 @@ async function list(root) {
             ? `<ul class="ticket-list">${data.tickets.map((ticket) => row(ticket, categories)).join('')}</ul>`
             : `<div class="empty" style="box-shadow:none;background:transparent">
                 <h3>${escapeHtml(tr('tk.none'))}</h3>
-                <p>${escapeHtml(tr('tk.sub'))}</p>
+                <p>${escapeHtml(subtitle)}</p>
                 <button class="btn btn-primary" id="new-2">${icon('plus')} ${escapeHtml(tr('tk.new'))}</button>
               </div>`
         }
@@ -89,7 +92,12 @@ async function list(root) {
 
   // Kommt eine Antwort herein, ist die Liste sofort veraltet.
   state.onLive = debounce((event) => {
-    if (event.type === 'ticket' && state.route.name === 'tickets' && !state.route.id) draw();
+    if (
+      event.type === 'ticket' &&
+      event.message.audience?.customer &&
+      state.route.name === 'tickets' &&
+      !state.route.id
+    ) draw();
   }, 500);
 }
 
@@ -497,16 +505,27 @@ async function one(root, id, { staff, backHash }) {
         )}`
       : '';
   };
-  setInterval(paintTyping, 1500);
+
+  const mergeMessages = (incoming) => {
+    // Live-Ereignisse können schneller eintreffen als der Nachlade-Request. Statt einen zweiten
+    // Verlauf blind anzuhängen, ist die Datenbank-ID die eindeutige Wahrheit.
+    const known = new Set(messages.map((entry) => entry.id));
+    const fresh = incoming.filter((entry) => !known.has(entry.id));
+    if (!fresh.length) return false;
+    messages = messages.concat(fresh).sort((left, right) => left.id - right.id);
+    return true;
+  };
 
   state.onLive = async (event) => {
     if (event.type !== 'ticket' || event.message.ticket_id !== Number(id)) return;
     const message = event.message;
+    if (staff ? !message.audience?.staff : !message.audience?.customer) return;
 
     if (event.event === 'typing') {
       if (message.user_id === state.me.id) return;
       typers.set(message.name, Date.now());
       paintTyping();
+      setTimeout(paintTyping, 4_100);
       return;
     }
     if (event.event === 'status') {
@@ -520,8 +539,7 @@ async function one(root, id, { staff, backHash }) {
       const last = messages.length ? messages[messages.length - 1].id : 0;
       const fresh = await api(`${base}/messages?since=${last}`).catch(() => null);
       if (!fresh) return;
-      if (fresh.messages.length) {
-        messages = messages.concat(fresh.messages);
+      if (mergeMessages(fresh.messages)) {
         typers.clear();
         paintTyping();
         paint();

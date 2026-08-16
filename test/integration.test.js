@@ -139,6 +139,37 @@ async function api(base, pathname, { token, method = 'GET', body, botSecret } = 
   return { response, data };
 }
 
+async function browserSocket(base, token) {
+  const socket = new WebSocket(base.replace(/^http/, 'ws') + '/api/ws', {
+    headers: { cookie: `afk_session=${token}`, origin: base },
+  });
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Browser WebSocket hello timed out')), 5_000);
+    socket.once('message', (raw) => {
+      clearTimeout(timer);
+      const message = JSON.parse(raw.toString());
+      if (message.type === 'hello') resolve();
+      else reject(new Error('Browser WebSocket did not send hello'));
+    });
+    socket.once('error', reject);
+  });
+  return socket;
+}
+
+function nextTicketEvent(socket) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Ticket WebSocket event timed out')), 5_000);
+    const receive = (raw) => {
+      const message = JSON.parse(raw.toString());
+      if (message.type !== 'ticket') return;
+      clearTimeout(timer);
+      socket.off('message', receive);
+      resolve(message);
+    };
+    socket.on('message', receive);
+  });
+}
+
 test('migration seeds the exact Premium feature list and Discord-bound Free plan', () => {
   const premium = billing.planBySlug('premium');
   assert.equal(premium.chat_limit, 50_000);
@@ -580,6 +611,23 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const throughAdminTab = await api(base, `/api/admin/tickets/${openTicket.id}`, { token: ADMIN_TOKEN });
   assert.equal(throughAdminTab.response.status, 200);
   assert.equal(throughAdminTab.data.ticket.id, openTicket.id);
+
+  // Das Browser-Live-Ereignis trennt persönliche und Team-Warteschlange. So kann ein Admin bei
+  // fremden Tickets keinen persönlichen „Meine Tickets“-Zähler mehr bekommen.
+  const customerSocket = await browserSocket(base, USER_TOKEN);
+  const staffSocket = await browserSocket(base, ADMIN_TOKEN);
+  const customerEvent = nextTicketEvent(customerSocket);
+  const staffEvent = nextTicketEvent(staffSocket);
+  const customerReply = await api(base, `/api/tickets/${openTicket.id}/reply`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { body: 'Reply from the customer side' },
+  });
+  assert.equal(customerReply.response.status, 200);
+  assert.deepEqual((await customerEvent).audience, { customer: true, staff: false });
+  assert.deepEqual((await staffEvent).audience, { customer: false, staff: true });
+  customerSocket.close();
+  staffSocket.close();
 
   const adminCustomerReply = await api(base, `/api/tickets/${adminOwnTicket.id}/reply`, {
     token: ADMIN_TOKEN,
