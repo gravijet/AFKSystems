@@ -1,7 +1,7 @@
 // Sichtbarkeit für Discord-Moderatoren.
 //
-// Discord-Moderatoren bekommen Leserechte in allen Kanälen, mit einer klaren Ausnahme:
-// Kanäle, die ausschließlich der Admin-Rolle zugänglich sind. Tickets fallen genau in diese
+// Discord-Moderatoren bekommen Leserechte in öffentlichen und rollenbasierten Kanälen, nicht
+// aber in Administrator- oder rein personenbezogenen Kanälen. Tickets fallen genau in diese
 // Ausnahme. Team bleibt unabhängig davon die automatisch vergebene gemeinsame Rolle.
 
 import { OverwriteType, PermissionFlagsBits } from 'discord.js';
@@ -15,7 +15,7 @@ export class ChannelAccess {
     return this.bot.config;
   }
 
-  /** Ist ein Kanal nicht ausschließlich für Administratoren bestimmt? */
+  /** Ist ein Kanal öffentlich oder für mindestens eine Nicht-Admin-Rolle sichtbar? */
   shouldGrant(channel, guild) {
     if (!channel?.permissionOverwrites || channel.isThread?.()) return false;
     const moderator = String(this.config.roles.mod || '');
@@ -23,24 +23,24 @@ export class ChannelAccess {
     const team = String(this.config.roles.team || '');
     if (!moderator) return false;
 
-    // Öffentliche Kanäle sind nie admin-only.
+    // Öffentliche Kanäle sind stets sichtbar.
     if (channel.permissionsFor(guild.roles.everyone)?.has(PermissionFlagsBits.ViewChannel)) return true;
 
-    const allowedRoles = [...channel.permissionOverwrites.cache.values()].filter(
+    // Eine explizite Nutzerfreigabe genügt bewusst nicht. Erst eine normale Rolle (außer Admin,
+    // Team, Moderator und Bot) macht den Kanal zum moderierbaren, rollenbasierten Bereich.
+    return [...channel.permissionOverwrites.cache.values()].some(
       (overwrite) =>
         overwrite.type === OverwriteType.Role &&
         overwrite.allow.has(PermissionFlagsBits.ViewChannel) &&
         String(overwrite.id) !== String(guild.roles.everyone.id) &&
         String(overwrite.id) !== moderator &&
         String(overwrite.id) !== team &&
+        String(overwrite.id) !== admin &&
         String(overwrite.id) !== String(this.bot.client.user.id)
     );
-    // Nur die Admin-Rolle (plus der Bot selbst) darf hinein: Mod bleibt draußen. Gibt es keine
-    // Rollenfreigabe oder zusätzlich eine andere Rolle, erhält der Moderator dagegen Zugang.
-    return !(allowedRoles.length === 1 && String(allowedRoles[0].id) === admin);
   }
 
-  /** Discord Moderator explizit hinzufügen, falls der Kanal nicht admin-only ist. */
+  /** Discord Moderator explizit hinzufügen, falls der Kanal öffentlich oder rollenbasiert ist. */
   async sync(channel, guild = null) {
     const targetGuild = guild || (await this.bot.guild());
     const moderator = this.config.roles.mod;
@@ -52,7 +52,7 @@ export class ChannelAccess {
     await channel.permissionOverwrites.edit(
       moderator,
       { ViewChannel: true },
-      'AFKSystems: Discord Moderator may view every non-admin channel'
+      'AFKSystems: Discord Moderator may view public and role-based channels'
     );
     return true;
   }

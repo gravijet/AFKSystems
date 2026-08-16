@@ -215,7 +215,7 @@ test('Admin and moderator are Linked Roles; Ultra includes Premium and staff rec
   assert.equal(manualPremium.roles.includes('10002'), true);
 });
 
-test('Discord moderators may view every non-admin channel', () => {
+test('Discord moderators may view public and role-based channels, never admin-only or member-only channels', () => {
   const access = new ChannelAccess({
     config: { roles: { team: '10006', admin: '19998', mod: '19999' } },
     client: { user: { id: '90000' } },
@@ -232,7 +232,7 @@ test('Discord moderators may view every non-admin channel', () => {
   assert.equal(access.shouldGrant(channel({ publicView: true }), guild), true);
   assert.equal(access.shouldGrant(channel({ overwrites: [role('10002')] }), guild), true);
   assert.equal(access.shouldGrant(channel({ overwrites: [role('19998')] }), guild), false);
-  assert.equal(access.shouldGrant(channel({ overwrites: [member('200000000000000002')] }), guild), true);
+  assert.equal(access.shouldGrant(channel({ overwrites: [member('200000000000000002')] }), guild), false);
 });
 
 test('upgrading a Free server applies the full Premium chat-history allowance', () => {
