@@ -653,11 +653,11 @@ router.get(
   '/tickets/:id',
   auth.requireUser,
   wrap((req, res) => {
-    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
-    tickets.markRead(ticket, req.user);
+    const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
+    tickets.markRead(ticket, req.user, { staff: false });
     res.json({
       ticket: ticketView(ticket),
-      messages: tickets.messages(ticket.id, { staff: req.user.role === 'admin' }),
+      messages: tickets.messages(ticket.id, { staff: false }),
       participants: tickets.participants(ticket.id),
       me: req.user.id,
     });
@@ -669,10 +669,10 @@ router.get(
   '/tickets/:id/messages',
   auth.requireUser,
   wrap((req, res) => {
-    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
     const since = Number(req.query.since) || 0;
-    tickets.markRead(ticket, req.user);
-    const all = tickets.messages(ticket.id, { staff: req.user.role === 'admin' });
+    tickets.markRead(ticket, req.user, { staff: false });
+    const all = tickets.messages(ticket.id, { staff: false });
     res.json({
       ticket: ticketView(ticket),
       messages: since ? all.filter((message) => message.id > since) : all,
@@ -684,8 +684,8 @@ router.post(
   '/tickets/:id/reply',
   auth.requireUser,
   wrap((req, res) => {
-    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
-    const updated = tickets.reply(ticket, req.user, req.body?.body);
+    const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
+    const updated = tickets.reply(ticket, req.user, req.body?.body, { staff: false });
     tickets.notifyStaffReply(updated, req.user, req.body?.body || '');
     // Alle anderen Beteiligten bekommen Post – der Schreiber nicht.
     tickets.notifyParticipants(
@@ -696,7 +696,7 @@ router.post(
     );
     res.json({
       ticket: ticketView(updated),
-      messages: tickets.messages(ticket.id, { staff: req.user.role === 'admin' }),
+      messages: tickets.messages(ticket.id, { staff: false }),
     });
   })
 );
@@ -710,7 +710,7 @@ router.post(
   '/tickets/:id/status',
   auth.requireUser,
   wrap((req, res) => {
-    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
     const wanted = String(req.body?.status || '');
     if (wanted !== 'closed') {
       throw bad('Diesen Zustand darfst du nicht setzen.', { en: 'You cannot set that status.' });
@@ -726,7 +726,7 @@ router.post(
   '/tickets/:id/close',
   auth.requireUser,
   wrap((req, res) => {
-    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
     const updated = tickets.setStatus(ticket, 'closed', req.user.id);
     tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
     res.json({ ticket: ticketView(updated) });
@@ -743,12 +743,12 @@ router.post(
   '/tickets/:id/typing',
   auth.requireUser,
   wrap((req, res) => {
-    const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
+    const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
     bridge.emit('ticket.typing', {
       ticket_id: ticket.id,
       user_id: req.user.id,
       name: req.user.username,
-      staff: req.user.role === 'admin',
+      staff: false,
     });
     res.json({ ok: true });
   })

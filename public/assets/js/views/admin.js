@@ -90,7 +90,7 @@ export async function render(root, route) {
   const views = {
     overview,
     system,
-    tickets: staffTickets,
+    tickets: route.id ? (node) => staffTicket(node, route.id) : staffTickets,
     users: route.id ? (node) => userDetail(node, route.id) : users,
     servers: route.id ? (node) => serverDetail(node, route.id) : servers,
     accounts,
@@ -369,6 +369,11 @@ function uptime(seconds) {
 const TICKET_STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
 const TICKET_PRIORITY_PILL = { urgent: 'missing', high: 'primary', normal: '', low: '' };
 
+async function staffTicket(root, id) {
+  const { renderStaffTicket } = await import('./tickets.js');
+  return renderStaffTicket(root, id);
+}
+
 async function staffTickets(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const status = params.get('status') || 'open';
@@ -409,7 +414,7 @@ async function staffTickets(root) {
     </section>`;
 
   $$('[data-open]').forEach((node) =>
-    node.addEventListener('click', () => go(`/tickets/${node.dataset.open}?from=admin`))
+    node.addEventListener('click', () => go(`/admin/tickets/${node.dataset.open}`))
   );
 
   const reload = debounce(() => {
@@ -504,7 +509,7 @@ async function ticketForCustomer(categories) {
   try {
     const result = await api(`/admin/users/${answer.user_id}/ticket`, { method: 'POST', body: answer });
     ok(tr('tk.created'));
-    go(`/tickets/${result.ticket.id}?from=admin`);
+    go(`/admin/tickets/${result.ticket.id}`);
   } catch (error) {
     fail(error);
   }
@@ -882,7 +887,7 @@ async function userDetail(root, id) {
     if (!answer) return;
     try {
       const result = await api(`/admin/users/${id}/ticket`, { method: 'POST', body: answer });
-      go(`/tickets/${result.ticket.id}?from=admin`);
+      go(`/admin/tickets/${result.ticket.id}`);
     } catch (error) {
       fail(error);
     }
@@ -971,7 +976,7 @@ async function userDetail(root, id) {
     row.addEventListener('click', () => go(`/admin/servers/${row.dataset.server}`))
   );
   $$('[data-ticket]').forEach((row) =>
-    row.addEventListener('click', () => go(`/tickets/${row.dataset.ticket}`))
+    row.addEventListener('click', () => go(`/admin/tickets/${row.dataset.ticket}`))
   );
 }
 
