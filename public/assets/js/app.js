@@ -226,7 +226,7 @@ export const ADMIN_GROUPS = [
       { key: 'tickets', label: 'adm.tickets', icon: 'ticket' },
       { key: 'users', label: 'adm.users', icon: 'users' },
       { key: 'servers', label: 'adm.servers', icon: 'server' },
-      { key: 'bots', label: 'adm.bots', icon: 'bot' },
+      { key: 'accounts', label: 'adm.accounts', icon: 'users' },
     ],
   },
   {
@@ -323,9 +323,14 @@ export function drawSide() {
   const unread = state.stats?.tickets_unread || 0;
 
   $('#side').innerHTML = `
-    <a class="brand" href="/${lang}" style="padding:.35rem .65rem">
-      <img class="logo" src="${LOGO}" alt="" />AFKSystems
-    </a>
+    <div class="side-head">
+      <a class="brand" href="/${lang}">
+        <img class="logo" src="${LOGO}" alt="" />AFKSystems
+      </a>
+      <button class="btn btn-ghost side-close" type="button" aria-label="${escapeHtml(
+        tr('common.close')
+      )}">${icon('x')}</button>
+    </div>
 
     <nav class="nav">
       ${NAV.map(
@@ -375,6 +380,27 @@ export function drawSide() {
     await api('/auth/logout', { method: 'POST' });
     location.href = url('');
   });
+  drawMobileNav();
+}
+
+const MOBILE_NAV = [NAV[0], NAV[1], NAV[2], NAV[5]];
+
+function drawMobileNav() {
+  const root = $('#mobile-nav');
+  if (!root) return;
+  const unread = state.stats?.tickets_unread || 0;
+  root.innerHTML = `${MOBILE_NAV.map(
+    (item) => `<a href="${item.hash}" ${routeMatches(item.hash) ? 'aria-current="page"' : ''}>
+      <span class="mobile-nav-icon">${icon(item.icon)}${
+        item.hash === '#/tickets' && unread ? `<i>${unread > 99 ? '99+' : unread}</i>` : ''
+      }</span>
+      <span>${escapeHtml(tr(item.hash === '#/accounts' ? 'dash.accountsShort' : item.key))}</span>
+    </a>`
+  ).join('')}
+    <button type="button" data-open-side>
+      <span class="mobile-nav-icon">${icon('menu')}</span>
+      <span>${escapeHtml(tr('nav.menu'))}</span>
+    </button>`;
 }
 
 /**
@@ -387,7 +413,8 @@ export function drawSide() {
  */
 function adminSection() {
   if (state.me?.role !== 'admin') return '';
-  const current = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
+  const requested = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
+  const current = requested === 'bots' ? 'accounts' : requested;
   const openGroup = ADMIN_GROUPS.find((group) => group.items.some((item) => item.key === current));
   const waiting = state.stats?.staff_tickets || 0;
 
@@ -446,24 +473,43 @@ function costLine() {
 }
 
 // Seitenleiste auf dem Handy ein-/ausblenden.
-export function toggleSide(open) {
-  $('#side').classList.toggle('open', open);
-  $('#side-backdrop').classList.toggle('hide', !open);
+const widePanel = window.matchMedia('(min-width: 1000px)');
+let sideTrigger = null;
+
+export function toggleSide(open, trigger = null) {
+  const side = $('#side');
+  const mobile = !widePanel.matches;
+  const visible = mobile && Boolean(open);
+  if (trigger) sideTrigger = trigger;
+  side.classList.toggle('open', visible);
+  side.inert = mobile && !visible;
+  side.setAttribute('aria-hidden', String(mobile && !visible));
+  $('#side-backdrop').classList.toggle('hide', !visible);
+  document.body.classList.toggle('side-open', visible);
+  if (visible) requestAnimationFrame(() => side.querySelector('.side-close')?.focus());
+  else if (sideTrigger?.isConnected) sideTrigger.focus();
 }
 $('#side-backdrop').addEventListener('click', () => toggleSide(false));
 document.addEventListener('click', (event) => {
   // Der Knopf wird bei jeder Ansicht neu gezeichnet – deshalb hier einmal für alle. Ob er
   // überhaupt zu sehen ist, entscheidet allein die Breite, und das gehört ins CSS: sonst bliebe
   // er nach dem Verkleinern des Fensters verschwunden und die Seitenleiste unerreichbar.
-  if (event.target.closest('.side-toggle')) toggleSide(true);
+  const opener = event.target.closest('.side-toggle, [data-open-side]');
+  if (opener) toggleSide(true, opener);
+  else if (event.target.closest('.side-close')) toggleSide(false);
   else if (event.target.closest('.side a')) toggleSide(false);
 });
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && $('#side').classList.contains('open')) toggleSide(false);
+});
+widePanel.addEventListener('change', () => toggleSide(false));
+toggleSide(false);
 
 /** Kopfzeile einer Ansicht – enthält auf dem Handy den Knopf für die Seitenleiste. */
 export function appbar(title, actionsHtml = '', subtitle = '') {
   return `<div class="appbar">
     <div class="row" style="min-width:0">
-      <button class="btn btn-ghost btn-sm side-toggle" type="button" aria-label="${escapeHtml(
+      <button class="btn btn-ghost btn-sm side-toggle" data-open-side type="button" aria-label="${escapeHtml(
         tr('nav.menu')
       )}">${icon('menu')}</button>
       <div style="min-width:0">
@@ -471,7 +517,7 @@ export function appbar(title, actionsHtml = '', subtitle = '') {
         ${subtitle ? `<p class="small muted truncate">${subtitle}</p>` : ''}
       </div>
     </div>
-    <div class="row wrap">${actionsHtml}</div>
+    <div class="row wrap appbar-actions">${actionsHtml}</div>
   </div>`;
 }
 

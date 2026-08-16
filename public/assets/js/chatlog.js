@@ -88,7 +88,16 @@ export function parseFormatting(raw) {
         .split('§')
         .join('');
       push();
-      current = { ...current, text: '', color: `#${hex}` };
+      // Wie jede Minecraft-Farbe beendet auch eine RGB-Farbe vorherige Auszeichnungen.
+      current = {
+        text: '',
+        color: `#${hex}`,
+        bold: false,
+        italic: false,
+        underline: false,
+        strike: false,
+        obfuscated: false,
+      };
       i += 12;
       continue;
     }

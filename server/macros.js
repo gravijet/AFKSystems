@@ -60,7 +60,7 @@ export const ACTIONS = [
   { type: 'jump', de: 'Springen', en: 'Jump', needs: 'movement', fields: [] },
   { type: 'home', de: 'Nach Hause laufen', en: 'Walk home', needs: 'movement', fields: [] },
   { type: 'stop', de: 'Bewegung stoppen', en: 'Stop moving', needs: 'movement', fields: [] },
-  { type: 'sneak', de: 'Schleichen an/aus', en: 'Toggle sneak', needs: 'sneak', fields: [] },
+  { type: 'sneak', de: 'Schleichen umschalten', en: 'Toggle sneak', needs: 'sneak', fields: [] },
   { type: 'swing', de: 'Arm schwingen', en: 'Swing arm', needs: 'sneak', fields: [] },
   { type: 'use', de: 'Gegenstand benutzen', en: 'Use item', needs: 'sneak', fields: [] },
   {

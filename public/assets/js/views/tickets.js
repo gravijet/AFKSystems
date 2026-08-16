@@ -202,13 +202,21 @@ async function one(root, id) {
           <header><h3>${escapeHtml(tr('tk.setStatus'))}</h3></header>
           <div class="body stack">
             <div class="status-picker" id="status">
-              ${(staff ? ['open', 'waiting', 'answered', 'closed'] : ['open', 'closed'])
-                .map(
-                  (entry) => `<button class="status-choice ${entry} ${
-                    ticket.status === entry ? 'active' : ''
-                  }" data-status="${entry}">${escapeHtml(tr(`tk.status.${entry}`))}</button>`
-                )
-                .join('')}
+              ${
+                staff
+                  ? ['open', 'waiting', 'answered', 'closed']
+                      .map(
+                        (entry) => `<button class="status-choice ${entry} ${
+                          ticket.status === entry ? 'active' : ''
+                        }" data-status="${entry}">${escapeHtml(tr(`tk.status.${entry}`))}</button>`
+                      )
+                      .join('')
+                  : ticket.status === 'closed'
+                    ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
+                    : `<button class="btn btn-danger btn-block" data-status="closed">${escapeHtml(
+                        tr('tk.close')
+                      )}</button>`
+              }
             </div>
             ${
               ticket.status === 'closed'

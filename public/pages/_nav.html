@@ -6,23 +6,30 @@
           <span>{{brand}}</span>
         </a>
 
-        <nav class="site-links" aria-label="{{nav.menu}}">
-          <a href="/{{lang}}/features" {{curFeatures}}>{{nav.features}}</a>
-          <a href="/{{lang}}/pricing" {{curPricing}}>{{nav.pricing}}</a>
-          <a href="/{{lang}}/faq" {{curFaq}}>{{nav.faq}}</a>
-        </nav>
+        <button class="site-menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu">
+          <span class="site-menu-lines" aria-hidden="true"><i></i><i></i></span>
+          <span>{{nav.menu}}</span>
+        </button>
 
-        <div class="site-actions">
-          {{discordNav}}
-          <div class="langs" role="group" aria-label="{{common.language}}">
-            <a href="/en{{path}}" hreflang="en" {{enCurrent}}>EN</a>
-            <a href="/de{{path}}" hreflang="de" {{deCurrent}}>DE</a>
+        <div class="site-menu" id="site-menu">
+          <nav class="site-links" aria-label="{{nav.menu}}">
+            <a href="/{{lang}}/features" {{curFeatures}}>{{nav.features}}</a>
+            <a href="/{{lang}}/pricing" {{curPricing}}>{{nav.pricing}}</a>
+            <a href="/{{lang}}/faq" {{curFaq}}>{{nav.faq}}</a>
+          </nav>
+
+          <div class="site-actions">
+            {{discordNav}}
+            <div class="langs" role="group" aria-label="{{common.language}}">
+              <a href="/en{{path}}" hreflang="en" lang="en" title="English" {{enCurrent}}>EN</a>
+              <a href="/de{{path}}" hreflang="de" lang="de" title="Deutsch" {{deCurrent}}>DE</a>
+            </div>
+            <div class="themes" id="themes"></div>
+            <span class="head-auth" id="head-auth">
+              <a class="btn btn-sm" href="/{{lang}}/login">{{nav.login}}</a>
+              <a class="btn btn-primary btn-sm" href="/{{lang}}/register">{{nav.register}}</a>
+            </span>
           </div>
-          <div class="themes" id="themes"></div>
-          <span class="head-auth" id="head-auth">
-            <a class="btn btn-sm" href="/{{lang}}/login">{{nav.login}}</a>
-            <a class="btn btn-primary btn-sm" href="/{{lang}}/register">{{nav.register}}</a>
-          </span>
         </div>
       </div>
     </header>

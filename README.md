@@ -79,13 +79,17 @@ journalctl -u afksystems -f
 * `deploy/afksystems.service` – systemd-Unit fürs Panel; startet beim Hochfahren alle Bots wieder,
   die zuletzt laufen sollten, und stoppt sie beim Beenden sauber.
 * `deploy/afksystems-bot.service` – systemd-Unit für den Discord-Bot (eigener Dienst).
-* `deploy/nginx-example.invalid.conf` – vHost samt WebSocket-Durchreichung für den Live-Chat.
+* `deploy/nginx-example.invalid.conf` – vHost samt WebSocket-Durchreichung für Live-Chat und
+  Discord-Bot; insbesondere `/api/bot/stream` darf nicht als normales HTTP-GET am Panel landen.
 
 ## Geld
 
 **1 Credit = 1 Cent**, ganzzahlig. 100 Credits sind ein Euro. Ein Monat sind hier immer **30 Tage**.
 
-* Der **erste Serverplatz je Konto ist gratis** und bleibt es (Einstellung `free_slots`).
+* Der **erste Serverplatz je Konto ist gratis**, solange das verknüpfte Discord-Konto Mitglied im
+  konfigurierten AFKSystems-Server (`000000000000000000`) ist. Austritt, fehlende Verknüpfung oder
+  ein veralteter Mitgliedschaftsnachweis stoppen ihn sofort beziehungsweise spätestens nach der
+  eingestellten Prüfzeit.
 * Jeder weitere Platz bucht beim Anlegen den Monatspreis seines Tarifs ab und verlängert sich
   stündlich geprüft von selbst, solange das Guthaben reicht.
 * Reicht es nicht, wird der Platz **stillgelegt**: Bots gehen aus, gelöscht wird nichts, ins Minus
@@ -96,7 +100,7 @@ journalctl -u afksystems -f
 
 Die Tarife stehen in der Tabelle `plans` und sind im Admin-Bereich vollständig änderbar – Name,
 Beschreibungstext, Preis, Anzahl Bots, Chatverlauf, Macros, Premium-Client, Proxys,
-Offline-Konten, Anzeigetafel, Menüs, Support-Vorrang und die Discord-Rolle.
+Offline-Konten, Scoreboard, Menüs, Support-Vorrang und die Discord-Rolle.
 
 Auch **der Wortlaut auf der Preisseite** gehört dazu: `features_de` und `features_en` sind die
 Merkmalsliste eines Tarifs, eine Zeile je Punkt. Steht dort etwas, wird genau das angezeigt; sind
@@ -113,7 +117,7 @@ wird. In der Tabelle `addons` steht, was sich dazubuchen lässt; `profile_addons
 | `menus` | Menüs bedienen – in Ultra enthalten, auf Premium dazubuchbar |
 | `pov` | Live-Ansicht – angekündigt, `available = 0`, noch nicht buchbar; je Konto **und** Platz, in keinem Tarif enthalten |
 
-Die Anzeigetafel war einmal ein Zusatz (`board`) und gehört seit Migration 006 zu jedem bezahlten
+Das Scoreboard war einmal ein Zusatz (`board`) und gehört seit Migration 006 zu jedem bezahlten
 Tarif. Der Eintrag steht als `active = 0` noch in der Tabelle, damit alte Buchungen nachvollziehbar
 bleiben; angeboten wird er nicht mehr.
 
@@ -126,16 +130,25 @@ Stelle: `billing.featuresOf()` mischt Tarif und Zusätze, `billing.gateCaps()` s
 zu, was die Client-Datei hergibt. Alles andere – Reiter im Panel, erlaubte Befehle, Startargumente –
 fragt dort nach.
 
-## Drei Bauformen, ein Tarif entscheidet
+## Sieben Rust-Bauformen, ein Tarif entscheidet
 
 | Bauform | Datei | Wer sie bekommt |
 | --- | --- | --- |
-| schlank | `afk-linux` | der Gratis-Platz: verbinden, drinbleiben, Chat, Befehle, Macros |
-| Bewegung | `afk-linux-move` | optional, selbst gebaut (`scripts/build-movement.sh`) |
-| Premium | `premium-afk-linux` | bezahlte Plätze: dazu Anti-AFK, Schleichen, Anzeigetafel, Menüs |
+| Basis | `afk-linux` | Verbindung, Chat, Befehle und Macros |
+| Bewegung | `afk-linux-move` | Basis plus Bewegung, Blickrichtung, Routen und Sprung |
+| Items | `items-afk-linux` | Basis plus Menüs und formatierte Gegenstandsdaten |
+| Premium | `premium-afk-linux` | Bewegung, formatiertes Scoreboard, Menü-Klicks, Tastenzustand und Anti-AFK |
+| Premium + Items | `premium-items-afk-linux` | Premium plus sichtbare Gegenstände mit Namen, Farbe und Lore |
+| POV | `pov-afk-linux` | automatisch gestartete Terminal-POV |
+| Ultra | `ultra-afk-linux` | Premium, Items und zuschaltbare POV |
 
 `server/binaries.js` sucht die passende Datei zum Tarif und fällt auf die nächstbeste zurück, wenn
 sie fehlt – ein vergessener Download legt damit keine Bots still.
+
+Alle Bauformen sprechen über `--mc` Minecraft 1.21.1, 1.21.11, 26.1 und 26.2. Nach einem Kick oder
+gewöhnlichen Verbindungsabbruch endet der Prozess absichtlich mit Fehlerstatus; das Panel startet
+ihn nicht heimlich neu. Nur ein vom Server angeordneter Transfer auf einen Unterserver bleibt Teil
+derselben Sitzung. Tablist und Playerlist gibt es in den Rust-Clients nicht mehr.
 
 ## Standorte
 
@@ -178,12 +191,13 @@ Was verschickt wurde, steht in `mails` – **mit Empfänger und Wortlaut**. Der 
 eigenen Nachrichten unter *Einstellungen → Nachrichten an dich*. Wer eine E-Mail mit unserem Namen
 bekommt und sich fragt, ob sie echt war, prüft das dort ohne Rückfrage.
 
-## Was es nicht gibt
+## Noch nicht im Webpanel
 
-Eine **Live-Ansicht (POV)** ist nicht gebaut: Für ein Bild müsste der Client Chunks, Blöcke und
-Entitäten im Speicher halten, aus wenigen MB je Bot würden Hunderte. Sie steht als Zusatz mit
-`available = 0` in der Datenbank – sichtbar als „kommt später“, nicht buchbar. Dasselbe gilt für
-**Bedrock**: ein eigener Protokollstapel und damit ein zweiter Client.
+Der Rust-Client enthält inzwischen eine echte **Terminal-POV**: `pov-afk-linux` startet sie direkt,
+bei `ultra-afk-linux` schaltet `:pov live` sie zu. Das Webpanel hat dafür noch keinen
+Browser-Renderer; der Zusatz steht deshalb weiterhin mit `available = 0` in der Datenbank und wird
+nicht verkauft. **Bedrock** bleibt ebenfalls außen vor: Dafür wäre ein eigener Protokollstapel und
+damit ein zweiter Client nötig.
 
 ## Support und Proxys
 

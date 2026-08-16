@@ -5,9 +5,9 @@
 // Serverplatz und Monat – und ein Monat ist hier immer genau 30 Tage, damit der Preis auf der
 // Seite und die Abbuchung im Kontoauszug dieselbe Zahl sind.
 //
-// Ein Serverplatz je Konto ist dauerhaft kostenlos. Jeder weitere bekommt einen bezahlten Tarif;
-// läuft er ab und es ist zu wenig Guthaben da, wird der Server stillgelegt (Bots aus) statt
-// gelöscht – aufladen und weitermachen genügt.
+// Ein Serverplatz je Konto kostet nichts, solange ein verknüpftes Discord-Konto seine Mitgliedschaft
+// im AFKSystems-Server bestätigt. Jeder weitere bekommt einen bezahlten Tarif; läuft er ab und es
+// ist zu wenig Guthaben da, wird der Server stillgelegt (Bots aus) statt gelöscht.
 
 import { db, getSetting, audit } from './db.js';
 import { voucherCode, bad, notFound } from './util.js';
@@ -126,6 +126,7 @@ const CAP_GATES = {
   premium: 'premium',
   board: 'board',
   menu: 'menus',
+  items: 'menus',
   proxy: 'proxy',
   fakehost: 'fakehost',
   offline: 'offline_accounts',
@@ -176,11 +177,40 @@ export function usedFreeSlots(userId, exceptProfileId = 0) {
 export const freeSlotAvailable = (userId, exceptProfileId = 0) =>
   usedFreeSlots(userId, exceptProfileId) < freeSlots();
 
+/** Der Discord-Server, dessen Mitgliedschaft den Gratis-Tarif freischaltet. */
+export const freeGuildId = () => String(getSetting('free_discord_guild_id') || '').trim();
+
+/**
+ * Darf ein Nutzer den Gratis-Tarif gerade ausführen?
+ *
+ * Der Bot meldet Beitritt/Austritt sofort und gleicht stündlich vollständig ab. Ein alter positiver
+ * Wert darf trotzdem nicht unbegrenzt weitergelten, falls der Bot ausfällt: nach der eingestellten
+ * Frist wird deshalb fail-closed gestoppt.
+ */
+export function freeAccess(userId, now = Date.now()) {
+  const user = readUser.get(userId);
+  const guildId = freeGuildId();
+  const maxAge = Math.max(5, Number(getSetting('free_discord_check_minutes')) || 120) * 60_000;
+  const checkedAt = Number(user?.discord_guild_checked_at) || 0;
+  let reason = null;
+  if (!guildId) reason = 'not-configured';
+  else if (!user?.discord_id) reason = 'discord-link';
+  else if (!checkedAt || now - checkedAt > maxAge) reason = 'discord-check';
+  else if (!user.discord_guild_member) reason = 'discord-join';
+  return {
+    ok: !reason,
+    reason,
+    guild_id: guildId,
+    discord_id: user?.discord_id || null,
+    checked_at: checkedAt || null,
+  };
+}
+
 /** Ist dieses Profil bezahlt und gültig? */
 export function isActive(profile) {
   const plan = planOf(profile);
   if (profile.suspended) return false;
-  if (plan.free_slot) return true;
+  if (plan.free_slot) return freeAccess(profile.user_id).ok;
   return Boolean(profile.paid_until && profile.paid_until > Date.now());
 }
 
@@ -282,12 +312,17 @@ export const setPlan = db.transaction((profile, plan, { by = null } = {}) => {
   }
   if (refund > 0) move(profile.user_id, refund, 'refund', `Restguthaben "${profile.name}"`);
   move(profile.user_id, -price, 'plan', `${plan.name_de} · ${profile.name} · 30 Tage`, String(profile.id));
+  // Beim Wechsel vom Gratis-Platz gilt das Limit des gebuchten Tarifs sofort. Wer auf einem
+  // bezahlten Platz bewusst einen kürzeren Verlauf eingestellt hat, behält diese Wahl.
+  const chatLimit = current.free_slot
+    ? plan.chat_limit
+    : Math.min(profile.chat_limit || plan.chat_limit, plan.chat_limit);
   db.prepare(
     'UPDATE profiles SET plan_id = ?, paid_until = ?, suspended = 0, renew = 1, chat_limit = ? WHERE id = ?'
   ).run(
     plan.id,
     Date.now() + MONTH_MS,
-    Math.min(profile.chat_limit || plan.chat_limit, plan.chat_limit),
+    chatLimit,
     profile.id
   );
   audit(by ?? profile.user_id, 'plan-set', { profile: profile.id, plan: plan.slug, price });

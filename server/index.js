@@ -11,6 +11,7 @@ import { supervisor } from './supervisor.js';
 import './macros.js'; // hängt die Macro-Engine in den Supervisor
 import * as binaries from './binaries.js';
 import * as billing from './billing.js';
+import * as roles from './roles.js';
 import * as notify from './notify.js';
 import * as mail from './mail.js';
 import * as pages from './pages.js';
@@ -260,7 +261,10 @@ app.get(/^\/(en|de)\/app(\/.*)?$/, maintenanceGuard, (req, res) => {
 });
 
 app.use((req, res) => {
-  if (req.path.startsWith('/api/')) return res.status(404).json({ error: 'Unbekannter Endpunkt.' });
+  if (req.path.startsWith('/api/')) {
+    const lang = pages.langFor(req);
+    return res.status(404).json({ error: lang === 'en' ? 'Unknown endpoint.' : 'Unbekannter Endpunkt.' });
+  }
   const lang = pages.langFor(req);
   res
     .status(404)
@@ -323,7 +327,7 @@ server.on('upgrade', (req, socket, head) => {
       });
       ws.on('close', () => bridge.remove(ws));
       ws.send(JSON.stringify({ type: 'hello', seq: bridge.sequence }));
-      console.log('[bot] verbunden');
+      console.log('[bot] connected');
     });
   }
 
@@ -433,6 +437,7 @@ function billingTick() {
     const user = userById(entry.userId);
     if (user) mail.sendTo(user, 'renewed', { name: entry.name, price: entry.price, balance });
     push(entry.userId, { type: 'credits', balance });
+    roles.changed(entry.userId);
   }
 
   for (const entry of suspended) {
@@ -452,6 +457,7 @@ function billingTick() {
       name: entry.name,
       reason: entry.reason,
     });
+    roles.changed(entry.userId);
   }
 
   // Rechtzeitig Bescheid geben, wenn für die nächste Verlängerung Guthaben fehlt.
@@ -482,6 +488,33 @@ function billingTick() {
   }
 }
 
+/**
+ * Gratis-Plätze nur laufen lassen, solange Discord die Mitgliedschaft frisch bestätigt hat.
+ * Gateway-Austritte stoppen bereits im Bot-Endpunkt; dieser Takt ist das Sicherheitsnetz für
+ * einen ausgefallenen Bot oder einen veralteten positiven Cachewert.
+ */
+function enforceFreePlans() {
+  const profiles = db
+    .prepare(
+      `SELECT p.* FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+        WHERE pl.free_slot = 1`
+    )
+    .all();
+  let stopped = 0;
+  for (const profile of profiles) {
+    const access = billing.freeAccess(profile.user_id);
+    if (access.ok) continue;
+    const wanted = db
+      .prepare('SELECT 1 FROM profile_accounts WHERE profile_id = ? AND wanted = 1 LIMIT 1')
+      .get(profile.id);
+    if (wanted || supervisor.runningOnProfile(profile.id)) stopped += 1;
+    supervisor.stopProfile(profile.id, 'Discord membership required for the Free plan.', {
+      keepWanted: false,
+    });
+  }
+  return stopped;
+}
+
 /** Sperrzeit für Nachrichten, die aus dem Stundentakt kommen. */
 const lastMailed = new Map();
 function onceADay(key) {
@@ -492,6 +525,7 @@ function onceADay(key) {
 }
 
 setInterval(billingTick, 3_600_000).unref();
+setInterval(enforceFreePlans, 60_000).unref();
 
 // Stündlich: abgelaufene Sitzungen weg, Client-Release nachsehen.
 setInterval(() => {
@@ -502,8 +536,12 @@ setInterval(() => {
 // ---------------------------------------------------------------- Start
 
 const started = async () => {
-  await binaries.sync();
+  // Tests exercise the real HTTP/WebSocket stack against an isolated database. They only need
+  // local detection; contacting GitHub on every test run would make that stack test flaky.
+  if (process.env.NODE_ENV === 'test') await binaries.detect();
+  else await binaries.sync();
   billingTick();
+  enforceFreePlans();
   const restored = supervisor.restoreAll();
   server.listen(config.port, config.host, () => {
     console.log(

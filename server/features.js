@@ -30,12 +30,12 @@ const LIST = [
     key: 'reconnect',
     group: 'connection',
     de: {
-      title: 'Kommt von selbst zurück',
-      text: 'Bricht die Verbindung ab oder startet der Server neu, tritt der Bot wieder bei. Für einen Kick legst du selbst fest, was passieren soll – ein Macro auf den Rauswurf macht daraus genau die Reaktion, die dein Server braucht.',
+      title: 'Klarer Sitzungsabschluss',
+      text: 'Ein Kick oder gewöhnlicher Verbindungsabbruch beendet den Client mit sichtbarem Fehler. Nur ein vom Server angeordneter Wechsel auf einen Unterserver wird direkt befolgt.',
     },
     en: {
-      title: 'Comes back on its own',
-      text: 'If the connection drops or the server restarts, the bot joins again. For a kick you decide what happens: a macro on being kicked turns it into exactly the reaction your server needs.',
+      title: 'A clear end to a session',
+      text: 'A kick or ordinary disconnect ends the client with a visible error. Only a sub-server transfer explicitly ordered by the server is followed immediately.',
     },
   },
   {
@@ -156,8 +156,8 @@ const LIST = [
     group: 'game',
     need: 'movement',
     premium: true,
-    de: { title: 'Laufen und umsehen', text: 'Gehen, springen, fallen lassen und die Blickrichtung setzen.' },
-    en: { title: 'Walk and look around', text: 'Walk, jump, drop down and set where the bot looks.' },
+    de: { title: 'Laufen und umsehen', text: 'Gehen, springen und die Blickrichtung setzen.' },
+    en: { title: 'Walk and look around', text: 'Walk, jump and set where the bot looks.' },
   },
   {
     key: 'home-route',
@@ -193,7 +193,7 @@ const LIST = [
     need: 'board',
     premium: true,
     de: {
-      title: 'Anzeigetafel',
+      title: 'Scoreboard',
       text: 'Die Seitenleiste des Servers im Panel – mit denselben Farben und derselben Anordnung wie im Spiel. In jedem bezahlten Tarif enthalten.',
     },
     en: {

@@ -25,9 +25,8 @@ export class Panel extends EventEmitter {
     return {
       authorization: `Bearer ${this.secret}`,
       'content-type': 'application/json',
-      // Fehlermeldungen des Panels kommen in der Sprache der Anfrage – im Protokoll des Bots
-      // sollen sie so aussehen wie überall sonst.
-      'accept-language': 'de',
+      // Discords primary language is English, including errors relayed to interactions and logs.
+      'accept-language': 'en',
     };
   }
 
@@ -46,7 +45,7 @@ export class Panel extends EventEmitter {
       data = { error: text.slice(0, 200) };
     }
     if (!response.ok) {
-      const error = new Error(data.error || `Panel antwortet mit ${response.status}`);
+      const error = new Error(data.error || `Panel responded with ${response.status}`);
       error.status = response.status;
       throw error;
     }
@@ -61,7 +60,7 @@ export class Panel extends EventEmitter {
 
     this.socket.on('open', async () => {
       this.retry = 0;
-      console.log('[panel] verbunden');
+      console.log('[panel] connected');
       // Was während der Unterbrechung passiert ist, nachholen – sonst fehlte in Discord genau
       // die eine Antwort, die währenddessen geschrieben wurde.
       if (this.seq) {
@@ -69,7 +68,7 @@ export class Panel extends EventEmitter {
           const missed = await this.call(`/events?since=${this.seq}`);
           for (const event of missed.events || []) this.handle(event);
         } catch (error) {
-          console.warn('[panel] Nachholen fehlgeschlagen:', error.message);
+          console.warn('[panel] event recovery failed:', error.message);
         }
       }
       this.emit('ready');
@@ -87,12 +86,15 @@ export class Panel extends EventEmitter {
       if (this.closing) return;
       this.retry += 1;
       const wait = Math.min(60_000, 2000 * 2 ** Math.min(this.retry, 5));
-      console.warn(`[panel] Verbindung weg – neuer Versuch in ${Math.round(wait / 1000)} s`);
-      setTimeout(() => this.connect(), wait);
+      console.warn(`[panel] connection lost – retrying in ${Math.round(wait / 1000)} s`);
+      setTimeout(() => this.connect(), wait).unref?.();
     });
 
     this.socket.on('error', (error) => {
-      console.warn('[panel] Fehler:', error.message);
+      const hint = /Unexpected server response: 404/.test(error.message)
+        ? ' (the reverse proxy must pass WebSocket upgrades for /api/bot/stream)'
+        : '';
+      console.warn('[panel] error:', `${error.message}${hint}`);
     });
   }
 

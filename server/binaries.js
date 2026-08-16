@@ -1,15 +1,9 @@
 // Die Client-Dateien. Sie kommen aus dem Release "latest" von gravijet/HugoAFKClient – dort liegt
 // nach jedem Push der frische Stand.
 //
-// Es gibt drei Bauformen derselben Quelle. Welche ein Serverplatz benutzt, entscheidet sein Tarif:
-//
-//   schlank   afk-linux           kein Zustand im Speicher, keine Bewegung – der Gratis-Platz
-//   Bewegung  afk-linux-move      dazu :go/:look/:home (liegt nicht im Release, siehe scripts/)
-//   Premium   premium-afk-linux   dazu Anti-AFK, Schleichen, Anzeigetafel, Menüs
-//
-// Was eine Datei wirklich kann, wird **nicht hier gepflegt**, sondern aus ihrer eigenen `--help`
-// gelesen. Kommt im Client etwas dazu, taucht es nach dem nächsten Abgleich von selbst im Panel
-// auf – und was fehlt, bleibt im Panel abgeschaltet, statt einen Knopf anzubieten, der nichts tut.
+// Der Release enthält sieben Rust-Bauformen. Optionen wie Proxy, Events und Offline-Modus werden
+// aus `--help` erkannt; einkompilierte Module stehen zusätzlich am stabilen Release-Dateinamen,
+// weil die knappe Hilfe nicht jeden lokalen Befehl einzeln auflistet.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,9 +16,73 @@ const run = promisify(execFile);
 const MANIFEST = path.join(paths.bin, 'manifest.json');
 
 export const BUILDS = {
-  slim: { file: 'afk-linux', label_de: 'Schlank', label_en: 'Slim' },
-  move: { file: 'afk-linux-move', label_de: 'Bewegung', label_en: 'Movement' },
-  premium: { file: 'premium-afk-linux', label_de: 'Premium', label_en: 'Premium' },
+  slim: { file: 'afk-linux', label_de: 'Basis', label_en: 'Base', features: {} },
+  move: {
+    file: 'afk-linux-move',
+    label_de: 'Bewegung',
+    label_en: 'Movement',
+    features: { local: true, movement: true },
+  },
+  items: {
+    file: 'items-afk-linux',
+    label_de: 'Gegenstände',
+    label_en: 'Items',
+    features: { local: true, menu: true, items: true },
+  },
+  premium: {
+    file: 'premium-afk-linux',
+    label_de: 'Premium',
+    label_en: 'Premium',
+    features: {
+      local: true,
+      movement: true,
+      premium: true,
+      board: true,
+      menu: true,
+      state: true,
+      sneak: true,
+      antiafk: true,
+    },
+  },
+  premiumItems: {
+    file: 'premium-items-afk-linux',
+    label_de: 'Premium + Gegenstände',
+    label_en: 'Premium + items',
+    features: {
+      local: true,
+      movement: true,
+      premium: true,
+      board: true,
+      menu: true,
+      items: true,
+      state: true,
+      sneak: true,
+      antiafk: true,
+    },
+  },
+  pov: {
+    file: 'pov-afk-linux',
+    label_de: 'POV',
+    label_en: 'POV',
+    features: { local: true, pov: true },
+  },
+  ultra: {
+    file: 'ultra-afk-linux',
+    label_de: 'Ultra',
+    label_en: 'Ultra',
+    features: {
+      local: true,
+      movement: true,
+      premium: true,
+      board: true,
+      menu: true,
+      items: true,
+      state: true,
+      sneak: true,
+      antiafk: true,
+      pov: true,
+    },
+  },
 };
 
 /** Was `--help` verrät. Jeder Schlüssel ist eine Zeichenkette, die in der Hilfe stehen muss. */
@@ -37,8 +95,6 @@ const PROBES = {
   oncooldown: /--on-cooldown\b/,
   antiafk: /--antiafk\b/,
   sneak: /--sneak\b/,
-  // Bewegung und alle anderen örtlichen Befehle hängen an ':' – die Hilfe sagt es in der Fußzeile.
-  local: /(Ö|Oe)rtliche Befehle beginnen mit/,
 };
 
 export const state = {
@@ -108,7 +164,7 @@ export async function sync({ force = false } = {}) {
       // bei einem privaten Repository (mit Token im Kopf).
       await download(asset.url, target);
       manifest[asset.name] = { updated_at: asset.updated_at, size: asset.size };
-      if (!asset.name.endsWith('.jar') && !asset.name.endsWith('.exe')) fs.chmodSync(target, 0o755);
+      if (Object.values(BUILDS).some((build) => build.file === asset.name)) fs.chmodSync(target, 0o755);
     }
     manifest._release = { tag: release.tag_name, published_at: release.published_at };
     writeManifest(manifest);
@@ -128,7 +184,13 @@ export async function detect() {
   state.builds = {};
   for (const [key, build] of Object.entries(BUILDS)) {
     const file = path.join(paths.bin, build.file);
-    const entry = { key, file: build.file, present: fs.existsSync(file), caps: {}, version: null };
+    const entry = {
+      key,
+      file: build.file,
+      present: fs.existsSync(file),
+      caps: { ...build.features },
+      version: null,
+    };
     state.builds[key] = entry;
     if (!entry.present) continue;
     try {
@@ -138,11 +200,6 @@ export async function detect() {
       // "AFKSystems 2.0.0 – schlanker Minecraft-AFK-Client"
       entry.version = /^AFKSystems\s+(\S+)/m.exec(help)?.[1] || null;
       for (const [cap, probe] of Object.entries(PROBES)) entry.caps[cap] = probe.test(help);
-      // Die Premium-Bauform bringt Bewegung mit; die schlanke hat sie nie.
-      entry.caps.movement = entry.caps.local;
-      entry.caps.premium = entry.caps.antiafk && entry.caps.sneak;
-      entry.caps.board = entry.caps.premium;
-      entry.caps.menu = entry.caps.premium;
 
       // "-m, --mc <version>  Protokoll: 1.21.1 | 1.21.11 | 26.1 | 26.2  (Standard: 26.1)"
       const line = /Protokoll:\s*([^\n(]+?)\s*\(Standard:\s*([^)]+)\)/.exec(help);
@@ -157,7 +214,7 @@ export async function detect() {
   }
 
   const slim = state.builds.slim;
-  const any = [state.builds.slim, state.builds.premium, state.builds.move].find((b) => b?.present);
+  const any = Object.values(state.builds).find((build) => build?.present);
   state.ready = Boolean(any);
   state.clientVersion = any?.version || null;
   state.versions = any?.versions || [];
@@ -190,8 +247,26 @@ export function anyCaps() {
  * gleich alle Bots stilllegt.
  */
 export function buildFor(profile, plan) {
-  const want = plan?.premium ? 'premium' : profile?.movement && plan?.movement ? 'move' : 'slim';
-  const order = { premium: ['premium', 'move', 'slim'], move: ['move', 'premium', 'slim'], slim: ['slim'] };
+  let want = 'slim';
+  // Der AFKSystems-Tarif Ultra nutzt auch dann die dafür gebaute Datei, wenn einzelne darin
+  // enthaltene Funktionen (derzeit die Terminal-POV) im Webpanel noch nicht freigeschaltet sind.
+  // gateCaps() hält solche Funktionen trotzdem aus der Oberfläche heraus.
+  if (plan?.slug === 'ultra' || (plan?.pov && plan?.premium)) want = 'ultra';
+  else if (plan?.pov) want = 'pov';
+  else if (plan?.premium && plan?.menus) want = 'premiumItems';
+  else if (plan?.premium) want = 'premium';
+  else if (plan?.menus) want = 'items';
+  else if (profile?.movement && plan?.movement) want = 'move';
+
+  const order = {
+    ultra: ['ultra', 'premiumItems', 'premium', 'move', 'slim'],
+    pov: ['pov', 'ultra', 'slim'],
+    premiumItems: ['premiumItems', 'ultra', 'premium', 'move', 'slim'],
+    premium: ['premium', 'premiumItems', 'ultra', 'move', 'slim'],
+    items: ['items', 'premiumItems', 'ultra', 'slim'],
+    move: ['move', 'premium', 'premiumItems', 'ultra', 'slim'],
+    slim: ['slim'],
+  };
   for (const key of order[want]) {
     if (state.builds[key]?.present) return key;
   }
@@ -209,7 +284,7 @@ export function command(profile, plan) {
 
 /** Der Weg für Aufgaben ohne Profil (Anmeldung, Kontenliste). Nimmt, was da ist. */
 export function anyCommand() {
-  for (const key of ['slim', 'premium', 'move']) {
+  for (const key of ['slim', 'move', 'premium', 'premiumItems', 'items', 'ultra', 'pov']) {
     if (state.builds[key]?.present) {
       return { command: path.join(paths.bin, BUILDS[key].file), build: key, caps: caps(key) };
     }

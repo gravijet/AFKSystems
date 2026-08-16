@@ -21,8 +21,65 @@ import { state, appbar, draw, go, ADMIN_GROUPS } from '../app.js';
 
 const ADMIN_ITEMS = ADMIN_GROUPS.flatMap((group) => group.items);
 
+const accountKindLabel = (kind) =>
+  tr(kind === 'offline' ? 'acc.kind.offline' : kind === 'microsoft' ? 'acc.kind.microsoft' : 'common.none');
+
+const accountStatusLabel = (status) => {
+  const keys = { ok: 'acc.ok', pending: 'acc.pending', error: 'acc.error' };
+  return tr(keys[status] || 'state.offline');
+};
+
+function bindAdminSwitches(selector, save) {
+  $$(selector).forEach((node) => {
+    const toggle = async () => {
+      const enabled = node.getAttribute('aria-checked') !== 'true';
+      node.setAttribute('aria-checked', String(enabled));
+      try {
+        const saved = await save(node.dataset.discordRole, enabled);
+        if (saved === false) node.setAttribute('aria-checked', String(!enabled));
+      } catch (error) {
+        node.setAttribute('aria-checked', String(!enabled));
+        fail(error);
+      }
+    };
+    node.addEventListener('click', toggle);
+    node.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      toggle();
+    });
+  });
+}
+
+async function changeAccountSuspension(account) {
+  if (!account) return;
+  const accountId = account.id ?? account.account_id;
+  if (account.suspended) {
+    if (!(await confirmDialog(tr('adm.resumeAccountAsk', { name: account.name }), { danger: false }))) return;
+    await api(`/admin/accounts/${accountId}/suspension`, {
+      method: 'POST',
+      body: { suspended: false },
+    }).catch(fail);
+    draw();
+    return;
+  }
+  const answer = await formDialog(
+    tr('adm.suspendAccount'),
+    [{ key: 'reason', label: tr('adm.suspendReason'), required: true }],
+    { submit: tr('adm.suspendAccount'), note: account.name }
+  );
+  if (!answer) return;
+  await api(`/admin/accounts/${accountId}/suspension`, {
+    method: 'POST',
+    body: { suspended: true, reason: answer.reason },
+  }).catch(fail);
+  draw();
+}
+
 export async function render(root, route) {
-  const entry = ADMIN_ITEMS.find((item) => item.key === route.tab);
+  // Alte Lesezeichen aus der früheren Prozessansicht bleiben gültig.
+  const requested = route.tab === 'bots' ? 'accounts' : route.tab;
+  const entry = ADMIN_ITEMS.find((item) => item.key === requested);
   const tab = entry ? entry.key : 'overview';
 
   root.innerHTML = `
@@ -36,7 +93,7 @@ export async function render(root, route) {
     tickets: staffTickets,
     users: route.id ? (node) => userDetail(node, route.id) : users,
     servers: route.id ? (node) => serverDetail(node, route.id) : servers,
-    bots,
+    accounts,
     nodes,
     plans,
     addons,
@@ -550,12 +607,26 @@ async function users(root) {
 async function userDetail(root, id) {
   const data = await api(`/admin/users/${id}`);
   const user = data.user;
+  const discordRoles = new Set(user.discord_roles || []);
+  const discordRoleRows = [
+    ['customer', null],
+    ['premium', null],
+    ['ultra', null],
+    ['partner', 'discord_partner'],
+    ['vip', 'discord_vip'],
+    ['administrator', null],
+    ['moderator', 'discord_moderator'],
+    ['team', null],
+  ];
 
   root.innerHTML = `
     <div class="row wrap spread" style="margin-bottom:1.25rem">
       <div>
         <h2 style="font-size:1.4rem">${escapeHtml(user.username)}
           ${user.role === 'admin' ? '<span class="pill primary">admin</span>' : ''}
+          ${(user.discord_roles || [])
+            .map((role) => `<span class="pill">${escapeHtml(tr(`role.${role}`))}</span>`)
+            .join('')}
           ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}</h2>
         <p class="small muted mono">${escapeHtml(user.email)} · #${user.id} ·
           ${escapeHtml(tr('common.status'))}: ${user.last_seen_at ? since(user.last_seen_at) : '–'}
@@ -594,6 +665,57 @@ async function userDetail(root, id) {
       <button class="btn btn-sm" id="logout">${escapeHtml(tr('adm.logoutUser'))}</button>
     </div>
 
+    <section class="panel" style="margin-bottom:1.5rem">
+      <header><h3>${escapeHtml(tr('adm.discordRoles'))}</h3>
+        <span class="small muted">${escapeHtml(user.discord ? tr('adm.rolesSynced') : tr('adm.rolesNeedLink'))}</span></header>
+      <div class="body">
+        <ul class="switch-list">
+          ${discordRoleRows
+            .map(([role, editable]) => `<li>
+              <div class="grow">
+                <span class="strong">${escapeHtml(tr(`role.${role}`))}</span>
+                <p class="small muted">${escapeHtml(tr(`role.${role}.hint`))}</p>
+              </div>
+              ${
+                editable
+                  ? `<span class="switch" role="switch" tabindex="0" aria-checked="${Boolean(user[editable])}"
+                       aria-label="${escapeHtml(tr(`role.${role}`))}" data-discord-role="${editable}"></span>`
+                  : `<span class="pill ${discordRoles.has(role) ? 'primary' : ''}">${escapeHtml(
+                      discordRoles.has(role) ? tr('adm.assigned') : tr('adm.notAssigned')
+                    )}</span>`
+              }
+            </li>`)
+            .join('')}
+        </ul>
+      </div>
+    </section>
+
+    ${panel(
+      tr('adm.accounts'),
+      table(
+        [tr('common.name'), tr('common.status'), tr('common.created'), ''],
+        data.accounts.map(
+          (account) => `<tr>
+            <td><span class="strong">${escapeHtml(account.name)}</span>
+              <span class="small muted"> · ${escapeHtml(accountKindLabel(account.kind))}</span></td>
+            <td>${
+              account.suspended
+                ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>
+                   ${account.suspend_reason ? `<span class="small muted">${escapeHtml(account.suspend_reason)}</span>` : ''}`
+                : `<span class="pill ${account.status === 'error' ? 'missing' : 'primary'}">${escapeHtml(
+                    accountStatusLabel(account.status)
+                  )}</span>`
+            }</td>
+            <td class="small muted mono">${datetime(account.created_at)}</td>
+            <td style="text-align:right"><button class="btn btn-sm ${account.suspended ? '' : 'btn-danger'}"
+              data-account-suspend="${account.id}">${escapeHtml(
+                account.suspended ? tr('adm.resumeAccount') : tr('adm.suspendAccount')
+              )}</button></td>
+          </tr>`
+        )
+      )
+    )}
+
     ${panel(
       tr('adm.profiles'),
       table(
@@ -605,9 +727,11 @@ async function userDetail(root, id) {
             <td class="small">${escapeHtml(profile.plan || '–')}</td>
             <td class="small muted">${profile.paid_until ? date(profile.paid_until) : '–'}</td>
             <td>${
-              profile.suspended
-                ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
-                : `<span class="pill ${profile.online ? 'primary' : ''}">${profile.online}</span>`
+              profile.locked
+                ? `<span class="pill missing">${escapeHtml(tr('adm.serverSuspended'))}</span>`
+                : profile.suspended
+                  ? `<span class="pill missing">${escapeHtml(tr('adm.billingSuspended'))}</span>`
+                  : `<span class="pill ${profile.online ? 'primary' : ''}">${profile.online}</span>`
             }</td>
             <td style="text-align:right"><button class="btn btn-sm" data-extend="${profile.id}">+30 d</button></td>
           </tr>`
@@ -677,8 +801,10 @@ async function userDetail(root, id) {
       await api(`/admin/users/${id}`, { method: 'PATCH', body });
       ok(tr('adm.saved'));
       draw();
+      return true;
     } catch (error) {
       fail(error);
+      return false;
     }
   };
 
@@ -823,6 +949,12 @@ async function userDetail(root, id) {
     patch({ notes: $('#notes').value, proxy_allowance: Number($('#allowance').value) })
   );
 
+  bindAdminSwitches('[data-discord-role]', (field, enabled) => patch({ [field]: enabled }));
+  $$('[data-account-suspend]').forEach((button) => {
+    const account = data.accounts.find((entry) => entry.id === Number(button.dataset.accountSuspend));
+    button.addEventListener('click', () => changeAccountSuspension(account));
+  });
+
   $$('[data-extend]').forEach((button) =>
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
@@ -860,8 +992,10 @@ async function servers(root) {
           <td class="small">${escapeHtml(profile.plan || '–')}</td>
           <td class="small muted">${profile.paid_until ? date(profile.paid_until) : '–'}</td>
           <td>${
-            profile.suspended
-              ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
+            profile.locked
+              ? `<span class="pill missing">${escapeHtml(tr('adm.serverSuspended'))}</span>`
+              : profile.suspended
+              ? `<span class="pill missing">${escapeHtml(tr('adm.billingSuspended'))}</span>`
               : `<span class="pill ${profile.online ? 'primary' : ''}">${profile.online}</span>`
           }</td>
           <td style="text-align:right;white-space:nowrap">
@@ -911,15 +1045,17 @@ async function serverDetail(root, id) {
       <div>
         <h2 style="font-size:1.4rem">${escapeHtml(profile.name)}
           ${profile.locked ? `<span class="pill missing">${escapeHtml(tr('adm.locked'))}</span>` : ''}
-          ${profile.suspended ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>` : ''}</h2>
+          ${profile.suspended ? `<span class="pill missing">${escapeHtml(tr('adm.billingSuspended'))}</span>` : ''}</h2>
         <p class="small muted mono">${escapeHtml(profile.address)} · MC ${escapeHtml(profile.mc_version)} ·
           <a href="#/admin/users/${data.owner?.id}">${escapeHtml(data.owner?.username || '')}</a></p>
       </div>
       <div class="row wrap">
         <a class="btn btn-sm" href="#/admin/servers">${escapeHtml(tr('common.back'))}</a>
-        <button class="btn btn-sm" id="start">${icon('play')} ${escapeHtml(tr('srv.startAll'))}</button>
+        <button class="btn btn-sm" id="start" ${profile.locked || profile.suspended ? 'disabled' : ''}>
+          ${icon('play')} ${escapeHtml(tr('srv.startAll'))}</button>
         <button class="btn btn-sm" id="stop">${icon('stop')} ${escapeHtml(tr('srv.stopAll'))}</button>
-        <button class="btn btn-sm" id="restart">${icon('refresh')}</button>
+        <button class="btn btn-sm" id="restart" ${profile.locked || profile.suspended ? 'disabled' : ''}>
+          ${icon('refresh')}</button>
         <button class="btn btn-sm ${profile.locked ? '' : 'btn-danger'}" id="lock">
           ${icon(profile.locked ? 'unlock' : 'lock')} ${escapeHtml(profile.locked ? tr('adm.unlock') : tr('adm.lock'))}</button>
       </div>
@@ -960,8 +1096,19 @@ async function serverDetail(root, id) {
                       <div class="small muted truncate">${escapeHtml(account.state)}
                         ${account.detail ? `· ${escapeHtml(account.detail)}` : ''}
                         ${account.pid ? `· PID ${account.pid}` : ''}</div>
+                      ${
+                        account.suspended
+                          ? `<div class="small" style="color:var(--warn)">${escapeHtml(
+                              account.suspend_reason || tr('acc.suspended')
+                            )}</div>`
+                          : ''
+                      }
                     </div>
                     <span class="small muted mono">${account.since ? since(account.since) : '–'}</span>
+                    <button class="btn btn-sm ${account.suspended ? '' : 'btn-danger'}"
+                      data-account-suspend="${account.account_id}">${escapeHtml(
+                        account.suspended ? tr('adm.resumeAccount') : tr('adm.suspendAccount')
+                      )}</button>
                   </li>`
                 )
                 .join('') ||
@@ -979,7 +1126,7 @@ async function serverDetail(root, id) {
         <div class="body" style="padding:0;display:flex;flex-direction:column;min-height:0">
           <div class="console grow" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}"></div>
           <div class="row send-row">
-            <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))} — :board, :tab, /list"
+            <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))} — :board, :menu, /list"
               autocomplete="off">
             <button class="btn btn-primary" id="send">${icon('send')}</button>
           </div>
@@ -1012,7 +1159,7 @@ async function serverDetail(root, id) {
           <div class="row">
             <button class="btn btn-sm" id="extend">+30 ${escapeHtml(tr('common.days'))}</button>
             <button class="btn btn-sm" id="suspend">${escapeHtml(
-              profile.suspended ? tr('srv.resume') : tr('tk.status.closed')
+              profile.suspended ? tr('adm.resumeBilling') : tr('adm.suspendBilling')
             )}</button>
           </div>
         </div>
@@ -1140,6 +1287,11 @@ async function serverDetail(root, id) {
     draw();
   });
 
+  $$('[data-account-suspend]').forEach((button) => {
+    const account = data.accounts.find((entry) => entry.account_id === Number(button.dataset.accountSuspend));
+    button.addEventListener('click', () => changeAccountSuspension(account));
+  });
+
   $('#plan').addEventListener('change', async (event) => {
     await api(`/admin/profiles/${id}`, {
       method: 'PATCH',
@@ -1186,38 +1338,49 @@ async function serverDetail(root, id) {
   );
 }
 
-async function bots(root) {
-  const data = await api('/admin/bots');
+async function accounts(root) {
+  const data = await api('/admin/accounts');
   root.innerHTML = panel(
-    `${data.bots.length} ${tr('adm.bots')}`,
+    `${data.accounts.length} ${tr('adm.accounts')}`,
     table(
-      [tr('adm.users'), tr('ov.col.account'), tr('ov.col.server'), tr('common.status'), tr('ov.col.uptime'), ''],
-      data.bots.map(
-        (bot) => `<tr>
-          <td class="small"><a href="#/admin/users/${bot.user_id}">${escapeHtml(bot.username || '')}</a></td>
-          <td>${escapeHtml(bot.account || '')}</td>
-          <td class="small muted mono">
-            <a href="#/admin/servers/${bot.profile_id}">${escapeHtml(bot.profile || '')}</a>
-            · ${escapeHtml(bot.host || '')}</td>
-          <td class="small">${escapeHtml(bot.state || '')} ${
-            bot.plan ? `<span class="pill">${escapeHtml(bot.plan)}</span>` : ''
+      [tr('adm.users'), tr('ov.col.account'), tr('adm.servers'), tr('common.status'), tr('common.created'), ''],
+      data.accounts.map(
+        (account) => `<tr>
+          <td class="small"><a href="#/admin/users/${account.user_id}">${escapeHtml(account.username || '')}</a></td>
+          <td><span class="strong">${escapeHtml(account.name || '')}</span>
+            <span class="small muted"> · ${escapeHtml(accountKindLabel(account.kind))}</span></td>
+          <td class="small">${
+            account.servers.length
+              ? account.servers
+                  .map((server) => `<a href="#/admin/servers/${server.id}">${escapeHtml(server.name)}</a>`)
+                  .join(', ')
+              : '–'
           }</td>
-          <td class="mono small muted">${bot.since ? since(bot.since) : '–'}</td>
-          <td style="text-align:right"><button class="btn btn-sm" data-stop="${bot.key}">${escapeHtml(
-            tr('ov.stop')
-          )}</button></td>
+          <td class="small">${
+            account.suspended
+              ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>
+                 ${account.suspend_reason ? `<span class="muted">${escapeHtml(account.suspend_reason)}</span>` : ''}`
+              : account.running
+                ? `<span class="pill primary">${escapeHtml(tr('state.online'))} ${account.online}/${account.running}</span>`
+                : `<span class="pill ${account.status === 'error' ? 'missing' : ''}">${escapeHtml(
+                    accountStatusLabel(account.status)
+                  )}</span>
+                   ${account.last_error ? `<span class="muted">${escapeHtml(account.last_error)}</span>` : ''}`
+          }</td>
+          <td class="mono small muted">${datetime(account.created_at)}</td>
+          <td style="text-align:right"><button class="btn btn-sm ${account.suspended ? '' : 'btn-danger'}"
+            data-account-suspend="${account.id}">${escapeHtml(
+              account.suspended ? tr('adm.resumeAccount') : tr('adm.suspendAccount')
+            )}</button></td>
         </tr>`
       )
     )
   );
 
-  $$('[data-stop]').forEach((button) =>
-    button.addEventListener('click', async () => {
-      const [profileId, accountId] = button.dataset.stop.split(':');
-      await api(`/admin/bots/${profileId}/${accountId}/stop`, { method: 'POST' }).catch(fail);
-      draw();
-    })
-  );
+  $$('[data-account-suspend]').forEach((button) => {
+    const account = data.accounts.find((entry) => entry.id === Number(button.dataset.accountSuspend));
+    button.addEventListener('click', () => changeAccountSuspension(account));
+  });
 }
 
 // ---------------------------------------------------------------- Standorte
@@ -1383,7 +1546,7 @@ const PLAN_FLAGS = [
   ['offline_accounts', 'Offline-/Cracked-Konten erlaubt'],
   ['chat_limit_editable', 'Chatverlauf selbst einstellbar'],
   ['priority_support', 'Support-Vorrang'],
-  ['board', 'Anzeigetafel'],
+  ['board', 'Scoreboard'],
   ['menus', 'Menüs bedienen'],
   ['pov', 'Live-Ansicht (POV)'],
   ['addons', 'Zusätze buchbar'],

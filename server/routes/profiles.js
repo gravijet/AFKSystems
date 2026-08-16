@@ -48,7 +48,7 @@ function membersOf(profile) {
   const rows = db
     .prepare(
       `SELECT pa.account_id, pa.note, pa.proxy_id, pa.wanted, pa.ordinal,
-              a.name, a.uuid, a.status, a.last_error, a.kind,
+              a.name, a.uuid, a.status, a.last_error, a.kind, a.suspended, a.suspend_reason,
               b.state, b.connections, b.uptime_sec, b.last_error AS bot_error
          FROM profile_accounts pa
          JOIN mc_accounts a ON a.id = pa.account_id
@@ -67,6 +67,8 @@ function membersOf(profile) {
       kind: row.kind,
       account_status: row.status,
       account_error: row.last_error,
+      suspended: Boolean(row.suspended),
+      suspend_reason: row.suspend_reason || '',
       note: row.note,
       proxy_id: row.proxy_id,
       wanted: Boolean(row.wanted),
@@ -100,11 +102,8 @@ function profileView(profile, lang = 'en') {
     address: profile.port ? `${profile.host}:${profile.port}` : profile.host,
     mc_version: profile.mc_version,
     join_delay: profile.join_delay,
-    reconnect_delay: profile.reconnect_delay,
-    max_backoff: profile.max_backoff,
     chat_delay: profile.chat_delay,
     chat_limit: profile.chat_limit,
-    auto_reconnect: Boolean(profile.auto_reconnect),
     movement: Boolean(profile.movement),
     fake_host: profile.fake_host || '',
     antiafk_sec: profile.antiafk_sec,
@@ -141,6 +140,7 @@ function profileView(profile, lang = 'en') {
     locked: Boolean(profile.locked),
     lock_reason: profile.lock_reason || '',
     active: billing.isActive(profile) && !profile.locked,
+    free_access: plan.free_slot ? billing.freeAccess(profile.user_id) : null,
     days_left: profile.paid_until
       ? Math.max(0, Math.ceil((profile.paid_until - Date.now()) / 86_400_000))
       : null,
@@ -177,14 +177,14 @@ const capsOf = (profile) => {
   return build ? billing.gateCaps(binaries.caps(build), features) : {};
 };
 
-/** Ein gesperrter Serverplatz lässt sich nicht mehr ändern – nur noch ansehen. */
+/** Ein suspendierter Serverplatz lässt sich nicht mehr ändern – nur noch ansehen. */
 function notLocked(profile) {
   if (profile.locked) {
     throw new HttpError(
       403,
-      `"${profile.name}" ist gesperrt${profile.lock_reason ? `: ${profile.lock_reason}` : '.'} Bitte melde dich beim Support.`,
+      `"${profile.name}" ist suspendiert${profile.lock_reason ? `: ${profile.lock_reason}` : '.'} Bitte melde dich beim Support.`,
       {
-        en: `"${profile.name}" is locked${profile.lock_reason ? `: ${profile.lock_reason}` : '.'} Please contact support.`,
+        en: `"${profile.name}" is suspended${profile.lock_reason ? `: ${profile.lock_reason}` : '.'} Please contact support.`,
       }
     );
   }
@@ -272,7 +272,7 @@ router.post(
         version,
         plan.id,
         node.id,
-        Math.min(200, plan.chat_limit),
+        plan.chat_limit,
         (max ?? 0) + 1,
         Date.now()
       );
@@ -294,6 +294,7 @@ router.post(
         'INSERT OR IGNORE INTO profile_accounts (profile_id, account_id, ordinal) VALUES (?, ?, 0)'
       ).run(profile.id, account.id);
     }
+    roles.changed(req.user.id);
     audit(req.user.id, 'profile-create', { name, host, port, plan: plan.slug });
     res.json({ profile: profileView(profile, lang), balance: billing.balance(req.user.id) });
   })
@@ -335,12 +336,6 @@ router.patch(
       put('mc_version', version);
     }
     if (body.join_delay !== undefined) put('join_delay', requireInt(body.join_delay, 'Join-Delay', { max: 600 }));
-    if (body.reconnect_delay !== undefined) {
-      put('reconnect_delay', requireInt(body.reconnect_delay, 'Reconnect-Delay', { min: 1, max: 600 }));
-    }
-    if (body.max_backoff !== undefined) {
-      put('max_backoff', requireInt(body.max_backoff, 'Max-Backoff', { min: 1, max: 3600 }));
-    }
     if (body.chat_delay !== undefined) {
       put('chat_delay', requireInt(body.chat_delay, 'Chat-Abstand', { min: 200, max: 60000 }));
     }
@@ -357,7 +352,6 @@ router.patch(
       }
       put('chat_limit', requireInt(body.chat_limit, 'Chatverlauf', { min: 20, max: plan.chat_limit }));
     }
-    if (body.auto_reconnect !== undefined) put('auto_reconnect', body.auto_reconnect ? 1 : 0);
     if (body.movement !== undefined) {
       if (body.movement && !plan.movement) {
         throw new HttpError(402, 'Bewegung gibt es ab einem bezahlten Serverplatz.', {
@@ -406,7 +400,15 @@ router.patch(
       put('on_cooldown', requireInt(body.on_cooldown, 'Sperrzeit', { min: 1, max: 3600 }));
     }
     if (body.color !== undefined) put('color', String(body.color).slice(0, 20));
-    if (body.anti_afk !== undefined) put('anti_afk', JSON.stringify(body.anti_afk || {}));
+    if (body.anti_afk !== undefined) {
+      const antiAfk = body.anti_afk && typeof body.anti_afk === 'object' ? body.anti_afk : {};
+      if (String(antiAfk.command_text || '').trim().startsWith(':')) {
+        throw bad('Anti-AFK-Nachrichten dürfen keine örtlichen Client-Befehle sein.', {
+          en: 'Anti-AFK messages cannot be local client commands.',
+        });
+      }
+      put('anti_afk', JSON.stringify(antiAfk));
+    }
     if (body.ordinal !== undefined) put('ordinal', requireInt(body.ordinal, 'Reihenfolge', { max: 999 }));
     if (body.renew !== undefined) put('renew', body.renew ? 1 : 0);
 
@@ -471,13 +473,25 @@ router.get(
           ? 'Auf dem kostenlosen Serverplatz gibt es keine Zusätze. Wähle zuerst einen bezahlten Tarif.'
           : 'The free server slot takes no extras. Pick a paid plan first.'
         : '',
-      addons: billing.addons().map((addon) => ({
-        ...addonView(addon, lang, caps),
-        qty: booked[addon.id] || 0,
-        // Was der Tarif schon kann, muss niemand kaufen.
-        included: addon.kind === 'flag' && addon.flag ? Boolean(plan[addon.flag]) : false,
-        prorated: billing.proratedPrice(profile, addon.price_credits),
-      })),
+      addons: billing.addons().map((addon) => {
+        const qty = booked[addon.id] || 0;
+        const remaining = Math.max(0, addon.max_qty - qty);
+        return {
+          ...addonView(addon, lang, caps),
+          qty,
+          // Was der Tarif schon kann, muss niemand kaufen.
+          included: addon.kind === 'flag' && addon.flag ? Boolean(plan[addon.flag]) : false,
+          prorated: billing.proratedPrice(profile, addon.price_credits),
+          // Der Gesamtpreis wird einmal gerundet. Bei mehreren Stück wäre "Stückpreis × Menge"
+          // gelegentlich einen Credit daneben; deshalb liefert der Server die exakten Summen.
+          prorated_by_qty: Object.fromEntries(
+            Array.from({ length: remaining }, (_, index) => {
+              const amount = index + 1;
+              return [amount, billing.proratedPrice(profile, addon.price_credits * amount)];
+            })
+          ),
+        };
+      }),
       days_left: profile.paid_until
         ? Math.max(0, Math.ceil((profile.paid_until - Date.now()) / 86_400_000))
         : null,
@@ -497,7 +511,8 @@ router.post(
         en: 'The client cannot do that on this server right now.',
       });
     }
-    const result = billing.addAddon(profile, addon, Number(req.body?.qty) || 1);
+    const qty = requireInt(req.body?.qty ?? 1, 'Menge', { min: 1, max: addon.max_qty });
+    const result = billing.addAddon(profile, addon, qty);
     res.json({
       ...result,
       profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id), langOf(req)),
@@ -511,7 +526,8 @@ router.delete(
     const profile = notLocked(ownedProfile(req));
     const addon = billing.addonById(requireInt(req.params.addonId, 'Zusatz'));
     if (!addon) throw notFound('Diesen Zusatz gibt es nicht.', { en: 'No such extra.' });
-    const result = billing.removeAddon(profile, addon, Number(req.body?.qty) || 1);
+    const qty = requireInt(req.body?.qty ?? 1, 'Menge', { min: 1, max: addon.max_qty });
+    const result = billing.removeAddon(profile, addon, qty);
     // Weniger Bots erlaubt als gerade laufen: die überzähligen gehen aus, sonst liefe etwas
     // weiter, das niemand mehr bezahlt.
     const features = billing.featuresOf(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id));
@@ -542,11 +558,12 @@ router.post(
 router.post(
   '/:id/resume',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     if (!profile.suspended) throw bad('Dieser Server ist nicht stillgelegt.', {
       en: 'This server is not suspended.',
     });
     const updated = billing.resume(profile);
+    roles.changed(req.user.id);
     res.json({ profile: profileView(updated, langOf(req)), balance: billing.balance(req.user.id) });
   })
 );
@@ -560,6 +577,7 @@ router.delete(
     const refund = billing.refundValue(profile);
     if (refund > 0) billing.move(req.user.id, refund, 'refund', `Restguthaben "${profile.name}"`);
     db.prepare('DELETE FROM profiles WHERE id = ?').run(profile.id);
+    roles.changed(req.user.id);
     audit(req.user.id, 'profile-delete', { name: profile.name, refund });
     res.json({ ok: true, refund, balance: billing.balance(req.user.id) });
   })
@@ -747,7 +765,7 @@ router.get(
   '/:id/views',
   wrap((req, res) => {
     const profile = ownedProfile(req);
-    const kinds = ['board', 'menu'];
+    const kinds = ['board', 'menu', 'position'];
     const wanted = kinds.includes(String(req.query.kind)) ? [String(req.query.kind)] : kinds;
     const out = [];
     for (const member of membersOf(profile)) {
@@ -766,14 +784,25 @@ router.get(
 router.post(
   '/:id/chat',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const text = requireString(req.body?.text, 'Nachricht', { max: 256 });
+    let local = null;
+    if (text.startsWith(':')) {
+      const [rawVerb, ...rest] = text.slice(1).trim().split(/\s+/);
+      const verb = String(rawVerb || '').toLowerCase();
+      const need = LOCAL_VERBS[verb];
+      if (!need) throw bad(`Unbekannter örtlicher Befehl "${verb}".`, {
+        en: `Unknown local command "${verb}".`,
+      });
+      local = { verb, arg: rest.join(' '), need };
+    }
     const results = [];
     for (const accountId of targets(req, profile)) {
       const bot = supervisor.get(profile.id, accountId);
       try {
         if (!bot) throw new HttpError(409, 'Der Bot läuft gerade nicht.', { en: 'That bot is not running.' });
-        bot.send(text);
+        if (local) bot.local(local.verb, local.arg, local.need);
+        else bot.send(text);
         results.push({ account_id: accountId, ok: true });
       } catch (error) {
         results.push({ account_id: accountId, ok: false, error: error.message });
@@ -803,15 +832,16 @@ const LOCAL_VERBS = {
   use: 'sneak',
   hand: 'sneak',
   board: 'board',
-  tab: 'board',
   menu: 'menu',
   click: 'menu',
   close: 'menu',
+  slot: 'items',
+  inv: 'items',
   antiafk: 'antiafk',
 };
 
 const runLocal = wrap((req, res) => {
-  const profile = ownedProfile(req);
+  const profile = notLocked(ownedProfile(req));
   const verb = String(req.body?.verb || '').toLowerCase();
   const need = LOCAL_VERBS[verb];
   if (!need) throw bad(`Unbekannter Befehl "${verb}".`, { en: `Unknown command "${verb}".` });
@@ -858,7 +888,14 @@ function cleanActions(input, caps) {
     }
     const action = { type };
     if (raw.delay) action.delay = requireInt(raw.delay, 'Verzögerung', { max: 3600 });
-    if (type === 'chat') action.text = requireString(raw.text, 'Text', { max: 256 });
+    if (type === 'chat') {
+      action.text = requireString(raw.text, 'Text', { max: 256 });
+      if (action.text.trim().startsWith(':')) {
+        throw bad('Nutze für örtliche Client-Befehle den passenden Macro-Schritt.', {
+          en: 'Use the matching macro step for local client commands.',
+        });
+      }
+    }
     if (type === 'wait') action.seconds = requireInt(raw.seconds, 'Sekunden', { min: 1, max: 3600 });
     if (type === 'move') {
       action.direction = ['vor', 'zurück', 'links', 'rechts'].includes(raw.direction)
@@ -1086,6 +1123,11 @@ router.post(
   wrap((req, res) => {
     const profile = ownedProfile(req);
     const message = requireString(req.body?.message, 'Nachricht', { max: 256 });
+    if (message.trim().startsWith(':')) {
+      throw bad('Wiederholte Nachrichten dürfen keine örtlichen Client-Befehle sein.', {
+        en: 'Repeated messages cannot be local client commands.',
+      });
+    }
     const interval = requireInt(req.body?.interval_sec ?? 300, 'Intervall', { min: 5, max: 86400 });
     const info = db
       .prepare(
@@ -1116,8 +1158,14 @@ router.patch(
     const set = [];
     const values = [];
     if (body.message !== undefined) {
+      const message = requireString(body.message, 'Nachricht', { max: 256 });
+      if (message.trim().startsWith(':')) {
+        throw bad('Wiederholte Nachrichten dürfen keine örtlichen Client-Befehle sein.', {
+          en: 'Repeated messages cannot be local client commands.',
+        });
+      }
       set.push('message = ?');
-      values.push(requireString(body.message, 'Nachricht', { max: 256 }));
+      values.push(message);
     }
     if (body.interval_sec !== undefined) {
       set.push('interval_sec = ?');

@@ -15,7 +15,7 @@ import { db, getSetting, audit } from './db.js';
 import { config } from './config.js';
 import { bad, HttpError, hashPassword, token as randomToken } from './util.js';
 import * as mail from './mail.js';
-import { grant } from './billing.js';
+import { grant, freeGuildId } from './billing.js';
 import { bridge } from './bridge.js';
 
 // ---------------------------------------------------------------- Anbieter
@@ -117,6 +117,24 @@ export function startUrl(key, { mode = 'link', userId = null, lang = 'en', next 
       en: `Signing in with ${entry.label} is switched off.`,
     });
   }
+  if (mode === 'verify') {
+    if (key !== 'discord') {
+      throw bad('Linked Roles gibt es nur für Discord.', { en: 'Linked Roles are only available for Discord.' });
+    }
+    const user = db
+      .prepare('SELECT role, discord_moderator, discord_id FROM users WHERE id = ?')
+      .get(userId);
+    if (!user || (user.role !== 'admin' && !user.discord_moderator)) {
+      throw new HttpError(403, 'Linked Roles sind nur für Administratoren und Discord-Moderatoren.', {
+        en: 'Linked Roles are only available to administrators and Discord moderators.',
+      });
+    }
+    if (!user.discord_id) {
+      throw new HttpError(409, 'Verknüpfe zuerst dein Discord-Konto.', {
+        en: 'Link your Discord account first.',
+      });
+    }
+  }
   const params = new URLSearchParams({
     client_id: String(getSetting(entry.settings.id)),
     redirect_uri: redirectUri(key),
@@ -181,6 +199,15 @@ export async function callback({ code, state: value }) {
   const accessToken = await exchange(which, code);
 
   if (entry.mode === 'verify') {
+    const account = await identity(which, accessToken);
+    const user = db.prepare('SELECT discord_id FROM users WHERE id = ?').get(entry.userId);
+    if (!user?.discord_id || String(user.discord_id) !== String(account.id)) {
+      throw new HttpError(
+        403,
+        'Bestätige bitte dasselbe Discord-Konto, das im Panel verknüpft ist.',
+        { en: 'Please authorize the same Discord account that is linked in the panel.' }
+      );
+    }
     await writeRoleConnection(accessToken, entry.userId);
     return { action: 'verified', userId: entry.userId, lang: entry.lang, provider: which.key };
   }
@@ -200,7 +227,10 @@ export async function callback({ code, state: value }) {
     writeIdentity(entry.userId, which, account);
     audit(entry.userId, `${which.key}-link`, { external: account.id });
     // Der Bot vergibt die Rolle für "Konto verknüpft" – und die soll sofort da sein.
-    if (which.key === 'discord') bridge.emit('roles.changed', { discord_id: account.id, user_id: entry.userId });
+    if (which.key === 'discord') {
+      await refreshDiscordMembership(entry.userId, account.id);
+      bridge.emit('roles.changed', { discord_id: account.id, user_id: entry.userId });
+    }
     notifySecurity(entry.userId, {
       de: `${which.label}-Konto verknüpft`,
       en: `${which.label} account linked`,
@@ -250,6 +280,10 @@ export async function callback({ code, state: value }) {
   }
   // Namen auffrischen, sie ändern sich gern.
   writeIdentity(user.id, which, account);
+  if (which.key === 'discord') {
+    await refreshDiscordMembership(user.id, account.id);
+    bridge.emit('roles.changed', { discord_id: account.id, user_id: user.id });
+  }
   return {
     action: created ? 'created' : 'login',
     userId: user.id,
@@ -312,17 +346,25 @@ function createFromIdentity(which, account, lang) {
 export function unlink(key, userId) {
   const which = provider(key);
   const columns = which.columns;
-  if (which.key === 'discord') {
-    const before = db.prepare('SELECT discord_id FROM users WHERE id = ?').get(userId);
-    if (before?.discord_id) {
-      bridge.emit('roles.changed', { discord_id: before.discord_id, user_id: userId });
-    }
-  }
+  const before =
+    which.key === 'discord'
+      ? db.prepare('SELECT discord_id FROM users WHERE id = ?').get(userId)
+      : null;
   const set = [`${columns.id} = NULL`];
+  const values = [];
   if (columns.name) set.push(`${columns.name} = NULL`);
   if (columns.avatar) set.push(`${columns.avatar} = NULL`);
   if (columns.email) set.push(`${columns.email} = NULL`);
-  db.prepare(`UPDATE users SET ${set.join(', ')} WHERE id = ?`).run(userId);
+  if (which.key === 'discord') {
+    set.push('discord_guild_member = 0');
+    set.push('discord_guild_checked_at = ?');
+  }
+  if (which.key === 'discord') values.push(Date.now());
+  values.push(userId);
+  db.prepare(`UPDATE users SET ${set.join(', ')} WHERE id = ?`).run(...values);
+  if (before?.discord_id) {
+    bridge.emit('roles.changed', { discord_id: before.discord_id, user_id: userId });
+  }
   audit(userId, `${which.key}-unlink`);
   notifySecurity(userId, {
     de: `${which.label}-Konto getrennt`,
@@ -344,48 +386,77 @@ function notifySecurity(userId, { de, en, detail }) {
   });
 }
 
-// ---------------------------------------------------------------- Linked Roles (Discord)
+// ---------------------------------------------------------------- Discord-Mitgliedschaft und Linked Roles
 
 /**
- * Discords „Linked Roles“: der Server-Betreiber baut eine Rolle, die eine Bedingung an unsere
- * Anwendung stellt („hat ein verknüpftes AFKSystems-Konto“, „Tarif mindestens Premium“). Discord
- * fragt dafür nicht bei uns nach, sondern liest, was wir zu diesem Nutzer hinterlegt haben.
- *
- * Genau das passiert hier: nach der Zustimmung schreiben wir die aktuellen Werte in sein Profil.
- * Das Schema dazu meldet der Bot beim Start an (siehe bot/handlers/linkedRoles.js).
+ * Die Mitgliedschaft direkt über den Bot-Token prüfen. Das macht eine neue Verknüpfung sofort
+ * nutzbar; danach hält der Discord-Bot den Wert mit Gateway-Ereignissen und Vollabgleichen aktuell.
+ */
+export async function refreshDiscordMembership(userId, discordId = null) {
+  const guildId = freeGuildId();
+  const token = String(getSetting('discord_bot_token') || '').trim();
+  const id =
+    String(discordId || db.prepare('SELECT discord_id FROM users WHERE id = ?').get(userId)?.discord_id || '').trim();
+  if (!guildId || !token || !id) return { checked: false, member: false };
+
+  let response;
+  try {
+    response = await fetch(`https://discord.com/api/v10/guilds/${guildId}/members/${id}`, {
+      headers: { authorization: `Bot ${token}`, accept: 'application/json' },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return { checked: false, member: false };
+  }
+  if (response.status !== 200 && response.status !== 404) {
+    return { checked: false, member: false, status: response.status };
+  }
+  const member = response.status === 200;
+  db.prepare(
+    'UPDATE users SET discord_guild_member = ?, discord_guild_checked_at = ? WHERE id = ? AND discord_id = ?'
+  ).run(member ? 1 : 0, Date.now(), userId, id);
+  return { checked: true, member };
+}
+
+/**
+ * Discords Linked Roles bleiben bewusst auf zwei Team-Merkmale beschränkt: Administrator und
+ * Discord Moderator. Customer, Tarife, Partner, VIP und Team sind normale Serverrollen; sie
+ * synchronisiert der Bot ohne OAuth-Zustimmung für `role_connections.write`.
  */
 export const ROLE_METADATA = [
-  { key: 'linked', name: 'Konto verknüpft', name_en: 'Account linked', type: 7, description: 'Hat ein AFKSystems-Konto verknüpft' },
-  { key: 'plan', name: 'Tarifstufe', name_en: 'Plan level', type: 2, description: '0 = Gratis, 1 = Premium, 2 = Ultra' },
-  { key: 'servers', name: 'Serverplätze', name_en: 'Server slots', type: 2, description: 'Wie viele Serverplätze laufen' },
-  { key: 'staff', name: 'Team', name_en: 'Staff', type: 7, description: 'Gehört zum AFKSystems-Team' },
+  {
+    key: 'administrator',
+    name: 'Administrator',
+    type: 7,
+    description: 'AFKSystems panel administrator',
+  },
+  {
+    key: 'discord_moderator',
+    name: 'Discord Moderator',
+    type: 7,
+    description: 'AFKSystems Discord moderator',
+  },
 ];
 
 /** Die Werte, die Discord über einen Nutzer bekommen soll. */
 export function roleMetadataFor(userId) {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) return null;
-  const best = db
-    .prepare(
-      `SELECT MAX(CASE WHEN pl.free_slot = 1 THEN 0 WHEN pl.price_credits >= 500 THEN 2 ELSE 1 END) AS level,
-              COUNT(*) AS servers
-         FROM profiles p JOIN plans pl ON pl.id = p.plan_id
-        WHERE p.user_id = ? AND p.suspended = 0
-          AND (pl.free_slot = 1 OR p.paid_until > ?)`
-    )
-    .get(userId, Date.now());
   return {
-    linked: 1,
-    plan: best?.level ?? 0,
-    servers: best?.servers ?? 0,
-    staff: user.role === 'admin' ? 1 : 0,
+    administrator: user.role === 'admin' ? 1 : 0,
+    discord_moderator: user.discord_moderator ? 1 : 0,
   };
 }
 
 async function writeRoleConnection(accessToken, userId) {
   const applicationId = String(getSetting('discord_client_id') || '').trim();
   if (!applicationId) throw bad('Discord ist nicht eingerichtet.', { en: 'Discord is not set up.' });
-  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT username, role, discord_moderator FROM users WHERE id = ?').get(userId);
+  if (!user || (user.role !== 'admin' && !user.discord_moderator)) {
+    throw new HttpError(403, 'Linked Roles sind nur für Administratoren und Discord-Moderatoren.', {
+      en: 'Linked Roles are only available to administrators and Discord moderators.',
+    });
+  }
   const response = await fetch(
     `https://discord.com/api/v10/users/@me/applications/${applicationId}/role-connection`,
     {

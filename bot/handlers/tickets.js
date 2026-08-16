@@ -16,6 +16,7 @@ import {
   ButtonStyle,
   ChannelType,
   EmbedBuilder,
+  MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
   StringSelectMenuBuilder,
@@ -26,10 +27,10 @@ import {
 const COLORS = { info: 0x206cfe, ok: 0x00bb7f, warn: 0xfcbb00, bad: 0xfb2c36 };
 
 const STATUS_LABEL = {
-  open: 'offen',
-  waiting: 'wartet',
-  answered: 'beantwortet',
-  closed: 'geschlossen',
+  open: 'open',
+  waiting: 'waiting',
+  answered: 'answered',
+  closed: 'closed',
 };
 
 export class Tickets {
@@ -51,7 +52,7 @@ export class Tickets {
     if (!channelId) return;
     const channel = await this.bot.client.channels.fetch(channelId).catch(() => null);
     if (!channel?.isTextBased()) {
-      console.warn('[tickets] Ticket-Kanal nicht gefunden:', channelId);
+      console.warn('[tickets] ticket panel channel not found:', channelId);
       return;
     }
 
@@ -61,11 +62,11 @@ export class Tickets {
       .setTitle('Support')
       .setDescription(
         [
-          'Ein Ticket geht hier genauso wie im Panel – und ist danach an beiden Stellen dasselbe.',
+          'A ticket opened here is the same ticket you see in the panel.',
           '',
-          'Wähle unten die Kategorie. Es öffnet sich ein Kanal, den nur du und das Team sehen.',
+          'Choose a category below. A private channel will open for you and the team.',
           '',
-          `Dein Discord-Konto muss dafür mit deinem ${this.config.brand}-Konto verknüpft sein:`,
+          `Your Discord account needs to be linked to your ${this.config.brand} account:`,
           `${this.config.link_url}`,
         ].join('\n')
       )
@@ -73,7 +74,7 @@ export class Tickets {
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId('ticket:new')
-      .setPlaceholder('Worum geht es?')
+      .setPlaceholder('What do you need help with?')
       .addOptions(
         this.config.categories.map((entry) => ({ label: entry.label, value: entry.key }))
       );
@@ -97,12 +98,12 @@ export class Tickets {
 
     const modal = new ModalBuilder()
       .setCustomId(`ticket:create:${category}`)
-      .setTitle('Ticket aufmachen')
+      .setTitle('Open a ticket')
       .addComponents(
         new ActionRowBuilder().addComponents(
           new TextInputBuilder()
             .setCustomId('subject')
-            .setLabel('Worum geht es?')
+            .setLabel('What is this about?')
             .setStyle(TextInputStyle.Short)
             .setMaxLength(120)
             .setRequired(true)
@@ -110,7 +111,7 @@ export class Tickets {
         new ActionRowBuilder().addComponents(
           new TextInputBuilder()
             .setCustomId('body')
-            .setLabel('Beschreib es kurz')
+            .setLabel('Describe the issue')
             .setStyle(TextInputStyle.Paragraph)
             .setMaxLength(3000)
             .setRequired(true)
@@ -121,19 +122,19 @@ export class Tickets {
 
   async tellUnlinked(interaction) {
     await interaction.reply({
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
       embeds: [
         new EmbedBuilder()
           .setColor(COLORS.warn)
-          .setTitle('Konto noch nicht verknüpft')
+          .setTitle('Account not linked yet')
           .setDescription(
             [
-              `Ein Ticket gehört zu einem ${this.config.brand}-Konto – sonst weiß das Team nicht,`,
-              'um welchen Serverplatz es geht.',
+              `A ticket belongs to a ${this.config.brand} account so the team can identify`,
+              'the affected server slot.',
               '',
-              `Verknüpfen dauert einen Klick: ${this.config.link_url}`,
+              `Linking takes one click: ${this.config.link_url}`,
               '',
-              'Danach hier einfach noch einmal auswählen.',
+              'Then select the category here again.',
             ].join('\n')
           )
           .setThumbnail(this.config.logo),
@@ -143,7 +144,7 @@ export class Tickets {
 
   /** Formular abgeschickt: Ticket im Panel anlegen, Kanal hier aufmachen. */
   async onCreate(interaction, category) {
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const subject = interaction.fields.getTextInputValue('subject');
     const body = interaction.fields.getTextInputValue('body');
 
@@ -155,12 +156,12 @@ export class Tickets {
       });
       ticket = result.ticket;
     } catch (error) {
-      return interaction.editReply(`Das ging schief: ${error.message}`);
+      return interaction.editReply(`That did not work: ${error.message}`);
     }
 
     const channel = await this.openChannel(ticket, interaction.user.id);
     await interaction.editReply(
-      channel ? `Ticket #${ticket.id} ist offen: <#${channel.id}>` : `Ticket #${ticket.id} ist offen.`
+      channel ? `Ticket #${ticket.id} is open: <#${channel.id}>` : `Ticket #${ticket.id} is open.`
     );
   }
 
@@ -208,7 +209,7 @@ export class Tickets {
         permissionOverwrites: overwrites,
       });
     } catch (error) {
-      console.warn('[tickets] Kanal ließ sich nicht anlegen:', error.message);
+      console.warn('[tickets] could not create channel:', error.message);
       return null;
     }
 
@@ -222,18 +223,18 @@ export class Tickets {
       .setTitle(`#${ticket.id} · ${ticket.subject}`)
       .setURL(ticket.url)
       .addFields(
-        { name: 'Von', value: ticket.owner?.username || '–', inline: true },
-        { name: 'Kategorie', value: this.categoryLabel(ticket.category), inline: true },
-        { name: 'Zustand', value: STATUS_LABEL[ticket.status] || ticket.status, inline: true }
+        { name: 'From', value: ticket.owner?.username || '–', inline: true },
+        { name: 'Category', value: this.categoryLabel(ticket.category), inline: true },
+        { name: 'Status', value: STATUS_LABEL[ticket.status] || ticket.status, inline: true }
       )
-      .setFooter({ text: 'Was hier steht, steht auch im Panel.', iconURL: this.config.logo });
+      .setFooter({ text: 'Messages here are synced with the panel.', iconURL: this.config.logo });
 
     const buttons = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`ticket:close:${ticket.id}`)
-        .setLabel('Schließen')
+        .setLabel('Close ticket')
         .setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setURL(ticket.url).setLabel('Im Panel öffnen').setStyle(ButtonStyle.Link)
+      new ButtonBuilder().setURL(ticket.url).setLabel('Open in panel').setStyle(ButtonStyle.Link)
     );
 
     const message = await channel.send({ embeds: [embed], components: [buttons] });
@@ -260,7 +261,7 @@ export class Tickets {
     if (entry.role === 'system') embed.setAuthor({ name: 'System' });
     else {
       embed.setAuthor({
-        name: `${entry.author || 'Kunde'}${entry.role === 'staff' ? ' · Team' : ''}`,
+        name: `${entry.author || 'Customer'}${entry.role === 'staff' ? ' · Team' : ''}`,
         iconURL: this.config.logo,
       });
     }
@@ -271,7 +272,9 @@ export class Tickets {
   /** Eine gewöhnliche Nachricht in einem Ticket-Kanal: ab damit ins Panel. */
   async onMessage(message) {
     if (message.author.bot || this.mine.has(message.id)) return;
-    const match = /^ticket-(\d+)$/.exec(message.channel.name || '');
+    // `geschlossen-*` keeps channels created before the English Discord migration working.
+    // New and renamed channels are always English.
+    const match = /^(?:ticket|closed|geschlossen)-(\d+)$/.exec(message.channel.name || '');
     if (!match) return;
     const id = Number(match[1]);
 
@@ -294,7 +297,7 @@ export class Tickets {
       await message.react('✅').catch(() => {});
     } catch (error) {
       // Wer nicht verknüpft ist, soll wissen warum – und nicht ins Leere schreiben.
-      await message.reply(`Das kam nicht im Panel an: ${error.message}`).catch(() => {});
+      await message.reply(`This was not saved in the panel: ${error.message}`).catch(() => {});
       await message.react('⚠️').catch(() => {});
     }
   }
@@ -307,9 +310,9 @@ export class Tickets {
         method: 'POST',
         body: { status: 'closed', discord_id: interaction.user.id },
       });
-      await interaction.editReply('Ticket geschlossen. Eine Antwort macht es wieder auf.');
+      await interaction.editReply('Ticket closed. A new reply will reopen it.');
     } catch (error) {
-      await interaction.editReply(`Das ging schief: ${error.message}`);
+      await interaction.editReply(`That did not work: ${error.message}`);
     }
   }
 
@@ -337,7 +340,7 @@ export class Tickets {
       discord_id: null,
     });
     if (event.reopened) {
-      await channel.send({ content: 'Das Ticket wurde durch eine Antwort wieder geöffnet.' });
+      await channel.send({ content: 'The ticket was reopened by a new reply.' });
     }
   }
 
@@ -350,12 +353,12 @@ export class Tickets {
       embeds: [
         new EmbedBuilder()
           .setColor(closed ? COLORS.warn : COLORS.ok)
-          .setDescription(`Zustand: **${STATUS_LABEL[event.status] || event.status}**`),
+          .setDescription(`Status: **${STATUS_LABEL[event.status] || event.status}**`),
       ],
     });
     // Geschlossen heißt hier: der Kanal wird archiviert, nicht gelöscht. Der Verlauf bleibt an
     // beiden Stellen lesbar, und eine Antwort macht das Ticket ohnehin wieder auf.
-    if (closed) await channel.setName(`geschlossen-${event.ticket_id}`).catch(() => {});
+    if (closed) await channel.setName(`closed-${event.ticket_id}`).catch(() => {});
     else await channel.setName(`ticket-${event.ticket_id}`).catch(() => {});
   }
 

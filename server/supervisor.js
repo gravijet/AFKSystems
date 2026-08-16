@@ -15,7 +15,7 @@ import path from 'node:path';
 import { config, paths, userDir } from './config.js';
 import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
-import { featuresOf, isActive, gateCaps } from './billing.js';
+import { featuresOf, isActive, gateCaps, freeAccess } from './billing.js';
 import { HttpError, codeUrl, MS_LINK } from './util.js';
 
 const ANSI = /\x1b\[[0-9;]*m/g;
@@ -91,6 +91,23 @@ function parseEvent(line) {
  */
 function parseView(kind, lines) {
   const rows = lines.filter((line) => line.trim().length);
+  if (kind === 'position') {
+    const text = rows.join(' ');
+    const match = /x=(-?\d+(?:[.,]\d+)?)\s+y=(-?\d+(?:[.,]\d+)?)\s+z=(-?\d+(?:[.,]\d+)?).*?(?:Blick|look)\s+(-?\d+(?:[.,]\d+)?)°(?:\s*\([^)]*\))?\s*\/\s*(-?\d+(?:[.,]\d+)?)°/i.exec(
+      text
+    );
+    if (!match) return { empty: true, text };
+    const number = (value) => Number(value.replace(',', '.'));
+    return {
+      empty: false,
+      x: number(match[1]),
+      y: number(match[2]),
+      z: number(match[3]),
+      yaw: number(match[4]),
+      pitch: number(match[5]),
+      text,
+    };
+  }
   if (kind === 'board') {
     if (!rows.length || rows.some((line) => /keine Seitenleiste/i.test(line))) {
       return { empty: true, title: '', rows: [] };
@@ -183,7 +200,7 @@ class Bot extends EventEmitter {
     // Anzeigetafel und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
     // dem Client; gesammelt werden sie nur, wenn das Panel gerade danach gefragt hat (siehe
     // `capture`). Ohne das stünden dreizehn Zeilen Seitenleiste zwischen den Chatnachrichten.
-    this.views = { board: null, menu: null };
+    this.views = { board: null, menu: null, position: null };
     this.capture = null;
     this.stopping = false;
     this.timers = new Set();
@@ -225,10 +242,6 @@ class Bot extends EventEmitter {
       profile.mc_version,
       '--join-delay',
       String(profile.join_delay),
-      '--reconnect-delay',
-      String(profile.reconnect_delay),
-      '--max-backoff',
-      String(profile.max_backoff),
       '--chat-delay',
       String(profile.chat_delay),
       '--no-color',
@@ -237,7 +250,6 @@ class Bot extends EventEmitter {
     if (this.account.kind === 'offline' && caps.offline) args.push('--offline', this.account.name);
     else args.push('--account', this.account.name);
 
-    if (!profile.auto_reconnect) args.push('--no-reconnect');
     if (caps.events) args.push('--events');
 
     // Proxy und Fake-Host darf nur, wessen Tarif das hergibt – sonst stünde im Panel eine
@@ -338,8 +350,13 @@ class Bot extends EventEmitter {
       this.push('system', reason);
       this.setState(this.stopping ? 'offline' : code === 0 ? 'offline' : 'error', reason);
       this.cleanup();
-      // Ein Absturz, obwohl der Bot laufen soll: nach kurzer Pause noch einmal versuchen.
-      if (!this.stopping && this.wanted()) this.supervisor.scheduleRestart(this);
+      // Der neue Rust-Client beendet nach Kick oder Netzabbruch absichtlich die Sitzung. Das Panel
+      // respektiert das: kein versteckter Prozess-Neustart, sondern ein bewusster neuer Start.
+      if (!this.stopping) {
+        db.prepare(
+          'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
+        ).run(this.profile.id, this.account.id);
+      }
     });
 
     db.prepare(
@@ -384,7 +401,7 @@ class Bot extends EventEmitter {
     this.startedAt = null;
     this.auth = null;
     this.menu = null;
-    this.views = { board: null, menu: null };
+    this.views = { board: null, menu: null, position: null };
     if (this.capture) {
       clearTimeout(this.capture.timer);
       this.capture = null;
@@ -460,14 +477,15 @@ class Bot extends EventEmitter {
         this.setState('reconnecting', `Versuch ${event.versuch || '?'}, in ${event.in || '?'}`);
         break;
       case 'menu': {
+        const opened = /^open\s+id=(-?\d+)\s*([\s\S]*)$/i.exec(event.text || '');
         this.menu =
           event.text === 'close'
             ? null
             : {
-                id: event.id || null,
-                // Der Client gibt Titel und Feldzahl mit, wenn er sie kennt. Sonst holt sie die
-                // erste `:menu`-Abfrage nach.
-                title: event.titel || event.title || '',
+                id: opened ? Number(opened[1]) : Number(event.id) || null,
+                // Neue Rust-Clients schreiben `open id=7 <§-Titel>`. Die benannten Felder bleiben
+                // als Rückwärtskompatibilität für ältere Clients erhalten.
+                title: opened ? opened[2] : event.titel || event.title || '',
                 slots: Number(event.felder || event.slots) || 0,
                 at: Date.now(),
               };
@@ -477,6 +495,67 @@ class Bot extends EventEmitter {
           key: this.key,
           state: this.snapshot(),
         });
+        break;
+      }
+      case 'slot': {
+        const slot = /^(\d+)\s+(\d+)\s+([\s\S]*)$/.exec(event.text || '');
+        if (!slot) break;
+        const index = Number(slot[1]);
+        const current = this.views.menu && !this.views.menu.empty ? this.views.menu : {};
+        const items = { ...(current.items || {}) };
+        items[index] = {
+          ...(items[index] || {}),
+          count: Number(slot[2]) || 1,
+          name: slot[3],
+          lore: [],
+        };
+        this.views.menu = {
+          empty: false,
+          title: current.title || this.menu?.title || '',
+          slots: current.slots || this.menu?.slots || 0,
+          items,
+          at: Date.now(),
+        };
+        this.emitView('menu');
+        break;
+      }
+      case 'lore': {
+        const lore = /^(\d+)\s+([\s\S]*)$/.exec(event.text || '');
+        if (!lore || !this.views.menu || this.views.menu.empty) break;
+        const index = Number(lore[1]);
+        const items = { ...(this.views.menu.items || {}) };
+        const item = items[index];
+        if (!item) break;
+        items[index] = { ...item, lore: [...(item.lore || []), lore[2]] };
+        this.views.menu = { ...this.views.menu, items, at: Date.now() };
+        this.emitView('menu');
+        break;
+      }
+      case 'board': {
+        const text = event.text || '';
+        const title = /^(?:titel|title)\s+([\s\S]*)$/i.exec(text);
+        if (title) {
+          if (this.capture?.kind === 'board') {
+            clearTimeout(this.capture.timer);
+            this.capture = null;
+          }
+          this.views.board = { empty: false, title: title[1], rows: [], at: Date.now() };
+        } else {
+          const line = /^(?:zeile|line)\s+wert=(-?\d+)\s+zahl=([\s\S]*?)\s+text=([\s\S]*)$/i.exec(text);
+          if (!line) break;
+          if (!this.views.board || this.views.board.empty) {
+            this.views.board = { empty: false, title: '', rows: [], at: Date.now() };
+          }
+          this.views.board.rows.push({
+            score: Number(line[1]),
+            number: line[2],
+            hidden: line[2] === '',
+            text: line[3],
+          });
+          this.views.board.rows = this.views.board.rows.slice(0, 15);
+          this.views.board.at = Date.now();
+        }
+        this.emitView('board');
         break;
       }
       default:
@@ -586,13 +665,24 @@ class Bot extends EventEmitter {
 
   /**
    * Ab jetzt gehören die nächsten Ausgabezeilen zu einer Abfrage. Der Client kennt dafür kein
-   * Ereignis – er schreibt die Seitenleiste als Text hin. Da aber immer das Panel danach fragt,
-   * weiß es auch, wann eine Antwort zu erwarten ist: zwei Sekunden, oder bis 400 ms Ruhe ist.
+   * einzelnes Abschlussereignis. Strukturierte Board-/Item-Zeilen ergänzen den Text; die ruhige
+   * Textphase markiert nach spätestens zwei Sekunden das Ende des Schnappschusses.
    */
   beginCapture(kind) {
     if (this.capture) {
       clearTimeout(this.capture.timer);
       this.finishCapture();
+    }
+    if (kind === 'menu') {
+      // Jede Abfrage ist ein vollständiger Schnappschuss. Alte Felder dürfen nicht stehen bleiben,
+      // wenn der Server inzwischen ein anderes Menü oder einen leeren Slot geschickt hat.
+      this.views.menu = {
+        empty: false,
+        title: this.menu?.title || '',
+        slots: this.menu?.slots || 0,
+        items: {},
+        at: Date.now(),
+      };
     }
     this.capture = { kind, lines: [], until: Date.now() + 2000, timer: null };
     this.capture.timer = setTimeout(() => this.finishCapture(), 2000);
@@ -605,15 +695,26 @@ class Bot extends EventEmitter {
     clearTimeout(capture.timer);
     this.capture = null;
     const view = parseView(capture.kind, capture.lines);
+    if (capture.kind === 'menu' && !view.empty) {
+      const structured = this.views.menu && !this.views.menu.empty ? this.views.menu : null;
+      view.title = view.title || structured?.title || this.menu?.title || '';
+      view.slots = view.slots || structured?.slots || this.menu?.slots || 0;
+      view.items = { ...(view.items || {}), ...(structured?.items || {}) };
+      view.at = Date.now();
+    }
     this.views[capture.kind] = view;
     if (capture.kind === 'menu' && view && !view.empty) {
       this.menu = { ...(this.menu || {}), title: view.title, slots: view.slots, at: Date.now() };
     }
+    this.emitView(capture.kind);
+  }
+
+  emitView(kind) {
     this.supervisor.emit('bot-view', {
       userId: this.userId,
       key: this.key,
-      kind: capture.kind,
-      view,
+      kind,
+      view: this.views[kind],
     });
   }
 
@@ -690,12 +791,17 @@ class Bot extends EventEmitter {
   }
 
   /** Eine Zeile an den Client schicken. Mit '/' vorn ist es ein Serverbefehl. */
-  send(text) {
+  send(text, { local = false } = {}) {
     if (!this.proc || !this.proc.stdin.writable) {
       throw new HttpError(409, 'Der Bot läuft gerade nicht.', { en: 'That bot is not running.' });
     }
     const line = String(text).replace(/[\r\n]+/g, ' ').trim();
     if (!line) return false;
+    if (line.startsWith(':') && !local) {
+      throw new HttpError(400, 'Örtliche Client-Befehle müssen über die geprüfte Befehlsfunktion laufen.', {
+        en: 'Local client commands must use the checked command endpoint.',
+      });
+    }
     this.proc.stdin.write(`${line}\n`);
     // Örtliche Befehle (`:go vor 5`, `:board`) gehen nie an den Server und gehören deshalb auch
     // nicht in den Chatverlauf. Dort stand vorher "Gesendet: :go vor 3" zwischen den Nachrichten
@@ -725,7 +831,8 @@ class Bot extends EventEmitter {
     }
     // Abfragen, deren Antwort als Ansicht gehört und nicht als Textzeilen.
     if (verb === 'board' || verb === 'menu') this.beginCapture(verb);
-    return this.send(`:${verb}${arg ? ` ${arg}` : ''}`);
+    if (verb === 'pos' || verb === 'position') this.beginCapture('position');
+    return this.send(`:${verb}${arg ? ` ${arg}` : ''}`, { local: true });
   }
 
   snapshot() {
@@ -755,7 +862,6 @@ class Supervisor extends EventEmitter {
     super();
     this.setMaxListeners(0);
     this.bots = new Map();
-    this.restarts = new Map();
     this.macros = null; // wird von macros.js gesetzt
   }
 
@@ -853,9 +959,9 @@ class Supervisor extends EventEmitter {
     if (profile.locked) {
       throw new HttpError(
         403,
-        `"${profile.name}" ist gesperrt${profile.lock_reason ? `: ${profile.lock_reason}` : '.'}`,
+        `"${profile.name}" ist suspendiert${profile.lock_reason ? `: ${profile.lock_reason}` : '.'}`,
         {
-          en: `"${profile.name}" is locked${profile.lock_reason ? `: ${profile.lock_reason}` : '.'}`,
+          en: `"${profile.name}" is suspended${profile.lock_reason ? `: ${profile.lock_reason}` : '.'}`,
         }
       );
     }
@@ -867,6 +973,29 @@ class Supervisor extends EventEmitter {
       );
     }
     if (!isActive(profile)) {
+      const access = tariff.free_slot ? freeAccess(profile.user_id) : null;
+      if (access && !access.ok) {
+        const messages = {
+          'discord-link': [
+            'Für den Gratis-Tarif muss ein Discord-Konto verknüpft sein.',
+            'The Free plan requires a linked Discord account.',
+          ],
+          'discord-join': [
+            'Für den Gratis-Tarif musst du Mitglied im AFKSystems-Discord sein.',
+            'The Free plan requires membership in the AFKSystems Discord guild.',
+          ],
+          'discord-check': [
+            'Die Discord-Mitgliedschaft konnte nicht aktuell bestätigt werden.',
+            'Discord membership could not be confirmed recently.',
+          ],
+          'not-configured': [
+            'Der Gratis-Tarif ist derzeit nicht verfügbar.',
+            'The Free plan is currently unavailable.',
+          ],
+        };
+        const message = messages[access.reason] || messages['discord-check'];
+        throw new HttpError(403, message[0], { en: message[1], code: access.reason });
+      }
       throw new HttpError(402, `Für "${profile.name}" ist die bezahlte Laufzeit abgelaufen.`, {
         en: `The paid month for "${profile.name}" has run out.`,
       });
@@ -878,6 +1007,15 @@ class Supervisor extends EventEmitter {
         `Der Tarif "${tariff.name_de}" erlaubt ${tariff.max_accounts} Bot(s) gleichzeitig auf diesem Server.`,
         {
           en: `Plan "${tariff.name_en}" allows ${tariff.max_accounts} bot(s) at once on this server.`,
+        }
+      );
+    }
+    if (account.suspended) {
+      throw new HttpError(
+        403,
+        `Konto "${account.name}" wurde stillgelegt${account.suspend_reason ? `: ${account.suspend_reason}` : '.'}`,
+        {
+          en: `Account "${account.name}" was suspended${account.suspend_reason ? `: ${account.suspend_reason}` : '.'}`,
         }
       );
     }
@@ -940,14 +1078,12 @@ class Supervisor extends EventEmitter {
 
   /** Alle Bots eines Serverplatzes anhalten – etwa, wenn die Laufzeit abgelaufen ist. */
   stopProfile(profileId, reason = '', { keepWanted = true } = {}) {
+    if (!keepWanted) {
+      db.prepare('UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ?').run(profileId);
+    }
     for (const bot of this.bots.values()) {
       if (bot.profile.id !== profileId || !bot.running) continue;
       if (reason) bot.push('system', reason);
-      if (!keepWanted) {
-        db.prepare(
-          'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
-        ).run(bot.profile.id, bot.account.id);
-      }
       bot.stop();
     }
   }
@@ -962,32 +1098,6 @@ class Supervisor extends EventEmitter {
       );
       bot.stop();
     }
-  }
-
-  scheduleRestart(bot) {
-    const attempts = (this.restarts.get(bot.key) || 0) + 1;
-    this.restarts.set(bot.key, attempts);
-    // Nach fünf Fehlversuchen bleibt es aus – sonst dreht sich das ewig im Kreis.
-    if (attempts > 5) {
-      bot.push('error', 'Fünf Startversuche fehlgeschlagen – bleibt aus.');
-      db.prepare('UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?').run(
-        bot.profile.id,
-        bot.account.id
-      );
-      return;
-    }
-    const delay = Math.min(60_000, 5000 * attempts);
-    bot.push('system', `Neustart in ${Math.round(delay / 1000)} s (Versuch ${attempts}).`);
-    setTimeout(() => {
-      if (!bot.wanted()) return;
-      const fresh = this.context(bot.profile.id, bot.account.id);
-      if (!fresh || !isActive(fresh.profile)) return;
-      bot.profile = fresh.profile;
-      bot.account = fresh.account;
-      bot.plan = fresh.plan;
-      bot.start();
-      this.macros.attach(bot);
-    }, delay).unref();
   }
 
   /** Serverplatz, Konto, Nutzer und Tarif frisch aus der Datenbank holen. */
@@ -1029,7 +1139,13 @@ class Supervisor extends EventEmitter {
     for (const row of rows) {
       const context = this.context(row.profile_id, row.account_id);
       if (!context) continue;
-      if (context.user.blocked || context.profile.locked || !isActive(context.profile)) continue;
+      if (
+        context.user.blocked ||
+        context.profile.locked ||
+        context.account.suspended ||
+        !isActive(context.profile)
+      )
+        continue;
       try {
         this.start(context);
         started += 1;
@@ -1056,8 +1172,13 @@ class Supervisor extends EventEmitter {
 
 /** Ein Macro, das nichts als Chatzeilen ohne Wartezeit sendet – nur das kann der Client selbst. */
 function simpleChatMacro(actions) {
-  return actions.length > 0 && actions.every((action) => action.type === 'chat' && !action.delay);
+  return (
+    actions.length > 0 &&
+    actions.every(
+      (action) => action.type === 'chat' && !action.delay && !String(action.text || '').trim().startsWith(':')
+    )
+  );
 }
 
 export const supervisor = new Supervisor();
-export { Bot, simpleChatMacro, parseEvent };
+export { Bot, simpleChatMacro, parseEvent, parseView };

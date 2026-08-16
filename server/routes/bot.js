@@ -13,8 +13,10 @@ import { db, getSetting, audit } from '../db.js';
 import { config } from '../config.js';
 import * as tickets from '../tickets.js';
 import * as roles from '../roles.js';
+import * as billing from '../billing.js';
 import { ROLE_METADATA } from '../oauth.js';
 import { bridge } from '../bridge.js';
+import { supervisor } from '../supervisor.js';
 import { wrap, requireInt, requireString, bad, notFound, HttpError, safeEqual } from '../util.js';
 
 export const router = express.Router();
@@ -56,9 +58,10 @@ router.get(
       roles: roles.managed(),
       managed_roles: roles.managedIds(),
       role_metadata: ROLE_METADATA,
-      categories: tickets.categoriesFor('de'),
+      categories: tickets.categoriesFor('en'),
       statuses: tickets.STATUSES,
-      link_url: `${config.publicUrl}/de/app#/settings`,
+      link_url: `${config.publicUrl}/en/app#/settings`,
+      free_guild_id: billing.freeGuildId(),
       seq: bridge.sequence,
     });
   })
@@ -82,6 +85,61 @@ router.get(
   })
 );
 
+/**
+ * Frischer Mitgliedschaftsabgleich aus Discord. `members` enthält nur verknüpfte Panel-Konten;
+ * dadurch bleibt die Anfrage klein, auch wenn der Discord-Server viele andere Mitglieder hat.
+ */
+router.post(
+  '/memberships',
+  wrap((req, res) => {
+    const guildId = String(req.body?.guild_id || '');
+    if (!guildId || guildId !== billing.freeGuildId()) {
+      throw bad('Falscher Discord-Server.', { en: 'Wrong Discord guild.' });
+    }
+    const raw = Array.isArray(req.body?.members) ? req.body.members : [];
+    if (raw.length > 10_000) throw bad('Zu viele Einträge.', { en: 'Too many entries.' });
+    const now = Date.now();
+    const update = db.prepare(
+      `UPDATE users SET discord_guild_member = ?, discord_guild_checked_at = ?
+        WHERE discord_id = ?`
+    );
+    const changed = [];
+    db.transaction(() => {
+      for (const entry of raw) {
+        const discordId = String(entry?.discord_id || '').trim();
+        if (!/^\d{5,25}$/.test(discordId)) continue;
+        const before = db
+          .prepare('SELECT id, discord_guild_member FROM users WHERE discord_id = ?')
+          .get(discordId);
+        if (!before) continue;
+        const present = entry.present ? 1 : 0;
+        update.run(present, now, discordId);
+        if (Boolean(before.discord_guild_member) !== Boolean(present)) {
+          changed.push({ user_id: before.id, discord_id: discordId, present: Boolean(present) });
+        }
+      }
+    })();
+
+    // Ein Austritt beendet jeden Gratis-Platz sofort. Gewollte Starts werden dabei ebenfalls
+    // gelöscht; nach einem erneuten Beitritt entscheidet der Nutzer bewusst, was wieder startet.
+    for (const entry of changed) {
+      if (entry.present) continue;
+      const profiles = db
+        .prepare(
+          `SELECT p.id FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+            WHERE p.user_id = ? AND pl.free_slot = 1`
+        )
+        .all(entry.user_id);
+      for (const profile of profiles) {
+        supervisor.stopProfile(profile.id, 'Discord membership required for the Free plan.', {
+          keepWanted: false,
+        });
+      }
+    }
+    res.json({ ok: true, checked: raw.length, changed });
+  })
+);
+
 // ---------------------------------------------------------------- Tickets
 
 /** Ein Ticket so, wie der Bot es braucht. */
@@ -97,7 +155,7 @@ function ticketView(ticket) {
     channel_id: ticket.discord_channel_id,
     created_at: ticket.created_at,
     updated_at: ticket.updated_at,
-    url: `${config.publicUrl}/de/app#/tickets/${ticket.id}`,
+    url: `${config.publicUrl}/en/app#/tickets/${ticket.id}`,
     owner,
     participants: tickets.participants(ticket.id),
   };
@@ -205,10 +263,12 @@ router.post(
       authorName: body.author_name || user.username,
       discordId: String(body.discord_id || '') || null,
     });
-    if (user.role !== 'admin') tickets.notifyStaffReply(updated, user, body.body);
+    if (user.role !== 'admin' && !user.discord_moderator) {
+      tickets.notifyStaffReply(updated, user, body.body);
+    }
     tickets.notifyParticipants(
       updated,
-      user.role === 'admin' ? 'ticket_reply' : 'ticket_reply',
+      'ticket_reply',
       { preview: String(body.body).slice(0, 160) },
       user.id
     );
@@ -222,8 +282,20 @@ router.post(
     const ticket = tickets.byId(requireInt(req.params.id, 'Ticket'));
     if (!ticket) throw notFound('Dieses Ticket gibt es nicht.', { en: 'No such ticket.' });
     const status = String(req.body?.status || '');
-    if (!tickets.STATUSES.includes(status)) throw bad('Unbekannter Zustand.', { en: 'Unknown status.' });
+    if (status !== 'closed') {
+      throw bad('Discord darf ein Ticket nur schließen.', {
+        en: 'Discord may only close a ticket.',
+      });
+    }
     const by = req.body?.discord_id ? roles.byDiscordId(req.body.discord_id) : null;
+    if (
+      !by ||
+      (by.role !== 'admin' && !by.discord_moderator && !tickets.isParticipant(ticket.id, by.id))
+    ) {
+      throw new HttpError(403, 'Du darfst dieses Ticket nicht schließen.', {
+        en: 'You may not close this ticket.',
+      });
+    }
     const updated = tickets.setStatus(ticket, status, by?.id ?? null);
     if (status === 'closed') tickets.notifyParticipants(updated, 'ticket_closed', {}, by?.id ?? null);
     audit(by?.id ?? null, 'ticket-status-discord', { id: ticket.id, status });

@@ -4,15 +4,41 @@
     <main id="main">
       <section class="hero">
         <div class="page">
-          <div class="hero-copy">
-            <p class="eyebrow">{{brand.tagline}}</p>
-            <h1>{{hero.title.a}} <span class="hl">{{hero.title.mark}}</span>{{hero.title.b}}</h1>
-            <p class="lead">{{hero.lead}}</p>
-            <div class="hero-cta">
-              <a class="btn btn-primary btn-lg" href="/{{lang}}/register">{{hero.cta}}</a>
-              <a class="btn btn-lg" href="/{{lang}}/pricing">{{hero.cta2}}</a>
+          <div class="hero-grid">
+            <div class="hero-copy">
+              <p class="eyebrow">{{brand.tagline}}</p>
+              <h1>{{hero.title.a}} <span class="hl">{{hero.title.mark}}</span>{{hero.title.b}}</h1>
+              <p class="lead">{{hero.lead}}</p>
+              <div class="hero-cta">
+                <a class="btn btn-primary btn-lg" href="/{{lang}}/register">{{hero.cta}}</a>
+                <a class="btn btn-lg" href="/{{lang}}/pricing">{{hero.cta2}}</a>
+              </div>
+              <p class="hero-note">{{hero.note}}</p>
             </div>
-            <p class="hero-note">{{hero.note}}</p>
+
+            <div class="hero-product" role="group" aria-label="{{home.preview.label}}">
+              <div class="hero-product-head">
+                <span class="hero-product-brand">{{icon.monitor}} {{home.preview.panel}}</span>
+                <span class="preview-live"><i></i>{{home.preview.live}}</span>
+              </div>
+              <div class="preview-server">
+                <div>
+                  <span>{{home.preview.server}}</span>
+                  <strong>play.example.net</strong>
+                </div>
+                <span class="preview-count">2 / 2</span>
+              </div>
+              <div class="preview-console" aria-hidden="true">
+                <p><span>12:41</span> {{home.preview.connected}}</p>
+                <p><span>12:42</span> {{home.preview.chat}}</p>
+                <p><span>12:44</span> {{home.preview.antiafk}}</p>
+              </div>
+              <div class="preview-features">
+                <span>{{icon.message}}{{home.preview.control}}</span>
+                <span>{{icon.gamepad}}{{home.preview.movement}}</span>
+                <span>{{icon.monitor}}Scoreboard</span>
+              </div>
+            </div>
           </div>
 
           <dl class="rail">

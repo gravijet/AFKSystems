@@ -76,7 +76,7 @@ export const config = {
   // Obergrenzen, damit ein einzelnes Konto den Server nicht auffrisst.
   maxBotsPerUser: num('MAX_BOTS_PER_USER', 25),
   maxBotsTotal: num('MAX_BOTS_TOTAL', 200),
-  chatHistoryMax: num('CHAT_HISTORY_MAX', 1000),
+  chatHistoryMax: num('CHAT_HISTORY_MAX', 50000),
 };
 
 export const paths = {

@@ -14,6 +14,7 @@ export async function render(root) {
         profile.accounts.some((member) => member.account_id === account.id)
       );
       const broken = account.status === 'error';
+      const suspended = account.suspended;
       return `<article class="card">
         <div class="row spread" style="align-items:flex-start">
           <div class="row">
@@ -26,14 +27,20 @@ export async function render(root) {
             </div>
           </div>
           ${
-            broken
+            suspended
+              ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>`
+              : broken
               ? `<span class="pill missing">${escapeHtml(tr('acc.error'))}</span>`
               : `<span class="pill primary">${escapeHtml(tr('acc.ok'))}</span>`
           }
         </div>
 
         ${
-          broken
+          suspended
+            ? `<p class="small" style="margin-top:.75rem;color:var(--warn)">${escapeHtml(
+                account.suspend_reason || tr('acc.suspendedHint')
+              )}</p>`
+            : broken
             ? `<p class="small" style="margin-top:.75rem;color:var(--bad)">${escapeHtml(account.last_error || '')}</p>`
             : ''
         }
@@ -53,7 +60,7 @@ export async function render(root) {
           ${
             account.kind === 'offline'
               ? ''
-              : `<button class="btn btn-sm" data-relogin="${account.id}">${icon('refresh')} ${escapeHtml(
+              : `<button class="btn btn-sm" data-relogin="${account.id}" ${suspended ? 'disabled' : ''}>${icon('refresh')} ${escapeHtml(
                   tr('acc.renew')
                 )}</button>`
           }

@@ -38,6 +38,7 @@ async function renderList(root) {
 }
 
 function card(profile) {
+  const unavailable = profile.locked || profile.suspended || (profile.plan.free_slot && profile.free_access?.ok === false);
   return `<a class="card" href="#/servers/${profile.id}/connect" style="display:block">
     <div class="row spread">
       <div class="row">
@@ -53,8 +54,8 @@ function card(profile) {
     <div class="row spread" style="margin-top:1rem">
       <span class="small muted">${profile.online}/${profile.total} · MC ${escapeHtml(profile.mc_version)}</span>
       ${
-        profile.suspended
-          ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
+        unavailable
+          ? `<span class="pill missing">${escapeHtml(tr('srv.unavailable'))}</span>`
           : `<span class="small" style="color:var(--primary)">${escapeHtml(tr('common.open'))} ${icon('arrow')}</span>`
       }
     </div>
@@ -154,6 +155,15 @@ async function renderProfile(root, route) {
             <a href="#/servers/${profile.id}/plan" style="color:var(--primary)">${escapeHtml(
               tr('srv.resume')
             )}</a></div></div>`
+        : ''
+    }
+    ${
+      profile.plan.free_slot && profile.free_access?.ok === false
+        ? `<div class="note warn" style="margin-bottom:1.25rem">${icon('discord')}
+            <div><strong>${escapeHtml(tr('srv.freeDiscordTitle'))}</strong><br>
+              ${escapeHtml(tr(`srv.freeDiscord.${profile.free_access.reason}`))}
+              <a href="#/settings">${escapeHtml(tr('srv.freeDiscordAction'))}</a>
+            </div></div>`
         : ''
     }
     <nav class="tabs">${tabs
@@ -322,7 +332,9 @@ async function tabConnect(root, profile) {
         <div class="row" style="gap:.4rem">
           <span class="strong truncate">${escapeHtml(member.name)}</span>
           ${
-            member.account_status === 'error'
+            member.suspended
+              ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>`
+              : member.account_status === 'error'
               ? `<span class="pill missing">${escapeHtml(tr('acc.error'))}</span>`
               : ''
           }
@@ -334,7 +346,9 @@ async function tabConnect(root, profile) {
       </div>
       <div class="row" style="gap:.25rem">
         <button class="btn btn-sm ${running ? '' : 'btn-primary'}" data-toggle="${member.account_id}"
-          ${running || profile.active ? '' : 'disabled'}>${escapeHtml(running ? tr('ov.stop') : tr('ov.start'))}</button>
+          ${running || (profile.active && !member.suspended) ? '' : 'disabled'}>${escapeHtml(
+            running ? tr('ov.stop') : tr('ov.start')
+          )}</button>
         <button class="btn btn-ghost btn-sm btn-danger" data-detach="${member.account_id}"
           title="${escapeHtml(tr('srv.remove'))}">${icon('x')}</button>
       </div>
@@ -681,9 +695,9 @@ async function tabMovement(root, profile) {
           </div>
           <div class="row wrap">
             <button class="btn btn-sm" data-verb="jump">${escapeHtml(tr('srv.jump'))}</button>
-            <button class="btn btn-sm" data-verb="fall">${escapeHtml(tr('srv.fall'))}</button>
             <button class="btn btn-sm" data-verb="pos">${escapeHtml(tr('srv.pos'))}</button>
           </div>
+          <div id="position-results" class="stack"></div>
         </div>
       </section>
 
@@ -718,10 +732,13 @@ async function tabMovement(root, profile) {
           <div class="row wrap">
             <button class="btn btn-sm" data-home="set">${escapeHtml(tr('srv.homeSet'))}</button>
             <button class="btn btn-sm" data-home="go">${escapeHtml(tr('srv.homeGo'))}</button>
-            <button class="btn btn-sm" data-home="on">${escapeHtml(tr('srv.on'))}</button>
-            <button class="btn btn-sm" data-home="off">${escapeHtml(tr('srv.off'))}</button>
             <button class="btn btn-sm" data-home="">${escapeHtml(tr('common.status'))}</button>
             <button class="btn btn-sm btn-danger" data-home="clear">${escapeHtml(tr('common.delete'))}</button>
+          </div>
+          <div class="row spread">
+            <span class="strong">${escapeHtml(tr('srv.homeAuto'))}</span>
+            <span class="switch" role="switch" tabindex="0" aria-checked="false"
+              aria-label="${escapeHtml(tr('srv.homeAuto'))}" data-runtime="home"></span>
           </div>
         </div>
       </section>
@@ -743,11 +760,17 @@ async function tabMovement(root, profile) {
           ? `<section class="panel">
               <header><h3>${escapeHtml(tr('srv.body'))}</h3></header>
               <div class="body stack">
+                <div class="row spread">
+                  <span class="strong">${escapeHtml(tr('srv.sneak'))}</span>
+                  <span class="switch" role="switch" tabindex="0" aria-checked="${Boolean(profile.sneak)}"
+                    aria-label="${escapeHtml(tr('srv.sneak'))}" data-runtime="sneak"></span>
+                </div>
+                <div class="row spread">
+                  <span class="strong">${escapeHtml(tr('srv.sprint'))}</span>
+                  <span class="switch" role="switch" tabindex="0" aria-checked="false"
+                    aria-label="${escapeHtml(tr('srv.sprint'))}" data-runtime="sprint"></span>
+                </div>
                 <div class="row wrap">
-                  <button class="btn btn-sm" data-cmd="sneak|on">${escapeHtml(tr('srv.sneakOn'))}</button>
-                  <button class="btn btn-sm" data-cmd="sneak|off">${escapeHtml(tr('srv.sneakOff'))}</button>
-                  <button class="btn btn-sm" data-cmd="sprint|on">${escapeHtml(tr('srv.sprintOn'))}</button>
-                  <button class="btn btn-sm" data-cmd="sprint|off">${escapeHtml(tr('srv.sprintOff'))}</button>
                   <button class="btn btn-sm" data-cmd="swing|">${escapeHtml(tr('srv.swing'))}</button>
                   <button class="btn btn-sm" data-cmd="use|">${escapeHtml(tr('srv.use'))}</button>
                 </div>
@@ -767,10 +790,14 @@ async function tabMovement(root, profile) {
               <header><h3>${escapeHtml(tr('srv.antiafk'))}</h3></header>
               <div class="body stack">
                 <p class="small muted">${escapeHtml(tr('srv.antiafkHint'))}</p>
-                <div class="row wrap">
-                  <button class="btn btn-sm" data-cmd="antiafk|on">${escapeHtml(tr('srv.on'))}</button>
-                  <button class="btn btn-sm" data-cmd="antiafk|off">${escapeHtml(tr('srv.off'))}</button>
-                  <button class="btn btn-sm" data-cmd="antiafk|">${escapeHtml(tr('common.status'))}</button>
+                <div class="row spread">
+                  <div class="field" style="max-width:11rem">
+                    <label for="runtime-antiafk">${escapeHtml(tr('srv.intervalSec'))}</label>
+                    <input id="runtime-antiafk" type="number" min="15" max="3600"
+                      value="${Math.max(15, profile.antiafk_sec || 60)}">
+                  </div>
+                  <span class="switch" role="switch" tabindex="0" aria-checked="${profile.antiafk_sec > 0}"
+                    aria-label="${escapeHtml(tr('srv.antiafk'))}" data-runtime="antiafk"></span>
                 </div>
               </div>
             </section>`
@@ -779,6 +806,22 @@ async function tabMovement(root, profile) {
     </div>`;
 
   const run = commandRunner(profile);
+
+  const paintPositions = () => {
+    const cards = members
+      .map((member) => ({ member, view: state.bots.get(`${profile.id}:${member.account_id}`)?.views?.position }))
+      .filter(({ view }) => view)
+      .map(({ member, view }) =>
+        view.empty
+          ? `<div class="small muted">${escapeHtml(member.name)}: ${escapeHtml(view.text || tr('srv.positionMissing'))}</div>`
+          : `<div class="note"><div><strong>${escapeHtml(member.name)}</strong><br>
+              <span class="mono">X ${view.x.toFixed(2)} · Y ${view.y.toFixed(2)} · Z ${view.z.toFixed(2)}</span><br>
+              <span class="small muted">${escapeHtml(tr('srv.positionLook', { yaw: view.yaw.toFixed(1), pitch: view.pitch.toFixed(1) }))}</span>
+            </div></div>`
+      );
+    const target = $('#position-results');
+    if (target) target.innerHTML = cards.join('');
+  };
 
   $$('[data-go]').forEach((button) =>
     button.addEventListener('click', () => run('go', `${button.dataset.go} ${$('#blocks').value || 1}`))
@@ -794,7 +837,16 @@ async function tabMovement(root, profile) {
       run(verb, arg);
     })
   );
+  bindSwitches('[data-runtime]', async (verb, enabled) => {
+    const arg = verb === 'antiafk' && enabled ? String(Math.max(15, Number($('#runtime-antiafk')?.value) || 60)) : enabled ? 'on' : 'off';
+    const success = await run(verb, arg);
+    if (!success) throw new Error(tr('srv.commandFailed'));
+  });
   $('#hand')?.addEventListener('click', () => run('hand', $('#slot').value));
+  paintPositions();
+  state.onLive = (event) => {
+    if (event.type === 'view' && event.kind === 'position' && event.key.startsWith(`${profile.id}:`)) paintPositions();
+  };
 }
 
 // ---------------------------------------------------------------- Anzeigetafel
@@ -855,7 +907,11 @@ function boardCard(member, view) {
       ${view.rows
         .map(
           (row) => `<li><span class="board-text">${mcText(row.text)}</span>
-            ${row.score === null ? '' : `<span class="board-score">${row.score}</span>`}</li>`
+            ${
+              row.number === '' || row.hidden
+                ? ''
+                : `<span class="board-score">${row.number != null ? mcText(row.number) : row.score ?? ''}</span>`
+            }</li>`
         )
         .join('')}
     </ol>
@@ -879,6 +935,7 @@ async function tabMenu(root, profile) {
     <div class="views" id="views"></div>`;
 
   const run = commandRunner(profile);
+  const inspected = new Set();
   $('#get-menu').addEventListener('click', () => run('menu'));
   $('#close-menu').addEventListener('click', () => run('close'));
 
@@ -929,7 +986,8 @@ async function tabMenu(root, profile) {
   function slotButton(member, index, item) {
     const count = Number(item?.count) || 0;
     return `<button class="slot ${item ? 'has-item' : ''}" data-slot="${index}"
-      data-account="${member.account_id}" aria-label="${escapeHtml(`${tr('srv.slot')} ${index}`)}">
+      data-account="${member.account_id}" data-inspect="${item ? '1' : '0'}"
+      aria-label="${escapeHtml(`${tr('srv.slot')} ${index}`)}">
       ${
         item
           ? `<span class="slot-item">${escapeHtml(itemGlyph(item))}</span>
@@ -947,7 +1005,7 @@ async function tabMenu(root, profile) {
   }
 
   function bindSlots() {
-    $$('[data-slot]').forEach((button) =>
+    $$('[data-slot]').forEach((button) => {
       button.addEventListener('click', async (event) => {
         const target = event.currentTarget;
         const which = event.shiftKey ? 'shift' : event.ctrlKey || event.metaKey ? 'rechts' : '';
@@ -963,8 +1021,32 @@ async function tabMenu(root, profile) {
         } catch (error) {
           fail(error);
         }
-      })
-    );
+      });
+
+      // Namen kommen schon mit `:menu`; Lore liefert der Rust-Client gezielt mit `:slot`.
+      // Beim ersten Hover oder Tastaturfokus wird sie nachgeladen, ohne das Menü anzuklicken.
+      const inspect = async () => {
+        if (button.dataset.inspect !== '1') return;
+        const key = `${button.dataset.account}:${button.dataset.slot}`;
+        if (inspected.has(key)) return;
+        inspected.add(key);
+        try {
+          const result = await api(`/profiles/${profile.id}/command`, {
+            method: 'POST',
+            body: {
+              verb: 'slot',
+              arg: button.dataset.slot,
+              accounts: [Number(button.dataset.account)],
+            },
+          });
+          if (!result.results?.some((entry) => entry.ok)) inspected.delete(key);
+        } catch {
+          inspected.delete(key);
+        }
+      };
+      button.addEventListener('mouseenter', inspect);
+      button.addEventListener('focus', inspect);
+    });
   }
 
   paint();
@@ -1045,6 +1127,13 @@ async function tabAddons(root, profile) {
         </div>
         <div class="row">
           ${
+            !addon.included && !soon && data.allowed && addon.max_qty > 1 && addon.qty < addon.max_qty
+              ? `<label class="field addon-qty"><span>${escapeHtml(tr('ad.qty'))}</span>
+                  <input type="number" min="1" max="${addon.max_qty - addon.qty}" value="1"
+                    data-qty="${addon.id}"></label>`
+              : ''
+          }
+          ${
             addon.qty > 0
               ? `<button class="btn btn-sm btn-danger" data-drop="${addon.id}">${escapeHtml(tr('ad.cancel'))}</button>`
               : ''
@@ -1063,14 +1152,22 @@ async function tabAddons(root, profile) {
   $$('[data-buy]').forEach((button) =>
     button.addEventListener('click', async () => {
       const addon = data.addons.find((entry) => entry.id === Number(button.dataset.buy));
-      const price = data.days_left === null ? addon.price_credits : addon.prorated;
-      if (!(await confirmDialog(tr('ad.confirmBuy', { name: addon.name, credits: price }), {
+      const input = $(`[data-qty="${addon.id}"]`);
+      const qty = Math.max(
+        1,
+        Math.min(addon.max_qty - addon.qty, Math.trunc(Number(input?.value) || 1))
+      );
+      const price =
+        data.days_left === null
+          ? addon.price_credits * qty
+          : addon.prorated_by_qty?.[qty] ?? addon.prorated * qty;
+      if (!(await confirmDialog(tr('ad.confirmBuy', { name: addon.name, credits: price, qty }), {
         confirm: tr('ad.book'),
         danger: false,
       })))
         return;
       try {
-        await api(`/profiles/${profile.id}/addons`, { method: 'POST', body: { addon_id: addon.id, qty: 1 } });
+        await api(`/profiles/${profile.id}/addons`, { method: 'POST', body: { addon_id: addon.id, qty } });
         await refresh({ accounts: false });
         ok(tr('srv.saved'));
         draw();
@@ -1750,15 +1847,7 @@ async function tabSettings(root, profile) {
         <div class="body stack">
           <div class="field"><label for="join_delay">${escapeHtml(tr('srv.joinDelay'))}</label>
             <input id="join_delay" type="number" min="0" max="600" value="${profile.join_delay}"></div>
-          <label class="check"><input type="checkbox" id="auto_reconnect" ${
-            profile.auto_reconnect ? 'checked' : ''
-          }> ${escapeHtml(tr('srv.autoReconnect'))}</label>
-          <div class="row">
-            <div class="field"><label for="reconnect_delay">${escapeHtml(tr('srv.firstWait'))}</label>
-              <input id="reconnect_delay" type="number" min="1" max="600" value="${profile.reconnect_delay}"></div>
-            <div class="field"><label for="max_backoff">${escapeHtml(tr('srv.maxWait'))}</label>
-              <input id="max_backoff" type="number" min="1" max="3600" value="${profile.max_backoff}"></div>
-          </div>
+          <div class="note">${icon('info')}<div>${escapeHtml(tr('srv.disconnectStops'))}</div></div>
           <div class="field"><label for="chat_delay">${escapeHtml(tr('srv.chatDelay'))}</label>
             <input id="chat_delay" type="number" min="200" max="60000" value="${profile.chat_delay}"></div>
           <div class="field"><label for="on_cooldown">${escapeHtml(tr('srv.onCooldown'))}</label>
@@ -1805,9 +1894,6 @@ async function tabSettings(root, profile) {
       address: $('#address').value,
       mc_version: $('#mc_version').value,
       join_delay: Number($('#join_delay').value),
-      auto_reconnect: $('#auto_reconnect').checked,
-      reconnect_delay: Number($('#reconnect_delay').value),
-      max_backoff: Number($('#max_backoff').value),
       chat_delay: Number($('#chat_delay').value),
       on_cooldown: Number($('#on_cooldown').value),
     };
@@ -1903,7 +1989,10 @@ function accountPicker(members) {
 function commandRunner(profile) {
   return async (verb, arg = '') => {
     const accounts = $$('[data-target]:checked').map((box) => Number(box.dataset.target));
-    if (!accounts.length) return toast(tr('srv.noAccounts'));
+    if (!accounts.length) {
+      toast(tr('srv.noAccounts'));
+      return false;
+    }
     try {
       const result = await api(`/profiles/${profile.id}/command`, {
         method: 'POST',
@@ -1911,8 +2000,10 @@ function commandRunner(profile) {
       });
       const failures = result.results.filter((entry) => !entry.ok);
       if (failures.length === result.results.length) toast(failures[0].error, 'bad');
+      return failures.length !== result.results.length;
     } catch (error) {
       fail(error);
+      return false;
     }
   };
 }
