@@ -66,11 +66,6 @@ admin.get(
       revenue_30d_cent: db
         .prepare("SELECT COALESCE(SUM(amount_cent), 0) AS n FROM topups WHERE status = 'paid' AND paid_at > ?")
         .get(month).n,
-      mrr_credits: db
-        .prepare(
-          "SELECT COALESCE(SUM(pl.price_credits), 0) AS n FROM profiles p JOIN plans pl ON pl.id = p.plan_id WHERE pl.free_slot = 0 AND p.paid_until > ?"
-        )
-        .get(Date.now()).n,
       open_topups: db.prepare("SELECT COUNT(*) AS n FROM topups WHERE status = 'open'").get().n,
       tickets: tickets.counts(),
       open_tickets: db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE status != 'closed'").get().n,

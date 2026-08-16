@@ -487,8 +487,7 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.doesNotMatch(germanHome, /href="\/en"[^>]*aria-current="true"/);
   assert.match(germanHome, /class="site-menu-toggle"[^>]*aria-expanded="false"/);
   assert.match(germanHome, /class="site-menu" id="site-menu"/);
-  assert.match(germanHome, /class="hero-product"/);
-  assert.match(germanHome, /Vorschau des AFKSystems-Panels/);
+  assert.doesNotMatch(germanHome, /class="hero-product"|play\.example\.net|Vorschau des AFKSystems-Panels/);
   assert.doesNotMatch(germanHome, /Live-Steuerung|class="hl"/);
   assert.doesNotMatch(englishHome, /Live control|class="hl"/);
   assert.doesNotMatch(germanHome, /\{\{[^}]+\}\}/);
@@ -496,13 +495,36 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const appShell = await (await fetch(`${base}/en/app`)).text();
   assert.match(appShell, /class="mobile-nav" id="mobile-nav"/);
   assert.match(appShell, /id="side-backdrop"[^>]*aria-label="Close"/);
+  assert.equal((await fetch(`${base}/en/app`)).headers.get('cache-control'), 'no-store');
+  const homeResponse = await fetch(`${base}/en`);
+  assert.equal(homeResponse.headers.get('x-frame-options'), 'DENY');
+  assert.match(homeResponse.headers.get('content-security-policy'), /script-src 'self'/);
+  assert.doesNotMatch(homeResponse.headers.get('content-security-policy'), /script-src[^;]*unsafe-inline/);
+  assert.match(homeResponse.headers.get('permissions-policy'), /camera=\(\)/);
   const stylesheetPath = englishHome.match(/href="([^"]+\/css\/app\.css)"/)?.[1];
   assert.ok(stylesheetPath);
   const stylesheet = await (await fetch(`${base}${stylesheetPath}`)).text();
   assert.match(stylesheet, /\.mobile-nav\s*\{/);
-  assert.match(stylesheet, /\.admin-primary-link/);
+  assert.match(stylesheet, /\.side-section\s*>\s*summary/);
+  assert.match(stylesheet, /body\.side-collapsed/);
   assert.match(stylesheet, /@media \(max-width: 640px\)/);
   assert.match(stylesheet, /\.site-menu\.open/);
+
+  const privacyResponse = await fetch(`${base}/de/privacy`);
+  const privacy = await privacyResponse.text();
+  assert.equal(privacyResponse.status, 200);
+  assert.match(privacy, /<h2>1\. Verantwortlicher und Kontakt<\/h2>/);
+  assert.match(privacy, /Art\. 6 Abs\. 1 lit\. b DSGVO/);
+  const terms = await (await fetch(`${base}/en/terms`)).text();
+  assert.match(terms, /<h2>5\. Prices, credits and renewal<\/h2>/);
+  assert.equal((await fetch(`${base}/en/imprint`)).status, 404);
+  assert.doesNotMatch(await (await fetch(`${base}/sitemap.xml`)).text(), /imprint/);
+
+  const crossSite = await fetch(`${base}/api/auth/logout`, {
+    method: 'POST',
+    headers: { cookie: `afk_session=${USER_TOKEN}`, origin: 'https://evil.example' },
+  });
+  assert.equal(crossSite.status, 403);
 
   for (const page of ['login', 'register']) {
     const html = await (await fetch(`${base}/en/${page}`)).text();

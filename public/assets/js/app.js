@@ -262,10 +262,27 @@ export const ADMIN_GROUPS = [
   },
 ];
 
-// Diese sechs Bereiche werden nicht zwischen Werkzeugen versteckt: Sie sind das tägliche
-// Admin-Menü und stehen in derselben Größe wie die normalen Panel-Seiten ganz oben.
-const ADMIN_PRIMARY_KEYS = ['tickets', 'overview', 'users', 'servers', 'settings', 'system'];
-const ADMIN_ITEMS = ADMIN_GROUPS.flatMap((group) => group.items);
+const SIDE_COLLAPSED_KEY = 'afk-side-collapsed';
+const SIDE_SECTION_PREFIX = 'afk-side-section-';
+
+function storedFlag(key, fallback = false) {
+  try {
+    const value = localStorage.getItem(key);
+    return value === null ? fallback : value === 'true';
+  } catch {
+    return fallback;
+  }
+}
+
+let sideCollapsed = storedFlag(SIDE_COLLAPSED_KEY);
+
+function sectionOpen(key, force = false) {
+  return force || storedFlag(`${SIDE_SECTION_PREFIX}${key}`, true);
+}
+
+function applySideLayout() {
+  document.body.classList.toggle('side-collapsed', sideCollapsed);
+}
 
 /**
  * Die Reiter eines Serverplatzes. `need` ist die Fähigkeit, die der Client dafür mitbringen muss –
@@ -294,6 +311,7 @@ export const tabsFor = (profile) =>
   });
 
 export function drawSide() {
+  applySideLayout();
   const route = state.route;
   const profiles = state.profiles
     .map((profile) => {
@@ -305,7 +323,8 @@ export function drawSide() {
           : profile.total
             ? 'var(--text-2)'
             : 'var(--line)';
-      return `<a class="profile-link ${active ? 'active' : ''}" href="#/servers/${profile.id}/connect">
+      return `<a class="profile-link ${active ? 'active' : ''}" href="#/servers/${profile.id}/connect"
+          title="${escapeHtml(profile.name)}">
         <span class="dot ${profile.online ? 'live' : ''}" style="color:${color}"></span>
         <span class="grow truncate">${escapeHtml(profile.name)}</span>
         <span class="count muted">${profile.online}/${profile.total}</span>
@@ -330,33 +349,42 @@ export function drawSide() {
   $('#side').innerHTML = `
     <div class="side-head">
       <a class="brand" href="/${lang}">
-        <img class="logo" src="${LOGO}" alt="" />AFKSystems
+        <img class="logo" src="${LOGO}" alt="" /><span>AFKSystems</span>
       </a>
+      <button class="btn btn-ghost side-collapse" data-collapse-side type="button"
+        aria-label="${escapeHtml(tr(sideCollapsed ? 'dash.expandNav' : 'dash.collapseNav'))}"
+        title="${escapeHtml(tr(sideCollapsed ? 'dash.expandNav' : 'dash.collapseNav'))}">${icon('arrow')}</button>
       <button class="btn btn-ghost side-close" type="button" aria-label="${escapeHtml(
         tr('common.close')
       )}">${icon('x')}</button>
     </div>
 
-    ${adminPrimarySection()}
-
     <nav class="nav">
       ${NAV.map(
         (item) =>
-          `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}">${icon(item.icon)}${escapeHtml(
-            tr(item.key)
-          )}${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
+          `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}"
+              title="${escapeHtml(tr(item.key))}">${icon(item.icon)}<span class="grow truncate">${escapeHtml(
+                tr(item.key)
+              )}</span>${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
       ).join('')}
     </nav>
 
-    <div class="stack" style="gap:.25rem">
-      <div class="row spread">
-        <span class="label">${escapeHtml(tr('dash.servers'))}</span>
-        <button class="btn btn-ghost btn-sm" id="new-profile" title="${escapeHtml(tr('dash.newServer'))}">${icon('plus')}</button>
+    <details class="side-section" data-side-section="servers" ${
+      sectionOpen('servers', route.name === 'server') ? 'open' : ''
+    }>
+      <summary title="${escapeHtml(tr('dash.servers'))}">
+        <span class="side-section-title">${icon('server')}<span>${escapeHtml(tr('dash.servers'))}</span></span>
+        ${icon('arrow', 'icon side-section-arrow')}
+      </summary>
+      <div class="side-section-content stack" style="gap:.25rem">
+        <button class="btn btn-ghost side-add" id="new-profile" title="${escapeHtml(tr('dash.newServer'))}">
+          ${icon('plus')}<span>${escapeHtml(tr('dash.newServer'))}</span>
+        </button>
+        ${profiles || `<p class="small muted side-empty">${escapeHtml(tr('dash.noServers'))}</p>`}
       </div>
-      ${profiles || `<p class="small muted" style="padding:.35rem .65rem">${escapeHtml(tr('dash.noServers'))}</p>`}
-    </div>
+    </details>
 
-    ${adminToolsSection()}
+    ${adminSection()}
 
     <div class="foot stack" style="gap:.6rem">
       ${
@@ -383,6 +411,15 @@ export function drawSide() {
     </div>`;
 
   $('#new-profile').addEventListener('click', () => import('./views/server.js').then((m) => m.newProfile()));
+  $('#side').querySelectorAll('[data-side-section]').forEach((details) => {
+    details.addEventListener('toggle', () => {
+      try {
+        localStorage.setItem(`${SIDE_SECTION_PREFIX}${details.dataset.sideSection}`, String(details.open));
+      } catch {
+        /* privater Modus: der Abschnitt funktioniert trotzdem */
+      }
+    });
+  });
   $('#logout').addEventListener('click', async () => {
     await api('/auth/logout', { method: 'POST' });
     location.href = url('');
@@ -417,43 +454,35 @@ function drawMobileNav() {
     </button>`;
 }
 
-function adminLink(item, current, waiting, { primary = false } = {}) {
-  return `<a class="${current === item.key ? 'active' : ''} ${primary ? 'admin-primary-link' : ''} ${
+function adminLink(item, current, waiting) {
+  return `<a class="${current === item.key ? 'active' : ''} ${
     item.key === 'tickets' ? 'admin-ticket-link' : ''
-  }" href="#/admin/${item.key}">${icon(item.icon)}
+  }" href="#/admin/${item.key}" title="${escapeHtml(tr(item.label))}">${icon(item.icon)}
     <span class="grow truncate">${escapeHtml(tr(item.label))}</span>
     ${item.key === 'tickets' && waiting ? `<span class="count primary">${waiting}</span>` : ''}</a>`;
 }
 
-/** Die wichtigsten Admin-Seiten stehen direkt unter dem Logo und sind auch mobil direkt da. */
-function adminPrimarySection() {
-  if (state.me?.role !== 'admin') return '';
-  const requested = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
-  const current = requested === 'bots' ? 'accounts' : requested;
-  const waiting = state.stats?.staff_tickets || 0;
-  const primary = ADMIN_PRIMARY_KEYS.map((key) => ADMIN_ITEMS.find((item) => item.key === key)).filter(Boolean);
-
-  return `<section class="admin-nav admin-primary">
-    <span class="label">${escapeHtml(tr('dash.admin'))}</span>
-    <nav class="nav">${primary.map((item) => adminLink(item, current, waiting, { primary: true })).join('')}</nav>
-  </section>`;
-}
-
-/** Alle weiteren Werkzeuge bleiben einzelne, vollwertige Links statt kleiner Klapp-Untertabs. */
-function adminToolsSection() {
+/** Die gesamte Administration steht gebündelt unter den normalen Panel- und Serverbereichen. */
+function adminSection() {
   if (state.me?.role !== 'admin') return '';
   const requested = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
   const current = requested === 'bots' ? 'accounts' : requested;
   const waiting = state.stats?.staff_tickets || 0;
 
-  return `<section class="admin-nav admin-tools">
+  return `<details class="side-section admin-nav admin-tools" data-side-section="admin" ${
+    sectionOpen('admin', state.route.name === 'admin') ? 'open' : ''
+  }>
+    <summary title="${escapeHtml(tr('dash.admin'))}">
+      <span class="side-section-title">${icon('shield')}<span>${escapeHtml(tr('dash.admin'))}</span></span>
+      ${icon('arrow', 'icon side-section-arrow')}
+    </summary>
+    <div class="side-section-content">
     ${ADMIN_GROUPS.map((group) => {
-      const items = group.items.filter((item) => !ADMIN_PRIMARY_KEYS.includes(item.key));
-      if (!items.length) return '';
       return `<span class="label admin-group-label">${escapeHtml(tr(group.label))}</span>
-        <nav class="nav">${items.map((item) => adminLink(item, current, waiting)).join('')}</nav>`;
+        <nav class="nav">${group.items.map((item) => adminLink(item, current, waiting)).join('')}</nav>`;
     }).join('')}
-  </section>`;
+    </div>
+  </details>`;
 }
 
 function routeMatches(hash) {
@@ -496,7 +525,16 @@ document.addEventListener('click', (event) => {
   // überhaupt zu sehen ist, entscheidet allein die Breite, und das gehört ins CSS: sonst bliebe
   // er nach dem Verkleinern des Fensters verschwunden und die Seitenleiste unerreichbar.
   const opener = event.target.closest('.side-toggle, [data-open-side]');
-  if (opener) toggleSide(true, opener);
+  const collapse = event.target.closest('[data-collapse-side]');
+  if (collapse) {
+    sideCollapsed = !sideCollapsed;
+    try {
+      localStorage.setItem(SIDE_COLLAPSED_KEY, String(sideCollapsed));
+    } catch {
+      /* siehe gespeicherte Abschnitte */
+    }
+    drawSide();
+  } else if (opener) toggleSide(true, opener);
   else if (event.target.closest('.side-close')) toggleSide(false);
   else if (event.target.closest('.side a')) toggleSide(false);
 });
@@ -538,6 +576,21 @@ const VIEWS = {
 
 let drawing = false;
 let redrawWanted = false;
+let paintedRoute = '';
+
+function animateRoute(route) {
+  const signature = `${route.name}:${route.id || ''}:${route.tab || ''}`;
+  if (signature === paintedRoute) return;
+  paintedRoute = signature;
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  $('#main').animate(
+    [
+      { opacity: 0.15, transform: 'translate3d(16px, 0, 0)' },
+      { opacity: 1, transform: 'translate3d(0, 0, 0)' },
+    ],
+    { duration: 190, easing: 'cubic-bezier(.2,.75,.25,1)' }
+  );
+}
 
 export async function draw() {
   // Während gezeichnet wird, kommt kein zweiter Durchlauf dazwischen – aber der Wunsch wird
@@ -554,10 +607,12 @@ export async function draw() {
   try {
     const module = await VIEWS[state.route.name]();
     await module.render($('#main'), state.route);
+    animateRoute(state.route);
   } catch (error) {
     $('#main').innerHTML = `<div class="empty"><h3>${escapeHtml(tr('common.error'))}</h3>
       <p>${escapeHtml(error.message)}</p>
-      <button class="btn" onclick="location.reload()">${escapeHtml(tr('common.retry'))}</button></div>`;
+      <button class="btn" id="retry-view">${escapeHtml(tr('common.retry'))}</button></div>`;
+    $('#retry-view').addEventListener('click', () => location.reload());
   } finally {
     drawing = false;
     banner();

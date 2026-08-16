@@ -44,7 +44,7 @@ const escape = (text) =>
 
 /**
  * Eine Seite bauen. `vars` schlägt die Sprachdatei – so kommen Werte aus der Datenbank
- * (Impressum, Wartungstext) an dieselbe Stelle wie ein fester Text.
+ * (Rechtstexte, Wartungstext) an dieselbe Stelle wie ein fester Text.
  */
 export function render(name, lang, vars = {}) {
   const values = {

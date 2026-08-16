@@ -29,8 +29,97 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
 
+const websocketOrigin = config.publicUrl.replace(/^http/, 'ws');
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'none'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  `connect-src 'self' ${websocketOrigin}`,
+  "media-src 'none'",
+  "manifest-src 'self'",
+].join('; ');
+
+/** Browser-Härtung für Website, Panel und auch Fehlerantworten. */
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', CONTENT_SECURITY_POLICY);
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
+  res.setHeader('Origin-Agent-Cluster', '?1');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  if (config.publicUrl.startsWith('https://')) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  if (req.path.startsWith('/api/') || /^\/(en|de)\/app(?:\/|$)/.test(req.path)) {
+    res.setHeader('Cache-Control', 'no-store');
+  }
+  next();
+});
+
+function allowedOrigins(req) {
+  const origins = new Set([new URL(config.publicUrl).origin]);
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
+  const protocol = String(req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http'))
+    .split(',')[0]
+    .trim();
+  if (host && /^(https?|wss?)$/.test(protocol)) origins.add(`${protocol.replace(/^ws/, 'http')}://${host}`);
+  return origins;
+}
+
+function trustedOrigin(req) {
+  const origin = String(req.headers.origin || '');
+  return Boolean(origin && allowedOrigins(req).has(origin));
+}
+
 // Der Stripe-Webhook braucht den Rohtext für die Signatur – deshalb vor dem JSON-Parser.
 app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), stripeWebhook);
+
+// Browser dürfen schreibende API-Anfragen nur aus derselben Website schicken. Dienst-zu-Dienst-
+// Aufrufe (Discord-Bot, Stripe) tragen keinen Browser-Origin und haben eigene Signaturen/Secrets.
+app.use('/api', (req, _res, next) => {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  if (req.headers['sec-fetch-site'] === 'cross-site') {
+    return next(new HttpError(403, 'Anfrage von einer fremden Website abgelehnt.', { en: 'Cross-site request rejected.' }));
+  }
+  if (req.headers.origin && !trustedOrigin(req)) {
+    return next(new HttpError(403, 'Anfrage von einer fremden Website abgelehnt.', { en: 'Cross-site request rejected.' }));
+  }
+  next();
+});
+
+// Anmeldung und Wiederherstellung sind absichtlich teure Vorgänge. Ein kleines, lokales Fenster
+// bremst Passwort-Raten und verhindert, dass fremde Websites den Prozess als CPU-DoS missbrauchen.
+const authAttempts = new Map();
+const AUTH_WINDOW_MS = 15 * 60_000;
+const AUTH_MAX = 30;
+app.use('/api/auth', (req, _res, next) => {
+  if (req.method !== 'POST') return next();
+  const now = Date.now();
+  const key = `${req.ip}:${req.path}`;
+  const recent = (authAttempts.get(key) || []).filter((at) => now - at < AUTH_WINDOW_MS);
+  if (recent.length >= AUTH_MAX) {
+    return next(new HttpError(429, 'Zu viele Versuche. Bitte später erneut versuchen.', {
+      en: 'Too many attempts. Please try again later.',
+    }));
+  }
+  recent.push(now);
+  authAttempts.set(key, recent);
+  if (authAttempts.size > 5_000) {
+    for (const [entry, times] of authAttempts) {
+      if (!times.some((at) => now - at < AUTH_WINDOW_MS)) authAttempts.delete(entry);
+    }
+  }
+  next();
+});
 
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser);
@@ -126,7 +215,6 @@ app.get('/sitemap.xml', (req, res) => {
     '/pricing',
     '/faq',
     '/register',
-    '/imprint',
     '/privacy',
     '/terms',
   ];
@@ -191,7 +279,6 @@ const PAGES = {
   forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true },
   reset: { view: 'reset', title: 'auth.reset.title', noindex: true },
   verify: { view: 'verify', title: 'auth.verify.title', noindex: true },
-  imprint: { view: 'legal', legal: 'imprint' },
   privacy: { view: 'legal', legal: 'privacy' },
   terms: { view: 'legal', legal: 'terms' },
 };
@@ -232,7 +319,6 @@ for (const [from, to] of Object.entries({
   '/index.html': '',
   '/login.html': 'login',
   '/register.html': 'register',
-  '/impressum.html': 'imprint',
   '/datenschutz.html': 'privacy',
   '/agb.html': 'terms',
 })) {
@@ -332,6 +418,10 @@ server.on('upgrade', (req, socket, head) => {
   }
 
   if (!req.url.startsWith('/api/ws')) return socket.destroy();
+  if (!trustedOrigin(req)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+    return socket.destroy();
+  }
   const value = auth.readCookie(req, 'afk_session');
   const row = value
     ? db

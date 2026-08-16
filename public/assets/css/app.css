@@ -1049,17 +1049,10 @@ body.site {
   z-index: 1;
 }
 .hero-grid {
-  display: grid;
-  align-items: center;
-  gap: clamp(2.5rem, 6vw, 5rem);
-}
-@media (min-width: 58rem) {
-  .hero-grid {
-    grid-template-columns: minmax(0, 1.08fr) minmax(21rem, 0.82fr);
-  }
+  display: block;
 }
 .hero-copy {
-  max-width: 46rem;
+  max-width: 52rem;
 }
 .hero h1 {
   margin-top: 1.1rem;
@@ -1084,126 +1077,6 @@ body.site {
   max-width: 37rem;
   font-size: 0.8125rem;
   color: var(--text-2);
-}
-
-.hero-product {
-  position: relative;
-  width: 100%;
-  max-width: 29rem;
-  justify-self: end;
-  padding: 0.9rem;
-  border-radius: var(--r-3xl);
-  background: color-mix(in srgb, var(--surface-2) 92%, transparent);
-  box-shadow: inset 0 0 0 1px var(--line), 0 28px 70px -38px rgba(32, 108, 254, 0.65);
-  backdrop-filter: blur(12px);
-}
-.hero-product::before {
-  content: '';
-  position: absolute;
-  inset: -0.45rem;
-  z-index: -1;
-  border-radius: calc(var(--r-3xl) + 0.45rem);
-  background: linear-gradient(135deg, color-mix(in srgb, var(--primary) 26%, transparent), transparent 45% 65%, color-mix(in srgb, var(--accent) 22%, transparent));
-}
-.hero-product-head,
-.preview-server {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-.hero-product-head {
-  justify-content: flex-end;
-  padding: 0.25rem 0.25rem 0.8rem;
-}
-.preview-live {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--ok);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-.preview-live i {
-  width: 0.45rem;
-  height: 0.45rem;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 0 0.25rem color-mix(in srgb, var(--ok) 14%, transparent);
-}
-.preview-server {
-  padding: 1rem;
-  border-radius: var(--r-xl);
-  background: var(--surface);
-}
-.preview-server div {
-  display: grid;
-  gap: 0.18rem;
-}
-.preview-server div span {
-  color: var(--text-2);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-.preview-server strong {
-  font-family: var(--mono);
-  font-size: 0.875rem;
-}
-.preview-count {
-  padding: 0.25rem 0.5rem;
-  border-radius: var(--r-md);
-  background: color-mix(in srgb, var(--ok) 12%, transparent);
-  color: var(--ok);
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  font-weight: 700;
-}
-.preview-console {
-  display: grid;
-  gap: 0.35rem;
-  margin-top: 0.65rem;
-  padding: 0.9rem 1rem;
-  border-radius: var(--r-xl);
-  background: #0d0d0f;
-  color: #d6d9df;
-  font-family: var(--mono);
-  font-size: 0.6875rem;
-}
-.preview-console p {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.preview-console p span {
-  margin-right: 0.6rem;
-  color: #697386;
-}
-.preview-features {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.45rem;
-  margin-top: 0.65rem;
-}
-.preview-features > span {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.35rem;
-  min-width: 0;
-  padding: 0.55rem 0.35rem;
-  border-radius: var(--r-lg);
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 0.6875rem;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.preview-features .icon {
-  width: 0.85rem;
-  height: 0.85rem;
-  color: var(--primary);
 }
 
 /* Die Zahlenleiste unter dem Hero. */
@@ -1793,6 +1666,19 @@ body.site {
   color: var(--text-2);
   line-height: 1.65;
 }
+.prose h2 {
+  margin: 2.2rem 0 0.75rem;
+  font-size: 1.2rem;
+  letter-spacing: -0.015em;
+}
+.prose ul {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0 0 1.25rem;
+  padding-left: 1.25rem;
+  color: var(--text-2);
+  line-height: 1.6;
+}
 
 
 /* ---------------------------------------------------------------- Dashboard */
@@ -1806,6 +1692,10 @@ body.site {
 @media (min-width: 1000px) {
   .app {
     grid-template-columns: 17.5rem 1fr;
+    transition: grid-template-columns 0.2s ease;
+  }
+  body.side-collapsed .app {
+    grid-template-columns: 4.75rem 1fr;
   }
 }
 
@@ -1857,6 +1747,7 @@ body.site {
   display: flex;
   align-items: center;
   gap: 0.65rem;
+  min-height: 2.75rem;
   padding: 0.5rem 0.65rem;
   border-radius: var(--r-lg);
   color: var(--text-2);
@@ -1890,6 +1781,7 @@ body.site {
   display: flex;
   align-items: center;
   gap: 0.6rem;
+  min-height: 2.75rem;
   padding: 0.5rem 0.65rem;
   border-radius: var(--r-lg);
   color: var(--text-2);
@@ -1965,12 +1857,18 @@ body.site {
   padding-bottom: 0.25rem;
 }
 .tabs a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1 0 7.5rem;
+  min-height: 2.65rem;
   padding: 0.4rem 0.75rem;
   border-radius: var(--r-lg);
   color: var(--text-2);
   font-size: 0.875rem;
   font-weight: 500;
   white-space: nowrap;
+  text-align: center;
 }
 .tabs a:hover {
   background: var(--surface);
@@ -2153,6 +2051,30 @@ dialog footer {
   }
 }
 
+/* Browser mit View-Transitions halten beim Wechsel öffentlicher Unterseiten das alte Bild fest,
+ * bis die neue Seite bereit ist. Das Panel selbst wechselt seine Ansichten ohne Seitenreload. */
+@view-transition {
+  navigation: auto;
+}
+::view-transition-old(root) {
+  animation: page-out 0.16s ease both;
+}
+::view-transition-new(root) {
+  animation: page-in 0.2s cubic-bezier(.2, .75, .25, 1) both;
+}
+@keyframes page-out {
+  to { opacity: 0; transform: translateX(-10px); }
+}
+@keyframes page-in {
+  from { opacity: 0; transform: translateX(14px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+  }
+}
+
 /* ---------------------------------------------------------------- Dashboard: Ergänzungen */
 
 /* Die Unterreiter eines Serverplatzes in der Seitenleiste. */
@@ -2166,24 +2088,67 @@ dialog footer {
   font-size: 0.8125rem;
 }
 
-/* Admin-Navigation: wichtige Ziele groß und sofort sichtbar, alle übrigen Werkzeuge als genauso
- * vollwertige Links. Es gibt bewusst keine kleinen Klapp-Untertabs mehr. */
-.admin-nav {
-  display: grid;
-  gap: 0.35rem;
+/* Server und Administration bilden gleich große, einklappbare Bereiche. */
+.side-section {
+  min-width: 0;
 }
-.admin-primary {
-  padding-bottom: 0.9rem;
-  box-shadow: inset 0 -1px 0 var(--line-soft);
-}
-.admin-primary .nav {
-  gap: 0.25rem;
-}
-.side .nav a.admin-primary-link {
-  min-height: 2.65rem;
-  padding: 0.65rem 0.75rem;
-  font-size: 0.925rem;
+.side-section > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  font-size: 0.875rem;
   font-weight: 650;
+  cursor: pointer;
+  list-style: none;
+}
+.side-section > summary::-webkit-details-marker {
+  display: none;
+}
+.side-section > summary:hover {
+  background: color-mix(in oklab, var(--text) 5%, transparent);
+  color: var(--text);
+}
+.side-section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+.side-section-title .icon,
+.side-add .icon {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+}
+.side-section-arrow {
+  width: 0.8rem;
+  height: 0.8rem;
+  transform: rotate(90deg);
+  transition: transform 0.16s ease;
+}
+.side-section[open] > summary .side-section-arrow {
+  transform: rotate(-90deg);
+}
+.side-section-content {
+  margin-top: 0.25rem;
+}
+.side-add {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.65rem;
+}
+.side-empty {
+  padding: 0.35rem 0.65rem;
+}
+
+.admin-nav {
+  display: block;
 }
 .side .nav a.admin-ticket-link {
   background: color-mix(in oklab, var(--primary) 9%, transparent);
@@ -2196,13 +2161,11 @@ dialog footer {
   color: var(--primary);
 }
 .admin-tools {
-  margin-top: 0.25rem;
-  padding-top: 0.9rem;
-  box-shadow: inset 0 1px 0 var(--line-soft);
+  margin-top: 0;
 }
 .admin-tools .admin-group-label {
   display: block;
-  margin-top: 0.65rem;
+  margin-top: 0.9rem;
 }
 .admin-tools .admin-group-label:first-child {
   margin-top: 0;
@@ -3531,6 +3494,65 @@ hr.rule {
   gap: 0.75rem;
   padding: 0.2rem 0.65rem;
 }
+.side-collapse {
+  display: inline-flex;
+  width: 2.25rem;
+  min-width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+}
+.side-collapse .icon {
+  width: 0.95rem;
+  height: 0.95rem;
+  transform: rotate(180deg);
+  transition: transform 0.2s ease;
+}
+body.side-collapsed .side-collapse .icon {
+  transform: none;
+}
+
+@media (min-width: 1000px) {
+  body.side-collapsed .side {
+    padding-inline: 0.65rem;
+  }
+  body.side-collapsed .side-head {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  body.side-collapsed .side-head .brand,
+  body.side-collapsed .side-head .side-close,
+  body.side-collapsed .side .label,
+  body.side-collapsed .side .count,
+  body.side-collapsed .side .nav a .grow,
+  body.side-collapsed .side-section-title > span,
+  body.side-collapsed .side-section-arrow,
+  body.side-collapsed .profile-link .grow,
+  body.side-collapsed .profile-link .count,
+  body.side-collapsed .side-add > span,
+  body.side-collapsed .side-empty,
+  body.side-collapsed .side .foot > .side-discord,
+  body.side-collapsed .side .foot > a.card,
+  body.side-collapsed .side .foot .themes,
+  body.side-collapsed .side .foot #logout,
+  body.side-collapsed .side .foot a span,
+  body.side-collapsed .subtabs {
+    display: none;
+  }
+  body.side-collapsed .side-collapse {
+    margin: 0 auto;
+  }
+  body.side-collapsed .side .nav a,
+  body.side-collapsed .profile-link,
+  body.side-collapsed .side-section > summary,
+  body.side-collapsed .side-add,
+  body.side-collapsed .side .foot a {
+    justify-content: center;
+    padding-inline: 0;
+  }
+  body.side-collapsed .admin-tools .admin-group-label + .nav {
+    margin-top: 0.35rem;
+  }
+}
 .side-close,
 .mobile-nav {
   display: none;
@@ -3561,6 +3583,9 @@ hr.rule {
 }
 
 @media (max-width: 999px) {
+  .side-collapse {
+    display: none;
+  }
   body.side-open {
     overflow: hidden;
   }
@@ -3670,9 +3695,6 @@ hr.rule {
   .hero {
     padding-block: 2.8rem 3rem;
   }
-  .hero-grid {
-    gap: 2.35rem;
-  }
   .hero h1 {
     font-size: clamp(2.2rem, 11vw, 3rem);
     line-height: 1.02;
@@ -3680,18 +3702,6 @@ hr.rule {
   .hero .lead {
     margin-top: 1.2rem;
     font-size: 1rem;
-  }
-  .hero-product {
-    justify-self: stretch;
-    max-width: none;
-    padding: 0.7rem;
-  }
-  .preview-features {
-    gap: 0.35rem;
-  }
-  .preview-features > span {
-    padding-inline: 0.2rem;
-    font-size: 0.625rem;
   }
   .rail {
     margin-top: 2.25rem;
@@ -3883,11 +3893,5 @@ hr.rule {
   .hero-cta .btn {
     width: 100%;
     min-height: 3rem;
-  }
-  .hero-product-head {
-    gap: 0.5rem;
-  }
-  .preview-server strong {
-    font-size: 0.8125rem;
   }
 }

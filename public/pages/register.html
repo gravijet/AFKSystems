@@ -50,7 +50,10 @@
             </div>
             <label class="check">
               <input id="terms" type="checkbox" required />
-              <span>{{auth.register.terms}}</span>
+              <span>{{auth.register.termsBefore}}
+                <a href="/{{lang}}/terms" target="_blank" rel="noopener">{{footer.terms}}</a>
+                {{auth.register.termsAnd}}
+                <a href="/{{lang}}/privacy" target="_blank" rel="noopener">{{footer.privacy}}</a>.</span>
             </label>
             <p id="error" class="form-error hide" role="alert"></p>
             <button class="btn btn-primary btn-block" type="submit">{{auth.register.submit}}</button>
