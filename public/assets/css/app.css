@@ -382,11 +382,20 @@ textarea {
   font-weight: 600;
 }
 
+/* Ein Panel füllt die Höhe, die ihm das Raster gibt: Kopf oben, Körper darunter, und der Körper
+ * nimmt den Rest. Ohne das endete jedes Panel dort, wo sein Inhalt aufhört – nebeneinander waren
+ * das drei Kästen mit drei verschiedenen Unterkanten. */
 .panel {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border-radius: var(--r-2xl);
   box-shadow: inset 0 0 0 1px var(--line);
   overflow: hidden;
+}
+.panel > .body {
+  flex: 1;
+  min-height: 0;
 }
 .panel > header {
   display: flex;
@@ -403,9 +412,13 @@ textarea {
   padding: 1.1rem;
 }
 
+/* Karten in einem Raster sind gleich hoch – auch über mehrere Reihen hinweg (`grid-auto-rows`).
+ * Sonst endet jede Karte dort, wo ihr Text aufhört, und ein Raster aus Kästen mit fünf
+ * verschiedenen Unterkanten sieht aus wie ein Fehler beim Laden. */
 .grid {
   display: grid;
   gap: 1rem;
+  grid-auto-rows: 1fr;
 }
 .grid.two {
   grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr));
@@ -415,6 +428,10 @@ textarea {
 }
 .grid.four {
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+}
+/* Ausnahme: Kästen, die von selbst wachsen (Panels mit Tabellen darin) dürfen es weiter. */
+.grid.free-height {
+  grid-auto-rows: auto;
 }
 
 /* ---------------------------------------------------------------- Zustände */
@@ -458,7 +475,7 @@ textarea {
   align-items: center;
   gap: 0.45rem;
   padding: 0.2rem 0.6rem 0.2rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--r-md);
   background: color-mix(in oklab, currentColor 10%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, currentColor 25%, transparent);
   font-size: 0.75rem;
@@ -485,17 +502,21 @@ textarea {
   color: var(--warn);
 }
 
+/* Etiketten sind Rechtecke mit weichen Ecken, keine Kapseln: bei einem längeren Text wie
+ * "Im Tarif enthalten" wurden aus den 999 px zwei Halbkreise, die den Text nicht mehr umschlossen,
+ * sondern rechts und links davon standen. */
 .pill {
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  padding: 0.2rem 0.6rem;
-  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  border-radius: var(--r-md);
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-2);
   font-size: 0.75rem;
   font-weight: 600;
+  line-height: 1.3;
 }
 .pill.primary {
   background: color-mix(in oklab, var(--primary) 12%, transparent);
@@ -963,13 +984,32 @@ body.site {
   margin-top: 2rem;
 }
 
-/* Die Karten mit den vier Sätzen darüber, wofür das Ganze gut ist. */
+/* Die Karten mit den vier Sätzen darüber, wofür das Ganze gut ist.
+ *
+ * Feste Spaltenzahl statt `auto-fit`: bei vier Kacheln ließ auto-fit je nach Fensterbreite drei
+ * oben und eine allein darunter stehen, und die letzte war dann so breit wie ein Drittel der
+ * Zeile – das sah aus, als fehle etwas. Zwei oder vier gehen immer glatt auf.
+ * `grid-auto-rows: 1fr` macht alle Reihen gleich hoch, damit auch der längere Text keine Kachel
+ * aus der Reihe wachsen lässt. */
 .tiles {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  grid-template-columns: 1fr;
+  grid-auto-rows: 1fr;
+}
+@media (min-width: 40rem) {
+  .tiles {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (min-width: 68rem) {
+  .tiles {
+    grid-template-columns: repeat(4, 1fr);
+  }
 }
 .tile {
+  display: flex;
+  flex-direction: column;
   padding: 1.35rem;
   border-radius: var(--r-2xl);
   background: var(--surface);
@@ -999,11 +1039,18 @@ body.site {
 .slots {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  grid-template-columns: 1fr;
+  grid-auto-rows: 1fr;
   margin-bottom: clamp(1.75rem, 3.5vw, 2.5rem);
+}
+@media (min-width: 44rem) {
+  .slots {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }
 .slot-row {
   display: grid;
+  align-content: start;
   gap: 0.4rem;
   padding: 1.15rem 1.35rem;
   border-radius: var(--r-2xl);
@@ -1041,6 +1088,7 @@ body.site {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
+  grid-auto-rows: 1fr;
   align-items: stretch;
 }
 .plan {
@@ -1060,7 +1108,7 @@ body.site {
   top: -0.6rem;
   left: 1.5rem;
   padding: 0.2rem 0.6rem;
-  border-radius: 999px;
+  border-radius: var(--r-md);
   background: var(--primary);
   color: var(--primary-ink);
   font-size: 0.6875rem;
@@ -1159,10 +1207,12 @@ body.site {
   display: grid;
   gap: 0.75rem;
   grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  grid-auto-rows: 1fr;
   align-content: start;
 }
 .pack {
   display: grid;
+  align-content: start;
   gap: 0.15rem;
   padding: 0.85rem 1rem;
   border-radius: var(--r-xl);
@@ -1194,11 +1244,17 @@ body.site {
 .steps {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  grid-template-columns: 1fr;
+  grid-auto-rows: 1fr;
   margin: 0;
   padding: 0;
   list-style: none;
   counter-reset: step;
+}
+@media (min-width: 52rem) {
+  .steps {
+    grid-template-columns: repeat(3, 1fr);
+  }
 }
 .steps li {
   padding: 1.35rem 1.5rem;
@@ -1830,6 +1886,57 @@ dialog footer {
   font-size: 0.8125rem;
 }
 
+/* Der Admin-Bereich ganz unten in der Seitenleiste: vier Gruppen zum Aufklappen. Offen ist die,
+ * in der man gerade steht – alles auf einmal wären siebzehn Zeilen unter den Serverplätzen. */
+.admin-nav {
+  margin-top: 0.5rem;
+  padding-top: 0.75rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.admin-group > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.65rem;
+  border-radius: var(--r-lg);
+  color: var(--text-2);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.admin-group > summary::-webkit-details-marker {
+  display: none;
+}
+.admin-group > summary::before {
+  content: '';
+  width: 0.4rem;
+  height: 0.4rem;
+  flex: none;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s ease;
+}
+.admin-group[open] > summary::before {
+  transform: rotate(45deg);
+}
+.admin-group > summary:hover {
+  background: color-mix(in oklab, var(--text) 5%, transparent);
+  color: var(--text);
+}
+.admin-group .profile-link {
+  margin-left: 0.5rem;
+  padding-block: 0.3rem;
+  font-size: 0.8125rem;
+}
+.admin-group .profile-link .icon {
+  width: 0.9rem;
+  height: 0.9rem;
+  flex: none;
+}
+
 .side .nav .count,
 .profile-link .count {
   margin-left: auto;
@@ -1884,10 +1991,17 @@ dialog footer {
 }
 
 /* Tarifauswahl im Serverplatz. */
+/* Die Tarifkästen im Panel: gleich hoch, damit die Knöpfe darunter auf einer Linie stehen.
+ * Die Merkmalsliste dehnt sich (`.plan-list.grow`), der Rest bleibt oben. */
 .plans-grid {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  grid-auto-rows: 1fr;
+}
+.plans-grid > .card {
+  display: flex;
+  flex-direction: column;
 }
 .plans-grid .card.is-current {
   box-shadow: inset 0 0 0 2px var(--primary);
@@ -2068,88 +2182,175 @@ hr.rule {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr));
-  align-items: start;
+  grid-auto-rows: 1fr;
 }
 
-/* Eine Tafel sieht aus wie im Spiel: dunkler Grund, feste Schrift, Punktzahl rechts. */
+/* Eine Anzeigetafel, wie Minecraft sie zeichnet.
+ *
+ * Nicht wie ein Chatfeld: im Spiel steht der Titel mittig auf einem etwas helleren Streifen, die
+ * Zeilen darunter auf halbdurchsichtigem Schwarz, die Punktzahl rechts in Rot. Genau das steht
+ * hier – gleiche Reihenfolge, gleiche Farben, gleicher Zeilenabstand. */
 .board {
-  border-radius: var(--r-xl);
-  background: #0d0d0f;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  color: #e6e6ea;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r-lg);
+  background: rgba(16, 16, 20, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
+  color: #ffffff;
   font-family: var(--mono);
   overflow: hidden;
+  text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.55);
 }
 .board > header {
-  padding: 0.7rem 0.9rem;
-  background: rgba(255, 255, 255, 0.05);
+  padding: 0.5rem 0.9rem;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.07);
   font-size: 0.9375rem;
   font-weight: 700;
   text-align: center;
   overflow-wrap: anywhere;
 }
 .board-rows {
+  flex: 1;
   margin: 0;
-  padding: 0.5rem 0;
+  padding: 0.35rem 0 0.5rem;
   list-style: none;
   font-size: 0.8125rem;
+  line-height: 1.55;
 }
 .board-rows li {
   display: flex;
   align-items: baseline;
-  gap: 1rem;
-  padding: 0.1rem 0.9rem;
-}
-.board-rows li:hover {
-  background: rgba(255, 255, 255, 0.04);
+  gap: 1.25rem;
+  padding: 0 0.9rem;
 }
 .board-text {
   flex: 1;
   overflow-wrap: anywhere;
 }
+/* Im Spiel ist die Punktzahl rot – daran erkennt man eine Anzeigetafel auf den ersten Blick. */
 .board-score {
   flex: none;
   color: #ff5555;
   font-variant-numeric: tabular-nums;
 }
-.board-rows.players li {
-  padding: 0.15rem 0.9rem;
-}
 .board > footer {
-  padding: 0.5rem 0.9rem;
-  background: rgba(255, 255, 255, 0.03);
-  font-size: 0.75rem;
+  padding: 0.4rem 0.9rem;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  color: #9aa3af;
+  font-size: 0.6875rem;
+  text-shadow: none;
+}
+.board-note {
+  padding: 1.25rem 0.9rem;
+  margin: 0;
+  color: #9aa3af;
+  font-size: 0.8125rem;
+  text-align: center;
+  text-shadow: none;
 }
 .board.is-empty > header {
-  background: transparent;
-  color: #9aa3af;
-  font-weight: 600;
+  background: rgba(0, 0, 0, 0.35);
+  color: #c9ccd4;
 }
 
-/* Ein Menü ist ein Raster wie eine Truhe. Was in den Feldern liegt, liest der Client nicht –
- * die Nummer genügt zum Anklicken, und mehr behaupten wir auch nicht. */
-.menu-card .slots {
+/* Ein Menü ist ein Raster wie eine Truhe: neun kleine Felder je Reihe, so groß wie im Spiel und
+ * nicht größer. Was in einem Feld liegt, steht darin; Name und Beschreibung klappen beim
+ * Überfahren darüber auf – mit den Farben, die der Server geschickt hat. */
+.menu-grid {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   grid-template-columns: repeat(9, 1fr);
   margin: 0;
-  padding: 0.6rem;
+  padding: 0.5rem;
+  max-width: 24rem;
 }
 .slot {
+  position: relative;
   aspect-ratio: 1;
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #6b7280;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.06), inset -1px -1px 0 rgba(0, 0, 0, 0.35);
+  color: #5b6270;
   font-family: var(--mono);
-  font-size: 0.625rem;
+  font-size: 0.5rem;
   cursor: pointer;
+  padding: 0;
 }
 .slot:hover {
-  background: var(--primary);
+  background: rgba(255, 255, 255, 0.22);
+  z-index: 3;
+}
+.slot.has-item {
+  background: rgba(255, 255, 255, 0.11);
+  color: #e6e6ea;
+}
+.slot-item {
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.slot-count {
+  position: absolute;
+  right: 1px;
+  bottom: 0;
   color: #fff;
+  font-size: 0.5625rem;
+  font-weight: 700;
+  text-shadow: 1px 1px 0 #000;
+}
+.slot-index {
+  color: inherit;
+  font-size: 0.5rem;
+}
+
+/* Der Aufklapper über einem Feld – dieselbe Bauart wie im Spiel: dunkler Kasten, Name oben,
+ * Beschreibung darunter, Kennung ganz unten in Grau. */
+.slot-tip {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  gap: 0.1rem;
+  width: max-content;
+  max-width: 18rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-md);
+  background: rgba(16, 0, 16, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(80, 0, 190, 0.75), 0 6px 18px rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  z-index: 5;
+}
+.slot:hover .slot-tip,
+.slot:focus-visible .slot-tip {
+  display: flex;
+}
+.slot-tip-name {
+  font-weight: 700;
+}
+/* Beschreibungstexte stehen im Spiel unter dem Namen und etwas zurückgenommen. Eine eigene Farbe
+ * bekommen sie hier nicht: die schickt der Server als Farbcode mit, und die soll gelten. */
+.slot-tip-lore {
+  font-size: 0.71875rem;
+}
+.slot-tip-id {
+  margin-top: 0.15rem;
+  color: #8b8fa3;
+  font-size: 0.6875rem;
+}
+/* Eine Menütafel ist schmaler als eine Anzeigetafel – neun Felder brauchen keine 17 rem. */
+.menu-card {
+  align-self: start;
 }
 
 /* ---------------------------------------------------------------- Zusätze */
@@ -2184,6 +2385,13 @@ hr.rule {
     column-count: 2;
     column-gap: 1.25rem;
   }
+}
+/* Im Admin-Bereich steht je Reiter genau eine Karte – die soll die Breite bekommen und nicht in
+ * zwei Spalten zerfallen. */
+.settings.settings-single {
+  display: block;
+  column-count: 1;
+  max-width: 60rem;
 }
 .setting-card {
   border-radius: var(--r-2xl);
@@ -2326,6 +2534,26 @@ hr.rule {
   background: linear-gradient(to top, var(--background) 65%, transparent);
 }
 
+/* Die Aufladepakete: drei Felder je Zeile mit einer Kopfzeile darüber, damit man weiß, welche
+ * Zahl wohin gehört. Vorher standen dort drei namenlose Kästchen nebeneinander. */
+.pack-editor {
+  display: grid;
+  gap: 0.4rem;
+}
+.pack-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+.pack-row.pack-head {
+  color: var(--text-2);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 /* ---------------------------------------------------------------- Guthaben */
 
 .topup-box {
@@ -2387,7 +2615,7 @@ hr.rule {
   top: -0.55rem;
   right: 0.85rem;
   padding: 0.15rem 0.5rem;
-  border-radius: 999px;
+  border-radius: var(--r-md);
   background: var(--primary);
   color: var(--primary-ink);
   font-size: 0.625rem;
@@ -2461,6 +2689,39 @@ hr.rule {
 }
 
 /* ---------------------------------------------------------------- Tickets */
+
+/* Der Weg in den Discord, über der Ticket-Liste. Nicht jede Frage braucht ein Ticket – und wer
+ * dort in zwei Minuten eine Antwort bekommt, soll nicht auf unsere warten. */
+.ticket-discord {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--r-2xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: inherit;
+}
+.ticket-discord:hover {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, #5865f2 45%, transparent);
+  text-decoration: none;
+}
+.ticket-discord-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--r-lg);
+  background: color-mix(in srgb, #5865f2 15%, transparent);
+  color: #5865f2;
+}
+.ticket-discord .strong,
+.ticket-discord .small {
+  display: block;
+}
 
 .ticket-list {
   margin: 0;
@@ -2579,7 +2840,7 @@ hr.rule {
 }
 .chat-system span {
   padding: 0.2rem 0.7rem;
-  border-radius: 999px;
+  border-radius: var(--r-md);
   background: var(--surface);
 }
 
@@ -2864,12 +3125,15 @@ hr.rule {
   }
 }
 
-/* Funktionsseite: Gruppen als Karten mit Symbol statt einer sehr langen Spalte. */
+/* Funktionsseite: Gruppen als Karten mit Symbol statt einer sehr langen Spalte.
+ *
+ * `stretch` statt `start`: Karten unterschiedlicher Höhe nebeneinander lassen die Reihe unten
+ * ausgefranst aussehen. Lieber etwas Luft im Inneren der kürzeren Karte als eine gerissene Kante. */
 .spec {
   display: grid;
   gap: 1rem;
   grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  align-items: start;
+  grid-auto-rows: 1fr;
 }
 .spec-group {
   padding: 1.5rem;
@@ -2919,7 +3183,7 @@ hr.rule {
 }
 .spec-tag {
   padding: 0.1rem 0.45rem;
-  border-radius: 999px;
+  border-radius: var(--r-md);
   background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
   font-size: 0.6875rem;
@@ -2969,59 +3233,3 @@ hr.rule {
   text-decoration: none;
 }
 
-/* ---------------------------------------------------------------- Vorschau auf der Startseite
- * Dieselben Bausteine wie im Panel – dieselbe Chatfläche, dieselbe Anzeigetafel. Ein
- * Bildschirmfoto wäre nach der nächsten Änderung falsch; das hier ist es nie. */
-
-.demo {
-  border-radius: var(--r-3xl);
-  background: var(--surface-2);
-  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
-  overflow: hidden;
-}
-.demo-bar {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  padding: 0.75rem 1.1rem;
-  box-shadow: inset 0 -1px 0 var(--line-soft);
-}
-.demo-name {
-  font-family: var(--mono);
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-.demo-tag {
-  padding: 0.1rem 0.5rem;
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 0.6875rem;
-  font-weight: 700;
-}
-.demo-body {
-  display: grid;
-  gap: 1px;
-  background: var(--line-soft);
-}
-@media (min-width: 52rem) {
-  .demo-body {
-    grid-template-columns: 1fr 16rem;
-  }
-}
-.demo-body .console {
-  border-radius: 0;
-  box-shadow: none;
-  min-height: 13rem;
-  padding: 1rem 1.1rem;
-}
-.demo-body .board {
-  border-radius: 0;
-  box-shadow: none;
-}
-.demo-note {
-  margin: 1rem 0 0;
-  color: var(--text-2);
-  font-size: 0.8125rem;
-  text-align: center;
-}

@@ -200,7 +200,10 @@ export function system(ticket, text) {
 export const create = db.transaction((owner, { subject, category, body, priority }, options = {}) => {
   const { by = owner.id, source = 'panel', staffPriority = false } = options;
   const title = requireString(subject, 'Betreff', { max: 120 });
-  const text = requireString(body, 'Nachricht', { max: 8000 });
+  // Der Betreff genügt. Wer auf "Abschicken" drückt, hat gesagt, worum es geht – dann darf das
+  // Ticket nicht daran scheitern, dass das zweite Feld noch leer war. Fehlt der Text, steht das
+  // Ticket eben nur mit seinem Betreff da und das Team fragt nach.
+  const text = requireString(body, 'Nachricht', { min: 0, max: 8000 });
   const kind = CATEGORIES.some((entry) => entry.key === category) ? category : 'general';
 
   const open = db
@@ -231,10 +234,12 @@ export const create = db.transaction((owner, { subject, category, body, priority
     )
     .run(owner.id, title, kind, boost, source, by === owner.id ? 0 : 1, now, now);
   const id = info.lastInsertRowid;
-  db.prepare(
-    `INSERT INTO ticket_messages (ticket_id, user_id, role, body, created_at)
-     VALUES (?, ?, ?, ?, ?)`
-  ).run(id, by, by === owner.id ? 'user' : 'staff', text, now);
+  if (text) {
+    db.prepare(
+      `INSERT INTO ticket_messages (ticket_id, user_id, role, body, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(id, by, by === owner.id ? 'user' : 'staff', text, now);
+  }
   audit(by, 'ticket-create', { id, category: kind, owner: owner.id, source });
   return ticketRow.get(id);
 });

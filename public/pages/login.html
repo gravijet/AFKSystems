@@ -23,9 +23,16 @@
             <button class="btn btn-primary btn-block" type="submit">{{auth.login.submit}}</button>
           </form>
 
-          <div id="discord" class="hide">
+          <!-- Anmelden über Discord oder Google. Beide Knöpfe zeigt auth.js nur, wenn der
+               Betreiber den Anbieter eingerichtet **und** freigeschaltet hat. -->
+          <div id="oauth" class="hide">
             <div class="or"><span>{{auth.or}}</span></div>
-            <a class="btn btn-block" href="/api/auth/discord/start?mode=login">{{auth.login.discord}}</a>
+            <div class="stack" style="gap:.5rem">
+              <a class="btn btn-block hide" id="oauth-discord"
+                 href="/api/auth/discord/start?mode=login">{{auth.login.discord}}</a>
+              <a class="btn btn-block hide" id="oauth-google"
+                 href="/api/auth/google/start?mode=login">{{auth.login.google}}</a>
+            </div>
           </div>
         </div>
 

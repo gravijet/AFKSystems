@@ -83,11 +83,11 @@ function parseEvent(line) {
 }
 
 /**
- * Die Antwort auf `:board`, `:tab` oder `:menu` in Daten übersetzen.
+ * Die Antwort auf `:board` oder `:menu` in Daten übersetzen.
  *
- * Der Client schreibt sie als Text – die Anzeigetafel Zeile für Zeile mit der Punktzahl hinten,
- * die Spielerliste mit einer Kopfzeile. Hier wird daraus etwas, das sich als Tafel zeichnen lässt;
- * die Farbcodes (§) bleiben stehen und werden erst im Browser zu Farben.
+ * Der Client schreibt sie als Text – die Anzeigetafel Zeile für Zeile mit der Punktzahl hinten.
+ * Hier wird daraus etwas, das sich als Tafel zeichnen lässt; die Farbcodes (§) bleiben stehen und
+ * werden erst im Browser zu Farben.
  */
 function parseView(kind, lines) {
   const rows = lines.filter((line) => line.trim().length);
@@ -107,31 +107,58 @@ function parseView(kind, lines) {
     };
   }
 
-  if (kind === 'tab') {
-    const players = [];
-    let count = null;
-    for (const line of rows) {
-      const head = /^Spieler\s*\((\d+)\)/.exec(line.trim());
-      if (head) {
-        count = Number(head[1]);
-        continue;
-      }
-      if (/noch keine|keine Zeilen/i.test(line)) continue;
-      for (const part of line.split('\t')) {
-        const name = part.trim();
-        if (name) players.push(name);
-      }
-    }
-    return { empty: count === null && !players.length, count: count ?? players.length, players };
-  }
-
   const text = rows.join(' ');
-  if (!rows.length || /kein Men(ü|ue) offen/i.test(text)) return { empty: true, title: '', slots: 0 };
+  if (!rows.length || /kein Men(ü|ue) offen/i.test(text)) {
+    return { empty: true, title: '', slots: 0, items: {} };
+  }
   return {
     empty: false,
     title: /[»"„]([^»"“]{1,64})[«"“]/.exec(text)?.[1] || '',
     slots: Number(/(\d+)\s*Feld/.exec(text)?.[1]) || 0,
+    items: menuItems(rows),
   };
+}
+
+/**
+ * Die Gegenstände in einem Menü, sofern der Client sie meldet.
+ *
+ * Er schreibt je belegtem Feld eine Zeile. Beide Schreibweisen, die dabei vorkommen können,
+ * werden gelesen – die knappe und die mit Beschreibungstext:
+ *
+ *     12  minecraft:diamond_sword x1  §bSchärfe V
+ *     12 | minecraft:diamond_sword | 1 | §bScharfes Schwert | §7Schaden 7 | §7Haltbarkeit 1561
+ *
+ * Meldet er gar nichts davon (ältere Bauformen lesen den Inhalt nicht aus), kommt ein leeres
+ * Verzeichnis zurück und das Panel zeigt die Felder wie bisher nur mit ihrer Nummer.
+ */
+function menuItems(rows) {
+  const items = {};
+  for (const raw of rows) {
+    const line = raw.trim();
+    // Mit senkrechten Strichen: Feld | Kennung | Anzahl | Name | Beschreibung …
+    const piped = line.split('|').map((part) => part.trim());
+    if (piped.length >= 3 && /^\d+$/.test(piped[0])) {
+      const [slot, id, count, name, ...lore] = piped;
+      items[Number(slot)] = {
+        id,
+        count: Number(count) || 1,
+        name: name || id,
+        lore: lore.filter(Boolean),
+      };
+      continue;
+    }
+    const short = /^(\d+)[.:)\s]+\s*([a-z0-9_.:]+)(?:\s*[x×]\s*(\d+))?\s*(.*)$/i.exec(line);
+    if (!short) continue;
+    const [, slot, id, count, rest] = short;
+    if (!id.includes(':') && !id.includes('_')) continue; // eine Fließtextzeile, kein Gegenstand
+    items[Number(slot)] = {
+      id,
+      count: Number(count) || 1,
+      name: rest.trim() || id,
+      lore: [],
+    };
+  }
+  return items;
 }
 
 class Bot extends EventEmitter {
@@ -153,10 +180,10 @@ class Bot extends EventEmitter {
     this.proc = null;
     this.build = null;
     this.menu = null;
-    // Anzeigetafel, Spielerliste und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
+    // Anzeigetafel und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
     // dem Client; gesammelt werden sie nur, wenn das Panel gerade danach gefragt hat (siehe
     // `capture`). Ohne das stünden dreizehn Zeilen Seitenleiste zwischen den Chatnachrichten.
-    this.views = { board: null, tab: null, menu: null };
+    this.views = { board: null, menu: null };
     this.capture = null;
     this.stopping = false;
     this.timers = new Set();
@@ -357,7 +384,7 @@ class Bot extends EventEmitter {
     this.startedAt = null;
     this.auth = null;
     this.menu = null;
-    this.views = { board: null, tab: null, menu: null };
+    this.views = { board: null, menu: null };
     if (this.capture) {
       clearTimeout(this.capture.timer);
       this.capture = null;
@@ -458,7 +485,7 @@ class Bot extends EventEmitter {
   }
 
   onStatus(line) {
-    // Läuft gerade eine Abfrage (`:board`, `:tab`, `:menu`), gehört die Zeile dorthin und nicht
+    // Läuft gerade eine Abfrage (`:board`, `:menu`), gehört die Zeile dorthin und nicht
     // in die Ausgabe – sonst stünde die halbe Seitenleiste als Fließtext im Protokoll.
     if (this.capture && Date.now() < this.capture.until) {
       this.capture.lines.push(line);
@@ -627,8 +654,20 @@ class Bot extends EventEmitter {
   push(type, text) {
     const entry = { t: Date.now(), type, text };
     this.chat.push(entry);
+    // Die Grenze aus dem Tarif zählt **Chatzeilen**, nicht Zustandsmeldungen. Sonst hätte ein
+    // Bot, der eine Stunde lang neu verbindet, einen vollen Puffer aus Verbindungsmeldungen und
+    // keinen Chat mehr darin – gerade dann, wenn man nachlesen will, was passiert ist.
     const limit = this.chatLimit;
-    if (this.chat.length > limit) this.chat.splice(0, this.chat.length - limit);
+    let over = this.chat.filter((line) => line.type === 'chat' || line.type === 'sent').length - limit;
+    while (over > 0) {
+      const index = this.chat.findIndex((line) => line.type === 'chat' || line.type === 'sent');
+      if (index < 0) break;
+      this.chat.splice(0, index + 1);
+      over -= 1;
+    }
+    // Zustandsmeldungen dürfen den Puffer trotzdem nicht unbegrenzt füllen.
+    const hardLimit = limit + 200;
+    if (this.chat.length > hardLimit) this.chat.splice(0, this.chat.length - hardLimit);
     if (type === 'chat' || type === 'error') {
       const record = `${new Date(entry.t).toISOString()} ${type} ${text}\n`;
       this.rotateLog(Buffer.byteLength(record));
@@ -658,7 +697,10 @@ class Bot extends EventEmitter {
     const line = String(text).replace(/[\r\n]+/g, ' ').trim();
     if (!line) return false;
     this.proc.stdin.write(`${line}\n`);
-    this.push('sent', line);
+    // Örtliche Befehle (`:go vor 5`, `:board`) gehen nie an den Server und gehören deshalb auch
+    // nicht in den Chatverlauf. Dort stand vorher "Gesendet: :go vor 3" zwischen den Nachrichten
+    // der Mitspieler – zu lesen war der Chat damit nicht mehr.
+    if (!line.startsWith(':')) this.push('sent', line);
     return true;
   }
 
@@ -682,7 +724,7 @@ class Bot extends EventEmitter {
       );
     }
     // Abfragen, deren Antwort als Ansicht gehört und nicht als Textzeilen.
-    if (verb === 'board' || verb === 'tab' || verb === 'menu') this.beginCapture(verb);
+    if (verb === 'board' || verb === 'menu') this.beginCapture(verb);
     return this.send(`:${verb}${arg ? ` ${arg}` : ''}`);
   }
 

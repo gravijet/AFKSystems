@@ -55,9 +55,15 @@ niemand einlösen kann, ohne dass die Seite darüber redet.
 Englisch ist die Hauptsprache, Deutsch die zweite. Beide sind echte Adressen (siehe oben).
 
 Alle sichtbaren Texte stehen in **einer** Datei: `public/assets/js/i18n.js`. Sie wird von beiden
-Seiten importiert – Node rendert daraus die festen Seiten, der Browser das Dashboard. Die gewählte
-Sprache liegt im Cookie `lang` und am Konto; ohne beides entscheidet `Accept-Language`.
+Seiten importiert – Node rendert daraus die festen Seiten, der Browser das Dashboard.
 Fehlermeldungen der API kommen in derselben Sprache zurück.
+
+Gemerkt wird die Sprache **im Browser**: `localStorage['afk-lang']` und das Cookie `lang`, das der
+Server liest. Beim allerersten Besuch steht nichts davon fest – dann entscheidet `Accept-Language`,
+und was dabei herauskam, wird gemerkt. Ab dann gilt die gemerkte Sprache überall: Website wie
+Dashboard, auch wenn jemand über einen Link in der anderen Sprache hereinkommt (`ui.js` leitet
+einmal um). Beim Umschalten geht beides neu, und angemeldete Konten speichern es zusätzlich am
+Konto – das entscheidet, in welcher Sprache E-Mails kommen.
 
 Zwei weitere Dateien teilen sich beide Seiten: `chatlog.js` (Chatzeilen zusammenlegen,
 Minecraft-Farben zerlegen) und `settings-schema.js` (Beschreibung aller Einstellungen).
@@ -89,8 +95,12 @@ journalctl -u afksystems -f
   bucht direkt auf.
 
 Die Tarife stehen in der Tabelle `plans` und sind im Admin-Bereich vollständig änderbar – Name,
-Beschreibungstext, Preis, Anzahl Bots, Chatverlauf, Macros, Premium-Client, Proxys, Fake-Host,
+Beschreibungstext, Preis, Anzahl Bots, Chatverlauf, Macros, Premium-Client, Proxys,
 Offline-Konten, Anzeigetafel, Menüs, Support-Vorrang und die Discord-Rolle.
+
+Auch **der Wortlaut auf der Preisseite** gehört dazu: `features_de` und `features_en` sind die
+Merkmalsliste eines Tarifs, eine Zeile je Punkt. Steht dort etwas, wird genau das angezeigt; sind
+die Felder leer, baut `landing.planLines()` die Liste aus den Zahlen des Tarifs zusammen.
 
 ### Zusätze
 
@@ -100,9 +110,12 @@ wird. In der Tabelle `addons` steht, was sich dazubuchen lässt; `profile_addons
 | Zusatz | Wirkung |
 | --- | --- |
 | `slot` | ein Bot mehr auf diesem Platz (mehrfach buchbar) |
-| `board` | Anzeigetafel und Spielerliste |
-| `menus` | Menüs bedienen |
-| `pov` | Live-Ansicht – angekündigt, `available = 0`, noch nicht buchbar |
+| `menus` | Menüs bedienen – in Ultra enthalten, auf Premium dazubuchbar |
+| `pov` | Live-Ansicht – angekündigt, `available = 0`, noch nicht buchbar; je Konto **und** Platz, in keinem Tarif enthalten |
+
+Die Anzeigetafel war einmal ein Zusatz (`board`) und gehört seit Migration 006 zu jedem bezahlten
+Tarif. Der Eintrag steht als `active = 0` noch in der Tabelle, damit alte Buchungen nachvollziehbar
+bleiben; angeboten wird er nicht mehr.
 
 Gerechnet wird anteilig: beim Buchen der Rest der laufenden Periode, beim Abbestellen kommt er
 zurück. Ab der nächsten Verlängerung steckt der Zusatz im Monatspreis. Auf dem Gratis-Platz gibt es
@@ -227,7 +240,7 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | Zusätze | `GET/POST /profiles/:id/addons`, `DELETE /profiles/:id/addons/:addonId` |
 | Bots | `POST /profiles/:id/start`, `/stop`, `/restart` |
 | Chat | `GET/POST /profiles/:id/chat`, `GET /profiles/:id/views`, `…/spam` |
-| Im Spiel | `POST /profiles/:id/command` (`go`, `look`, `home`, `board`, `tab`, `menu`, `click`, `sneak`, …) |
+| Im Spiel | `POST /profiles/:id/command` (`go`, `look`, `home`, `board`, `menu`, `click`, `sneak`, …) |
 | Automatik | `…/macros` (GET/POST/PATCH/DELETE, dazu `/test`) |
 | Guthaben | `GET /billing`, `POST /billing/voucher`, `POST /billing/topup` |
 | Support | `GET/POST /tickets`, `GET /tickets/:id`, `/messages`, `POST /tickets/:id/reply`, `/status`, `/typing` |

@@ -5,7 +5,7 @@
 // die wichtigste Frage – "war diese E-Mail wirklich von euch?" – ließ sich gar nicht beantworten.
 
 import {
-  api, icon, escapeHtml, datetime, tr, url, $, $$, ok, fail, confirmDialog,
+  api, icon, escapeHtml, datetime, tr, url, switchLang, $, $$, ok, fail, confirmDialog,
 } from '../ui.js';
 import { state, appbar, refresh, draw } from '../app.js';
 
@@ -186,7 +186,7 @@ function notifyBody(me) {
 
 function securityBody(sessions) {
   return `
-    <div class="grid two" style="align-items:start;gap:1.5rem">
+    <div class="grid two" style="gap:1.5rem">
       <div class="stack">
         <h3 class="small strong" style="margin:0">${escapeHtml(tr('set.password'))}</h3>
         <div class="field"><label for="old">${escapeHtml(tr('set.passwordOld'))}</label>
@@ -248,8 +248,10 @@ function bind(me, mails) {
     const next = $('#language').value;
     try {
       await api('/me', { method: 'PATCH', body: { language: next } });
-      // Die Sprache steckt in der Adresse – also gleich dorthin wechseln.
-      location.href = `/${next}/app${location.hash.split('?')[0]}`;
+      // Am Konto **und** im Browser merken: das Konto entscheidet, was in E-Mails steht, der
+      // Browser, was dieses Gerät anzeigt – auch abgemeldet. switchLang macht beides und geht
+      // gleich auf dieselbe Stelle in der neuen Sprache.
+      switchLang(next);
     } catch (error) {
       fail(error);
     }

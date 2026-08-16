@@ -430,7 +430,7 @@ admin.get(
   })
 );
 
-const PLAN_TEXT_FIELDS = ['name_de', 'name_en', 'blurb_de', 'blurb_en', 'discord_role'];
+const PLAN_TEXT_FIELDS = ['name_de', 'name_en', 'blurb_de', 'blurb_en', 'features_de', 'features_en', 'discord_role'];
 const PLAN_NUMBER_FIELDS = ['price_credits', 'max_accounts', 'chat_limit', 'max_macros', 'sort'];
 const PLAN_FLAG_FIELDS = [
   'free_slot',
@@ -456,7 +456,9 @@ function planValues(body, existing = {}) {
     if (body[field] === undefined) continue;
     if (PLAN_TEXT_FIELDS.includes(field)) {
       // Beschreibungen dürfen länger sein als Namen – auf der Preisseite steht ein ganzer Satz.
-      out[field] = String(body[field] ?? '').slice(0, field.startsWith('blurb') ? 400 : 200);
+      // Die Merkmalsliste ist eine Zeile je Punkt und darf entsprechend lang werden.
+      const limit = field.startsWith('features') ? 2000 : field.startsWith('blurb') ? 400 : 200;
+      out[field] = String(body[field] ?? '').slice(0, limit);
     } else if (PLAN_NUMBER_FIELDS.includes(field)) {
       out[field] = requireInt(body[field], field, { max: 1_000_000 });
     } else {
@@ -487,6 +489,8 @@ admin.post(
       name_en: slug,
       blurb_de: '',
       blurb_en: '',
+      features_de: '',
+      features_en: '',
       discord_role: null,
       price_credits: 0,
       free_slot: 0,
@@ -1040,7 +1044,9 @@ admin.patch(
       if (!entry) continue;
 
       if (entry.type === 'packages') {
-        if (!Array.isArray(value)) throw bad('Pakete müssen eine Liste sein.');
+        if (!Array.isArray(value)) {
+          throw bad('Pakete müssen eine Liste sein.', { en: 'Packages have to be a list.' });
+        }
         setSetting(
           key,
           value.map((pack) => ({

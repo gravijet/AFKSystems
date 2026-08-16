@@ -1,62 +1,39 @@
-// Administration. Ein Reiter je Thema, alles über /api/admin.
+// Administration. Ein Bildschirm je Thema, alles über /api/admin.
 //
 // Der Grundsatz hier: nichts verstecken, was der Betreiber braucht, und nichts anbieten, was das
 // Backend nicht kann. Jede Tabelle zeigt echte Werte aus der Datenbank, jede Änderung geht sofort
 // hin und kommt frisch zurück.
 //
-// Tickets stehen **nicht** mehr hier, sondern haben einen eigenen Punkt in der Seitenleiste: Sie
-// sind die Arbeit, die täglich anfällt, und die soll nicht zwei Klicks tief unter "Verwaltung"
-// liegen. Wer hierher kommt, verwaltet – wer dorthin geht, antwortet.
+// Die Themen stehen als eigene Punkte in der Seitenleiste (siehe ADMIN_GROUPS und app.js) und
+// nicht mehr als siebzehn Reiter in einer Zeile. Siebzehn Reiter nebeneinander sind keine
+// Gliederung: sie brechen um, und keiner sagt, was zusammengehört.
+//
+// "Tickets" ist der Arbeitsbildschirm des Teams – alle Tickets, filterbar. Der Support-Punkt in
+// der Seitenleiste zeigt dagegen die **eigenen** Tickets, auch einem Administrator: dort ist er
+// Kunde, hier bearbeitet er.
 
 import {
   api, icon, escapeHtml, credits, euro, datetime, date, since, bytes, meter, mcText, tr, $, $$,
   ok, fail, toast, confirmDialog, formDialog, copy, debounce,
 } from '../ui.js';
 import { mergeLines } from '../chatlog.js';
-import { state, appbar, draw, go } from '../app.js';
+import { state, appbar, draw, go, ADMIN_GROUPS } from '../app.js';
 
-const TABS = [
-  { key: 'overview', label: 'adm.overview' },
-  { key: 'system', label: 'adm.system' },
-  { key: 'users', label: 'adm.users' },
-  { key: 'servers', label: 'adm.servers' },
-  { key: 'bots', label: 'adm.bots' },
-  { key: 'nodes', label: 'adm.nodes' },
-  { key: 'plans', label: 'adm.plans' },
-  { key: 'addons', label: 'adm.addons' },
-  { key: 'topups', label: 'adm.topups' },
-  { key: 'vouchers', label: 'adm.vouchers' },
-  { key: 'proxies', label: 'adm.proxies' },
-  { key: 'announcements', label: 'adm.announce' },
-  { key: 'settings', label: 'adm.settings' },
-  { key: 'client', label: 'adm.client' },
-  { key: 'mails', label: 'adm.mails' },
-  { key: 'ledger', label: 'adm.ledger' },
-  { key: 'audit', label: 'adm.audit' },
-];
+const ADMIN_ITEMS = ADMIN_GROUPS.flatMap((group) => group.items);
 
 export async function render(root, route) {
-  // Der alte Ticket-Reiter lebt in Lesezeichen weiter – er führt jetzt an die richtige Stelle.
-  if (route.tab === 'tickets') {
-    location.hash = route.id ? `#/tickets/${route.id}` : '#/tickets?view=staff';
-    return;
-  }
-  const tab = TABS.some((entry) => entry.key === route.tab) ? route.tab : 'overview';
+  const entry = ADMIN_ITEMS.find((item) => item.key === route.tab);
+  const tab = entry ? entry.key : 'overview';
 
   root.innerHTML = `
-    ${appbar(tr('adm.title'), '', state.me.username)}
-    <nav class="tabs wrap">${TABS.map(
-      (entry) =>
-        `<a class="${tab === entry.key ? 'active' : ''}" href="#/admin/${entry.key}">${escapeHtml(
-          tr(entry.label)
-        )}</a>`
-    ).join('')}</nav>
+    ${appbar(tr(entry?.label || 'adm.overview'), '', tr('adm.title'))}
     <div id="admin-body"><div class="empty"><h3>${escapeHtml(tr('common.loading'))}</h3></div></div>`;
 
   const body = $('#admin-body');
   const views = {
     overview,
     system,
+    tickets: staffTickets,
     users: route.id ? (node) => userDetail(node, route.id) : users,
     servers: route.id ? (node) => serverDetail(node, route.id) : servers,
     bots,
@@ -141,7 +118,7 @@ async function overview(root) {
       )}
     </div>
 
-    <div class="grid two" style="align-items:start">
+    <div class="grid two">
       <section class="panel">
         <header><h3>${escapeHtml(tr('adm.client'))}</h3>
           <button class="btn btn-sm" id="sync">${icon('refresh')}</button></header>
@@ -247,7 +224,7 @@ async function system(root) {
         </div>
       </div>
 
-      <div class="grid two" style="align-items:start;margin-bottom:1.5rem">
+      <div class="grid two" style="margin-bottom:1.5rem">
         <section class="panel">
           <header><h3>${escapeHtml(tr('adm.machine'))}</h3></header>
           <div class="body stack">
@@ -325,6 +302,155 @@ function uptime(seconds) {
   const hours = Math.floor((seconds % 86400) / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   return days ? `${days} d ${hours} h` : hours ? `${hours} h ${minutes} min` : `${minutes} min`;
+}
+
+// ---------------------------------------------------------------- Tickets
+//
+// Der Arbeitsbildschirm des Teams: alle Tickets, nach Zustand gefiltert, das Dringendste oben.
+// Angeklickt wird daraus dasselbe Gespräch, das der Kunde sieht – nur mit den Werkzeugen dazu.
+
+const TICKET_STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
+const TICKET_PRIORITY_PILL = { urgent: 'missing', high: 'primary', normal: '', low: '' };
+
+async function staffTickets(root) {
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const status = params.get('status') || 'open';
+  const search = params.get('q') || '';
+
+  const data = await api(`/admin/tickets?status=${status}&q=${encodeURIComponent(search)}`);
+  const categories = data.categories || state.meta?.ticket_categories || [];
+
+  root.innerHTML = `
+    <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
+      <div class="row wrap">
+        <select id="tk-status" class="mini" style="max-width:13rem">
+          <option value="all" ${status === 'all' ? 'selected' : ''}>${escapeHtml(tr('common.all'))}</option>
+          ${(data.statuses || [])
+            .map(
+              (entry) =>
+                `<option value="${entry}" ${status === entry ? 'selected' : ''}>${escapeHtml(
+                  tr(`tk.status.${entry}`)
+                )}</option>`
+            )
+            .join('')}
+        </select>
+        <input id="tk-q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
+          value="${escapeHtml(search)}" style="max-width:16rem">
+      </div>
+      <button class="btn btn-sm" id="tk-new-for">${icon('users')} ${escapeHtml(tr('tk.newFor'))}</button>
+    </div>
+
+    <section class="panel">
+      <div class="body" style="padding:0">
+        ${
+          data.tickets.length
+            ? `<ul class="ticket-list">${data.tickets.map((ticket) => staffRow(ticket, categories)).join('')}</ul>`
+            : `<div class="empty" style="box-shadow:none;background:transparent">
+                <h3>${escapeHtml(tr('tk.none'))}</h3></div>`
+        }
+      </div>
+    </section>`;
+
+  $$('[data-open]').forEach((node) =>
+    node.addEventListener('click', () => go(`/tickets/${node.dataset.open}?from=admin`))
+  );
+
+  const reload = debounce(() => {
+    go(
+      `/admin/tickets?status=${$('#tk-status').value}&q=${encodeURIComponent($('#tk-q').value.trim())}`
+    );
+    draw();
+  }, 300);
+  $('#tk-status').addEventListener('change', reload);
+  $('#tk-q').addEventListener('input', reload);
+
+  $('#tk-new-for').addEventListener('click', () => ticketForCustomer(categories));
+
+  // Kommt ein Ticket herein oder eine Antwort, ist die Liste sofort veraltet.
+  state.onLive = debounce((event) => {
+    if (event.type === 'ticket' && state.route.name === 'admin' && state.route.tab === 'tickets') draw();
+  }, 500);
+}
+
+function staffRow(ticket, categories) {
+  return `<li class="ticket-row ${ticket.unread_staff ? 'is-unread' : ''}" data-open="${ticket.id}">
+    <span class="ticket-dot ${ticket.status}"></span>
+    <div class="grow" style="min-width:0">
+      <div class="row" style="gap:.5rem">
+        <span class="strong truncate">${escapeHtml(ticket.subject)}</span>
+        <span class="small muted mono">#${ticket.id}</span>
+        ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
+      </div>
+      <div class="small muted truncate">
+        ${escapeHtml(categories.find((entry) => entry.key === ticket.category)?.label || ticket.category)}
+        ${ticket.username ? ` · ${escapeHtml(ticket.username)}` : ''}
+        ${ticket.assigned_name ? ` · ${escapeHtml(ticket.assigned_name)}` : ''}
+      </div>
+    </div>
+    <div class="row" style="gap:.4rem">
+      ${
+        ticket.priority && ticket.priority !== 'normal'
+          ? `<span class="pill ${TICKET_PRIORITY_PILL[ticket.priority] || ''}">${escapeHtml(
+              tr(`tk.priority.${ticket.priority}`)
+            )}</span>`
+          : ''
+      }
+      <span class="pill ${TICKET_STATUS_PILL[ticket.status] || ''}">${escapeHtml(
+        tr(`tk.status.${ticket.status}`)
+      )}</span>
+      <span class="small muted mono nowrap">${since(ticket.updated_at)}</span>
+    </div>
+  </li>`;
+}
+
+/**
+ * Ein Ticket für einen Kunden – etwa nach einem Gespräch, das woanders stattgefunden hat.
+ *
+ * Das gehört hierher und nicht in den Support-Bildschirm eines Kunden: dort stand es bisher und
+ * war für jeden zu sehen, der zufällig Administrator ist, aber gerade Kunde sein wollte.
+ */
+async function ticketForCustomer(categories) {
+  const { users: list } = await api('/admin/users?filter=all');
+  const answer = await formDialog(
+    tr('tk.newFor'),
+    [
+      {
+        key: 'user_id',
+        label: tr('adm.users'),
+        type: 'select',
+        value: String(list[0]?.id || ''),
+        options: list.map((user) => ({ value: String(user.id), label: `${user.username} · ${user.email}` })),
+      },
+      { key: 'subject', label: tr('tk.subject'), required: true },
+      {
+        key: 'category',
+        label: tr('tk.category'),
+        type: 'select',
+        value: 'general',
+        options: categories.map((entry) => ({ value: entry.key, label: entry.label })),
+      },
+      {
+        key: 'priority',
+        label: tr('tk.priority'),
+        type: 'select',
+        value: 'normal',
+        options: ['low', 'normal', 'high', 'urgent'].map((value) => ({
+          value,
+          label: tr(`tk.priority.${value}`),
+        })),
+      },
+      { key: 'body', label: `${tr('tk.message')} (${tr('common.optional')})`, type: 'textarea' },
+    ],
+    { submit: tr('tk.send') }
+  );
+  if (!answer) return;
+  try {
+    const result = await api(`/admin/users/${answer.user_id}/ticket`, { method: 'POST', body: answer });
+    ok(tr('tk.created'));
+    go(`/tickets/${result.ticket.id}?from=admin`);
+  } catch (error) {
+    fail(error);
+  }
 }
 
 // ---------------------------------------------------------------- Nutzer
@@ -623,14 +749,14 @@ async function userDetail(root, id) {
             label: tr(`tk.priority.${value}`),
           })),
         },
-        { key: 'body', label: tr('tk.message'), type: 'textarea', required: true },
+        { key: 'body', label: `${tr('tk.message')} (${tr('common.optional')})`, type: 'textarea' },
       ],
       { submit: tr('tk.send') }
     );
     if (!answer) return;
     try {
       const result = await api(`/admin/users/${id}/ticket`, { method: 'POST', body: answer });
-      go(`/tickets/${result.ticket.id}`);
+      go(`/tickets/${result.ticket.id}?from=admin`);
     } catch (error) {
       fail(error);
     }
@@ -861,7 +987,7 @@ async function serverDetail(root, id) {
       </section>
     </div>
 
-    <div class="grid two" style="align-items:start;margin-top:1.5rem">
+    <div class="grid two" style="margin-top:1.5rem">
       <section class="panel">
         <header><h3>${escapeHtml(tr('nd.title'))}</h3></header>
         <div class="body stack">
@@ -1243,10 +1369,28 @@ async function nodes(root) {
 
 // ---------------------------------------------------------------- Tarife
 
+/**
+ * Die Ja/Nein-Merkmale eines Tarifs, mit dem Satz, was sie bewirken.
+ *
+ * Vorher stand hier der reine Spaltenname als Beschriftung ("offline_accounts", "chat_limit_
+ * editable") – wer den Tarif ändern wollte, musste raten oder in der Datenbank nachsehen.
+ */
 const PLAN_FLAGS = [
-  'free_slot', 'premium', 'movement', 'proxy', 'offline_accounts', 'fakehost',
-  'chat_limit_editable', 'priority_support', 'board', 'menus', 'pov', 'addons', 'highlight', 'active',
+  ['free_slot', 'Der kostenlose Platz (genau ein Tarif)'],
+  ['premium', 'Premium-Client: Bewegung, Anti-AFK, Schleichen'],
+  ['movement', 'Reiter "Bewegung" im Panel'],
+  ['proxy', 'Eigene Ausgangsadresse auf Anfrage'],
+  ['offline_accounts', 'Offline-/Cracked-Konten erlaubt'],
+  ['chat_limit_editable', 'Chatverlauf selbst einstellbar'],
+  ['priority_support', 'Support-Vorrang'],
+  ['board', 'Anzeigetafel'],
+  ['menus', 'Menüs bedienen'],
+  ['pov', 'Live-Ansicht (POV)'],
+  ['addons', 'Zusätze buchbar'],
+  ['highlight', 'Auf der Preisseite hervorheben'],
+  ['active', 'Buchbar'],
 ];
+const PLAN_FLAG_KEYS = PLAN_FLAGS.map(([key]) => key);
 
 async function plans(root) {
   const data = await api('/admin/plans');
@@ -1268,7 +1412,7 @@ async function plans(root) {
               <span class="small muted">${plan.free_slot ? '' : euro(plan.price_credits)}</span></td>
             <td class="small">${plan.max_accounts}</td>
             <td class="small">${plan.chat_limit}${plan.chat_limit_editable ? ' ✎' : ''}</td>
-            <td class="small">${PLAN_FLAGS.filter((flag) => plan[flag])
+            <td class="small">${PLAN_FLAG_KEYS.filter((flag) => plan[flag])
               .map((flag) => `<span class="pill">${escapeHtml(flag)}</span>`)
               .join(' ')}</td>
             <td style="text-align:right;white-space:nowrap">
@@ -1292,6 +1436,22 @@ async function plans(root) {
       hint: 'Ein Satz, für wen der Tarif gedacht ist. Steht auf der Preisseite unter dem Namen.',
     },
     { key: 'blurb_en', label: 'Beschreibung (EN)', type: 'textarea', value: plan.blurb_en || '' },
+    // Der Wortlaut der Merkmalsliste auf der Preisseite. Leer = die Liste baut sich aus den
+    // Zahlen dieses Tarifs zusammen (siehe planLines in server/landing.js).
+    {
+      key: 'features_de',
+      label: 'Merkmale auf der Preisseite (DE)',
+      type: 'textarea',
+      value: plan.features_de || '',
+      hint: 'Eine Zeile je Punkt. Leer lassen heißt: die Liste wird aus den Zahlen unten gebaut.',
+    },
+    {
+      key: 'features_en',
+      label: 'Merkmale auf der Preisseite (EN)',
+      type: 'textarea',
+      value: plan.features_en || '',
+      hint: 'One line per bullet. Empty means the list is built from the numbers below.',
+    },
     { key: 'price_credits', label: `${tr('common.credits')} / 30 d`, type: 'number', min: 0, value: plan.price_credits ?? 0 },
     { key: 'max_accounts', label: tr('pricing.bots'), type: 'number', min: 1, value: plan.max_accounts ?? 1 },
     { key: 'chat_limit', label: tr('pricing.chatHistory'), type: 'number', min: 20, value: plan.chat_limit ?? 200 },
@@ -1303,7 +1463,12 @@ async function plans(root) {
       value: plan.discord_role || '',
       hint: 'Rollen-ID. Leer = die Rolle aus den Einstellungen.',
     },
-    ...PLAN_FLAGS.map((flag) => ({ key: flag, label: flag, type: 'checkbox', value: Boolean(plan[flag]) })),
+    ...PLAN_FLAGS.map(([flag, label]) => ({
+      key: flag,
+      label,
+      type: 'checkbox',
+      value: Boolean(plan[flag]),
+    })),
   ];
 
   $('#new').addEventListener('click', async () => {
@@ -1846,6 +2011,10 @@ async function announcements(root) {
 // Das Formular kommt aus der Beschreibung, die der Server mitschickt (settings-schema.js). Damit
 // steht jede Beschriftung und jede Erklärung an genau einer Stelle – vorher stand im Frontend eine
 // Liste aus Schlüsselnamen ("smtp_pass" als Überschrift) und im Backend eine zweite daneben.
+//
+// Je Gruppe ein Reiter. Alle neun Gruppen untereinander waren eine Seite, auf der man scrollte,
+// bis man vergessen hatte, wonach man suchte; welcher Schalter zu welchem Thema gehört, ließ sich
+// nicht mehr sehen.
 
 async function settings(root) {
   const data = await api('/admin/settings');
@@ -1853,33 +2022,42 @@ async function settings(root) {
   const value = (key) => data.settings[key] ?? '';
   const packages = structuredClone(data.settings.packages || []);
 
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const wanted = params.get('group');
+  const group = groups.find((entry) => entry.key === wanted) || groups[0];
+  const fields = schema.filter((entry) => entry.group === group.key);
+
   root.innerHTML = `
-    <div class="settings">
+    <nav class="tabs wrap" style="margin-bottom:1.25rem">
       ${groups
-        .map((group) => {
-          const fields = schema.filter((entry) => entry.group === group.key);
-          return `<section class="setting-card">
-            <div class="setting-head">
-              <span class="setting-icon">${icon(group.icon)}</span>
-              <div>
-                <h2>${escapeHtml(group.title)}</h2>
-                <p>${escapeHtml(group.text)}</p>
-              </div>
-            </div>
-            <div class="setting-body stack">
-              ${fields.map(field).join('')}
-              ${group.key === 'money' ? packageEditor() : ''}
-              ${group.key === 'mail' ? mailTools(data) : ''}
-              ${group.key === 'discord' ? discordTools(data) : ''}
-            </div>
-          </section>`;
-        })
+        .map(
+          (entry) =>
+            `<a class="${entry.key === group.key ? 'active' : ''}"
+                href="#/admin/settings?group=${entry.key}">${escapeHtml(entry.title)}</a>`
+        )
         .join('')}
+    </nav>
+
+    <div class="settings settings-single">
+      <section class="setting-card">
+        <div class="setting-head">
+          <span class="setting-icon">${icon(group.icon)}</span>
+          <div>
+            <h2>${escapeHtml(group.title)}</h2>
+            <p>${escapeHtml(group.text)}</p>
+          </div>
+        </div>
+        <div class="setting-body stack">
+          ${fields.map(field).join('')}
+          ${group.key === 'mail' ? mailTools() : ''}
+          ${group.key === 'discord' ? discordTools(data) : ''}
+        </div>
+      </section>
     </div>
 
     <div class="save-bar">
       <button class="btn btn-primary btn-lg" id="save">${escapeHtml(tr('common.save'))}</button>
-      <span class="small muted" id="save-hint"></span>
+      <span class="small muted" id="save-hint">${escapeHtml(group.title)}</span>
     </div>`;
 
   function field(entry) {
@@ -1897,6 +2075,21 @@ async function settings(root) {
         }>
         <span class="switch" aria-hidden="true"></span>
       </label>`;
+    }
+
+    // Die Aufladepakete sind eine Liste aus Objekten und bekommen deshalb einen eigenen Editor.
+    // Ohne diesen Zweig fielen sie in das Textfeld am Ende: dort stand dann "[object Object],
+    // [object Object], …", und beim Speichern ging genau dieser Text als `packages` zurück – was
+    // der Server zu Recht mit "Pakete müssen eine Liste sein" ablehnte. Danach ließ sich in den
+    // Einstellungen überhaupt nichts mehr speichern.
+    if (entry.type === 'packages') {
+      return `<div class="field">
+        <label>${escapeHtml(entry.label)}</label>
+        <div class="pack-editor" id="packages"></div>
+        <button type="button" class="btn btn-sm" id="add-package" style="align-self:flex-start;margin-top:.6rem">
+          ${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
+        ${help}
+      </div>`;
     }
 
     if (entry.type === 'password') {
@@ -1926,7 +2119,7 @@ async function settings(root) {
 
     if (entry.type === 'textarea') {
       return `<div class="field"><label for="${id}">${escapeHtml(entry.label)}</label>
-        <textarea id="${id}" data-set="${entry.key}" rows="5">${escapeHtml(value(entry.key))}</textarea>
+        <textarea id="${id}" data-set="${entry.key}" rows="8">${escapeHtml(value(entry.key))}</textarea>
         ${help}</div>`;
     }
 
@@ -1939,16 +2132,7 @@ async function settings(root) {
       ${help}</div>`;
   }
 
-  function packageEditor() {
-    return `<div class="field">
-      <label>${escapeHtml(tr('bill.topUp'))}</label>
-      <div id="packages" class="stack"></div>
-      <button type="button" class="btn btn-sm" id="add-package" style="align-self:flex-start;margin-top:.5rem">
-        ${icon('plus')}</button>
-    </div>`;
-  }
-
-  function mailTools(data) {
+  function mailTools() {
     return `<div class="row wrap" style="gap:.5rem">
       <button type="button" class="btn btn-sm" id="mail-test">${icon('send')} ${escapeHtml(
         tr('adm.testMail')
@@ -1974,28 +2158,41 @@ async function settings(root) {
     </div>`;
   }
 
+  /** Die Aufladepakete: Betrag in Cent, dafür so viele Credits, dazu die Beschriftung. */
   const paintPackages = () => {
-    $('#packages').innerHTML = packages
-      .map(
-        (pack, index) => `<div class="row" style="gap:.5rem">
-          <input type="number" data-pack="${index}" data-key="cent" value="${pack.cent}"
-            style="max-width:7rem" aria-label="Cent">
-          <input type="number" data-pack="${index}" data-key="credits" value="${pack.credits}"
-            style="max-width:7rem" aria-label="Credits">
-          <input type="text" data-pack="${index}" data-key="label" value="${escapeHtml(pack.label || '')}"
-            style="max-width:7rem" aria-label="Label">
-          <button type="button" class="btn btn-ghost btn-sm btn-danger" data-pack-del="${index}">${icon('x')}</button>
-        </div>`
-      )
-      .join('');
-    $$('[data-pack]').forEach((input) =>
-      input.addEventListener('change', () => {
+    const box = $('#packages');
+    if (!box) return;
+    box.innerHTML = packages.length
+      ? `<div class="pack-row pack-head">
+          <span>${escapeHtml(tr('adm.packCent'))}</span>
+          <span>${escapeHtml(tr('common.credits'))}</span>
+          <span>${escapeHtml(tr('adm.packLabel'))}</span>
+          <span></span>
+        </div>
+        ${packages
+          .map(
+            (pack, index) => `<div class="pack-row">
+              <input type="number" min="100" step="50" data-pack="${index}" data-key="cent"
+                value="${Number(pack.cent) || 0}" aria-label="${escapeHtml(tr('adm.packCent'))}">
+              <input type="number" min="1" data-pack="${index}" data-key="credits"
+                value="${Number(pack.credits) || 0}" aria-label="${escapeHtml(tr('common.credits'))}">
+              <input type="text" data-pack="${index}" data-key="label"
+                value="${escapeHtml(pack.label || '')}" aria-label="${escapeHtml(tr('adm.packLabel'))}">
+              <button type="button" class="btn btn-ghost btn-sm btn-danger"
+                data-pack-del="${index}" title="${escapeHtml(tr('common.delete'))}">${icon('x')}</button>
+            </div>`
+          )
+          .join('')}`
+      : `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`;
+
+    $$('[data-pack]', box).forEach((input) =>
+      input.addEventListener('input', () => {
         const index = Number(input.dataset.pack);
         const key = input.dataset.key;
         packages[index][key] = key === 'label' ? input.value : Number(input.value);
       })
     );
-    $$('[data-pack-del]').forEach((button) =>
+    $$('[data-pack-del]', box).forEach((button) =>
       button.addEventListener('click', () => {
         packages.splice(Number(button.dataset.packDel), 1);
         paintPackages();
@@ -2003,7 +2200,7 @@ async function settings(root) {
     );
   };
   paintPackages();
-  $('#add-package').addEventListener('click', () => {
+  $('#add-package')?.addEventListener('click', () => {
     packages.push({ cent: 500, credits: 500, label: '5 €' });
     paintPackages();
   });
@@ -2031,12 +2228,15 @@ async function settings(root) {
   );
 
   $('#save').addEventListener('click', async () => {
-    const body = { packages };
+    // Nur die Felder dieses Reiters gehen mit. Der Server geht ohnehin über jeden Schlüssel
+    // einzeln, und was gerade nicht auf dem Bildschirm steht, hat auch niemand geändert.
+    const body = {};
     for (const input of $$('[data-set]')) {
       if (input.type === 'checkbox') body[input.dataset.set] = input.checked ? 1 : 0;
       else if (input.type === 'password' && !input.value) continue; // leer = nicht angefasst
       else body[input.dataset.set] = input.value;
     }
+    if (fields.some((entry) => entry.type === 'packages')) body.packages = packages;
     try {
       await api('/admin/settings', { method: 'PATCH', body });
       ok(tr('adm.saved'));
@@ -2047,7 +2247,7 @@ async function settings(root) {
     }
   });
 
-  $('#mail-test').addEventListener('click', async () => {
+  $('#mail-test')?.addEventListener('click', async () => {
     const answer = await formDialog(tr('adm.testMail'), [
       { key: 'to', label: tr('auth.register.email'), value: state.me.email },
     ]);

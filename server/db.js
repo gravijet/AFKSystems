@@ -535,6 +535,34 @@ const migrations = [
       for (const entry of ADDON_SEED) addon.run(entry);
     },
   },
+  {
+    name: '006-tarif-merkmale-frei-schreibbar',
+    sql: `
+      -- ---------------------------------------------------------------- Tarife
+      -- Bisher baute die Preisseite die Merkmalsliste eines Tarifs selbst zusammen: "5 Bots",
+      -- "Premium-Client", "2000 Zeilen Chatverlauf". Was dort steht, ließ sich nur durch Ändern
+      -- von Zahlen beeinflussen – ein eigener Satz war nicht möglich. Diese beiden Felder sind
+      -- die Liste im Wortlaut, eine Zeile je Punkt. Leer heißt weiterhin: zusammengebaut.
+      ALTER TABLE plans ADD COLUMN features_de TEXT NOT NULL DEFAULT '';
+      ALTER TABLE plans ADD COLUMN features_en TEXT NOT NULL DEFAULT '';
+    `,
+    run() {
+      // Die Anzeigetafel gehört ab jetzt zu jedem bezahlten Tarif. Sie war ein Zusatz für 59
+      // Credits – für etwas, das nur anzeigt, was der Server ohnehin an den Bot schickt, ist das
+      // eine Schranke ohne Gegenwert. Menüs bleiben der Zusatz, der Premium von Ultra trennt.
+      db.prepare('UPDATE plans SET board = 1 WHERE free_slot = 0').run();
+      db.prepare("UPDATE addons SET active = 0, available = 0 WHERE key = 'board'").run();
+      // Wer die Anzeigetafel gekauft hat, hat sie jetzt im Tarif – die Buchung kann weg.
+      db.prepare(
+        "DELETE FROM profile_addons WHERE addon_id IN (SELECT id FROM addons WHERE key = 'board')"
+      ).run();
+
+      // Die Live-Ansicht wird je Konto und Serverplatz bezahlt und steckt in keinem Tarif –
+      // auch nicht in Ultra. Sie ist angekündigt, mehr nicht.
+      db.prepare('UPDATE plans SET pov = 0').run();
+      db.prepare("UPDATE addons SET available = 0, active = 1 WHERE key = 'pov'").run();
+    },
+  },
 ];
 
 /**
@@ -558,26 +586,11 @@ const ADDON_SEED = [
     sort: 10,
   },
   {
-    key: 'board',
-    name_de: 'Anzeigetafel und Spielerliste',
-    name_en: 'Scoreboard and player list',
-    text_de: 'Die Seitenleiste des Servers und die Spielerliste im Panel, mit Farben wie im Spiel.',
-    text_en: 'The server sidebar and the player list in the panel, in the colours the game uses.',
-    price_credits: 59,
-    kind: 'flag',
-    flag: 'board',
-    amount: 1,
-    max_qty: 1,
-    need_cap: 'board',
-    available: 1,
-    sort: 20,
-  },
-  {
     key: 'menus',
     name_de: 'Menüs bedienen',
     name_en: 'Use menus',
-    text_de: 'Öffnet der Server ein Menü, siehst du es als Raster und klickst ein Feld an.',
-    text_en: 'When the server opens a menu you see it as a grid and can click a slot.',
+    text_de: 'Öffnet der Server ein Menü, siehst du es mit seinen Gegenständen und klickst ein Feld an. Im Ultra-Tarif schon enthalten.',
+    text_en: 'When the server opens a menu you see it with its items and can click a slot. Already part of the Ultra plan.',
     price_credits: 59,
     kind: 'flag',
     flag: 'menus',
@@ -591,8 +604,8 @@ const ADDON_SEED = [
     key: 'pov',
     name_de: 'Live-Ansicht (POV)',
     name_en: 'Live view (POV)',
-    text_de: 'Sehen, was der Bot sieht – je Serverplatz und Konto. Noch nicht buchbar.',
-    text_en: 'See what the bot sees, per server slot and account. Not bookable yet.',
+    text_de: 'Sehen, was der Bot sieht – je Konto und Serverplatz einzeln zu buchen. In keinem Tarif enthalten, auch nicht in Ultra. Kommt später.',
+    text_en: 'See what the bot sees – booked per account and server slot. Part of no plan, not even Ultra. Coming later.',
     price_credits: 199,
     kind: 'flag',
     flag: 'pov',
@@ -686,8 +699,9 @@ const PLAN_SEED = [
     chat_limit: 2000,
     chat_limit_editable: 1,
     priority_support: 1,
-    // Anzeigetafel und Menüs gehören zu Ultra – auf Premium lassen sie sich dazukaufen.
-    board: 0,
+    // Die Anzeigetafel gehört zu jedem bezahlten Platz. Menüs sind der Zusatz, den Premium
+    // dazukaufen kann und der in Ultra schon drinsteckt – das ist der Unterschied der beiden.
+    board: 1,
     menus: 0,
     pov: 0,
     max_macros: 40,

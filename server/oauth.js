@@ -15,6 +15,7 @@ import { db, getSetting, audit } from './db.js';
 import { config } from './config.js';
 import { bad, HttpError, hashPassword, token as randomToken } from './util.js';
 import * as mail from './mail.js';
+import { grant } from './billing.js';
 import { bridge } from './bridge.js';
 
 // ---------------------------------------------------------------- Anbieter
@@ -232,6 +233,14 @@ export async function callback({ code, state: value }) {
         }
       );
     }
+    // Hier entsteht ein neues Konto – also gilt dasselbe wie im Formular: ist die Registrierung
+    // zu, entsteht keines. Ohne diese Prüfung war "Registrierung offen: aus" eine Tür, die nur
+    // vorne verschlossen war.
+    if (!Number(getSetting('registration_open')) || !config.registrationOpen) {
+      throw bad('Neue Konten sind gerade nicht möglich.', {
+        en: 'New accounts are closed at the moment.',
+      });
+    }
     user = createFromIdentity(which, account, entry.lang);
     created = true;
   }
@@ -292,6 +301,10 @@ function createFromIdentity(which, account, lang) {
     )
     .run(account.email, username, hashPassword(randomToken(32)), lang === 'de' ? 'de' : 'en', Date.now());
   writeIdentity(info.lastInsertRowid, which, account);
+  // Das Startguthaben gilt für jedes neue Konto, egal auf welchem Weg es entstanden ist. Vorher
+  // bekam es nur, wer sich über das Formular anmeldete.
+  const bonus = Number(getSetting('signup_bonus')) || 0;
+  if (bonus > 0) grant(info.lastInsertRowid, bonus, 'bonus', 'Startguthaben');
   audit(info.lastInsertRowid, 'register', { via: which.key });
   return db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
 }

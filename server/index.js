@@ -379,7 +379,7 @@ function push(userId, message) {
 
 supervisor.on('bot-line', ({ userId, key, entry }) => push(userId, { type: 'line', key, entry }));
 supervisor.on('bot-state', ({ userId, key, state }) => push(userId, { type: 'state', key, state }));
-// Anzeigetafel, Spielerliste und Menü. Sie gehen denselben Weg wie ein Zustandswechsel, damit die
+// Anzeigetafel und Menü. Sie gehen denselben Weg wie ein Zustandswechsel, damit die
 // Ansicht ohne Nachfragen aktuell ist.
 supervisor.on('bot-view', ({ userId, key, kind, view }) => push(userId, { type: 'view', key, kind, view }));
 

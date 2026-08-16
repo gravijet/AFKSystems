@@ -737,7 +737,7 @@ router.get(
 );
 
 /**
- * Anzeigetafel, Spielerliste und Menü der Bots dieses Platzes.
+ * Anzeigetafel und Menü der Bots dieses Platzes.
  *
  * Sie stehen nicht im Chat, weil sie kein Chat sind: dreizehn Zeilen Seitenleiste zwischen den
  * Nachrichten sind für niemanden zu lesen. Der Client schickt sie auf Anfrage, das Panel hält
@@ -747,7 +747,7 @@ router.get(
   '/:id/views',
   wrap((req, res) => {
     const profile = ownedProfile(req);
-    const kinds = ['board', 'tab', 'menu'];
+    const kinds = ['board', 'menu'];
     const wanted = kinds.includes(String(req.query.kind)) ? [String(req.query.kind)] : kinds;
     const out = [];
     for (const member of membersOf(profile)) {

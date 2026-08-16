@@ -1,7 +1,7 @@
 // Guthaben: Stand, Serverplätze, Aufladen, Gutschein einlösen, Kontoauszug.
 
 import { api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, copy, formDialog } from '../ui.js';
-import { state, appbar, refresh, draw } from '../app.js';
+import { appbar, refresh, draw } from '../app.js';
 
 const KIND = {
   topup: 'bill.kind.topup',
@@ -141,7 +141,7 @@ export async function render(root) {
         : ''
     }
 
-    <div class="grid two" style="align-items:start;margin-top:1.5rem">
+    <div class="grid two" style="margin-top:1.5rem">
       <section class="panel">
         <header><h3>${escapeHtml(tr('bill.slots'))}</h3></header>
         <div class="body" style="padding:0">

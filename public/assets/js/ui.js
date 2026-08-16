@@ -7,9 +7,53 @@ import { parseFormatting } from './chatlog.js';
 //
 // Die Sprache steht im <html lang="…">, das der Server schon richtig ausliefert. Von dort holen
 // wir sie – so gibt es keinen zweiten Ort, an dem sie stehen könnte, und nichts blitzt falsch auf.
+//
+// Gemerkt wird sie **im Browser** (localStorage `afk-lang`) und zusätzlich im Cookie `lang`, das
+// der Server liest. Der Ablauf ist damit:
+//
+//   1. Erster Besuch: nichts gespeichert – der Server nimmt die Sprache des Browsers
+//      (Accept-Language) und schickt einen auf /en oder /de. Was dabei herauskam, merken wir uns.
+//   2. Jeder weitere Besuch: die gemerkte Sprache gilt, auch wenn jemand über einen Link in der
+//      anderen Sprache hereinkommt – dann wird einmal umgeleitet.
+//   3. Umschalten: schreibt beides neu und geht auf dieselbe Seite in der anderen Sprache.
+//
+// Das gilt für Website und Dashboard gleichermaßen: beide laden diese Datei.
+
+const STORE_KEY = 'afk-lang';
+
+const readStore = () => {
+  try {
+    const value = localStorage.getItem(STORE_KEY);
+    return LANGS.includes(value) ? value : null;
+  } catch {
+    return null; // privater Modus: dann gilt eben das Cookie
+  }
+};
+
+const writeStore = (value) => {
+  try {
+    localStorage.setItem(STORE_KEY, value);
+  } catch {
+    /* siehe oben */
+  }
+  document.cookie = `lang=${value}; path=/; max-age=${365 * 86400}; samesite=lax`;
+};
 
 const documentLang = document.documentElement.lang;
-export const lang = LANGS.includes(documentLang) ? documentLang : DEFAULT_LANG;
+const pageLang = LANGS.includes(documentLang) ? documentLang : DEFAULT_LANG;
+const stored = readStore();
+
+// Steht etwas anderes gespeichert, als gerade ausgeliefert wurde, gehört der Besucher auf die
+// gespeicherte Fassung. Einmal umleiten, nicht öfter: danach stimmt <html lang> überein.
+if (stored && stored !== pageLang && /^\/(en|de)(\/|$)/.test(location.pathname)) {
+  document.cookie = `lang=${stored}; path=/; max-age=${365 * 86400}; samesite=lax`;
+  location.replace(
+    `/${stored}${location.pathname.replace(/^\/(en|de)/, '')}${location.search}${location.hash}`
+  );
+}
+if (!stored) writeStore(pageLang);
+
+export const lang = pageLang;
 export const locale = lang === 'de' ? 'de-DE' : 'en-GB';
 
 /** Ein Text in der Sprache dieser Seite. */
@@ -410,19 +454,28 @@ export async function copy(text) {
   }
 }
 
-/** Sprache umschalten: Cookie setzen und auf dieselbe Seite in der anderen Sprache gehen. */
+/** Sprache umschalten: merken und auf dieselbe Seite in der anderen Sprache gehen. */
 export function switchLang(next) {
-  document.cookie = `lang=${next}; path=/; max-age=${365 * 86400}; samesite=lax`;
+  if (!LANGS.includes(next)) return;
+  writeStore(next);
   const rest = location.pathname.replace(/^\/(en|de)/, '');
   location.href = `/${next}${rest}${location.search}${location.hash}`;
 }
 
+// Die Sprachwahl in der Kopfleiste sind gewöhnliche Links (/en…, /de…) – damit sie auch dann
+// funktionieren, wenn kein JavaScript läuft, und für Suchmaschinen echte Adressen sind. Klickt
+// jemand darauf, während JavaScript läuft, merken wir die Wahl vorher.
 document.addEventListener('click', (event) => {
   const button = event.target.closest('[data-lang]');
   if (button && LANGS.includes(button.dataset.lang)) {
     event.preventDefault();
     switchLang(button.dataset.lang);
+    return;
   }
+  const link = event.target.closest('.langs a[href^="/"]');
+  if (!link) return;
+  const wanted = link.getAttribute('href').slice(1, 3);
+  if (LANGS.includes(wanted)) writeStore(wanted);
 });
 
 applyTheme();

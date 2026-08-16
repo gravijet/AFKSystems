@@ -109,8 +109,8 @@ export const S = {
   'rail.perMonth': { en: 'per 30 days', de: 'je 30 Tage' },
   'rail.month': { en: 'Billing period', de: 'Abrechnung je' },
   'rail.monthValue': { en: '30 days', de: '30 Tage' },
-  'rail.reconnect': { en: 'Reconnect', de: 'Neuverbindung' },
-  'rail.reconnectValue': { en: 'automatic', de: 'automatisch' },
+  'rail.reconnect': { en: 'After a dropout', de: 'Nach einem Abbruch' },
+  'rail.reconnectValue': { en: 'joins again', de: 'tritt wieder bei' },
 
   'home.what.title': { en: 'What you can do with it', de: 'Was du damit machen kannst' },
   'home.what.lead': {
@@ -139,16 +139,6 @@ export const S = {
   },
   'home.what.link': { en: 'All features', de: 'Alle Funktionen' },
 
-  'demo.title': { en: 'This is what you get', de: 'So sieht es aus' },
-  'demo.lead': {
-    en: 'The chat of your server, live, with the sidebar next to it. Write into it, send commands, watch what happens – from a browser, on any device.',
-    de: 'Der Chat deines Servers, live, daneben die Seitenleiste. Hineinschreiben, Befehle senden, mitlesen – aus dem Browser, auf jedem Gerät.',
-  },
-  'demo.note': {
-    en: 'Example lines. Everything you see here is built from the same parts as the panel itself.',
-    de: 'Beispielzeilen. Alles, was hier steht, ist aus denselben Teilen gebaut wie das Panel selbst.',
-  },
-
   'home.price.title': { en: 'What it costs', de: 'Was es kostet' },
   'home.price.lead': {
     en: 'The first server slot is free. Every further one is paid from your credit balance for 30 days at a time and can be stopped whenever you like.',
@@ -164,6 +154,7 @@ export const S = {
   },
   'features.premium': { en: 'Paid slot', de: 'Bezahlter Platz' },
   'features.ultra': { en: 'Ultra or add-on', de: 'Ultra oder Zusatz' },
+  'features.soon': { en: 'Coming later', de: 'Kommt später' },
 
   // ------------------------------------------------ Preise
   'pricing.title': { en: 'Plans and prices', de: 'Tarife und Preise' },
@@ -199,7 +190,8 @@ export const S = {
   'pricing.bots': { en: 'bots at once on this server', de: 'Bots gleichzeitig auf diesem Server' },
   'pricing.bot': { en: 'bot on this server', de: 'Bot auf diesem Server' },
   'pricing.premiumClient': { en: 'Movement, anti-AFK, sneaking', de: 'Bewegung, Anti-AFK, Schleichen' },
-  'pricing.boardMenus': { en: 'Scoreboard, player list, menus', de: 'Anzeigetafel, Spielerliste, Menüs' },
+  'pricing.board': { en: 'Scoreboard as in the game', de: 'Anzeigetafel wie im Spiel' },
+  'pricing.menus': { en: 'Open and use menus', de: 'Menüs öffnen und bedienen' },
   'pricing.macros': { en: '{n} macros per server', de: '{n} Macros je Server' },
   'pricing.addonHint': { en: 'bookable as an add-on', de: 'als Zusatz buchbar' },
   'pricing.slimClient': { en: 'Connect, chat, commands, macros', de: 'Verbinden, Chat, Befehle, Macros' },
@@ -336,6 +328,9 @@ export const S = {
   'auth.login.noAccount': { en: 'No account yet?', de: 'Noch kein Konto?' },
   'auth.login.forgot': { en: 'Forgot your password?', de: 'Passwort vergessen?' },
   'auth.login.discord': { en: 'Continue with Discord', de: 'Weiter mit Discord' },
+  'auth.login.google': { en: 'Continue with Google', de: 'Weiter mit Google' },
+  'auth.register.discord': { en: 'Sign up with Discord', de: 'Mit Discord registrieren' },
+  'auth.register.google': { en: 'Sign up with Google', de: 'Mit Google registrieren' },
   'auth.or': { en: 'or', de: 'oder' },
   'auth.working': { en: 'One moment …', de: 'Einen Moment …' },
 
@@ -553,7 +548,7 @@ export const S = {
   'srv.new': { en: 'Add a server', de: 'Server anlegen' },
   'srv.name': { en: 'Name', de: 'Name' },
   'srv.address': { en: 'Server address', de: 'Serveradresse' },
-  'srv.addressHint': { en: 'For example play.example.net or 192.0.2.1:25565', de: 'Zum Beispiel play.example.net oder 192.0.2.1:25565' },
+  'srv.addressHint': { en: 'For example example.invalid or 192.0.2.1:25565', de: 'Zum Beispiel example.invalid oder 192.0.2.1:25565' },
   'srv.version': { en: 'Minecraft version', de: 'Minecraft-Version' },
   'srv.plan': { en: 'Plan', de: 'Tarif' },
   'srv.planFreeLeft': { en: '{n} free slot(s) left', de: 'noch {n} Gratis-Platz/Plätze' },
@@ -586,7 +581,6 @@ export const S = {
   'srv.chatPlaceholder': { en: 'Message or /command …', de: 'Nachricht oder /Befehl …' },
   'srv.chatAll': { en: 'to every selected account', de: 'an alle ausgewählten Konten' },
   'srv.chatEmpty': { en: 'No messages yet.', de: 'Noch keine Nachrichten.' },
-  'srv.logEmpty': { en: 'No replies yet.', de: 'Noch keine Antworten.' },
   'srv.chatLimit': { en: 'Chat history per bot', de: 'Chatverlauf je Bot' },
   'srv.chatLimitLocked': {
     en: 'The free slot keeps {n} lines. Paid slots can raise it.',
@@ -652,10 +646,9 @@ export const S = {
     en: 'Small, restrained movements against plugins that look for real activity. 0 turns it off.',
     de: 'Kleine, zurückhaltende Bewegungen gegen Plugins, die auf echte Aktivität prüfen. 0 schaltet es aus.',
   },
-  'srv.tabList': { en: 'Player list', de: 'Spielerliste' },
   'srv.boardHint': {
-    en: 'The client asks the server for its current sidebar and player list and prints them below.',
-    de: 'Der Client fragt die aktuelle Seitenleiste und die Spielerliste ab und schreibt sie unten hin.',
+    en: 'The client asks the server for its current sidebar and shows it below.',
+    de: 'Der Client fragt die aktuelle Seitenleiste ab und zeigt sie unten an.',
   },
   'srv.menuOpen': { en: 'Menu open', de: 'Offenes Menü' },
   'srv.menuHint': {
@@ -667,7 +660,6 @@ export const S = {
   'srv.button': { en: 'Button', de: 'Taste' },
   'srv.left': { en: 'Left', de: 'Links' },
   'srv.right': { en: 'Right', de: 'Rechts' },
-  'srv.answers': { en: 'What the client says', de: 'Antworten des Clients' },
   'srv.macroHint': {
     en: 'A macro has one trigger and a chain of steps that run in order. Plain chat chains on join go to the client itself; everything else is timed by the panel so changes take effect at once.',
     de: 'Ein Macro hat einen Auslöser und eine Kette von Schritten, die der Reihe nach laufen. Reine Chat-Ketten beim Beitritt übernimmt der Client selbst – alles andere taktet das Panel, damit Änderungen sofort greifen.',
@@ -689,19 +681,17 @@ export const S = {
   },
   'srv.waitBefore': { en: 'Wait before (seconds)', de: 'Vorher warten (Sekunden)' },
   'srv.behaviour': { en: 'Behaviour', de: 'Verhalten' },
-  'srv.network': { en: 'Network', de: 'Netzwerk' },
   'srv.joinDelay': { en: 'Wait after joining (seconds)', de: 'Wartezeit nach dem Beitritt (Sekunden)' },
   'srv.autoReconnect': { en: 'Reconnect automatically after a drop', de: 'Nach einem Abbruch automatisch neu verbinden' },
   'srv.firstWait': { en: 'First wait (s)', de: 'Erste Wartezeit (s)' },
   'srv.maxWait': { en: 'Upper limit (s)', de: 'Obergrenze (s)' },
   'srv.chatDelay': { en: 'Minimum gap between messages (ms)', de: 'Mindestabstand zweier Nachrichten (ms)' },
   'srv.useMovement': { en: 'Use the movement build', de: 'Bewegungs-Bauform verwenden' },
-  'srv.fakehost': { en: 'Fake host in the handshake', de: 'Fake-Host im Handshake' },
-  'srv.fakehostHint': {
-    en: 'The address sent in the handshake. The connection still goes to the real target.',
-    de: 'Die Adresse im Handshake. Die Verbindung geht trotzdem zum echten Ziel.',
-  },
   'srv.onCooldown': { en: 'Cooldown between macro triggers (s)', de: 'Sperrzeit zwischen Macro-Auslösern (s)' },
+  'srv.onCooldownHint': {
+    en: 'How long the same trigger stays quiet after it fired once.',
+    de: 'Wie lange derselbe Auslöser Ruhe gibt, nachdem er einmal ausgelöst hat.',
+  },
   'srv.danger': { en: 'Danger zone', de: 'Gefährlicher Bereich' },
   'srv.deleteHint': {
     en: 'Deleting stops every bot here and removes macros, repeats and assignments. The Minecraft accounts themselves stay.',
@@ -842,6 +832,13 @@ export const S = {
 
   // ---------------------------------------------------------------- Administration
   'adm.title': { en: 'Administration', de: 'Administration' },
+  // Die Gruppen der Seitenleiste im Admin-Bereich.
+  'adm.group.work': { en: 'Day-to-day', de: 'Tagesgeschäft' },
+  'adm.group.money': { en: 'Plans and money', de: 'Tarife und Geld' },
+  'adm.group.platform': { en: 'Platform', de: 'Plattform' },
+  'adm.group.logs': { en: 'Logs and health', de: 'Protokolle und Zustand' },
+  'adm.packCent': { en: 'Amount in cents', de: 'Betrag in Cent' },
+  'adm.packLabel': { en: 'Label', de: 'Beschriftung' },
   'adm.overview': { en: 'Overview', de: 'Übersicht' },
   'adm.users': { en: 'Users', de: 'Nutzer' },
   'adm.plans': { en: 'Plans', de: 'Tarife' },
@@ -937,17 +934,14 @@ export const S = {
 
   // ---------------------------------------------------------------- Anzeigetafel und Menüs
   'vw.board': { en: 'Scoreboard', de: 'Anzeigetafel' },
-  'vw.tab': { en: 'Player list', de: 'Spielerliste' },
   'vw.menu': { en: 'Menu', de: 'Menü' },
   'vw.fetch': { en: 'Fetch', de: 'Abrufen' },
   'vw.empty': { en: 'The server is not showing one right now.', de: 'Der Server zeigt gerade keine an.' },
-  'vw.emptyTab': { en: 'No player list yet.', de: 'Noch keine Spielerliste.' },
   'vw.emptyMenu': { en: 'No menu is open.', de: 'Gerade ist kein Menü offen.' },
   'vw.hint': {
     en: 'The scoreboard is read once when you ask for it – it is not a live feed.',
     de: 'Die Anzeigetafel wird bei jeder Abfrage einmal gelesen – sie läuft nicht mit.',
   },
-  'vw.players': { en: '{n} players', de: '{n} Spieler' },
   'vw.slots': { en: '{n} slots', de: '{n} Felder' },
   'vw.clickSlot': { en: 'Click a slot to use it.', de: 'Klick ein Feld an, um es zu benutzen.' },
   'vw.menuBlind': {
@@ -974,9 +968,6 @@ export const S = {
   },
   'ch.heardBy': { en: 'heard by {n}', de: 'von {n} gehört' },
   'ch.onlyOne': { en: 'only {name}', de: 'nur {name}' },
-  'ch.filter': { en: 'Show', de: 'Zeigen' },
-  'ch.all': { en: 'Everything', de: 'Alles' },
-  'ch.chatOnly': { en: 'Chat only', de: 'Nur Chat' },
   'ch.clear': { en: 'Clear view', de: 'Ansicht leeren' },
   'ch.connected': { en: 'Live', de: 'Live' },
   'ch.reconnecting': { en: 'Reconnecting …', de: 'Verbinde neu …' },
@@ -1047,14 +1038,21 @@ export const S = {
   'tk.typingMany': { en: 'Several people are writing …', de: 'Mehrere schreiben …' },
   'tk.viaDiscord': { en: 'via Discord', de: 'über Discord' },
   'tk.inDiscord': { en: 'Also open in Discord', de: 'Läuft auch in Discord' },
-  'tk.staffTab': { en: 'All tickets', de: 'Alle Tickets' },
-  'tk.mineTab': { en: 'Mine', de: 'Meine' },
   'tk.setStatus': { en: 'Status', de: 'Zustand' },
   'tk.assign': { en: 'Handled by', de: 'Bearbeitet von' },
   'tk.unassigned': { en: 'nobody yet', de: 'noch niemand' },
   'tk.internalNote': { en: 'Internal note', de: 'Interne Notiz' },
   'tk.internalHint': { en: 'Only the team sees this.', de: 'Das sieht nur das Team.' },
   'tk.newFor': { en: 'New ticket for a customer', de: 'Ticket für einen Kunden' },
+  'tk.onlySubject': {
+    en: 'No text yet – only the subject. Write below to add something.',
+    de: 'Noch kein Text – nur der Betreff. Schreib unten, wenn du etwas ergänzen willst.',
+  },
+  'tk.discordTitle': { en: 'Ask in Discord', de: 'Im Discord fragen' },
+  'tk.discordText': {
+    en: 'Other players are often faster than we are – and there is no waiting for a reply.',
+    de: 'Andere Spieler sind oft schneller als wir – und du wartest auf keine Antwort.',
+  },
   'tk.system': { en: 'System', de: 'System' },
   'tk.writeHint': { en: 'Enter sends, Shift+Enter is a new line.', de: 'Enter schickt ab, Shift+Enter macht eine neue Zeile.' },
   'tk.priorityShort': { en: 'Priority', de: 'Dringlichkeit' },
