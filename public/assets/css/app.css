@@ -2079,8 +2079,10 @@ dialog footer {
 
 /* Die Unterreiter eines Serverplatzes in der Seitenleiste. */
 .subtabs {
-  margin: 0.15rem 0 0.65rem 0.85rem;
-  padding: 0.38rem 0.4rem 0.38rem 0.7rem;
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.15rem 0 0.75rem 0.85rem;
+  padding: 0.5rem 0.45rem 0.5rem 0.7rem;
   border-left: 2px solid color-mix(in oklab, var(--primary) 45%, var(--line));
   border-radius: 0 var(--r-lg) var(--r-lg) 0;
   background: color-mix(in oklab, var(--primary) 4%, transparent);
@@ -2089,6 +2091,10 @@ dialog footer {
   min-height: 2rem;
   padding: 0.35rem 0.45rem;
   font-size: 0.8125rem;
+}
+.side-tab-group + .side-tab-group {
+  padding-top: 0.4rem;
+  border-top: 1px solid color-mix(in oklab, var(--line) 72%, transparent);
 }
 .side-subtabs-label {
   display: block;
@@ -2150,11 +2156,27 @@ dialog footer {
   margin-top: 0.25rem;
 }
 .side-primary {
-  padding-bottom: 0.45rem;
-  border-bottom: 1px solid var(--line);
+  padding-bottom: 0;
+}
+.side-nav-block {
+  padding: 0.4rem 0 0.6rem;
+}
+.side-nav-block + .side-nav-block {
+  border-top: 1px solid var(--line);
+}
+.side-nav-label {
+  display: block;
+  margin: 0.2rem 0.65rem 0.35rem;
+  color: var(--text-2);
+  font-size: 0.67rem;
+  font-weight: 780;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
 .side-servers {
-  margin-top: 0.35rem;
+  margin-top: 0;
+  padding: 0.3rem 0 0.5rem;
+  border-top: 1px solid var(--line);
 }
 .side-add {
   justify-content: flex-start;
@@ -2180,54 +2202,30 @@ dialog footer {
   color: var(--primary);
 }
 .admin-tools {
-  margin-top: 0.25rem;
-  padding-top: 0.3rem;
+  margin-top: 0;
+  padding: 0.45rem 0 0.6rem;
   border-top: 1px solid var(--line);
 }
 .admin-groups {
   display: grid;
-  gap: 0.18rem;
+  gap: 0.65rem;
 }
 .admin-group {
-  border: 1px solid transparent;
+  padding: 0.45rem 0.35rem 0.35rem;
+  border: 1px solid color-mix(in oklab, var(--line) 75%, transparent);
   border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--text) 2%, transparent);
 }
-.admin-group[open] {
-  border-color: color-mix(in oklab, var(--line) 75%, transparent);
-  background: color-mix(in oklab, var(--text) 2.5%, transparent);
-}
-.admin-group > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 2.25rem;
-  padding: 0.35rem 0.55rem;
+.admin-group-title {
+  padding: 0.1rem 0.35rem 0.4rem;
   color: var(--text-2);
-  cursor: pointer;
   font-size: 0.76rem;
   font-weight: 750;
   letter-spacing: 0.06em;
-  list-style: none;
   text-transform: uppercase;
 }
-.admin-group > summary::-webkit-details-marker {
-  display: none;
-}
-.admin-group > summary:hover {
-  color: var(--text);
-}
-.admin-group .side-section-arrow {
-  width: 0.7rem;
-  height: 0.7rem;
-}
-.admin-group[open] > summary .side-section-arrow {
-  transform: rotate(-90deg);
-}
-.admin-group:not([open]) > summary .side-section-arrow {
-  transform: rotate(90deg);
-}
 .admin-group .nav {
-  padding: 0 0.25rem 0.3rem;
+  padding: 0;
 }
 
 .side .nav .count,
