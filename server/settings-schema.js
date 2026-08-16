@@ -421,22 +421,22 @@ export const SETTINGS = [
     key: 'discord_role_admin',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Administrator (Linked Role)', help: 'Diese Linked Role wird nicht direkt synchronisiert. Ihre ID gibt dem Admin Zugriff auf Ticket-Kanäle.' },
-    en: { label: 'Administrator (Linked Role)', help: 'This Linked Role is not synced directly. Its ID grants administrators access to ticket channels.' },
+    de: { label: 'Administrator', help: 'Normale Discord-Rolle; der Bot vergibt sie an Panel-Administratoren.' },
+    en: { label: 'Administrator', help: 'Normal Discord role; the bot gives it to panel administrators.' },
   },
   {
     key: 'discord_role_mod',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Discord Moderator (Linked Role)', help: 'Diese Linked Role wird nicht direkt synchronisiert. Moderator wird im Benutzerprofil gesetzt.' },
-    en: { label: 'Discord Moderator (Linked Role)', help: 'This Linked Role is not synced directly. Moderator status is set in the user profile.' },
+    de: { label: 'Discord Moderator', help: 'Normale Discord-Rolle; der Bot vergibt sie, wenn Moderator im Benutzerprofil gesetzt ist.' },
+    en: { label: 'Discord Moderator', help: 'Normal Discord role; the bot gives it when the moderator flag is set in the user profile.' },
   },
   {
     key: 'discord_role_team',
     group: 'discordroles',
     type: 'text',
-    de: { label: 'Team', help: 'Wird vom Bot vergeben, sobald jemand Admin oder Discord-Mod ist.' },
-    en: { label: 'Team', help: 'Given by the bot as soon as someone is admin or discord mod.' },
+    de: { label: 'Team (Linked Role)', help: 'Die einzige Linked Role. Discord vergibt sie nach der Verknüpfung an Admins und Discord-Mods.' },
+    en: { label: 'Team (Linked Role)', help: 'The only linked role. Discord gives it to admins and Discord moderators after verification.' },
   },
 
   // ---------------------------------------------------------------- Google

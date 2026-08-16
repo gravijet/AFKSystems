@@ -65,8 +65,8 @@ Unter *Administration → Einstellungen → Discord* und *→ Discord-Rollen*:
 | Customer | normale Rolle für jedes verknüpfte Konto |
 | Premium / Ultra | Rollen für die Tarife |
 | Partner / VIP | normale Rollen, die im Benutzerprofil vergeben werden |
-| Admin / Discord Moderator | die beiden einzigen Discord Linked Roles; im Benutzerprofil gesetzt |
-| Team | bekommt automatisch, wer Admin oder Discord-Mod ist |
+| Administrator / Discord Moderator | normale Rollen, die der Bot anhand des Benutzerprofils vergibt |
+| Team | die einzige Discord Linked Role; Discord vergibt sie nach der Verknüpfung für Admins und Discord-Mods |
 
 Für das Geheimnis:
 
@@ -95,7 +95,7 @@ Beim ersten Start sollte im Protokoll stehen:
 ```
 [discord] signed in as AFKSystems#1234
 [discord] commands registered
-[linked roles] registered 2 metadata field(s)
+[linked roles] registered 1 metadata field(s)
 [panel] connected
 [roles] initial sync: updated N member(s)
 ```
@@ -126,16 +126,17 @@ samt Zeitpunkt des letzten Lebenszeichens.
   des Teams bleiben im Panel.
 * Wer im Panel ein Ticket aufmacht, bekommt trotzdem einen Kanal in Discord.
 * Der Knopf **Schließen** schließt es an beiden Stellen. Eine Antwort macht es wieder auf.
-* Geschlossene Kanäle werden umbenannt, nicht gelöscht: der Verlauf bleibt lesbar.
+* Nur Administratoren können Tickets in Discord bearbeiten; Team und Discord-Moderatoren erhalten keinen Zugang zu Ticket-Kanälen.
+* Geschlossene Kanäle wandern in die Kategorie `archived Tickets` und werden nach sieben Tagen gelöscht.
 
 ### Rollen
 
 Stündlich und bei jeder Änderung:
 
 * verknüpftes Konto → **Customer**
-* laufender bezahlter Tarif → **Premium** bzw. **Ultra** (oder die Rolle am Tarif)
+* laufender bezahlter Tarif → **Premium** bzw. **Ultra** (Ultra erhält zusätzlich immer Premium; eine Tarifrolle kommt bei Bedarf dazu)
 * im Panel gesetztes Kennzeichen → **Partner** beziehungsweise **VIP**
-* **Admin** oder **Discord-Mod** → zusätzlich **Team**
+* **Admin** → Administrator, **Discord-Mod** → Discord Moderator; **Team** vergibt Discord als Linked Role nach der Verknüpfung
 
 Bei jedem Beitritt oder Austritt und beim stündlichen Vollabgleich meldet der Bot außerdem die
 Mitgliedschaft an das Panel. Ohne Mitgliedschaft im Pflichtserver wird jeder Gratis-Platz sofort
@@ -146,18 +147,18 @@ Selbstbedienungsrollen – bleibt unberührt.
 
 ### Linked Roles
 
-Der Bot meldet beim Start genau zwei Merkmale an, mit denen Discord Teamrollen an Bedingungen
+Der Bot meldet beim Start genau ein Merkmal an, mit dem Discord die Teamrolle an eine Bedingung
 knüpfen kann:
 
 | Feld | Bedeutung |
 | --- | --- |
-| `administrator` | ist Administrator im AFKSystems-Panel |
-| `discord_moderator` | ist im Panel als Discord Moderator markiert |
+| `team` | ist Administrator oder im Panel als Discord Moderator markiert |
 
 Einrichten: *Servereinstellungen → Rollen → Rolle → Links → AFKSystems → Bedingung*. Die Werte
 schreibt das Panel nach der Zustimmung über **Discord-Rollen auffrischen**. Diese Schaltfläche wird
-nur Administratoren und Discord-Moderatoren gezeigt. Customer, Premium, Ultra, Partner, VIP und
-Team sind ausdrücklich normale Rollen und werden vom Bot direkt synchronisiert.
+nur Administratoren und Discord-Moderatoren gezeigt. Customer, Premium, Ultra, Partner, VIP,
+Administrator und Discord Moderator sind normale Rollen und werden vom Bot direkt synchronisiert;
+**Team** ist die einzige Linked Role.
 
 ### Befehle
 

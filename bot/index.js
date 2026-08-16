@@ -21,6 +21,10 @@ import { Roles } from './handlers/roles.js';
 import { registerMetadata } from './handlers/linkedRoles.js';
 import * as commands from './handlers/commands.js';
 
+// Jede echte Person erhält beim Beitritt die öffentliche Basisrolle. Die ID ist bewusst hier
+// fest, weil sie zur einen AFKSystems-Guild gehört und nicht mit den Panel-Rollen wechselbar ist.
+const JOIN_ROLE_ID = '000000000000000000';
+
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 
 /** Die .env neben dieser Datei lesen – dasselbe schlichte Format wie im Panel. */
@@ -137,6 +141,11 @@ class Bot {
     this.client.on(Events.GuildMemberAdd, (member) => {
       this.roles.membership(member.id, true, member.guild.id).catch(() => {});
       if (String(member.guild.id) === String(this.config.guild_id)) {
+        if (!member.user.bot) {
+          member.roles
+            .add(JOIN_ROLE_ID, 'AFKSystems: default role on server join')
+            .catch((error) => console.warn(`[roles] could not add join role for ${member.user.tag}: ${error.message}`));
+        }
         this.roles.sync(member).catch(() => {});
       }
     });
@@ -175,6 +184,7 @@ class Bot {
       fields: this.config.role_metadata,
     }).catch((error) => console.warn('[linked roles]', error.message));
     await this.tickets.ensurePanel();
+    await this.tickets.enforceStaffAccess();
     const changed = await this.roles.syncAll();
     // Erst nach einem erfolgreichen Vollabgleich vergessen. Schlägt Discord oder das Panel
     // vorübergehend fehl, werden die alten IDs beim nächsten Stundenabgleich erneut bereinigt.
@@ -194,6 +204,7 @@ class Bot {
     }).catch(() => {});
 
     await this.tickets.ensurePanel().catch((error) => console.warn('[tickets]', error.message));
+    await this.tickets.enforceStaffAccess().catch((error) => console.warn('[tickets]', error.message));
     this.panel.connect();
 
     const changed = await this.roles.syncAll().catch(() => 0);
@@ -202,6 +213,9 @@ class Bot {
     // Stündlich: Rollen abgleichen (ein Tarif kann auslaufen, ohne dass jemand etwas anklickt)
     // und dem Panel ein Lebenszeichen geben, damit der Admin-Bereich zeigen kann, dass es läuft.
     setInterval(() => this.roles.syncAll().catch(() => {}), 60 * 60 * 1000).unref();
+    // Geschlossene Kanäle bleiben eine Woche als Archiv sichtbar und werden danach entfernt.
+    setInterval(() => this.tickets.cleanupArchived().catch((error) => console.warn('[tickets]', error.message)), 60 * 60 * 1000).unref();
+    await this.tickets.cleanupArchived().catch((error) => console.warn('[tickets]', error.message));
     const beat = () =>
       this.panel
         .call('/heartbeat', {

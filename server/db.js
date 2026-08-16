@@ -913,9 +913,8 @@ const defaults = {
   discord_role_ultra: '',
   discord_role_partner: '',
   discord_role_vip: '',
-  discord_role_team: '', // bekommt automatisch, wer Admin oder Mod ist
-  // IDs der Discord-Rollen, die an Linked Roles für Administrator/Moderator hängen. Der Bot
-  // synchronisiert sie nicht direkt, braucht sie aber für Ticket-Kanalrechte.
+  discord_role_team: '', // einzige Linked Role; Discord vergibt sie nach der Verknüpfung
+  // Normale Discord-Rollen für Administrator und Moderator, vom Bot synchronisiert.
   discord_role_admin: '',
   discord_role_mod: '',
 

@@ -25,6 +25,8 @@ import {
 } from 'discord.js';
 
 const COLORS = { info: 0x206cfe, ok: 0x00bb7f, warn: 0xfcbb00, bad: 0xfb2c36 };
+const ARCHIVE_CATEGORY_ID = '000000000000000000';
+const ARCHIVE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 
 const STATUS_LABEL = {
   open: 'open',
@@ -170,7 +172,9 @@ export class Tickets {
     const guild = await this.bot.guild();
     if (!guild) return null;
     const parent = this.config.ticket_category || null;
-    const staffRoles = [this.config.roles.team, this.config.roles.admin, this.config.roles.mod].filter(Boolean);
+    // Tickets werden ausschließlich von Panel-Administratoren bearbeitet. Team und Discord-
+    // Moderatoren bekommen deshalb bewusst keine Kanalrechte.
+    const staffRoles = [this.config.roles.admin].filter(Boolean);
 
     const overwrites = [
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
@@ -339,6 +343,7 @@ export class Tickets {
       created_at: event.created_at,
       discord_id: null,
     });
+    if (event.status && event.status !== 'closed') await this.reopenChannel(channel, event.ticket_id);
     if (event.reopened) {
       await channel.send({ content: 'The ticket was reopened by a new reply.' });
     }
@@ -356,10 +361,54 @@ export class Tickets {
           .setDescription(`Status: **${STATUS_LABEL[event.status] || event.status}**`),
       ],
     });
-    // Geschlossen heißt hier: der Kanal wird archiviert, nicht gelöscht. Der Verlauf bleibt an
-    // beiden Stellen lesbar, und eine Antwort macht das Ticket ohnehin wieder auf.
-    if (closed) await channel.setName(`closed-${event.ticket_id}`).catch(() => {});
-    else await channel.setName(`ticket-${event.ticket_id}`).catch(() => {});
+    // Geschlossene Tickets landen eine Woche sichtbar im Discord-Archiv. Bei einer neuen Antwort
+    // wird der Kanal zurück in die aktive Kategorie verschoben.
+    if (closed) {
+      await channel.setName(`closed-${event.ticket_id}`).catch(() => {});
+      await channel.setParent(ARCHIVE_CATEGORY_ID).catch((error) =>
+        console.warn(`[tickets] could not archive #${event.ticket_id}: ${error.message}`)
+      );
+    } else {
+      await this.reopenChannel(channel, event.ticket_id);
+    }
+  }
+
+  async reopenChannel(channel, ticketId) {
+    await channel.setName(`ticket-${ticketId}`).catch(() => {});
+    if (this.config.ticket_category) await channel.setParent(this.config.ticket_category).catch(() => {});
+  }
+
+  /** Entfernt Team-/Mod-Rechte aus bestehenden Kanälen, ohne Kundenzugänge anzutasten. */
+  async enforceStaffAccess() {
+    const result = await this.bot.panel.call('/tickets?open=0').catch(() => null);
+    for (const ticket of result?.tickets || []) {
+      if (!ticket.channel_id) continue;
+      const channel = await this.bot.client.channels.fetch(ticket.channel_id).catch(() => null);
+      if (!channel?.isTextBased()) continue;
+      const admin = this.config.roles.admin;
+      if (admin) {
+        await channel.permissionOverwrites
+          .edit(admin, { ViewChannel: true, SendMessages: true }, 'Only administrators may handle tickets')
+          .catch(() => {});
+      }
+      for (const roleId of [this.config.roles.team, this.config.roles.mod].filter(Boolean)) {
+        await channel.permissionOverwrites.delete(roleId, 'Only administrators may handle tickets').catch(() => {});
+      }
+    }
+  }
+
+  /** Löscht archivierte Discord-Kanäle sieben Tage nach dem Schließen und löst die Zuordnung. */
+  async cleanupArchived() {
+    const result = await this.bot.panel.call('/tickets?open=0').catch(() => null);
+    const threshold = Date.now() - ARCHIVE_RETENTION_MS;
+    for (const ticket of result?.tickets || []) {
+      if (ticket.status !== 'closed' || !ticket.channel_id || Number(ticket.closed_at || 0) > threshold) continue;
+      const channel = await this.bot.client.channels.fetch(ticket.channel_id).catch(() => null);
+      if (channel) await channel.delete('Archived AFKSystems ticket expired after seven days').catch(() => null);
+      await this.bot.panel
+        .call(`/tickets/${ticket.id}`, { method: 'PATCH', body: { channel_id: null } })
+        .catch(() => {});
+    }
   }
 
   async channelOf(ticketId) {

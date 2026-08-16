@@ -38,7 +38,9 @@ const CONTENT_SECURITY_POLICY = [
   "form-action 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
+  // Minecraft-Köpfe kommen von Minotar. Ohne diese explizite, eng begrenzte Ausnahme blockiert
+  // der Browser sie trotz korrekter API-Antwort mit der Content-Security-Policy.
+  "img-src 'self' data: https://minotar.net",
   "font-src 'self'",
   `connect-src 'self' ${websocketOrigin}`,
   "media-src 'none'",
