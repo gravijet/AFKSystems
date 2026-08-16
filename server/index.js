@@ -56,9 +56,6 @@ app.use((req, res, next) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Origin-Agent-Cluster', '?1');
   res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
-  if (config.publicUrl.startsWith('https://')) {
-    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  }
   if (req.path.startsWith('/api/') || /^\/(en|de)\/app(?:\/|$)/.test(req.path)) {
     res.setHeader('Cache-Control', 'no-store');
   }
