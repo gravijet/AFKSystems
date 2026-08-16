@@ -45,9 +45,20 @@ export class ChannelAccess {
     const targetGuild = guild || (await this.bot.guild());
     const moderator = this.config.roles.mod;
     if (!targetGuild || !moderator || String(channel?.guildId || '') !== String(targetGuild.id)) return false;
-    if (!this.shouldGrant(channel, targetGuild)) return false;
 
     const current = channel.permissionOverwrites.cache.get(String(moderator));
+    if (!this.shouldGrant(channel, targetGuild)) {
+      // Ein zuvor durch den Bot freigegebener Kanal kann später auf Admin oder einzelne Nutzer
+      // beschränkt werden. Das explizite Erlaubnisrecht wird dann wieder entfernt.
+      if (!current?.allow.has(PermissionFlagsBits.ViewChannel)) return false;
+      await channel.permissionOverwrites.edit(
+        moderator,
+        { ViewChannel: false },
+        'AFKSystems: Discord Moderator may not view admin-only or member-only channels'
+      );
+      return true;
+    }
+
     if (current?.allow.has(PermissionFlagsBits.ViewChannel)) return false;
     await channel.permissionOverwrites.edit(
       moderator,
