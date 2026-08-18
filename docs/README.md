@@ -11,6 +11,7 @@ Alles zu AFKSystems an einer Stelle. Die kurze Fassung des Ganzen steht in der
 | **[tebex.md](tebex.md)** | Bezahlen mit Tebex: Zugangsdaten, Aufladepakete, Webhook, Testen, Rückerstattungen. |
 | **[discord-bot.md](discord-bot.md)** | Den Discord-Bot aufsetzen: Anwendung, Rechte, Kanäle, Rollen, Tickets. |
 | **[google-anmeldung.md](google-anmeldung.md)** | Anmelden mit Google einrichten. |
+| **[umzug.md](umzug.md)** | Auf einen anderen Server umziehen: was mitmuss, in welcher Reihenfolge, und warum zwei laufende Panels sich gegenseitig kaputt machen. |
 
 ## Verstehen
 
