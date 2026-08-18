@@ -155,7 +155,9 @@ behalten. Wird es zum Problem, ist der Schalter der richtige Ort dafür.
   Fokusreihenfolge und `aria`-Angaben sind unangetastet.
 * **Die API.** `/api/…` ist durch Anmeldung und Rechte geschützt, nicht durch diese Schicht. Ein
   Kunde, der seine eigenen Daten abruft, soll das können.
-* **E-Mails.** Das Logo darin lädt weiterhin von `/assets/img/logo-256.png`.
+* **E-Mails.** Das Logo darin liegt der Nachricht als Anhang bei (`logo-mail.png`, eingebunden
+  über `cid:`) und wird gar nicht mehr vom Server nachgeladen – es ist also auch dann da, wenn ein
+  E-Mail-Programm Bilder aus dem Netz blockiert.
 
 ---
 

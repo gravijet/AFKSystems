@@ -10,9 +10,11 @@
 // lassen sich nicht abbestellen: was das Konto absichert (Anmeldung, Passwort) und was ohne
 // Nachricht gar nicht ginge (Adresse bestätigen, Passwort zurücksetzen).
 
+import fs from 'node:fs';
+import path from 'node:path';
 import nodemailer from 'nodemailer';
 import { db, getSetting } from './db.js';
-import { config } from './config.js';
+import { config, ROOT } from './config.js';
 
 /** Ist der Versand eingerichtet? */
 export function configured() {
@@ -152,7 +154,16 @@ export async function send({ to, subject, text, html, kind = 'mail', userId = nu
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
   try {
-    await transport().sendMail({ from: sender(), to, subject, text, html: html || undefined });
+    await transport().sendMail({
+      from: sender(),
+      to,
+      subject,
+      text,
+      html: html || undefined,
+      // Nur anhängen, wenn die Nachricht das Logo auch einbindet: eine reine Textnachricht soll
+      // nicht mit einem Anhang ankommen, den niemand zu sehen bekommt.
+      attachments: logoAttachment(html),
+    });
     record.run(userId, to, subject, kind, 'sent', null, String(text || '').slice(0, 4000), Date.now());
     return { ok: true };
   } catch (error) {
@@ -168,6 +179,25 @@ export async function send({ to, subject, text, html, kind = 'mail', userId = nu
     );
     return { ok: false, error: error.message };
   }
+}
+
+/**
+ * Das Logo als Anhang, wenn die Nachricht es einbindet.
+ *
+ * `contentDisposition: 'inline'` ist der Unterschied zwischen "Bild in der Kopfleiste" und
+ * "Datei zum Herunterladen am Ende der Nachricht".
+ */
+function logoAttachment(html) {
+  if (!String(html || '').includes(`cid:${LOGO_CID}`)) return undefined;
+  return [
+    {
+      filename: 'afksystems.png',
+      path: LOGO_FILE,
+      cid: LOGO_CID,
+      contentType: 'image/png',
+      contentDisposition: 'inline',
+    },
+  ];
 }
 
 /** Verbindung prüfen, ohne etwas zu verschicken – für den Knopf im Admin-Bereich. */
@@ -189,41 +219,88 @@ const escape = (text) =>
 const HOST = config.publicUrl.replace(/^https?:\/\//, '');
 
 /**
+ * Das Logo für die Kopfleiste.
+ *
+ * Es liegt als Anhang bei und wird über `cid:` eingebunden, nicht über eine Adresse. Ein Bild aus
+ * dem Netz lädt kein E-Mail-Programm ungefragt: bei Outlook, Thunderbird und der Gmail-App steht
+ * dort erst einmal nichts, und wer nicht auf "Bilder anzeigen" klickt, sieht in der Kopfleiste
+ * eine leere Fläche. Als Anhang ist es immer da.
+ *
+ * `logo-mail.png` ist nicht dasselbe wie `logo-256.png`: Es hat seinen dunklen Untergrund fest
+ * eingebacken (siehe unten). Fehlt die Datei, bleibt die Adresse als Rückfallweg.
+ */
+const LOGO_CID = 'afk-logo';
+const LOGO_FILE = path.join(ROOT, 'public', 'assets', 'img', 'logo-mail.png');
+const LOGO_SRC = fs.existsSync(LOGO_FILE)
+  ? `cid:${LOGO_CID}`
+  : `${config.publicUrl}/assets/img/logo-256.png`;
+
+/**
  * Der Rahmen um jede Nachricht: Kopfleiste mit Logo, Überschrift, Text, ein Knopf.
  *
  * Bewusst schlicht – E-Mail-Programme können weniger als jeder Browser, und eine Nachricht, die
  * überall ankommt, ist mehr wert als eine, die in dreien von zehn zerfällt. Deshalb Tabellen für
  * das Grundgerüst und keine Datei ohne Ersatzdarstellung.
  *
- * Zwei Dinge waren vorher falsch:
+ * ## Der Dunkelmodus
  *
- *  * **Das Logo stand auf Weiß.** Es ist eine Plakette mit weißer Schrift und weißem Rand – auf
- *    weißem Grund verschwand die halbe Zeichnung, und was blieb, sah aus wie ein Ladefehler.
- *    Jetzt sitzt es auf einer dunklen Leiste, für die es gezeichnet wurde.
- *  * **Alles war zu klein.** 34 rem breit und 16 px Text ist eine Nachricht, die man auf einem
- *    Telefon liest und auf einem Bildschirm sucht. Jetzt: 40 rem, größere Schrift, mehr Luft.
+ * Das Logo ist eine Plakette mit weißer Schrift und hellem Rand. Auf Weiß verschwand die halbe
+ * Zeichnung – deshalb stand es schon bisher auf einer dunklen Leiste. Nur hilft das nichts, wenn
+ * das E-Mail-Programm selbst umfärbt: Gmail und Outlook drehen im Dunkelmodus die Farben einer
+ * Nachricht um, die ihnen nichts anderes sagt. Aus der dunklen Leiste wurde dabei eine helle, und
+ * darauf war vom weißen Logo nur noch ein Fleck übrig.
+ *
+ * Drei Dinge zusammen lösen das, und keines davon allein:
+ *
+ *  * **Das Logo bringt seinen Untergrund mit.** `logo-mail.png` hat die Farbe der Kopfleiste
+ *    deckend eingebacken. Bilder färbt kein Programm um – was auch immer mit der Leiste geschieht,
+ *    das Logo sitzt weiter auf seinem eigenen Dunkel.
+ *  * **Die Nachricht sagt, dass sie beide Modi kann** (`color-scheme`). Damit hört Gmail auf,
+ *    blind umzudrehen, und Apple Mail lässt die Farben ganz in Ruhe.
+ *  * **Für den Dunkelmodus stehen eigene Farben da** – als Medienabfrage und zusätzlich über die
+ *    Kennzeichen, die Outlook.com an die Elemente hängt (`[data-ogsc]`). Wer beides nicht kann,
+ *    bekommt die helle Fassung, die inline an jedem Element steht.
  */
 function wrap({ title, body, action, footer }) {
-  const logo = `${config.publicUrl}/assets/img/logo-256.png`;
   return `<!doctype html>
 <html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="color-scheme" content="light">
-<title>${escape(title)}</title></head>
-<body style="margin:0;background:#eef1f6;padding:32px 16px;
+<meta name="color-scheme" content="light dark">
+<meta name="supported-color-schemes" content="light dark">
+<title>${escape(title)}</title>
+<style>
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  @media (prefers-color-scheme: dark) {
+    .m-body { background:#0b0d11 !important; color:#e8ecf3 !important }
+    .m-card { background:#151922 !important;
+      box-shadow:0 1px 2px rgba(0,0,0,.5),0 12px 32px rgba(0,0,0,.45) !important }
+    .m-head { background:#0f1218 !important }
+    .m-text, .m-text p { color:#e8ecf3 !important }
+    .m-muted { color:#98a3b3 !important }
+    .m-btn { background:#3d86ff !important; color:#0b0d11 !important }
+  }
+  /* Outlook.com benennt die Farben nicht um, sondern hängt diese Kennzeichen an. */
+  [data-ogsc] .m-body { background:#0b0d11 !important; color:#e8ecf3 !important }
+  [data-ogsc] .m-card { background:#151922 !important }
+  [data-ogsc] .m-head { background:#0f1218 !important }
+  [data-ogsc] .m-text, [data-ogsc] .m-text p { color:#e8ecf3 !important }
+  [data-ogsc] .m-muted { color:#98a3b3 !important }
+  [data-ogsc] .m-btn { background:#3d86ff !important; color:#0b0d11 !important }
+</style></head>
+<body class="m-body" style="margin:0;background:#eef1f6;padding:32px 16px;
   font:17px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#15181d;
   -webkit-font-smoothing:antialiased">
-  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" class="m-card"
     style="max-width:40rem;margin:0 auto;border-collapse:separate;border-spacing:0;
     background:#ffffff;border-radius:18px;overflow:hidden;
     box-shadow:0 1px 2px rgba(15,23,42,.06),0 12px 32px rgba(15,23,42,.08)">
     <tr>
-      <td style="background:#12151b;padding:22px 36px">
+      <td class="m-head" style="background:#12151b;padding:22px 36px">
         <table role="presentation" cellpadding="0" cellspacing="0" border="0">
           <tr>
-            <td style="vertical-align:middle;padding-right:14px">
-              <img src="${logo}" width="52" height="52" alt=""
-                style="display:block;border:0;width:52px;height:52px">
+            <td style="vertical-align:middle;padding-right:14px;line-height:0">
+              <img src="${LOGO_SRC}" width="56" height="56" alt="${escape(config.brand)}"
+                style="display:block;border:0;width:56px;height:56px">
             </td>
             <td style="vertical-align:middle;color:#ffffff;font-size:1.05rem;font-weight:700;
               letter-spacing:-.01em">${escape(config.brand)}</td>
@@ -232,25 +309,25 @@ function wrap({ title, body, action, footer }) {
       </td>
     </tr>
     <tr>
-      <td style="padding:36px">
+      <td class="m-text" style="padding:36px;color:#15181d">
         <h1 style="font-size:1.6rem;line-height:1.25;margin:0 0 1.1rem;letter-spacing:-.02em;
-          font-weight:700">${escape(title)}</h1>
+          font-weight:700;color:inherit">${escape(title)}</h1>
         ${body}
         ${
           action
-            ? `<p style="margin:2rem 0 0"><a href="${action.url}"
+            ? `<p style="margin:2rem 0 0"><a href="${action.url}" class="m-btn"
                  style="display:inline-block;background:#206cfe;color:#ffffff;text-decoration:none;
                  padding:.85rem 1.5rem;border-radius:12px;font-weight:600;font-size:1rem">${escape(
                    action.label
                  )}</a></p>
-               <p style="margin:1.4rem 0 0;font-size:.85rem;line-height:1.5;color:#5b6472;
+               <p class="m-muted" style="margin:1.4rem 0 0;font-size:.85rem;line-height:1.5;color:#5b6472;
                  word-break:break-all">${escape(action.fallback)}: ${action.url}</p>`
             : ''
         }
       </td>
     </tr>
   </table>
-  <p style="max-width:40rem;margin:1.25rem auto 0;font-size:.8125rem;color:#5b6472;text-align:center">
+  <p class="m-muted" style="max-width:40rem;margin:1.25rem auto 0;font-size:.8125rem;color:#5b6472;text-align:center">
     ${escape(footer || HOST)}</p>
 </body></html>`;
 }
