@@ -304,7 +304,7 @@ Was daran wirklich geht und was nicht, steht ehrlich in **[docs/schutz.md](docs/
 Alles Weitere in **[docs/](docs/README.md)**: [wie alles funktioniert](docs/aufbau.md),
 [Standorte](docs/standorte.md), [Tebex](docs/tebex.md), [Live-Ansicht](docs/live-ansicht.md),
 [Inhaltsschutz](docs/schutz.md), [Discord-Bot](docs/discord-bot.md),
-[Google-Anmeldung](docs/google-anmeldung.md).
+[Google-Anmeldung](docs/google-anmeldung.md), [Umzug auf einen anderen Server](docs/umzug.md).
 
 ## API
 
