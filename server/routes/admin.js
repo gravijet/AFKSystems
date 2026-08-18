@@ -297,6 +297,17 @@ admin.patch(
     if (body.credits_delta !== undefined) {
       const delta = Math.trunc(Number(body.credits_delta));
       if (!Number.isFinite(delta) || delta === 0) throw bad('Betrag fehlt.');
+      // Ins Minus geht es nirgends im Panel – auch hier nicht. Ein negativer Stand wäre eine
+      // stille Schuld beim Kunden: Aufladen fühlt sich danach an wie Bezahlen für nichts, und
+      // jede Rechnung, die auf „Guthaben ≥ Preis" prüft, rechnet plötzlich mit Vorzeichen.
+      if (delta < 0 && user.credits + delta < 0) {
+        throw bad(
+          `Das würde auf ${user.credits + delta} Credits führen. Höchstens ${user.credits} lassen sich abziehen.`,
+          {
+            en: `That would leave ${user.credits + delta} credits. At most ${user.credits} can be taken.`,
+          }
+        );
+      }
       billing.move(id, delta, 'admin', String(body.note || `durch ${req.user.username}`).slice(0, 200));
       audit(req.user.id, 'admin-credits', { user: id, delta });
     }

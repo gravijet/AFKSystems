@@ -10,6 +10,7 @@
 
 import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, paths, userDir } from './config.js';
@@ -95,60 +96,111 @@ export function ansiToMinecraft(raw) {
 
 // ---------------------------------------------------------------- Live-Ansicht (POV)
 //
-// Die POV-Bauformen zeichnen ein Bild ins Terminal: Cursor nach oben (`ESC[H`), dann Zeile für
-// Zeile Zeichen aus einer Helligkeitsrampe, jedes in seiner Echtfarbe, darunter eine Fußzeile mit
-// der Position. Das ist kein Chat und darf nicht durch die Chatverarbeitung laufen; hier wird das
-// Bild wieder in Daten zerlegt, die der Browser als Raster zeichnen kann.
+// So sieht ein Bild des Clients wirklich aus (mitgeschnitten aus `ultra-afk-linux 2.0.0`):
+//
+//     ESC[2J ESC[H                                            einmal, beim ersten Bild
+//     ESC[H POV  x=9.5 y=-60.0 z=-8.5  Blick 0/0  Chunks 213  (:pov stop)
+//     ESC[38;2;r;g;bm ESC[48;2;r;g;bm ▀  …je Zelle…  ESC[0m   eine Zeichenzeile
+//     …                                                       Höhe/2 solcher Zeilen
+//
+// Zwei Eigenschaften bestimmen alles Weitere:
+//
+//   * **Die `POV`-Zeile steht vorn.** Sie beginnt ein Bild, sie beendet keines. Wer sie als
+//     Schlusszeile liest, sammelt nie eine einzige Bildzeile ein – das Panel wartete deshalb
+//     ewig auf „das erste Bild“, während jede Bildzeile hinten als Statusmeldung im Chatverlauf
+//     landete: gut sechshundert Zeilen je Sekunde und Bot, an jeden offenen Browser.
+//   * **Ein Zeichen sind zwei Bildpunkte.** `▀` ist der obere Halbblock: die Vordergrundfarbe
+//     malt den oberen Punkt, die Hintergrundfarbe den unteren. Eine Zeichenzeile ist also zwei
+//     Bildzeilen, und wer die Hintergrundfarbe wegwirft, wirft das halbe Bild weg.
+//
+// Heraus kommen Bildzeilen aus Farbläufen (`[["4182d2", 160], …]`). Der Browser zeichnet sie auf
+// ein Canvas, ohne irgendetwas über den Client wissen zu müssen.
 
-/** Die Zeichen, aus denen der Client ein Bild baut (dunkel nach hell) – plus Leerraum. */
-const POV_RAMP = new Set([...' .:-=+*#%@']);
+/**
+ * Die Bildgröße. Sie steht **nicht** zur Wahl.
+ *
+ * Der Client kann 24×12 bis 160×80. Alles unterhalb des Größten ist ein schlechteres Bild für
+ * denselben Preis – die Rechenzeit dafür fällt beim Kunden ohnehin an, sobald die Ansicht läuft.
+ * Deshalb setzt das Panel vor jedem Start die größte Größe und nimmt von außen keine andere an.
+ */
+export const POV_SIZE = { width: 160, height: 80 };
 
-/** "POV  x=12 y=64 z=-8  gier=90  (:pov stop)" – die Zeile unter dem Bild. */
-const POV_FOOTER = /^POV\s/;
+/** Die Kopfzeile eines Bildes. Davor stehen je nach Lage `ESC[2J` und `ESC[H`. */
+const POV_HEAD = /^(?:\x1b\[[0-9;?]*[A-Za-z])*POV\s+x=/;
 
 /** Höchstens so oft geht ein Bild an den Browser. Der Client zeichnet schneller, als es nützt. */
 const POV_MIN_GAP_MS = 200;
 
-const isPovRow = (text) => text.length > 0 && [...text].every((char) => POV_RAMP.has(char));
+/** Mehr Bildzeilen als die größte Bildgröße hergibt, kann kein Bild haben. */
+const POV_MAX_ROWS = POV_SIZE.height;
+
+/** `▀` – der obere Halbblock, das einzige Zeichen, aus dem ein Bild besteht. */
+const HALF_BLOCK = 0x2580;
+
+const SGR_FOREGROUND = '\x1b[38;2;';
+const SGR_BACKGROUND = '\x1b[48;2;';
+const SGR_RESET = '\x1b[0m';
 
 /**
- * Eine gefärbte Bildzeile in Abschnitte zerlegen: [["7f9b3a", "  ..#"], …].
- *
- * Ohne diese Bündelung wären es 80 Einzelzellen je Zeile; so sind es meist ein paar Dutzend, und
- * das Bild passt auch bei mehreren Bildern je Sekunde durch die Leitung.
+ * `ESC[38;2;r;g;bm` ab `at` lesen und als `rrggbb` zurückgeben – oder `null`, wenn dort etwas
+ * anderes steht. Ziffern werden direkt aus den Zeichencodes gerechnet: das ist der heißeste Pfad
+ * im Panel (160 Zellen je Zeile, 40 Zeilen je Bild, ein Bild alle 60 ms **je Bot**), und er soll
+ * dabei nichts anlegen, was er nicht braucht.
  */
-function povCells(raw) {
-  const runs = [];
-  let color = null;
-  let index = 0;
-  const push = (text) => {
-    if (!text) return;
-    const last = runs[runs.length - 1];
-    if (last && last[0] === color) last[1] += text;
-    else runs.push([color, text]);
-  };
-  while (index < raw.length) {
-    const start = raw.indexOf('\x1b[', index);
-    if (start < 0) {
-      push(raw.slice(index));
-      break;
+function readColor(raw, at, prefix) {
+  if (!raw.startsWith(prefix, at)) return null;
+  let index = at + prefix.length;
+  let hex = '';
+  for (let part = 0; part < 3; part++) {
+    let value = 0;
+    let digits = 0;
+    while (index < raw.length) {
+      const code = raw.charCodeAt(index);
+      if (code < 48 || code > 57) break;
+      value = value * 10 + (code - 48);
+      digits += 1;
+      index += 1;
     }
-    push(raw.slice(index, start));
-    const match = /^\x1b\[([0-9;?]*)([A-Za-z])/.exec(raw.slice(start));
-    if (!match) break;
-    if (match[2] === 'm') {
-      const parts = match[1].split(';').map(Number);
-      if (parts[0] === 38 && parts[1] === 2) {
-        color = [parts[2], parts[3], parts[4]]
-          .map((value) => Math.max(0, Math.min(255, value || 0)).toString(16).padStart(2, '0'))
-          .join('');
-      } else if (parts[0] === 0 || Number.isNaN(parts[0])) {
-        color = null;
-      }
-    }
-    index = start + match[0].length;
+    // Nach r und g steht ein Semikolon, nach b das abschließende 'm'.
+    if (!digits || value > 255 || raw.charCodeAt(index) !== (part < 2 ? 59 : 109)) return null;
+    index += 1;
+    hex += value < 16 ? `0${value.toString(16)}` : value.toString(16);
   }
-  return runs;
+  return { hex, next: index };
+}
+
+/**
+ * Eine Zeichenzeile in ihre zwei Bildzeilen zerlegen: `{ top, bottom }`, jede als Farbläufe.
+ *
+ * `null` heißt „das war keine Bildzeile“ – dann ist das Bild zu Ende und die Zeile geht ihren
+ * gewohnten Weg als Meldung. Die Prüfung ist streng: Es gibt genau eine Schreibweise, und alles
+ * andere ist keine. Ohne diese Strenge verschwände eine Chatzeile, in der jemand `▀` schreibt.
+ */
+function povRow(raw) {
+  const length = raw.length;
+  const top = [];
+  const bottom = [];
+  let index = 0;
+  const add = (runs, hex) => {
+    const last = runs[runs.length - 1];
+    if (last && last[0] === hex) last[1] += 1;
+    else runs.push([hex, 1]);
+  };
+  while (index < length) {
+    if (raw.startsWith(SGR_RESET, index)) {
+      index += SGR_RESET.length;
+      continue;
+    }
+    const foreground = readColor(raw, index, SGR_FOREGROUND);
+    if (!foreground) return null;
+    const background = readColor(raw, foreground.next, SGR_BACKGROUND);
+    if (!background) return null;
+    if (raw.charCodeAt(background.next) !== HALF_BLOCK) return null;
+    index = background.next + 1;
+    add(top, foreground.hex);
+    add(bottom, background.hex);
+  }
+  return top.length ? { top, bottom } : null;
 }
 
 /**
@@ -366,12 +418,26 @@ class Bot extends EventEmitter {
     // Erkennung genau eine Abfrage je Zeile.
     this.povWanted = false;
     this.povRows = null;
+    // Ein Bild, das wegen der Bremse ohnehin niemand bekommt, wird nicht zerlegt, sondern nur
+    // überlesen – `povSkip` sagt, dass gerade eines vorbeizieht.
+    this.povSkip = false;
     this.povStatus = '';
     this.povSentAt = 0;
-    this.povSize = { width: 80, height: 40 };
     this.stopping = false;
     this.timers = new Set();
     this.buffers = { out: '', err: '' };
+    /**
+     * Je Kanal ein Decoder, kein `chunk.toString('utf8')`.
+     *
+     * Ein Datenstück endet dort, wo das Betriebssystem es abschneidet, und das ist mitten in einem
+     * Zeichen genauso wahrscheinlich wie anderswo. `toString` macht aus so einem angefangenen
+     * Zeichen ein Fragezeichen; der Decoder hält es zurück, bis der Rest kommt. Bei Chatzeilen fiel
+     * das kaum auf – ein zerbrochenes „ä" alle paar tausend Zeilen. Bei der Live-Ansicht fällt es
+     * sofort auf: Ein Bild sind 240 Kilobyte aus Halbblöcken zu je drei Byte, also alle 64 Kilobyte
+     * ein zerbrochenes Zeichen – und die Zeile, in der es steckt, ist damit keine Bildzeile mehr.
+     * Das Bild brach mittendrin ab, und der Rest stand als Zeichensalat im Chatverlauf.
+     */
+    this.decoders = { out: new StringDecoder('utf8'), err: new StringDecoder('utf8') };
     this.usesEvents = false;
     this.logFile = path.join(paths.logs, `bot-${profile.id}-${account.id}.log`);
   }
@@ -500,6 +566,8 @@ class Bot extends EventEmitter {
     // `pov-afk-linux` beginnt gleich nach dem Beitritt zu zeichnen; da wartet niemand auf
     // `:pov live`. Bei `ultra-afk-linux` bleibt die Ansicht aus, bis sie jemand einschaltet.
     this.povWanted = build === 'pov' && Boolean(caps.pov);
+    this.povSkip = false;
+    this.povRows = null;
     this.setState('starting', `${this.profile.host} · MC ${this.profile.mc_version}`);
 
     // Örtlich oder auf einem Standort? Beides sieht von hier aus gleich aus: `agents.spawn`
@@ -612,6 +680,7 @@ class Bot extends EventEmitter {
     this.views = { board: null, menu: null, position: null, pov: null };
     this.povWanted = false;
     this.povRows = null;
+    this.povSkip = false;
     this.povStatus = '';
     if (this.capture) {
       clearTimeout(this.capture.timer);
@@ -632,7 +701,9 @@ class Bot extends EventEmitter {
   // ------------------------------------------------------------ Ein-/Ausgabe
 
   feed(stream, chunk) {
-    this.buffers[stream] += chunk.toString('utf8');
+    this.buffers[stream] += Buffer.isBuffer(chunk)
+      ? this.decoders[stream].write(chunk)
+      : String(chunk);
     const lines = this.buffers[stream].split('\n');
     this.buffers[stream] = lines.pop();
     for (const raw of lines) {
@@ -666,53 +737,63 @@ class Bot extends EventEmitter {
   /**
    * Gehört diese Rohzeile zu einem POV-Bild? Dann wird sie hier verbraucht (Rückgabe `true`).
    *
-   * Ein Bild beginnt mit `ESC[H`, besteht danach nur aus Zeichen der Helligkeitsrampe und endet
-   * an der Fußzeile mit der Position. Kommt nach `ESC[H` etwas anderes – etwa die Meldung
-   * "Live-POV gestartet." –, ist es kein Bild und die Zeile geht ihren gewohnten Weg.
+   * Ein Bild beginnt mit seiner Kopfzeile, danach kommen die Bildzeilen, und mit der ersten
+   * Zeile, die keine mehr ist, ist es zu Ende. Solange niemand die Ansicht angefordert hat,
+   * kostet die Erkennung genau einen Vergleich je Zeile.
    */
   povFeed(raw) {
     if (!this.povWanted) return false;
-    let body = raw;
-    const home = raw.lastIndexOf('\x1b[H');
-    if (home >= 0) {
-      this.flushPov();
-      this.povRows = [];
-      body = raw.slice(home + 3);
-      if (!stripAnsi(body).trim()) return true;
-    }
-    if (!this.povRows) return false;
 
-    const text = stripAnsi(body);
-    if (POV_FOOTER.test(text)) {
-      this.povStatus = text.trim();
+    // Die Kopfzeile beginnt ein Bild – und hier, nur hier, entscheidet sich, ob das nächste
+    // überhaupt eingesammelt wird. Der Client zeichnet gut fünfzehn Bilder in der Sekunde, an den
+    // Browser gehen fünf. Die übrigen gar nicht erst zu zerlegen ist der Unterschied zwischen
+    // „kostet etwas“ und „kostet ein Zehntel Kern, sobald jemand zusieht“.
+    if (POV_HEAD.test(raw)) {
       this.flushPov();
+      this.povStatus = stripAnsi(raw).trim();
+      const keep = Date.now() - this.povSentAt >= POV_MIN_GAP_MS;
+      this.povRows = keep ? [] : null;
+      this.povSkip = !keep;
       return true;
     }
-    if (!isPovRow(text)) {
-      this.povRows = null;
+
+    // Ein Bild, das ohnehin niemand bekommt: nur noch feststellen, wo es zu Ende ist.
+    if (this.povSkip) {
+      if (raw.startsWith(SGR_FOREGROUND)) return true;
+      this.povSkip = false;
       return false;
     }
-    // Ein Bild bleibt ein Bild: mehr als 120 Zeilen kann keine eingestellte Größe ergeben, und
-    // ohne diese Grenze könnte ein hängender Client den Speicher volllaufen lassen.
-    if (this.povRows.length < 120) this.povRows.push(povCells(body));
+
+    if (!this.povRows) return false;
+    const row = povRow(raw);
+    if (!row) {
+      // Keine Bildzeile mehr: Das Bild ist vollständig, und diese Zeile ist eine Meldung.
+      this.flushPov();
+      return false;
+    }
+    this.povRows.push(row.top, row.bottom);
+    // Bei voller Höhe gleich abschicken statt bis zum nächsten Bild zu warten – das sind zwei
+    // Zehntelsekunden weniger Verzug, und mehr Zeilen kann ein Bild nicht haben.
+    if (this.povRows.length >= POV_MAX_ROWS) {
+      this.flushPov();
+      this.povSkip = true;
+    }
     return true;
   }
 
-  /** Das gesammelte Bild an den Browser geben – höchstens alle POV_MIN_GAP_MS. */
+  /** Das gesammelte Bild an den Browser geben. */
   flushPov() {
     const rows = this.povRows;
     this.povRows = null;
     if (!rows || !rows.length) return;
-    const now = Date.now();
-    if (now - this.povSentAt < POV_MIN_GAP_MS) return;
-    this.povSentAt = now;
+    this.povSentAt = Date.now();
     this.views.pov = {
       empty: false,
-      width: Math.max(...rows.map((row) => row.reduce((sum, run) => sum + run[1].length, 0))),
+      width: rows[0].reduce((sum, run) => sum + run[1], 0),
       height: rows.length,
       rows,
       status: this.povStatus,
-      at: now,
+      at: this.povSentAt,
     };
     this.emitView('pov');
   }
@@ -731,6 +812,9 @@ class Bot extends EventEmitter {
       case 'join': {
         const first = this.state !== 'online';
         this.setState('online', event.name || this.account.name);
+        // `pov-afk-linux` beginnt gleich nach dem Beitritt von selbst zu zeichnen – erst jetzt
+        // nimmt der Client örtliche Befehle an, und erst jetzt lässt sich die Größe setzen.
+        if (this.povWanted) this.applyPovSize();
         this.connections += 1;
         db.prepare(
           'UPDATE bots SET connections = connections + 1, state = ? WHERE profile_id = ? AND account_id = ?'
@@ -1125,7 +1209,12 @@ class Bot extends EventEmitter {
     // Abfragen, deren Antwort als Ansicht gehört und nicht als Textzeilen.
     if (verb === 'board' || verb === 'menu') this.beginCapture(verb);
     if (verb === 'pos' || verb === 'position') this.beginCapture('position');
-    if (verb === 'pov') this.setPov(arg);
+    if (verb === 'pov') {
+      // Erst die Größe, dann der Befehl: `:pov live` zeichnet sonst in der Größe, die der Client
+      // gerade für richtig hält – bei `pov-afk-linux` sind das 64×32.
+      if (arg === 'live' || arg === 'frame') this.applyPovSize();
+      this.setPov(arg);
+    }
     return this.send(`:${verb}${arg ? ` ${arg}` : ''}`, { local: true });
   }
 
@@ -1136,24 +1225,55 @@ class Bot extends EventEmitter {
    * als Bild lesen soll oder als gewöhnliche Ausgabe. Ohne diesen Schalter würde jede Zeile jedes
    * Bots gegen die Bilderkennung laufen, auch wenn niemand die Ansicht offen hat.
    */
-  setPov(arg) {
-    const [mode, width, height] = String(arg || 'live').trim().split(/\s+/);
+  /**
+   * Die Live-Ansicht schalten. `mode` ist `live`, `frame`, `info` oder `stop`.
+   *
+   * Eine Bildgröße nimmt diese Stelle bewusst nicht entgegen: Sie steht fest auf dem Größten,
+   * was der Client kann (POV_SIZE), und wird davor gesetzt – siehe `applyPovSize`.
+   */
+  setPov(mode) {
     if (mode === 'stop') {
       this.povWanted = false;
       this.povRows = null;
+      this.povSkip = false;
       this.views.pov = { empty: true };
       this.emitView('pov');
       return;
     }
-    if (mode === 'size') {
-      this.povSize = {
-        width: Math.max(24, Math.min(160, Number(width) || this.povSize.width)),
-        height: Math.max(12, Math.min(80, Number(height) || this.povSize.height)),
-      };
-      return;
-    }
     // live, frame und info liefern alle Bildzeilen – ab jetzt zuhören.
     this.povWanted = true;
+  }
+
+  /**
+   * Dem Client die volle Bildgröße sagen.
+   *
+   * Nötig vor jedem Start, und nicht nur einmal: Die Bauform `pov-afk-linux` beginnt von selbst
+   * mit 64×32 zu zeichnen, und ein neu gestarteter Prozess weiß nichts von der letzten Sitzung.
+   */
+  applyPovSize() {
+    try {
+      this.send(`:pov size ${POV_SIZE.width} ${POV_SIZE.height}`, { local: true });
+    } catch {
+      // Der Bot ist schon wieder weg – dann gibt es auch nichts zu zeichnen.
+    }
+  }
+
+  /**
+   * Eine laufende Ansicht abschalten, ohne dass jemand einen Befehl geschickt hat.
+   *
+   * Der Fall dafür ist der zugeschlagene Laptop: Der Browser kommt nicht mehr dazu, „Stopp“ zu
+   * sagen, und der Client raycastet weiter für niemanden. Wer zusieht, weiß das Panel an den
+   * offenen WebSocket-Verbindungen des Kontos (siehe index.js).
+   */
+  stopPovIfRunning() {
+    if (!this.povWanted || !this.running) return false;
+    try {
+      this.send(':pov stop', { local: true });
+    } catch {
+      // Läuft nicht mehr – dann zeichnet auch nichts mehr.
+    }
+    this.setPov('stop');
+    return true;
   }
 
   snapshot() {
@@ -1173,7 +1293,7 @@ class Bot extends EventEmitter {
       // Ohne das Bild: ein Zustandswechsel wird bei laufender Live-Ansicht sonst zu einem
       // Datenpaket von zig Kilobyte. Bilder gehen ihren eigenen Weg (`bot-view`).
       views: { board: this.views.board, menu: this.views.menu, position: this.views.position },
-      pov: this.povWanted ? { on: true, ...this.povSize } : { on: false, ...this.povSize },
+      pov: { on: this.povWanted, ...POV_SIZE },
       uptime: this.startedAt ? Date.now() - this.startedAt : 0,
       // Nur gesetzt, wenn der Client gerade auf eine neue Microsoft-Anmeldung wartet.
       auth: this.state === 'auth' ? this.auth : null,
@@ -1422,6 +1542,23 @@ class Supervisor extends EventEmitter {
       );
       bot.stop();
     }
+  }
+
+  /**
+   * Alle laufenden Live-Ansichten eines Kontos abschalten.
+   *
+   * Sie kostet auf der Maschine deutlich mehr als ein stiller Bot – der Client raycastet je Bild
+   * 12 800 Strahlen. Sobald niemand mehr zusieht, hat sie deshalb aufzuhören, auch wenn der
+   * Browser dazu nichts mehr gesagt hat. Aufgerufen aus index.js, wenn die letzte Verbindung
+   * dieses Kontos zu ist.
+   */
+  stopPovForUser(userId) {
+    let stopped = 0;
+    for (const bot of this.bots.values()) {
+      if (bot.userId !== userId) continue;
+      if (bot.stopPovIfRunning()) stopped += 1;
+    }
+    return stopped;
   }
 
   /** Serverplatz, Konto, Nutzer und Tarif frisch aus der Datenbank holen. */

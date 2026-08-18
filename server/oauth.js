@@ -252,13 +252,30 @@ export async function callback({ code, state: value, binding = null }) {
   let created = false;
 
   if (!user && account.email) {
-    // Gleiche Adresse, aber noch nicht verknüpft: das ist derselbe Mensch – also verknüpfen statt
-    // ein zweites Konto anzulegen, das er nie wieder findet.
+    // Gleiche Adresse, aber noch nicht verknüpft. Naheliegend ist: derselbe Mensch, also
+    // verknüpfen statt ein zweites Konto anzulegen, das er nie wieder findet.
+    //
+    // Das gilt aber nur, wenn die Adresse hier **wirklich bestätigt** wurde. Ist die Bestätigung
+    // am Server abgeschaltet (die Vorgabe, solange kein SMTP eingerichtet ist), sagt
+    // `email_verified` nichts aus: Dann darf sich jeder mit einer fremden Adresse registrieren.
+    // Wer das täte und wartete, bis der richtige Inhaber sich mit Google oder Discord anmeldet,
+    // hätte ihn genau hier in seinem eigenen Konto sitzen – samt Zahlungsdaten und Tickets.
+    //
+    // Deshalb: Ohne bestätigte Adresse wird nicht automatisch verknüpft. Der Weg dahin ist einer
+    // mehr, aber er ist einer, den nur der richtige Inhaber gehen kann – anmelden und in den
+    // Einstellungen verknüpfen.
     const byMail = db.prepare('SELECT * FROM users WHERE email = ?').get(account.email);
-    if (byMail) {
+    if (byMail && mail.verifyRequired() && byMail.email_verified) {
       writeIdentity(byMail.id, which, account);
       user = db.prepare('SELECT * FROM users WHERE id = ?').get(byMail.id);
       audit(user.id, `${which.key}-link`, { external: account.id, via: 'login' });
+    } else if (byMail) {
+      throw bad(
+        `Zu ${account.email} gibt es hier schon ein Konto. Melde dich damit an und verknüpfe ${which.label} in den Einstellungen – so ist sicher, dass es deins ist.`,
+        {
+          en: `An account with ${account.email} already exists here. Sign in to it and link ${which.label} in the settings – that way it is certain the account is yours.`,
+        }
+      );
     }
   }
 

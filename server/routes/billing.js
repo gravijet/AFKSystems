@@ -105,6 +105,11 @@ router.post(
   requireUser,
   wrap(async (req, res) => {
     const list = billing.packages();
+    // Ohne Aufladepakete gäbe es unten "Paket muss zwischen 0 und -1 liegen" – eine Meldung, aus
+    // der niemand liest, dass der Betreiber schlicht keine eingerichtet hat.
+    if (!list.length) {
+      throw bad('Es sind keine Aufladepakete eingerichtet.', { en: 'No top-up packages are set up.' });
+    }
     const index = requireInt(req.body?.package ?? 0, 'Paket', { min: 0, max: list.length - 1 });
     const chosen = list[index];
     const provider = String(req.body?.provider || (tebex.configured() ? 'tebex' : 'transfer'));
@@ -251,7 +256,12 @@ export const tebexWebhook = wrap(async (req, res) => {
     const topup = payment.topupId
       ? db.prepare("SELECT * FROM topups WHERE id = ? AND provider = 'tebex'").get(payment.topupId)
       : null;
-    if (topup && revoke) {
+    if (!topup) {
+      notify.staff({
+        title: `Tebex: ${event.type}`,
+        description: `Zahlung \`${payment.transaction || 'unbekannt'}\` – keine Aufladung dazu gefunden.`,
+      });
+    } else if (revoke) {
       const result = billing.refundTopup(topup.id, `Tebex ${event.type} ${payment.transaction || ''}`.trim());
       notify.staff({
         title: `Tebex: ${event.type}`,
@@ -260,9 +270,15 @@ export const tebexWebhook = wrap(async (req, res) => {
           (result.missing ? `, ${result.missing} Credits waren schon ausgegeben.` : '.'),
       });
     } else {
+      // Ein eröffneter Streitfall nimmt noch nichts zurück – aber er gehört auf den Tisch, und
+      // zwar mit der Aufladung, um die es geht. Vorher stand hier "keine Aufladung dazu gefunden",
+      // obwohl sie gefunden wurde: eine Meldung, die genau das Gegenteil dessen sagte, was war.
       notify.staff({
         title: `Tebex: ${event.type}`,
-        description: `Zahlung \`${payment.transaction || 'unbekannt'}\` – keine Aufladung dazu gefunden.`,
+        description:
+          `Aufladung #${topup.id} über ${(topup.amount_cent / 100).toFixed(2)} € ` +
+          `(Zahlung \`${payment.transaction || 'unbekannt'}\`). Noch nichts zurückgebucht – ` +
+          'das entscheidet der Ausgang des Streitfalls.',
       });
     }
     return res.json({ received: true });

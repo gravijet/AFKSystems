@@ -1,17 +1,30 @@
 // Übersicht: was läuft, was kostet es, wo hakt es.
 
-import { icon, escapeHtml, credits, euro, since, stateBadge, tr, $, $$, fail, ok, api, debounce } from '../ui.js';
+import {
+  icon,
+  escapeHtml,
+  credits,
+  euro,
+  since,
+  stateBadge,
+  safeLink,
+  tr,
+  $,
+  $$,
+  fail,
+  ok,
+  api,
+  debounce,
+} from '../ui.js';
 import { state, appbar, refresh, drawSide, draw } from '../app.js';
 
 export async function render(root) {
   const bots = [...state.bots.values()].filter((bot) => bot.state && bot.state !== 'offline');
   const online = bots.filter((bot) => bot.online).length;
-  const broken = state.accounts.filter((account) => account.status === 'error');
-  const suspended = state.profiles.filter((profile) => profile.suspended);
   const monthly = state.me.monthly_cost || 0;
   const paidSlots = state.profiles.filter((profile) => !profile.plan?.free_slot).length;
   const monthsLeft = monthly > 0 ? Math.floor(state.me.credits / monthly) : null;
-  const low = state.meta?.low_balance ?? 200;
+  const todos = state.todos || [];
 
   root.innerHTML = `
     ${appbar(
@@ -21,46 +34,7 @@ export async function render(root) {
       tr('dash.subtitle')
     )}
 
-    ${
-      monthly > 0 && state.me.credits <= 0
-        ? note('bad', 'alert', tr('ov.noCredits'), '#/credits', tr('ov.topUp'))
-        : monthly > 0 && state.me.credits <= low
-          ? note(
-              'warn',
-              'alert',
-              tr('ov.lowCredits', { credits: credits(state.me.credits), cost: credits(monthly) }),
-              '#/credits',
-              tr('ov.topUp')
-            )
-          : ''
-    }
-
-    ${
-      suspended.length
-        ? note(
-            'warn',
-            'alert',
-            tr('ov.suspendedNote', { names: suspended.map((profile) => profile.name).join(', ') }),
-            `#/servers/${suspended[0].id}/plan`,
-            tr('srv.resume')
-          )
-        : ''
-    }
-
-    ${
-      broken.length
-        ? note(
-            'warn',
-            'key',
-            tr('ov.brokenAccounts', {
-              n: broken.length,
-              names: broken.map((account) => account.name).join(', '),
-            }),
-            '#/accounts',
-            tr('ov.renewNow')
-          )
-        : ''
-    }
+    ${todoPanel(todos)}
 
     <div class="grid four" style="margin-bottom:1.5rem">
       <div class="stat"><div class="k">${escapeHtml(tr('ov.inGame'))}</div><div class="v">${online}</div>
@@ -149,9 +123,41 @@ export async function render(root) {
       </section>
     </div>`;
 
-  function note(kind, symbol, text, href, label) {
-    return `<div class="note ${kind}" style="margin-bottom:1.25rem">${icon(symbol)}
-      <div>${escapeHtml(text)} <a href="${href}" style="color:var(--primary)">${escapeHtml(label)}</a></div></div>`;
+  /**
+   * Was offen ist – ganz oben, weil es der Grund ist, warum jemand hierher kommt.
+   *
+   * Ist nichts offen, steht hier auch nichts. Ein leerer Kasten mit "alles erledigt" wäre eine
+   * Zeile, die jeden Tag da ist und nie etwas sagt – dann sieht man auch nicht mehr hin, wenn
+   * einmal etwas darin steht. Die Zahl in der Seitenleiste erfüllt denselben Zweck ohne Fläche.
+   *
+   * Der Inhalt kommt vollständig vom Server (server/todos.js). Hier steht nur, wie er aussieht.
+   */
+  function todoPanel(list) {
+    if (!list.length) return '';
+    return `<section class="panel todo" style="margin-bottom:1.5rem">
+      <header>
+        <h3>${escapeHtml(tr('todo.title'))}</h3>
+        <span class="small muted">${escapeHtml(tr('todo.count', { n: list.length }))}</span>
+      </header>
+      <ul class="todo-list">
+        ${list.map(todoItem).join('')}
+      </ul>
+    </section>`;
+  }
+
+  function todoItem(entry) {
+    const external = entry.external
+      ? ' target="_blank" rel="noopener"'
+      : '';
+    return `<li class="todo-item ${entry.kind === 'info' ? '' : entry.kind}">
+      <span class="todo-mark">${icon(entry.kind === 'bad' ? 'alert' : entry.kind === 'warn' ? 'clock' : 'info')}</span>
+      <div class="todo-text">
+        <strong>${escapeHtml(entry.title)}</strong>
+        <p class="small muted">${escapeHtml(entry.text)}</p>
+      </div>
+      <a class="btn btn-sm ${entry.kind === 'bad' ? 'btn-primary' : ''}"
+        href="${escapeHtml(safeLink(entry.href))}"${external}>${escapeHtml(entry.label)}</a>
+    </li>`;
   }
 
   function rows() {

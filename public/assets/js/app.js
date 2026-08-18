@@ -4,7 +4,7 @@
 // den Zustand übergeben; neu gezeichnet wird immer die ganze Ansicht – bei dieser Größe ist das
 // einfacher zu verstehen als jede feinere Aktualisierung, und schnell genug.
 
-import { api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, $, fail, toast } from './ui.js';
+import { api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, safeLink, $, fail, toast } from './ui.js';
 
 // Relativ zur eigenen Adresse: unter /assets/v/<version>/js/app.js kommt so von selbst die Adresse
 // mit demselben Fingerabdruck heraus. Siehe assetVersion in server/config.js.
@@ -17,6 +17,7 @@ export const state = {
   impersonator: null,
   profiles: [],
   accounts: [],
+  todos: [], // was der Kunde gerade zu tun hat – berechnet der Server (server/todos.js)
   bots: new Map(), // key "profil:konto" -> Zustand
   lines: new Map(), // key -> Chatzeilen (Ringpuffer)
   route: { name: 'overview', id: null, tab: null },
@@ -67,6 +68,7 @@ export async function refresh({ profiles = true, accounts = true, me = true } = 
       api('/me').then((data) => {
         state.me = data.user;
         state.stats = data.stats;
+        state.todos = data.todos || [];
         state.impersonator = data.impersonator || null;
       })
     );
@@ -115,6 +117,7 @@ function refreshTicketStats() {
     api('/me')
       .then((data) => {
         state.stats = data.stats;
+        state.todos = data.todos || [];
         drawSide();
       })
       .catch(() => {});
@@ -493,6 +496,7 @@ export function drawSide() {
   applySideLayout();
   const route = state.route;
   const unread = state.stats?.tickets_unread || 0;
+  const todoCount = state.todos?.length || 0;
   const side = $('#side');
 
   // Wer gerade tippt, darf beim Neuzeichnen nicht die Schreibmarke verlieren – und die Leiste
@@ -542,6 +546,9 @@ export function drawSide() {
             label: navLabel(item),
             iconName: item.icon,
             active: routeMatches(item.hash),
+            // Die offenen Aufgaben stehen in der Übersicht. Die Zahl daneben ist der Grund,
+            // überhaupt hinzusehen – sonst findet sie nur, wer ohnehin schon dort ist.
+            badge: item.hash === '#/' ? todoCount : 0,
           })
         ).join('')}
       </nav>
@@ -897,7 +904,7 @@ function announcements() {
           ${entry.body ? `<p class="small" style="margin:.35rem 0 0">${escapeHtml(entry.body).replace(/\n/g, '<br>')}</p>` : ''}
           ${
             entry.link
-              ? `<p style="margin:.5rem 0 0"><a href="${escapeHtml(entry.link)}" target="_blank" rel="noopener">${escapeHtml(
+              ? `<p style="margin:.5rem 0 0"><a href="${escapeHtml(safeLink(entry.link))}" target="_blank" rel="noopener">${escapeHtml(
                   tr('home.what.link')
                 )}</a></p>`
               : ''
