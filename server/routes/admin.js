@@ -15,9 +15,10 @@ import * as roles from '../roles.js';
 import * as nodes from '../nodes.js';
 import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
+import * as tebex from '../tebex.js';
 import { supervisor } from '../supervisor.js';
 import { planView, ticketView } from './core.js';
-import { botState } from './bot.js';
+import { botState, MIN_SECRET } from './bot.js';
 import { bridge } from '../bridge.js';
 import { SETTINGS, byKey as settingSchema, schemaFor } from '../settings-schema.js';
 import { mergeLines } from '../../public/assets/js/chatlog.js';
@@ -794,10 +795,8 @@ admin.get(
     res.json({
       tickets: tickets.listAll({
         status: req.query.status,
-        category: req.query.category,
         search: String(req.query.q || '').trim(),
       }),
-      categories: tickets.categoriesFor(langOf(req)),
       statuses: tickets.STATUSES,
       priorities: tickets.PRIORITIES,
     });
@@ -844,7 +843,11 @@ admin.post(
     const internal = Boolean(req.body?.internal);
     // Nur diese Admin-Route schreibt als Support. Unter „Meine Tickets“ schreibt derselbe
     // Benutzer bewusst als Kunde.
-    const updated = tickets.reply(ticket, req.user, req.body?.body, { internal, staff: true });
+    const updated = tickets.reply(ticket, req.user, req.body?.body, {
+      internal,
+      staff: true,
+      files: req.body?.files,
+    });
     // Interne Notizen sieht nur das Team – dafür gibt es keine Post an den Kunden.
     if (!internal) tickets.notifyUser(updated, req.body?.body || '');
     res.json({
@@ -881,10 +884,6 @@ admin.patch(
       if (!tickets.PRIORITIES.includes(body.priority)) throw bad('Unbekannte Dringlichkeit.');
       db.prepare('UPDATE tickets SET priority = ? WHERE id = ?').run(body.priority, ticket.id);
       audit(req.user.id, 'ticket-priority', { id: ticket.id, priority: body.priority }, req.ip);
-    }
-    if (body.category !== undefined) {
-      if (!tickets.CATEGORIES.some((entry) => entry.key === body.category)) throw bad('Unbekannte Kategorie.');
-      db.prepare('UPDATE tickets SET category = ? WHERE id = ?').run(body.category, ticket.id);
     }
     if (body.subject !== undefined) {
       db.prepare('UPDATE tickets SET subject = ? WHERE id = ?').run(
@@ -1073,6 +1072,7 @@ admin.get(
       mail_categories: mail.categoriesFor(langOf(req)),
       oauth: oauth.state(),
       bot: botState(),
+      tebex: tebex.status(),
     })
   )
 );
@@ -1121,6 +1121,15 @@ admin.patch(
         // auch nicht zurückschicken. Löschen geht über den eigenen Knopf (DELETE unten).
         const text = String(value || '').trim();
         if (!text) continue;
+        // Hinter dem Geheimnis zwischen Panel und Bot liegt der ganze Bot-Bereich: der
+        // Discord-Token, jedes Ticket, die Discord-IDs aller Konten. "1234" ist dafür kein
+        // Passwort, sondern eine offene Tür – deshalb wird es hier gar nicht erst angenommen.
+        if (key === 'discord_bot_secret' && text.length < MIN_SECRET) {
+          throw bad(
+            `Das Geheimnis zwischen Panel und Bot braucht mindestens ${MIN_SECRET} Zeichen.`,
+            { en: `The panel ↔ bot secret needs at least ${MIN_SECRET} characters.` }
+          );
+        }
         setSetting(key, text.slice(0, 500));
       } else {
         setSetting(key, String(value ?? '').slice(0, entry.type === 'textarea' ? 20_000 : 500));
@@ -1202,6 +1211,23 @@ admin.get(
     const row = db.prepare('SELECT * FROM mails WHERE id = ?').get(requireInt(req.params.id, 'Nachricht'));
     if (!row) throw notFound('Diese Nachricht gibt es nicht.');
     res.json({ mail: row });
+  })
+);
+
+/**
+ * Tebex prüfen, ohne dass Geld fließt.
+ *
+ * Beantwortet die Frage, an der beim Einrichten fast alles hängt: Nimmt Tebex die Zugangsdaten an,
+ * und ist die Checkout-API für dieses Projekt freigeschaltet? Dafür wird ein Warenkorb über einen
+ * Cent angelegt und liegengelassen. Was hier **nicht** geprüft werden kann, ist der Weg des Geldes
+ * zurück – dafür gibt es "Send Test" im Tebex-Panel und den einen echten kleinen Kauf.
+ */
+admin.post(
+  '/tebex/test',
+  wrap(async (req, res) => {
+    const result = await tebex.selfTest({ lang: langOf(req) });
+    audit(req.user.id, 'tebex-test', { ok: result.ok, mode: result.mode }, req.ip);
+    res.json(result);
   })
 );
 

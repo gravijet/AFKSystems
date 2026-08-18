@@ -10,6 +10,7 @@ import * as notify from '../notify.js';
 import * as mail from '../mail.js';
 import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
+import * as attachments from '../attachments.js';
 import * as nodes from '../nodes.js';
 import { features } from '../features.js';
 import { actionsFor, eventsFor } from '../macros.js';
@@ -18,7 +19,7 @@ import * as billing from '../billing.js';
 import * as tebex from '../tebex.js';
 import { setLangCookie } from '../pages.js';
 import { bridge } from '../bridge.js';
-import { wrap, requireInt, bad, notFound, HttpError } from '../util.js';
+import { wrap, requireInt, bad, notFound, forbidden, token, HttpError } from '../util.js';
 
 export const router = express.Router();
 
@@ -70,7 +71,6 @@ router.get(
       mail_categories: mail.categoriesFor(lang),
       low_balance: Number(getSetting('low_balance')),
       signup_bonus: Number(getSetting('signup_bonus')),
-      ticket_categories: tickets.categoriesFor(lang),
       support_hours: String(getSetting('support_hours') || ''),
       payment: {
         tebex: tebex.configured(),
@@ -257,6 +257,9 @@ router.post(
 
 const PROVIDER = /^(discord|google)$/;
 
+/** Das Merkmal, das Start und Rückweg einer Anmeldung an denselben Browser bindet. */
+const OAUTH_COOKIE = 'afk_oauth';
+
 router.get(
   '/auth/:provider/start',
   wrap((req, res) => {
@@ -265,8 +268,18 @@ router.get(
     if (mode !== 'login' && !req.user) {
       throw new HttpError(401, 'Bitte anmelden.', { en: 'Please log in.' });
     }
+    // Ein Merkmal dieses Browsers reist im Cookie mit und muss beim Rückweg wieder da sein.
+    // Sonst könnte jemand seine eigene, fertige Anmeldung einem anderen unterschieben.
+    const binding = token(24);
+    res.cookie(OAUTH_COOKIE, binding, {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: config.publicUrl.startsWith('https'),
+      maxAge: 10 * 60_000,
+      path: '/api/auth',
+    });
     res.redirect(
-      oauth.startUrl(req.params.provider, { mode, userId: req.user?.id, lang: langOf(req) })
+      oauth.startUrl(req.params.provider, { mode, userId: req.user?.id, lang: langOf(req), binding })
     );
   })
 );
@@ -277,8 +290,10 @@ router.get(
     const lang = langOf(req);
     const key = req.params.provider;
     if (!PROVIDER.test(key)) return res.redirect(`/${lang}`);
+    const binding = auth.readCookie(req, OAUTH_COOKIE);
+    res.clearCookie(OAUTH_COOKIE, { path: '/api/auth' });
     try {
-      const result = await oauth.callback({ code: req.query.code, state: req.query.state });
+      const result = await oauth.callback({ code: req.query.code, state: req.query.state, binding });
       if (result.action === 'login' || result.action === 'created') {
         const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.userId);
         auth.createSession(res, user, req);
@@ -592,8 +607,8 @@ router.get(
       // Der Hinweis stand nur auf Deutsch da, egal in welcher Sprache das Panel lief.
       hint: paying
         ? lang === 'de'
-          ? 'Proxys werden von Hand zugeteilt – mach dafür ein Ticket der Kategorie „Proxy anfragen“ auf.'
-          : 'Proxies are assigned by hand. Open a ticket in the “Request a proxy” category.'
+          ? 'Proxys werden von Hand zugeteilt – mach dafür ein Ticket auf und schreib dazu, für welchen Serverplatz.'
+          : 'Proxies are assigned by hand. Open a ticket and say which server slot it is for.'
         : lang === 'de'
           ? 'Proxys gibt es ab einem bezahlten Serverplatz.'
           : 'Proxies come with a paid server slot.',
@@ -606,7 +621,6 @@ router.get(
 export const ticketView = (row) => ({
   id: row.id,
   subject: row.subject,
-  category: row.category,
   status: row.status,
   priority: row.priority,
   source: row.source,
@@ -625,14 +639,87 @@ export const ticketView = (row) => ({
   email: row.email,
 });
 
+/**
+ * Einen Anhang hochladen.
+ *
+ * Ohne Ticketnummer: Wer ein neues Ticket schreibt, hängt seinen Screenshot an, bevor es das
+ * Ticket gibt. Die Datei gehört bis zum Abschicken nur dem Hochladenden; erst `files.claim()`
+ * beim Anlegen oder Antworten verbindet sie mit einem Ticket. Was liegen bleibt, räumt der
+ * tägliche Durchlauf weg.
+ *
+ * Der Rumpf ist die Datei selbst – kein Formular, keine Zusatzbibliothek. Wie sie heißt, steht im
+ * Kopf `X-File-Name`; was sie ist, entscheidet ohnehin der Inhalt und nicht der Absender.
+ */
+router.post(
+  '/tickets/files',
+  auth.requireUser,
+  express.raw({ type: '*/*', limit: attachments.MAX_BYTES }),
+  wrap((req, res) => {
+    const open = db
+      .prepare('SELECT COUNT(*) AS n FROM ticket_files WHERE user_id = ? AND ticket_id IS NULL')
+      .get(req.user.id).n;
+    if (open >= 50) {
+      throw bad('Zu viele offene Anhänge. Bitte erst das Ticket abschicken.', {
+        en: 'Too many pending attachments. Please send the ticket first.',
+      });
+    }
+    let name = 'anhang';
+    try {
+      name = decodeURIComponent(String(req.headers['x-file-name'] || '')) || name;
+    } catch {
+      name = String(req.headers['x-file-name'] || '') || name;
+    }
+    const file = attachments.store({
+      userId: req.user.id,
+      name,
+      buffer: Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0),
+    });
+    res.json({ file: attachments.view(file) });
+  })
+);
+
+/**
+ * Einen Anhang herunterladen.
+ *
+ * Wer ihn sehen darf, entscheidet das Ticket: Beteiligte sehen die Anhänge ihres Tickets,
+ * Administratoren jedes – interne Notizen samt ihren Dateien allerdings nur die. Eine noch nicht
+ * abgeschickte Datei gehört allein dem, der sie hochgeladen hat.
+ */
+router.get(
+  '/tickets/files/:fileId',
+  auth.requireUser,
+  wrap((req, res) => {
+    const file = attachments.byId(requireInt(req.params.fileId, 'Anhang'));
+    if (!file) throw notFound('Diesen Anhang gibt es nicht.', { en: 'No such attachment.' });
+    const admin = req.user.role === 'admin';
+    const allowed = file.ticket_id
+      ? (admin || (!file.internal && tickets.isParticipant(file.ticket_id, req.user.id)))
+      : file.user_id === req.user.id;
+    if (!allowed) throw forbidden();
+    const bytes = attachments.read(file);
+    if (!bytes) throw notFound('Diese Datei liegt nicht mehr vor.', { en: 'That file is gone.' });
+    // Bilder dürfen im Verlauf stehen, alles andere wird heruntergeladen. Der Inhaltstyp kommt
+    // aus den Bytes (attachments.sniff) – nie aus dem, was beim Hochladen behauptet wurde.
+    const inline = attachments.isInline(file.mime) && req.query.download !== '1';
+    res.setHeader('Content-Type', inline ? file.mime : 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(file.name)}`
+    );
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+    res.send(bytes);
+  })
+);
+
 router.get(
   '/tickets',
   auth.requireUser,
   wrap((req, res) => {
     res.json({
       tickets: tickets.listFor(req.user).map(ticketView),
-      categories: tickets.categoriesFor(langOf(req)),
       priority_allowed: billing.isPayingUser(req.user.id),
+      max_upload: attachments.MAX_BYTES,
     });
   })
 );
@@ -686,7 +773,10 @@ router.post(
   auth.requireUser,
   wrap((req, res) => {
     const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
-    const updated = tickets.reply(ticket, req.user, req.body?.body, { staff: false });
+    const updated = tickets.reply(ticket, req.user, req.body?.body, {
+      staff: false,
+      files: req.body?.files,
+    });
     tickets.notifyStaffReply(updated, req.user, req.body?.body || '');
     // Alle anderen Beteiligten bekommen Post – der Schreiber nicht.
     tickets.notifyParticipants(

@@ -15,8 +15,21 @@ Was es gibt, ist eine Reihe von Hürden, die den **bequemen** Weg verschließen.
 Speichern unter, fertig" wird Arbeit. Genau das tun große Anbieter auch, und mehr behaupten sie
 auch nicht.
 
-Ein- und ausschalten lässt sich das Ganze in **Administration → Einstellungen → Betrieb →
-Inhaltsschutz**. Aus heißt: keine einzige der folgenden Regeln gilt.
+## Zwei Schalter, zwei verschiedene Dinge
+
+In **Administration → Einstellungen → Betrieb** stehen zwei Schalter, und sie haben miteinander
+wenig zu tun:
+
+| Schalter | Wirkt auf | Vorgabe |
+| --- | --- | --- |
+| **Dateien schützen** (`content_protection`) | CSS und JavaScript lassen sich nicht einzeln abrufen, liegen in keinem fremden Zwischenspeicher, Website-Kopierer kommen nicht ans Dashboard | **an** |
+| **Bedienung sperren** (`content_lock_ui`) | Rechtsklick, Markieren, Ziehen, Drucken, Entwicklerwerkzeuge | **aus** |
+
+Das war einmal **ein** Schalter, und das war falsch. Wer seine Dateien nicht als Sammlung
+verschenken will, will deswegen noch lange nicht, dass seine Kunden eine Serveradresse nicht
+markieren können. Der zweite Schalter trifft ausschließlich die eigenen Besucher – ein Kopierer
+mit einem Skript merkt von ihm nichts. Deshalb ist die Seite ab Werk eine ganz normale Seite, und
+wer das andere will, schaltet es dazu.
 
 ---
 
@@ -78,6 +91,10 @@ strukturiert vorliegt, und spart nebenbei Bandbreite.
 
 ## Was im Browser passiert
 
+**Nur mit „Bedienung sperren“.** Ist der Schalter aus – und das ist die Vorgabe –, passiert hier
+gar nichts: Markieren, Rechtsklick, Kopieren und die Entwicklerwerkzeuge verhalten sich wie auf
+jeder anderen Website.
+
 Datei: `public/assets/js/shield.js` (läuft im `<head>`, damit der Schutz steht, bevor der erste
 Inhalt sichtbar ist)
 
@@ -120,7 +137,7 @@ Neugierigen. Der Effekt – "so kommt man nicht weiter" – ist derselbe, der Sc
 | | |
 | --- | --- |
 | Serverseitig | ein Vergleich zweier Kopfzeilen je Asset-Aufruf |
-| Browser | sechs Ereignis-Anmeldungen und alle fünf Sekunden ein Vergleich zweier Zahlen |
+| Browser | nichts, solange „Bedienung sperren“ aus ist; sonst sechs Ereignis-Anmeldungen und alle fünf Sekunden ein Vergleich zweier Zahlen |
 | CDN | CSS und JS werden nicht mehr von Cloudflare ausgeliefert, sondern vom Server |
 
 Der letzte Punkt ist der einzige, den man merkt: Beim allerersten Besuch kommen CSS und JS vom
@@ -144,8 +161,12 @@ behalten. Wird es zum Problem, ist der Schalter der richtige Ort dafür.
 
 ## Abschalten
 
-**Administration → Einstellungen → Betrieb → Inhaltsschutz** aus. Wirkt sofort für neue
+**Administration → Einstellungen → Betrieb**, der jeweilige Schalter. Wirkt sofort für neue
 Seitenaufrufe; bereits geladene Seiten behalten ihren Zustand bis zum Neuladen.
 
-Gründe, es zu tun: eine Umgebung, in der `Sec-Fetch-*` verloren geht (manche Firmen-Proxys), oder
-eine Fehlersuche, bei der die Entwicklerwerkzeuge gebraucht werden.
+Gründe, *Dateien schützen* abzuschalten: eine Umgebung, in der `Sec-Fetch-*` verloren geht (manche
+Firmen-Proxys), oder sehr viel Verkehr, bei dem CSS und JS wieder aus dem CDN kommen sollen.
+
+Gründe, *Bedienung sperren* einzuschalten: der Wunsch, das Abgreifen von Gestaltung und Texten
+unbequem zu machen. Der Preis dafür ist, dass auch die eigenen Kunden nichts mehr markieren können
+– außer an den Stellen, die ausdrücklich dafür da sind (siehe oben).

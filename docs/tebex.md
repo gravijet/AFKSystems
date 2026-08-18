@@ -223,16 +223,64 @@ Der rohe Rumpf ist wichtig – deshalb steht die Route in `server/index.js` **vo
 
 ## 7. Testen
 
-1. **Zahlungsmeldung von Hand auslösen:** Im Tebex-Panel unter **Developers → Webhooks → Send
-   Test** eine Art auswählen und abschicken. Es kommt nichts an? Dann stimmt die Adresse oder das
-   Geheimnis nicht.
-2. **Echter Kauf:** Tebex kennt einen Testmodus – im Zweifel mit dem kleinsten Paket einmal
-   wirklich kaufen und danach erstatten. Das ist der einzige Weg, der wirklich alles prüft.
-3. **Danach nachsehen:**
-   * **Administration → Aufladungen** – die Aufladung steht auf *bezahlt*.
-   * **Administration → Buchungen** – der Ledger-Eintrag mit `Tebex tbx-…`.
-   * **Administration → Post** – der Beleg, der an den Kunden ging.
-   * Beim Kunden: das Guthaben ist da, live und ohne Neuladen.
+### Erst die Wahrheit
+
+**Es gibt bei Tebex keinen zweiten Server zum Üben.** `checkout.tebex.io` ist die einzige Adresse;
+einen Sandkasten mit eigener Adresse und Testkarten, wie ihn Stripe oder PayPal haben, gibt es
+nicht. Ob ein Kauf echt abgerechnet wird, entscheidet allein der **Testmodus deines Stores** im
+Tebex-Panel – nicht die API und nicht dieses Panel.
+
+Deshalb zerfällt "testen" hier in drei Schritte, die man einzeln beantworten kann.
+
+### Schritt 1 – Nimmt Tebex meine Zugangsdaten an?
+
+**Administration → Einstellungen → Bezahlen mit Tebex → Verbindung prüfen.**
+
+Der Knopf legt einen echten Warenkorb über einen Cent an und lässt ihn liegen. Es fließt kein Geld,
+und er läuft von selbst ab. Zurück kommt entweder eine Bezahladresse – dann stimmen Projekt-ID und
+Schlüssel und die Checkout-API ist für dein Projekt freigeschaltet – oder die Meldung von Tebex im
+Klartext:
+
+| Antwort | Bedeutung |
+| --- | --- |
+| *Tebex hat die Zugangsdaten angenommen …* | alles richtig eingetragen |
+| `Tebex: 401 Unauthorized` | Projekt-ID oder privater Schlüssel falsch |
+| `Tebex: 403` / *not enabled* | Checkout-API für dieses Projekt nicht freigeschaltet → [Headless-Weg](#headless) |
+| *In den Einstellungen fehlt: …* | das genannte Feld ist leer |
+
+> **Wichtig:** Solange *Bezahlen mit Tebex* ausgeschaltet ist, steht die Zahlart im Panel nicht zur
+> Auswahl – auch dann nicht, wenn alle Schlüssel eingetragen sind. Genau das ist der häufigste
+> Grund für "es sind alle Informationen da, aber ich kann nichts kaufen". Der Prüfknopf funktioniert
+> trotzdem, damit sich die Zugangsdaten vor dem Einschalten prüfen lassen.
+
+### Schritt 2 – Kommt der Weg zurück an?
+
+**Developers → Webhooks → Send Test** im Tebex-Panel: eine Art auswählen, abschicken. Im Log des
+Panels steht dann `[tebex] Webhook bestätigt.` Kommt nichts an, stimmt die Adresse oder das
+Geheimnis nicht:
+
+```bash
+journalctl -u afksystems -n 100 | grep tebex
+```
+
+### Schritt 3 – Der eine echte Kauf
+
+Das ist der einzige Weg, der wirklich alles prüft: Zahlung, Webhook, Betragsvergleich, Buchung,
+Beleg. Zwei Möglichkeiten:
+
+* **Testmodus des Stores.** Steht dein Tebex-Store auf Test, laufen Käufe über Tebex' Testzahlarten
+  und kosten nichts. Wo der Schalter steht und welche Zahlarten er freigibt, sagt dein Tebex-Panel
+  – das ist eine Einstellung dort, nicht hier.
+* **Kleinstes Paket wirklich kaufen und danach erstatten.** Die Erstattung meldet Tebex als
+  `payment.refunded`, und das Panel zieht die Credits wieder ab – damit ist gleich der zweite Weg
+  mitgeprüft.
+
+### Danach nachsehen
+
+* **Administration → Aufladungen** – die Aufladung steht auf *bezahlt*.
+* **Administration → Buchungen** – der Ledger-Eintrag mit `Tebex tbx-…`.
+* **Administration → Post** – der Beleg, der an den Kunden ging.
+* Beim Kunden: das Guthaben ist da, live und ohne Neuladen.
 
 ---
 
@@ -258,7 +306,7 @@ eine Entscheidung des Betreibers und keine der Software.
 
 | Beobachtung | Ursache | Abhilfe |
 | --- | --- | --- |
-| Zahlart steht nicht zur Auswahl | Schalter aus oder Schlüssel fehlt | **Einstellungen → Bezahlen mit Tebex** durchsehen; beim Checkout-Weg braucht es Projekt-ID *und* privaten Schlüssel |
+| Zahlart steht nicht zur Auswahl | **Bezahlen mit Tebex** ist aus, oder ein Schlüssel fehlt | Schalter an; beim Checkout-Weg braucht es Projekt-ID *und* privaten Schlüssel. Der Knopf **Verbindung prüfen** sagt, was davon fehlt |
 | *"Tebex: 401 Unauthorized"* | Projekt-ID oder Schlüssel falsch | in creator.tebex.io neu erzeugen |
 | *"Tebex: 403"* / *"not enabled"* | Checkout-API nicht freigeschaltet | auf den Headless-Weg umstellen |
 | *"Tebex hat keine Bezahladresse zurückgegeben"* | Warenkorb leer | beim Headless-Weg: Paket-ID falsch oder Paket deaktiviert |

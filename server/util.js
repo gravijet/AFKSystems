@@ -113,6 +113,7 @@ export const wrap = (handler) => (req, res, next) => {
 const FIELD_EN = {
   'Titel (DE)': 'Title (DE)',
   'Titel (EN)': 'Title (EN)',
+  Anhang: 'Attachment',
   Ankündigung: 'Announcement',
   'Anti-AFK': 'Anti-AFK',
   Anzahl: 'Count',

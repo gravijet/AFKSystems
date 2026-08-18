@@ -13,7 +13,7 @@
 import crypto from 'node:crypto';
 import { db, getSetting, audit } from './db.js';
 import { config } from './config.js';
-import { bad, HttpError, hashPassword, token as randomToken } from './util.js';
+import { bad, HttpError, hashPassword, safeEqual, token as randomToken } from './util.js';
 import * as mail from './mail.js';
 import { grant, freeGuildId } from './billing.js';
 import { bridge } from './bridge.js';
@@ -89,7 +89,14 @@ export const state = () =>
 
 // ---------------------------------------------------------------- Ablauf
 
-/** Kurzlebige Zustände gegen Rückfragen von fremden Seiten. */
+/**
+ * Kurzlebige Zustände gegen Rückfragen von fremden Seiten.
+ *
+ * Der Zustand allein sagt nur "diese Anfrage kam von uns". Er sagt nicht, dass sie aus **diesem**
+ * Browser kam – und genau daraus wurde sonst ein Angriff: Wer selbst eine Anmeldung anfängt und
+ * die fertige Rückkehradresse jemand anderem unterschiebt, meldet dessen Browser an seinem Konto
+ * an. Deshalb reist zusätzlich ein zufälliger Wert im Cookie mit, und beide müssen zusammenpassen.
+ */
 const states = new Map();
 
 function newState(payload) {
@@ -105,7 +112,7 @@ function newState(payload) {
  * Adresse, auf die der Browser geschickt wird.
  * `mode`: link (verknüpfen), login (anmelden oder anlegen), verify (Discord-Linked-Roles).
  */
-export function startUrl(key, { mode = 'link', userId = null, lang = 'en', next = '' } = {}) {
+export function startUrl(key, { mode = 'link', userId = null, lang = 'en', next = '', binding = null } = {}) {
   const entry = provider(key);
   if (!configured(key)) {
     throw bad(`${entry.label} ist auf diesem Server nicht eingerichtet.`, {
@@ -140,7 +147,7 @@ export function startUrl(key, { mode = 'link', userId = null, lang = 'en', next 
     redirect_uri: redirectUri(key),
     response_type: 'code',
     scope: mode === 'verify' ? 'identify role_connections.write' : entry.scope,
-    state: newState({ provider: key, mode, userId, lang, next }),
+    state: newState({ provider: key, mode, userId, lang, next, binding }),
     ...entry.extra,
   });
   return `${entry.authorize}?${params}`;
@@ -187,7 +194,7 @@ async function identity(entry, accessToken) {
  *   { action: 'created',  userId, lang }  – Konto wurde gerade angelegt
  *   { action: 'verified', userId, lang }  – Discord-Linked-Roles geschrieben
  */
-export async function callback({ code, state: value }) {
+export async function callback({ code, state: value, binding = null }) {
   const entry = value ? states.get(value) : null;
   if (!entry) {
     throw new HttpError(400, 'Die Anfrage ist abgelaufen. Bitte noch einmal versuchen.', {
@@ -195,6 +202,13 @@ export async function callback({ code, state: value }) {
     });
   }
   states.delete(value);
+  // Derselbe Browser wie beim Start? Ohne diese Prüfung ließe sich eine fertige Rückkehradresse
+  // jemandem unterschieben, und der säße danach im fremden Konto.
+  if (entry.binding && !(binding && safeEqual(binding, entry.binding))) {
+    throw new HttpError(400, 'Diese Anmeldung gehört zu einem anderen Browser.', {
+      en: 'That sign-in belongs to a different browser.',
+    });
+  }
   const which = provider(entry.provider);
   const accessToken = await exchange(which, code);
 
@@ -423,18 +437,26 @@ export async function refreshDiscordMembership(userId, discordId = null) {
  * VIP und Team sind normale Serverrollen; sie synchronisiert der Bot ohne OAuth-Zustimmung für
  * `role_connections.write`.
  */
+/**
+ * Die beiden Linked-Role-Merkmale.
+ *
+ * `name` ist das, was Discord im Rollen-Dialog als Bedingung anzeigt – deshalb steht dort genau
+ * das, was die Rolle heißt, und sonst nichts. Den Namen der Anwendung ("AFKSystems") setzt Discord
+ * selbst davor; das ist keine Angabe von hier, sondern der Name im Developer Portal.
+ * `description` ist die Zeile darunter und darf erklären, worum es geht.
+ */
 export const ROLE_METADATA = [
   {
     key: 'administrator',
     name: 'Administrator',
     type: 7,
-    description: 'Administrator',
+    description: 'Runs the panel.',
   },
   {
     key: 'discord_moderator',
     name: 'Discord Moderator',
     type: 7,
-    description: 'Discord Moderator',
+    description: 'Moderates the Discord server.',
   },
 ];
 

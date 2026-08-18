@@ -12,6 +12,7 @@
 
 import {
   ActionRowBuilder,
+  AttachmentBuilder,
   ButtonBuilder,
   ButtonStyle,
   ChannelType,
@@ -19,7 +20,6 @@ import {
   MessageFlags,
   ModalBuilder,
   PermissionFlagsBits,
-  StringSelectMenuBuilder,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
@@ -27,6 +27,21 @@ import {
 const COLORS = { info: 0x206cfe, ok: 0x00bb7f, warn: 0xfcbb00, bad: 0xfb2c36 };
 const ARCHIVE_CATEGORY_ID = '1538534010748280852';
 const ARCHIVE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Wie groß eine Datei sein darf, die der Bot in einen Kanal hängt.
+ *
+ * Das entscheidet Discord, nicht wir: ein Server ohne Boosts nimmt 10 MB, mit Boost-Stufe 2 sind
+ * es 50 MB und mit Stufe 3 hundert. Ein Anhang aus dem Panel darf 20 MB haben – passt er hier
+ * nicht hinein, kommt statt der Datei ein Link ins Panel. Das ist ehrlicher als ein Fehler im
+ * Protokoll, den der Kunde nie zu sehen bekommt.
+ */
+const UPLOAD_LIMIT = [10, 10, 50, 100].map((mb) => mb * 1024 * 1024);
+const uploadLimit = (guild) => UPLOAD_LIMIT[guild?.premiumTier || 0] ?? UPLOAD_LIMIT[0];
+
+/** Eine Größe, wie sie ein Mensch liest. */
+const humanSize = (bytes) =>
+  bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
 const STATUS_LABEL = {
   open: 'open',
@@ -66,7 +81,8 @@ export class Tickets {
         [
           'A ticket opened here is the same ticket you see in the panel.',
           '',
-          'Choose a category below. A private channel will open for you and the team.',
+          'Press the button, write a subject and describe the issue. A private channel opens for',
+          'you and the team; screenshots and files can go in there as well.',
           '',
           `Your Discord account needs to be linked to your ${this.config.brand} account:`,
           `${this.config.link_url}`,
@@ -74,32 +90,32 @@ export class Tickets {
       )
       .setThumbnail(this.config.logo);
 
-    const menu = new StringSelectMenuBuilder()
+    // Ein Knopf, keine Auswahlliste: Es gibt nichts mehr zu wählen. Wer Hilfe braucht, schreibt
+    // hin, worum es geht – die Schubfächer davor hat niemand vermisst.
+    const button = new ButtonBuilder()
       .setCustomId('ticket:new')
-      .setPlaceholder('What do you need help with?')
-      .addOptions(
-        this.config.categories.map((entry) => ({ label: entry.label, value: entry.key }))
-      );
+      .setLabel('Open a ticket')
+      .setEmoji('🎫')
+      .setStyle(ButtonStyle.Primary);
 
     const existing = await channel.messages.fetch({ limit: 25 }).catch(() => null);
     const own = existing?.find(
       (message) => message.author.id === this.bot.client.user.id && message.embeds.length
     );
-    const payload = { embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] };
+    const payload = { embeds: [embed], components: [new ActionRowBuilder().addComponents(button)] };
     if (own) await own.edit(payload).catch(() => channel.send(payload));
     else await channel.send(payload);
   }
 
   // ------------------------------------------------------------ Discord → Panel
 
-  /** Auswahl im Ticket-Kanal: Formular zeigen. */
-  async onSelect(interaction) {
-    const category = interaction.values[0];
+  /** Knopf im Ticket-Kanal: Formular zeigen. */
+  async onOpen(interaction) {
     const linked = await this.bot.panel.call(`/users/${interaction.user.id}`).catch(() => null);
     if (!linked?.linked) return this.tellUnlinked(interaction);
 
     const modal = new ModalBuilder()
-      .setCustomId(`ticket:create:${category}`)
+      .setCustomId('ticket:create')
       .setTitle('Open a ticket')
       .addComponents(
         new ActionRowBuilder().addComponents(
@@ -136,7 +152,7 @@ export class Tickets {
               '',
               `Linking takes one click: ${this.config.link_url}`,
               '',
-              'Then select the category here again.',
+              'Then press the button here again.',
             ].join('\n')
           )
           .setThumbnail(this.config.logo),
@@ -145,7 +161,7 @@ export class Tickets {
   }
 
   /** Formular abgeschickt: Ticket im Panel anlegen, Kanal hier aufmachen. */
-  async onCreate(interaction, category) {
+  async onCreate(interaction) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const subject = interaction.fields.getTextInputValue('subject');
     const body = interaction.fields.getTextInputValue('body');
@@ -154,21 +170,24 @@ export class Tickets {
     try {
       const result = await this.bot.panel.call('/tickets', {
         method: 'POST',
-        body: { discord_id: interaction.user.id, subject, category, body },
+        body: { discord_id: interaction.user.id, subject, body },
       });
       ticket = result.ticket;
     } catch (error) {
       return interaction.editReply(`That did not work: ${error.message}`);
     }
 
-    const channel = await this.openChannel(ticket, interaction.user.id);
+    // Hier angelegt, hier angesprochen: Wer den Knopf gedrückt hat, wird im neuen Kanal erwähnt
+    // und findet ihn dadurch in der Kanalliste wieder. Ein Ticket aus dem Panel bekommt diese
+    // Erwähnung bewusst nicht – dort sitzt niemand in Discord und wartet darauf.
+    const channel = await this.openChannel(ticket, interaction.user.id, { ping: true });
     await interaction.editReply(
       channel ? `Ticket #${ticket.id} is open: <#${channel.id}>` : `Ticket #${ticket.id} is open.`
     );
   }
 
   /** Einen Kanal für ein Ticket anlegen und im Panel vermerken. */
-  async openChannel(ticket, discordId = null) {
+  async openChannel(ticket, discordId = null, { ping = false } = {}) {
     const guild = await this.bot.guild();
     if (!guild) return null;
     const parent = this.config.ticket_category || null;
@@ -228,10 +247,12 @@ export class Tickets {
       .setURL(ticket.url)
       .addFields(
         { name: 'From', value: ticket.owner?.username || '–', inline: true },
-        { name: 'Category', value: this.categoryLabel(ticket.category), inline: true },
         { name: 'Status', value: STATUS_LABEL[ticket.status] || ticket.status, inline: true }
       )
-      .setFooter({ text: 'Messages here are synced with the panel.', iconURL: this.config.logo });
+      .setFooter({
+        text: 'Messages and files here are synced with the panel.',
+        iconURL: this.config.logo,
+      });
 
     const buttons = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -241,7 +262,13 @@ export class Tickets {
       new ButtonBuilder().setURL(ticket.url).setLabel('Open in panel').setStyle(ButtonStyle.Link)
     );
 
-    const message = await channel.send({ embeds: [embed], components: [buttons] });
+    const message = await channel.send({
+      // Nur bei einem hier aufgemachten Ticket. Die Erwähnung steht am Kopf des Kanals, damit
+      // Discord ihn hervorhebt – ohne sie geht ein neuer Kanal in der Liste unter.
+      content: ping && discordId ? `<@${discordId}>` : undefined,
+      embeds: [embed],
+      components: [buttons],
+    });
     this.mine.add(message.id);
     await message.pin().catch(() => {});
 
@@ -251,16 +278,18 @@ export class Tickets {
     return channel;
   }
 
-  categoryLabel(key) {
-    return this.config.categories.find((entry) => entry.key === key)?.label || key;
-  }
-
-  /** Eine Nachricht in Discord posten, die aus dem Panel kam. */
+  /**
+   * Eine Nachricht in Discord posten, die aus dem Panel kam – samt ihrer Anhänge.
+   *
+   * Die Dateien holt der Bot beim Panel ab und hängt sie hier als echte Anhänge an: ein Bild soll
+   * im Kanal ein Bild sein und kein Link, den erst jemand anklickt. Nur was Discord zu groß ist,
+   * wird als Link auf das Panel angekündigt.
+   */
   async relayToDiscord(channel, entry, ticket) {
     if (entry.discord_id) return; // die kam von hier
+    const body = String(entry.body || '').slice(0, 4000);
     const embed = new EmbedBuilder()
       .setColor(entry.role === 'staff' ? COLORS.ok : entry.role === 'system' ? COLORS.warn : COLORS.info)
-      .setDescription(String(entry.body).slice(0, 4000))
       .setTimestamp(new Date(entry.created_at));
     if (entry.role === 'system') embed.setAuthor({ name: 'System' });
     else {
@@ -269,11 +298,57 @@ export class Tickets {
         iconURL: this.config.logo,
       });
     }
-    const message = await channel.send({ embeds: [embed] }).catch(() => null);
+
+    const { attachments, tooBig } = await this.fetchFiles(channel, entry, ticket);
+    const lines = [body];
+    if (tooBig.length) {
+      lines.push(
+        '',
+        ...tooBig.map(
+          (file) => `📎 **${file.name}** (${humanSize(file.size)}) – too large for Discord: ${ticket?.url || ''}`
+        )
+      );
+    }
+    const text = lines.join('\n').trim();
+    // Ein Beitrag ohne Text und ohne Datei wäre eine leere Nachricht – die nimmt Discord nicht an.
+    if (!text && !attachments.length) return;
+    embed.setDescription(text || '*(attachment)*');
+
+    const message = await channel.send({ embeds: [embed], files: attachments }).catch((error) => {
+      console.warn('[tickets] could not relay message:', error.message);
+      return null;
+    });
     if (message) this.mine.add(message.id);
   }
 
-  /** Eine gewöhnliche Nachricht in einem Ticket-Kanal: ab damit ins Panel. */
+  /** Die Anhänge einer Panel-Nachricht holen. Zu große bleiben als Hinweis übrig. */
+  async fetchFiles(channel, entry, ticket) {
+    const attachments = [];
+    const tooBig = [];
+    const limit = uploadLimit(channel.guild);
+    for (const file of entry.files || []) {
+      if (file.size > limit) {
+        tooBig.push(file);
+        continue;
+      }
+      const bytes = await this.bot.panel
+        .download(`/tickets/${ticket?.id ?? entry.ticket_id}/files/${file.id}`)
+        .catch((error) => {
+          console.warn(`[tickets] attachment ${file.id}: ${error.message}`);
+          return null;
+        });
+      if (bytes) attachments.push(new AttachmentBuilder(bytes, { name: file.name }));
+    }
+    return { attachments, tooBig };
+  }
+
+  /**
+   * Eine gewöhnliche Nachricht in einem Ticket-Kanal: ab damit ins Panel – mit ihren Anhängen.
+   *
+   * Die Dateien werden **nicht** als Adresse durchgereicht: Discords Anhang-Adressen laufen ab,
+   * und ein Ticket, in dem nach zwei Wochen ein toter Link steht, hat den Screenshot verloren.
+   * Der Bot meldet nur, was es gibt, und das Panel holt es sich und behält es.
+   */
   async onMessage(message) {
     if (message.author.bot || this.mine.has(message.id)) return;
     // `geschlossen-*` keeps channels created before the English Discord migration working.
@@ -282,23 +357,31 @@ export class Tickets {
     if (!match) return;
     const id = Number(match[1]);
 
-    const content = [message.content, ...message.attachments.map((file) => file.url)]
-      .filter(Boolean)
-      .join('\n')
-      .slice(0, 4000);
-    if (!content) return;
+    const content = String(message.content || '').slice(0, 4000);
+    const files = [...message.attachments.values()].map((file) => ({
+      name: file.name,
+      url: file.url,
+      size: file.size,
+    }));
+    if (!content && !files.length) return;
 
     try {
-      await this.bot.panel.call(`/tickets/${id}/messages`, {
+      const result = await this.bot.panel.call(`/tickets/${id}/messages`, {
         method: 'POST',
         body: {
           discord_id: message.id,
           discord_user_id: message.author.id,
           author_name: message.member?.displayName || message.author.username,
           body: content,
+          attachments: files,
         },
       });
       await message.react('✅').catch(() => {});
+      // Ein Anhang, der nicht übernommen werden konnte (zu groß, Adresse tot), darf nicht still
+      // verschwinden: sonst glaubt der Kunde, das Team habe sein Bild.
+      for (const note of result?.failed || []) {
+        await message.reply(`This attachment did not make it into the panel – ${note}`).catch(() => {});
+      }
     } catch (error) {
       // Wer nicht verknüpft ist, soll wissen warum – und nicht ins Leere schreiben.
       await message.reply(`This was not saved in the panel: ${error.message}`).catch(() => {});
@@ -336,15 +419,20 @@ export class Tickets {
     if (event.internal) return; // interne Notizen bleiben intern
     const channel = await this.channelOf(event.ticket_id);
     if (!channel) return;
-    await this.relayToDiscord(channel, {
-      role: event.role,
-      author: event.author,
-      body: event.body,
-      created_at: event.created_at,
-      // Eine Discord-Nachricht wurde schon als Original im Kanal geschrieben. Nur echte
-      // Panel-Nachrichten bekommen zusätzlich ein lesbares Embed in Discord.
-      discord_id: event.discord_id || null,
-    });
+    await this.relayToDiscord(
+      channel,
+      {
+        role: event.role,
+        author: event.author,
+        body: event.body,
+        files: event.files || [],
+        created_at: event.created_at,
+        // Eine Discord-Nachricht wurde schon als Original im Kanal geschrieben. Nur echte
+        // Panel-Nachrichten bekommen zusätzlich ein lesbares Embed in Discord.
+        discord_id: event.discord_id || null,
+      },
+      { id: event.ticket_id, url: this.ticketUrl(event.ticket_id) }
+    );
     if (event.status && event.status !== 'closed') await this.reopenChannel(channel, event.ticket_id);
     if (event.reopened) {
       await channel.send({ content: 'The ticket was reopened by a new reply.' });
@@ -438,6 +526,11 @@ export class Tickets {
         .call(`/tickets/${ticket.id}`, { method: 'PATCH', body: { channel_id: null } })
         .catch(() => {});
     }
+  }
+
+  /** Die Adresse eines Tickets im Panel – für Hinweise, wenn eine Datei hier nicht hineinpasst. */
+  ticketUrl(ticketId) {
+    return `${String(this.config.panel_url || '').replace(/\/+$/, '')}/en/app#/tickets/${ticketId}`;
   }
 
   async channelOf(ticketId) {

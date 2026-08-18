@@ -304,6 +304,7 @@ export const ADMIN_GROUPS = [
 
 const SIDE_RAIL_KEY = 'afk-side-collapsed';
 const SIDE_SECTION_PREFIX = 'afk-side-section-';
+const SIDE_SCROLL_KEY = 'afk-side-scroll';
 
 function storedFlag(key, fallback = false) {
   try {
@@ -317,6 +318,31 @@ function storedFlag(key, fallback = false) {
 function storeFlag(key, value) {
   try {
     localStorage.setItem(key, String(value));
+  } catch {
+    /* privater Modus: es funktioniert trotzdem, es merkt sich nur nichts */
+  }
+}
+
+/**
+ * Wie weit die Leiste heruntergescrollt ist.
+ *
+ * Die Leiste wird bei jedem Zustandswechsel eines Bots komplett neu gezeichnet, und beim
+ * Seitenwechsel sowieso. Ohne diesen Merker sprang sie dabei jedes Mal an den Anfang – wer im
+ * Admin-Bereich unten war, stand nach einem Klick wieder ganz oben. Der Wert liegt in der
+ * `sessionStorage`, damit er auch ein echtes Neuladen der Seite übersteht, aber nicht ewig bleibt.
+ */
+let sideScroll = (() => {
+  try {
+    return Number(sessionStorage.getItem(SIDE_SCROLL_KEY)) || 0;
+  } catch {
+    return 0;
+  }
+})();
+
+function rememberSideScroll(value) {
+  sideScroll = Math.max(0, Math.round(value || 0));
+  try {
+    sessionStorage.setItem(SIDE_SCROLL_KEY, String(sideScroll));
   } catch {
     /* privater Modus: es funktioniert trotzdem, es merkt sich nur nichts */
   }
@@ -474,6 +500,9 @@ export function drawSide() {
   const filterNode = $('#side-filter');
   const hadFocus = document.activeElement === filterNode;
   const caret = filterNode ? filterNode.selectionStart : null;
+  // Wo die Leiste gerade steht, bevor sie neu entsteht.
+  const scroller = $('#side-scroll');
+  if (scroller) rememberSideScroll(scroller.scrollTop);
 
   const servers = state.profiles
     .map((profile) => {
@@ -587,6 +616,14 @@ export function drawSide() {
     await api('/auth/logout', { method: 'POST' });
     location.href = url('');
   });
+
+  // Und wieder dorthin, wo sie war. `scrollHeight` ist erst nach dem Einsetzen bekannt, deshalb
+  // hier und nicht vorher – und begrenzt, damit eine kürzer gewordene Leiste nicht ins Leere zeigt.
+  const fresh = $('#side-scroll');
+  if (fresh) {
+    fresh.scrollTop = Math.min(sideScroll, Math.max(0, fresh.scrollHeight - fresh.clientHeight));
+    fresh.addEventListener('scroll', () => rememberSideScroll(fresh.scrollTop), { passive: true });
+  }
 
   const input = $('#side-filter');
   input.addEventListener('input', () => {

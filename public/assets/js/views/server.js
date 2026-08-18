@@ -1061,7 +1061,10 @@ async function tabPov(root, profile) {
     source.putImageData(image, 0, 0);
 
     const target = canvas.getContext('2d');
-    canvas.width = Math.min(960, cols * 8);
+    // Vier Bildpunkte je Zeichen reichen: Das Bild ist ein Raster aus Zeichen, mehr Pixel machen
+    // daraus keine schärfere Welt, sondern nur eine größere Fläche. Die Anzeigegröße bestimmt
+    // ohnehin das CSS – hier steht nur, wie fein gezeichnet wird.
+    canvas.width = Math.min(640, cols * 4);
     canvas.height = Math.round((canvas.width * rows) / cols);
     target.imageSmoothingEnabled = false;
     target.drawImage(buffer, 0, 0, canvas.width, canvas.height);

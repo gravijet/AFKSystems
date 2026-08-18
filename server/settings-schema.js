@@ -421,8 +421,14 @@ export const SETTINGS = [
     group: 'discord',
     type: 'password',
     secret: true,
-    de: { label: 'Geheimnis Panel ↔ Bot', help: 'Ein selbst ausgedachtes langes Passwort. Es steht hier und in der .env des Bots; ohne es spricht das Panel nicht mit ihm.' },
-    en: { label: 'Panel ↔ bot secret', help: 'A long password you choose. It lives here and in the bot .env; without it the panel does not talk to the bot.' },
+    de: {
+      label: 'Geheimnis Panel ↔ Bot',
+      help: 'Mindestens 24 Zeichen, zufällig (z. B. `openssl rand -base64 36`). Es steht hier und in der .env des Bots als PANEL_SECRET. Dahinter liegt alles, was der Bot darf – ein kurzes Passwort ist hier keines.',
+    },
+    en: {
+      label: 'Panel ↔ bot secret',
+      help: 'At least 24 random characters (e.g. `openssl rand -base64 36`). It lives here and in the bot .env as PANEL_SECRET. Everything the bot may do sits behind it – a short password is no password here.',
+    },
   },
   {
     key: 'discord_guild_id',
@@ -565,12 +571,25 @@ export const SETTINGS = [
     group: 'ops',
     type: 'switch',
     de: {
-      label: 'Inhaltsschutz',
-      help: 'Rechtsklick, Markieren, Ziehen und Drucken sind gesperrt, CSS und JavaScript lassen sich nicht einzeln herunterladen, und offene Entwicklerwerkzeuge blenden den Inhalt aus. Eingabefelder, Codes und Adressen bleiben kopierbar. Aus heißt: nichts davon gilt.',
+      label: 'Dateien schützen',
+      help: 'CSS und JavaScript lassen sich nicht einzeln aufrufen und liegen in keinem fremden Zwischenspeicher; Website-Kopierer kommen nicht ans Dashboard. Am Verhalten der Seite ändert das nichts – Markieren und Rechtsklick bleiben frei.',
     },
     en: {
-      label: 'Content protection',
-      help: 'Right-click, selecting, dragging and printing are blocked, CSS and JavaScript cannot be downloaded on their own, and open developer tools hide the content. Input fields, codes and addresses stay copyable. Off means none of it applies.',
+      label: 'Protect files',
+      help: 'CSS and JavaScript cannot be fetched on their own and stay out of foreign caches; website copiers do not get into the dashboard. This changes nothing about how the page behaves – selecting and right-click stay available.',
+    },
+  },
+  {
+    key: 'content_lock_ui',
+    group: 'ops',
+    type: 'switch',
+    de: {
+      label: 'Bedienung sperren',
+      help: 'Zusätzlich Rechtsklick, Markieren, Ziehen und Drucken sperren; offene Entwicklerwerkzeuge blenden den Inhalt aus. Eingabefelder, Codes, Adressen und Chatzeilen bleiben auch dann kopierbar. Aus (Vorgabe) heißt: eine ganz normale Seite.',
+    },
+    en: {
+      label: 'Lock interaction',
+      help: 'Additionally block right-click, selecting, dragging and printing; open developer tools hide the content. Input fields, codes, addresses and chat lines stay copyable even then. Off (the default) means: an ordinary web page.',
     },
   },
   {

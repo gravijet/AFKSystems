@@ -236,7 +236,10 @@ test('Admin and moderator are Linked Roles; Ultra includes Premium and staff rec
   assert.equal(roles.managedIds().includes('19998'), false);
   assert.equal(roles.managedIds().includes('19999'), false);
   assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.key), ['administrator', 'discord_moderator']);
-  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.description), ['Administrator', 'Discord Moderator']);
+  // Der Name ist das, was Discord im Rollen-Dialog als Bedingung anzeigt: genau der Rollenname,
+  // ohne Marke davor. Den Namen der Anwendung setzt Discord selbst davor.
+  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.name), ['Administrator', 'Discord Moderator']);
+  assert.ok(oauth.ROLE_METADATA.every((entry) => entry.description && entry.description !== entry.name));
   assert.deepEqual(oauth.roleMetadataFor(user.id), { administrator: 0, discord_moderator: 1 });
 
   db.prepare('UPDATE profiles SET locked = 1 WHERE id = ?').run(profile.id);
@@ -549,7 +552,8 @@ test('a POV frame becomes a picture and never lands in the chat', () => {
 });
 
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {
-  const BOT_SECRET = 'bot-test-secret';
+  // Mindestens 24 Zeichen – kürzer nimmt das Panel bewusst nicht an (routes/bot.js).
+  const BOT_SECRET = 'bot-test-secret-long-enough-0123456789';
   const USER_TOKEN = 'user-test-session';
   const ADMIN_TOKEN = 'admin-test-session';
   setSetting('discord_bot_secret', BOT_SECRET);
@@ -755,6 +759,7 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
       channelOf: async () => ({ id: 'ticket-channel' }),
       relayToDiscord: async (_channel, entry) => relayed.push(entry),
       reopenChannel: async () => {},
+      ticketUrl: (id) => `https://example.test/en/app#/tickets/${id}`,
     },
     {
       ticket_id: adminOwnTicket.id,
@@ -872,7 +877,11 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const configResponse = await api(base, '/api/bot/config', { botSecret: BOT_SECRET });
   assert.equal(configResponse.response.status, 200);
   assert.equal(configResponse.data.free_guild_id, '1538202840445485126');
-  assert.ok(configResponse.data.categories.every((entry) => !/[äöüß]/i.test(entry.label)));
+  // Kategorien für Tickets gibt es nicht mehr; die Liste hier sind Discord-Kategorien, in denen
+  // der Bot keine Rechte setzen darf.
+  assert.ok(Array.isArray(configResponse.data.skip_categories));
+  assert.ok(configResponse.data.skip_categories.includes('1538202844744908814'));
+  assert.equal(configResponse.data.max_upload, 20 * 1024 * 1024);
 
   const hello = await new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws://127.0.0.1:${port}/api/bot/stream`, {
@@ -920,7 +929,98 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     assert.match(nginx, /location = \/api\/bot\/stream/);
     assert.match(nginx, /proxy_set_header\s+Upgrade \$http_upgrade/);
     assert.match(nginx, /proxy_set_header\s+Authorization \$http_authorization/);
+    // Ein Screenshot darf 20 MB haben. Ohne einen eigenen Block gilt die Grenze des Servers
+    // (4 MB), und nginx lehnt ihn mit 413 ab, bevor das Panel ihn überhaupt sieht.
+    assert.match(nginx, /location = \/api\/tickets\/files/);
+    assert.match(nginx, /client_max_body_size\s+21M/);
   }
+
+  // Ein zu kurzes Geheimnis ist keines. Hinter dem Bot-Bereich liegen der Discord-Token und
+  // jedes Ticket – deshalb bleibt er zu, auch wenn der Aufrufer das kurze Wort kennt.
+  setSetting('discord_bot_secret', '1234');
+  const weakSecret = await api(base, '/api/bot/config', { botSecret: '1234' });
+  assert.equal(weakSecret.response.status, 401);
+  setSetting('discord_bot_secret', BOT_SECRET);
+  const strongSecret = await api(base, '/api/bot/config', { botSecret: BOT_SECRET });
+  assert.equal(strongSecret.response.status, 200);
+
+  // ------------------------------------------------------------ Anhänge
+  //
+  // Hochladen, an ein Ticket hängen, wieder herunterladen – und vor allem: **nicht** an fremde
+  // Anhänge kommen. Ein Anhang hängt am Ticket, nicht an der Kenntnis seiner Nummer.
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const upload = async (token, name, bytes) => {
+    const response = await fetch(`${base}/api/tickets/files`, {
+      method: 'POST',
+      headers: {
+        cookie: `afk_session=${token}`,
+        'content-type': 'application/octet-stream',
+        'x-file-name': encodeURIComponent(name),
+      },
+      body: bytes,
+    });
+    return { response, data: await response.json().catch(() => ({})) };
+  };
+
+  const shot = await upload(USER_TOKEN, 'bild schön.png', png);
+  assert.equal(shot.response.status, 200);
+  // Der Inhaltstyp kommt aus den Bytes, nicht aus dem, was der Browser behauptet hat.
+  assert.equal(shot.data.file.mime, 'image/png');
+  assert.equal(shot.data.file.image, true);
+
+  const disguised = await upload(USER_TOKEN, 'böse.png', Buffer.from('<svg onload=alert(1)>'));
+  assert.equal(disguised.response.status, 200);
+  assert.equal(disguised.data.file.mime, 'application/octet-stream');
+  assert.equal(disguised.data.file.image, false);
+
+  const withFile = await api(base, '/api/tickets', {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { subject: 'Screenshot', body: '', files: [shot.data.file.id] },
+  });
+  assert.equal(withFile.response.status, 200);
+  const withFileMessages = await api(base, `/api/tickets/${withFile.data.ticket.id}`, {
+    token: USER_TOKEN,
+  });
+  assert.equal(withFileMessages.data.messages.at(-1).files.length, 1);
+  assert.equal(withFileMessages.data.messages.at(-1).files[0].name, 'bild schön.png');
+
+  const download = await fetch(`${base}/api/tickets/files/${shot.data.file.id}`, {
+    headers: { cookie: `afk_session=${USER_TOKEN}` },
+  });
+  assert.equal(download.status, 200);
+  assert.equal(download.headers.get('content-type'), 'image/png');
+  assert.equal(Buffer.from(await download.arrayBuffer()).equals(png), true);
+
+  // Was kein Bild ist, wird nie im Browser dargestellt – sonst wäre ein hochgeladenes SVG ein
+  // Skript auf unserer Adresse.
+  const risky = await fetch(`${base}/api/tickets/files/${disguised.data.file.id}`, {
+    headers: { cookie: `afk_session=${USER_TOKEN}` },
+  });
+  assert.equal(risky.headers.get('content-type'), 'application/octet-stream');
+  assert.match(risky.headers.get('content-disposition'), /^attachment;/);
+
+  // Ein fremdes Konto kommt weder an den Anhang noch an die noch nicht abgeschickte Datei.
+  const stranger = createUser({ username: 'stranger' });
+  createSession(stranger, 'stranger-session');
+  const stolen = await fetch(`${base}/api/tickets/files/${shot.data.file.id}`, {
+    headers: { cookie: 'afk_session=stranger-session' },
+  });
+  assert.equal(stolen.status, 403);
+
+  // Und eine fremde Datei lässt sich nicht in ein eigenes Ticket ziehen.
+  const strangerUpload = await upload('stranger-session', 'fremd.png', png);
+  const hijack = await api(base, '/api/tickets', {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { subject: 'Fremde Datei', body: 'x', files: [strangerUpload.data.file.id] },
+  });
+  assert.equal(hijack.response.status, 200);
+  const hijacked = await api(base, `/api/tickets/${hijack.data.ticket.id}`, { token: USER_TOKEN });
+  assert.equal(hijacked.data.messages.at(-1).files.length, 0);
 
   assert.doesNotMatch(childOutput, /Unexpected server response: 404/);
 });

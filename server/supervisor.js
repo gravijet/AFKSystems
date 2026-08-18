@@ -188,6 +188,33 @@ function classify(line) {
 }
 
 /**
+ * Die Trennmeldung eines Servers als Satz.
+ *
+ * Minecraft schickt sie als Chat-Komponente: `{"text":"…"}`, oft mit `extra` und Farben darin.
+ * Roh im Panel sähe das aus wie ein Fehler im Panel – dabei ist es die Antwort des Servers und
+ * meist die ganze Erklärung ("Du bist gebannt", "falsche Version", "Server voll").
+ */
+function disconnectText(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (!text.startsWith('{') && !text.startsWith('[')) return text.slice(0, 300);
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return text.slice(0, 300);
+  }
+  const walk = (node) => {
+    if (node === null || node === undefined) return '';
+    if (typeof node === 'string') return node;
+    if (Array.isArray(node)) return node.map(walk).join('');
+    if (typeof node !== 'object') return String(node);
+    return [node.text ?? '', ...(Array.isArray(node.extra) ? node.extra.map(walk) : [])].join('');
+  };
+  return walk(data).replace(/\s+/g, ' ').trim().slice(0, 300);
+}
+
+/**
  * "@event world grund=unterserver" -> { type: 'world', grund: 'unterserver' }
  * "@event disconnect Server startet neu" -> { type: 'disconnect', text: 'Server startet neu' }
  *
@@ -323,6 +350,8 @@ class Bot extends EventEmitter {
     this.startedAt = null;
     this.connections = 0;
     this.lastError = null;
+    /** Warum der Server zuletzt getrennt hat – der Grund überlebt das Ende des Prozesses. */
+    this.lastReason = null;
     this.chat = [];
     this.proc = null;
     this.build = null;
@@ -467,6 +496,7 @@ class Bot extends EventEmitter {
     const home = userDir(this.userId);
 
     this.stopping = false;
+    this.lastReason = null;
     // `pov-afk-linux` beginnt gleich nach dem Beitritt zu zeichnen; da wartet niemand auf
     // `:pov live`. Bei `ultra-afk-linux` bleibt die Ansicht aus, bis sie jemand einschaltet.
     this.povWanted = build === 'pov' && Boolean(caps.pov);
@@ -512,11 +542,14 @@ class Bot extends EventEmitter {
       this.cleanup();
     });
     this.proc.on('exit', (code, signal) => {
+      // Sagt der Server, warum er getrennt hat, dann ist **das** der Grund. Der Rust-Client endet
+      // nach jedem Kick mit Fehlerstatus; "Code 1" ist die Folge, nicht die Ursache – und genau
+      // das stand vorher im Panel, während die eigentliche Antwort des Servers verlorenging.
       const reason = this.stopping
         ? 'gestoppt'
         : signal === 'LINK'
           ? 'Die Verbindung zum Standort ist abgerissen.'
-          : `Client beendet (${signal || `Code ${code}`})`;
+          : this.lastReason || `Client beendet (${signal || `Code ${code}`})`;
       if (!this.stopping && code !== 0) this.lastError = reason;
       this.push('system', reason);
       this.setState(this.stopping ? 'offline' : code === 0 ? 'offline' : 'error', reason);
@@ -714,11 +747,17 @@ class Bot extends EventEmitter {
       case 'death':
         this.supervisor.macros.onDeath(this);
         break;
-      case 'disconnect':
-        this.lastError = event.text || null;
-        this.setState('disconnected', event.text || '');
+      case 'disconnect': {
+        // Der Grund ist das Wertvollste, was in dieser Sitzung noch passiert – er sagt, warum es
+        // nicht ging. `lastReason` überlebt das Prozessende und ersetzt dort das nichtssagende
+        // "Client beendet (Code 1)".
+        const reason = disconnectText(event.text);
+        this.lastReason = reason || null;
+        this.lastError = reason || null;
+        this.setState('disconnected', reason || '');
         this.supervisor.macros.onDisconnect(this);
         break;
+      }
       case 'reconnect':
         this.setState('reconnecting', `Versuch ${event.versuch || '?'}, in ${event.in || '?'}`);
         break;
@@ -850,11 +889,14 @@ class Bot extends EventEmitter {
         if (first) this.supervisor.macros.onJoin(this);
         break;
       }
-      case 'disconnected':
-        this.lastError = hit.match[1];
-        this.setState('disconnected', hit.match[1]);
+      case 'disconnected': {
+        const reason = disconnectText(hit.match[1]);
+        this.lastReason = reason || null;
+        this.lastError = reason || null;
+        this.setState('disconnected', reason || '');
         this.supervisor.macros.onDisconnect(this);
         break;
+      }
       case 'reconnecting':
         this.setState('reconnecting', `Versuch ${hit.match[1]}, in ${hit.match[2]} s`);
         break;
@@ -1444,13 +1486,25 @@ class Supervisor extends EventEmitter {
     return started;
   }
 
-  /** Nach einem Neustart des Dienstes alles wieder hochfahren, was laufen soll. */
+  /**
+   * Alles wieder hochfahren, was laufen soll, aber nicht läuft.
+   *
+   * Das ist der Weg zurück nach **jeder** Unterbrechung: nach einem Neustart des Dienstes, nach
+   * einem Neustart des ganzen Servers, nachdem ein Standort wieder da ist, und nachdem eine
+   * Discord-Mitgliedschaft wieder bestätigt wurde. Der Wunsch (`wanted`) steht in der Datenbank
+   * und überlebt all das; hier wird er eingelöst.
+   *
+   * Ein abgestürzter Client kommt hier **nicht** wieder hoch: Endet ein Client von sich aus,
+   * löscht er den Wunsch mit. Sonst hätte ein Server, der jeden Beitritt ablehnt, eine
+   * Neustartschleife im Minutentakt.
+   */
   restoreAll() {
     const rows = db
       .prepare('SELECT profile_id, account_id FROM profile_accounts WHERE wanted = 1')
       .all();
     let started = 0;
     for (const row of rows) {
+      if (this.get(row.profile_id, row.account_id)?.running) continue;
       const context = this.context(row.profile_id, row.account_id);
       if (!context) continue;
       if (
@@ -1460,6 +1514,31 @@ class Supervisor extends EventEmitter {
         !isActive(context.profile)
       )
         continue;
+      try {
+        this.start(context);
+        started += 1;
+      } catch {
+        /* einer weniger, der Rest läuft trotzdem */
+      }
+    }
+    return started;
+  }
+
+  /** Dasselbe für ein einzelnes Konto – etwa, wenn seine Discord-Mitgliedschaft zurück ist. */
+  restoreUser(userId) {
+    const rows = db
+      .prepare(
+        `SELECT pa.profile_id, pa.account_id FROM profile_accounts pa
+           JOIN profiles p ON p.id = pa.profile_id
+          WHERE pa.wanted = 1 AND p.user_id = ?`
+      )
+      .all(userId);
+    let started = 0;
+    for (const row of rows) {
+      if (this.get(row.profile_id, row.account_id)?.running) continue;
+      const context = this.context(row.profile_id, row.account_id);
+      if (!context || !isActive(context.profile)) continue;
+      if (context.user.blocked || context.profile.locked || context.account.suspended) continue;
       try {
         this.start(context);
         started += 1;

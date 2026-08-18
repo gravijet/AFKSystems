@@ -12,11 +12,61 @@
 // der Route. Die Rolle allein reicht nicht: Ein Admin ist unter "Support" selbst Kunde.
 
 import {
-  api, icon, escapeHtml, datetime, since, tr, $, $$, ok, fail, toast, formDialog, debounce,
+  api, icon, escapeHtml, datetime, since, tr, $, $$, ok, fail, toast, formDialog, debounce, fileSize,
 } from '../ui.js';
 import { state, appbar, refresh, draw, go } from '../app.js';
 
 const STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
+
+/** 20 MB – dieselbe Grenze wie auf dem Server (attachments.js). */
+export const MAX_UPLOAD = 20 * 1024 * 1024;
+
+/**
+ * Dateien hochladen und ihre Nummern zurückgeben.
+ *
+ * Eine Datei je Anfrage, der Rumpf ist die Datei selbst: Damit braucht es weder ein Formular noch
+ * eine Bibliothek dafür, und der Fortschritt ist "so viele von so vielen" statt eines Balkens, der
+ * bei zwanzig Megabyte ohnehin nur zweimal zuckt.
+ */
+export async function uploadFiles(list, { onProgress } = {}) {
+  const ids = [];
+  const files = [...(list || [])];
+  for (const [index, file] of files.entries()) {
+    if (file.size > MAX_UPLOAD) {
+      throw new Error(tr('tk.tooBig', { name: file.name, max: fileSize(MAX_UPLOAD) }));
+    }
+    onProgress?.(index + 1, files.length, file.name);
+    const response = await fetch('/api/tickets/files', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        // Der Inhaltstyp kommt bewusst nicht von hier: Der Server sieht sich die Datei selbst an.
+        'content-type': 'application/octet-stream',
+        'x-file-name': encodeURIComponent(file.name),
+      },
+      body: file,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || `${tr('common.error')} (${response.status})`);
+    ids.push(data.file.id);
+  }
+  return ids;
+}
+
+/** Ein Anhang im Verlauf: Bilder als Bild, alles andere als Zeile zum Herunterladen. */
+function attachment(file) {
+  const href = `/api/tickets/files/${file.id}`;
+  if (file.image) {
+    return `<a class="chat-image" href="${href}" target="_blank" rel="noopener"
+      title="${escapeHtml(file.name)}"><img src="${href}" alt="${escapeHtml(file.name)}" loading="lazy"></a>`;
+  }
+  return `<a class="chat-file" href="${href}?download=1" download="${escapeHtml(file.name)}">
+    ${icon('download')}<span class="truncate">${escapeHtml(file.name)}</span>
+    <span class="small muted nowrap">${escapeHtml(fileSize(file.size))}</span></a>`;
+}
+
+const attachments = (files) =>
+  files?.length ? `<div class="chat-files">${files.map(attachment).join('')}</div>` : '';
 
 export async function render(root, route) {
   if (route.id) return one(root, route.id, { staff: false, backHash: '#/tickets' });
@@ -32,7 +82,6 @@ export const renderStaffTicket = (root, id) =>
 async function list(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const data = await api('/tickets');
-  const categories = data.categories || state.meta?.ticket_categories || [];
   const invite = state.meta?.discord_invite || '';
   const personalAdmin = state.me?.role === 'admin';
   const title = personalAdmin ? tr('dash.myTickets') : tr('tk.title');
@@ -72,7 +121,7 @@ async function list(root) {
       <div class="body" style="padding:0">
         ${
           data.tickets.length
-            ? `<ul class="ticket-list">${data.tickets.map((ticket) => row(ticket, categories)).join('')}</ul>`
+            ? `<ul class="ticket-list">${data.tickets.map(row).join('')}</ul>`
             : `<div class="empty" style="box-shadow:none;background:transparent">
                 <h3>${escapeHtml(tr('tk.none'))}</h3>
                 <p>${escapeHtml(subtitle)}</p>
@@ -85,10 +134,9 @@ async function list(root) {
   $$('[data-open]').forEach((node) =>
     node.addEventListener('click', () => go(`/tickets/${node.dataset.open}`))
   );
-  for (const id of ['#new', '#new-2']) $(id)?.addEventListener('click', () => create(categories));
+  for (const id of ['#new', '#new-2']) $(id)?.addEventListener('click', () => create());
 
-  const wanted = params.get('new');
-  if (wanted) create(categories, wanted);
+  if (params.get('new')) create();
 
   // Kommt eine Antwort herein, ist die Liste sofort veraltet.
   state.onLive = debounce((event) => {
@@ -101,7 +149,7 @@ async function list(root) {
   }, 500);
 }
 
-function row(ticket, categories) {
+function row(ticket) {
   return `<li class="ticket-row ${ticket.unread_user ? 'is-unread' : ''}" data-open="${ticket.id}">
     <span class="ticket-dot ${ticket.status}"></span>
     <div class="grow" style="min-width:0">
@@ -112,7 +160,7 @@ function row(ticket, categories) {
         ${ticket.shared ? `<span class="pill">${icon('users')}</span>` : ''}
       </div>
       <div class="small muted truncate">
-        ${escapeHtml(categories.find((entry) => entry.key === ticket.category)?.label || ticket.category)}
+        ${escapeHtml(tr('tk.messages', { n: ticket.messages ?? 0 }))}
       </div>
     </div>
     <div class="row" style="gap:.4rem">
@@ -124,29 +172,35 @@ function row(ticket, categories) {
 
 // ---------------------------------------------------------------- Anlegen
 
-async function create(categories, category = 'general') {
-  // Keine Dringlichkeit zur Auswahl. Wer ein Ticket aufmacht, hält es für dringend – die Frage
-  // beantwortet also jeder gleich, und beantwortet wird ohnehin nach Reihenfolge und Tarif.
-  // Die Nachricht ist kein Pflichtfeld: der Betreff sagt schon, worum es geht, und ein Ticket,
-  // das beim Abschicken verschwindet, weil ein Feld leer war, ist schlimmer als eines ohne Text.
+async function create() {
+  // Zwei Felder und ein Knopf für Dateien – mehr wird nicht gefragt. Keine Kategorie (die hat nie
+  // etwas entschieden) und keine Dringlichkeit: Wer ein Ticket aufmacht, hält es für dringend, die
+  // Frage beantwortet also jeder gleich. Die Nachricht ist kein Pflichtfeld – der Betreff sagt
+  // schon, worum es geht, und ein Ticket, das beim Abschicken verschwindet, weil ein Feld leer
+  // war, ist schlimmer als eines ohne Text.
   const answer = await formDialog(
     tr('tk.new'),
     [
       { key: 'subject', label: tr('tk.subject'), required: true },
-      {
-        key: 'category',
-        label: tr('tk.category'),
-        type: 'select',
-        value: category,
-        options: categories.map((entry) => ({ value: entry.key, label: entry.label })),
-      },
       { key: 'body', label: `${tr('tk.message')} (${tr('common.optional')})`, type: 'textarea' },
+      {
+        key: 'files',
+        label: tr('tk.files'),
+        type: 'files',
+        hint: tr('tk.filesHint', { max: fileSize(MAX_UPLOAD) }),
+      },
     ],
     { submit: tr('tk.send') }
   );
   if (!answer) return;
   try {
-    const result = await api('/tickets', { method: 'POST', body: answer });
+    const files = await uploadFiles(answer.files, {
+      onProgress: (index, total) => total > 1 && toast(tr('tk.uploading', { i: index, n: total })),
+    });
+    const result = await api('/tickets', {
+      method: 'POST',
+      body: { subject: answer.subject, body: answer.body, files },
+    });
     ok(tr('tk.created'));
     await refresh({ profiles: false, accounts: false });
     go(`/tickets/${result.ticket.id}`);
@@ -161,7 +215,6 @@ async function one(root, id, { staff, backHash }) {
   const base = staff ? `/admin/tickets/${id}` : `/tickets/${id}`;
   const data = await api(base);
   const ticket = data.ticket;
-  const categories = state.meta?.ticket_categories || [];
   let messages = data.messages;
   let participants = data.participants || [];
 
@@ -182,9 +235,7 @@ async function one(root, id, { staff, backHash }) {
     ${appbar(
       ticket.subject,
       `<a class="btn btn-sm" href="${backHash}">${escapeHtml(tr('common.back'))}</a>`,
-      `#${ticket.id} · ${escapeHtml(
-        categories.find((entry) => entry.key === ticket.category)?.label || ticket.category
-      )} · ${datetime(ticket.created_at)}`
+      `#${ticket.id} · ${datetime(ticket.created_at)}`
     )}
 
     <div class="ticket">
@@ -197,9 +248,16 @@ async function one(root, id, { staff, backHash }) {
             ticket.status === 'closed' ? '' : 'hidden'
           }>${escapeHtml(tr('tk.closedNote'))}</p>
           <textarea id="reply" rows="3" placeholder="${escapeHtml(tr('tk.reply'))}"></textarea>
+          <!-- Der Dateiwähler ist versteckt und wird vom Knopf daneben bedient: ein nacktes
+               <input type="file"> sieht in jedem Browser anders aus und in keinem gut. -->
+          <input id="reply-files" type="file" multiple hidden>
+          <div class="attach-list" id="attach-list" hidden></div>
           <div class="row spread wrap" style="margin-top:.6rem">
             <span class="small muted">${escapeHtml(tr('tk.writeHint'))}</span>
             <div class="row">
+              <button class="btn btn-sm" id="attach" title="${escapeHtml(
+                tr('tk.filesHint', { max: fileSize(MAX_UPLOAD) })
+              )}">${icon('plus')} ${escapeHtml(tr('tk.files'))}</button>
               ${
                 staff
                   ? `<button class="btn btn-sm" id="internal" title="${escapeHtml(tr('tk.internalHint'))}">
@@ -239,19 +297,6 @@ async function one(root, id, { staff, backHash }) {
                             `<option value="${entry}" ${ticket.priority === entry ? 'selected' : ''}>${escapeHtml(
                               tr(`tk.priority.${entry}`)
                             )}</option>`
-                        )
-                        .join('')}
-                    </select>
-                  </div>
-                  <div class="field">
-                    <label for="category">${escapeHtml(tr('tk.category'))}</label>
-                    <select id="category">
-                      ${categories
-                        .map(
-                          (entry) =>
-                            `<option value="${entry.key}" ${
-                              ticket.category === entry.key ? 'selected' : ''
-                            }>${escapeHtml(entry.label)}</option>`
                         )
                         .join('')}
                     </select>
@@ -336,7 +381,8 @@ async function one(root, id, { staff, backHash }) {
         ${message.discord_id ? `<span class="pill">${icon('discord')}</span>` : ''}
         <time>${datetime(message.created_at)}</time>
       </header>
-      <p>${escapeHtml(message.body).replace(/\n/g, '<br>')}</p>
+      ${message.body ? `<p>${escapeHtml(message.body).replace(/\n/g, '<br>')}</p>` : ''}
+      ${attachments(message.files)}
     </article>`;
   }
 
@@ -378,15 +424,93 @@ async function one(root, id, { staff, backHash }) {
   // ------------------------------------------------------------ Schreiben
 
   const input = $('#reply');
+  const picker = $('#reply-files');
+  const attachBox = $('#attach-list');
+
+  /** Was gerade angehängt werden soll – erst beim Abschicken hochgeladen. */
+  let pending = [];
+
+  const paintPending = () => {
+    attachBox.hidden = !pending.length;
+    attachBox.innerHTML = pending
+      .map(
+        (file, index) => `<span class="attach-chip">${icon('paperclip')}
+          <span class="truncate">${escapeHtml(file.name)}</span>
+          <span class="small muted nowrap">${escapeHtml(fileSize(file.size))}</span>
+          <button type="button" data-drop-file="${index}"
+            aria-label="${escapeHtml(tr('common.remove'))}">${icon('x')}</button></span>`
+      )
+      .join('');
+    for (const button of $$('[data-drop-file]', attachBox)) {
+      button.addEventListener('click', () => {
+        pending.splice(Number(button.dataset.dropFile), 1);
+        paintPending();
+      });
+    }
+  };
+
+  const addFiles = (list) => {
+    for (const file of list) {
+      if (file.size > MAX_UPLOAD) {
+        toast(tr('tk.tooBig', { name: file.name, max: fileSize(MAX_UPLOAD) }), 'bad');
+        continue;
+      }
+      if (pending.length >= 10) {
+        toast(tr('tk.tooMany'), 'bad');
+        break;
+      }
+      pending.push(file);
+    }
+    paintPending();
+  };
+
+  $('#attach').addEventListener('click', () => picker.click());
+  picker.addEventListener('change', () => {
+    addFiles([...picker.files]);
+    picker.value = '';
+  });
+
+  // Ein Screenshot ist in der Zwischenablage, nicht auf der Platte: Einfügen soll ihn anhängen.
+  input.addEventListener('paste', (event) => {
+    const files = [...(event.clipboardData?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    addFiles(files);
+  });
+
+  // Und wer die Datei lieber herüberzieht, zieht sie auf das Antwortfeld.
+  const box = input.closest('.reply-box');
+  for (const type of ['dragover', 'dragenter']) {
+    box.addEventListener(type, (event) => {
+      if (!event.dataTransfer?.types?.includes('Files')) return;
+      event.preventDefault();
+      box.classList.add('is-drop');
+    });
+  }
+  for (const type of ['dragleave', 'drop']) {
+    box.addEventListener(type, () => box.classList.remove('is-drop'));
+  }
+  box.addEventListener('drop', (event) => {
+    const files = [...(event.dataTransfer?.files || [])];
+    if (!files.length) return;
+    event.preventDefault();
+    addFiles(files);
+  });
 
   const send = async (internal = false) => {
     const body = input.value.trim();
-    if (!body) return;
+    const chosen = pending;
+    if (!body && !chosen.length) return;
     input.value = '';
+    pending = [];
+    paintPending();
     try {
+      const files = await uploadFiles(chosen, {
+        onProgress: (index, total) => total > 1 && toast(tr('tk.uploading', { i: index, n: total })),
+      });
       const result = await api(
         staff ? `/admin/tickets/${id}/reply` : `/tickets/${id}/reply`,
-        { method: 'POST', body: { body, internal } }
+        { method: 'POST', body: { body, internal, files } }
       );
       messages = result.messages;
       Object.assign(ticket, result.ticket);
@@ -395,7 +519,10 @@ async function one(root, id, { staff, backHash }) {
       await refresh({ profiles: false, accounts: false });
     } catch (error) {
       fail(error);
+      // Nichts geht verloren: Text und Auswahl stehen wieder da, wo sie waren.
       input.value = body;
+      pending = chosen;
+      paintPending();
     }
   };
 
@@ -450,7 +577,6 @@ async function one(root, id, { staff, backHash }) {
 
   for (const [id_, field] of [
     ['#priority', 'priority'],
-    ['#category', 'category'],
     ['#assigned', 'assigned_to'],
   ]) {
     $(id_)?.addEventListener('change', async (event) => {

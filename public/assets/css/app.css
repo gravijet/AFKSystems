@@ -1908,22 +1908,31 @@ body.site {
   background: var(--line) padding-box;
 }
 
+/* Bündel von Einträgen. Zwischen zwei Bündeln steht eine echte Linie über die ganze Breite –
+   vorher trennte sie nur ein Abstand von drei Millimetern, und in einer Liste aus zwanzig
+   gleich aussehenden Zeilen sah man dadurch keine Gruppen mehr, sondern eine lange Aufzählung. */
 .side-block {
   display: grid;
   gap: 0.1rem;
 }
+.side-block + .side-block,
 .side-block-split {
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  box-shadow: inset 0 1px 0 var(--line-soft);
+  margin-top: 0.7rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--line);
 }
+/* Die Beschriftung gehört zur Linie darüber: dicht darunter, damit sie die Gruppe anführt und
+   nicht zwischen zwei Gruppen zu schweben scheint. */
 .side-block-label {
-  padding: 0.55rem 0.6rem 0.2rem;
+  padding: 0.15rem 0.6rem 0.3rem;
   color: var(--text-2);
   font-size: 0.66rem;
   font-weight: 750;
   letter-spacing: 0.09em;
   text-transform: uppercase;
+}
+.side-block:first-child > .side-block-label {
+  padding-top: 0.35rem;
 }
 
 /* Ein Eintrag. Der aktive trägt links eine Kante – Farbe allein ist für Leute mit einer
@@ -2025,9 +2034,12 @@ body.site {
   background: var(--warn);
 }
 
-/* Aufklappbare Gruppe. Ihre Überschrift ist klein und leise – sie ordnet, sie wirbt nicht. */
+/* Aufklappbare Gruppe. Ihre Überschrift ist klein und leise – sie ordnet, sie wirbt nicht.
+   Getrennt wird sie wie jedes andere Bündel: mit einer Linie, nicht mit Luft. */
 .side-section {
-  margin-top: 0.4rem;
+  margin-top: 0.7rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--line);
 }
 .side-section > summary {
   display: flex;
@@ -2072,9 +2084,6 @@ body.site {
   display: grid;
   gap: 0.1rem;
   padding-top: 0.15rem;
-}
-.side-section-body .side-block + .side-block {
-  margin-top: 0.3rem;
 }
 
 .side-add {
@@ -2122,9 +2131,9 @@ body.site {
   font-weight: 650;
 }
 .side-sub-item.is-new-group {
-  margin-top: 0.32rem;
-  padding-top: 0.45rem;
-  box-shadow: inset 0 1px 0 var(--line-soft);
+  margin-top: 0.4rem;
+  padding-top: 0.5rem;
+  box-shadow: inset 0 1px 0 var(--line);
 }
 
 .side-no-hits {
@@ -2789,10 +2798,14 @@ hr.rule {
  * ein weichgezeichnetes Voxelbild sähe aus wie ein Fehler. Der Rahmen ist bewusst dunkel: was
  * darin steht, ist ein Blick in die Spielwelt und kein Bestandteil der Oberfläche. */
 
+/* Die Karten wachsen nicht ins Unendliche: ein einzelner Bot auf einem breiten Bildschirm hatte
+   sonst ein Bild über die volle Panelbreite – ein hochskaliertes 80×40-Raster, das damit vor
+   allem groß war und nicht gut. Mehr als 30 rem bringt kein Detail mehr, weil keins mehr da ist. */
 .pov-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 30rem));
+  justify-content: start;
 }
 .pov {
   display: flex;
@@ -2825,13 +2838,17 @@ hr.rule {
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 12rem;
+  min-height: 9rem;
   padding: 0.5rem;
 }
 .pov-canvas {
   display: block;
   width: 100%;
+  max-height: 17rem;
   height: auto;
+  /* Das Seitenverhältnis kommt aus dem Bild selbst; `contain` hält es, auch wenn die Höhe
+     begrenzt ist – gestreckt sähe die Welt schief aus. */
+  object-fit: contain;
   border-radius: var(--r-md);
   background: #05070a;
   image-rendering: pixelated;
@@ -3519,6 +3536,99 @@ hr.rule {
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+/* ---------------------------------------------------------------- Anhänge
+ *
+ * Ein Bild gehört in den Verlauf und nicht hinter einen Link: Wer einen Screenshot schickt, will,
+ * dass man ihn sieht. Alles andere wird eine Zeile mit Namen und Größe – eine 12-MB-Datei als
+ * fingernagelgroße Vorschau zu laden, hilft niemandem. */
+
+.chat-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.chat-msg p + .chat-files {
+  margin-top: 0.6rem;
+}
+.chat-image {
+  display: block;
+  max-width: min(22rem, 100%);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  line-height: 0;
+  box-shadow: 0 0 0 1px var(--line);
+}
+.chat-image img {
+  display: block;
+  width: 100%;
+  max-height: 15rem;
+  object-fit: cover;
+}
+.chat-image:hover {
+  box-shadow: 0 0 0 1px var(--primary);
+}
+.chat-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  font-size: 0.8125rem;
+}
+.chat-file:hover {
+  box-shadow: inset 0 0 0 1px var(--primary);
+  text-decoration: none;
+}
+.chat-file .icon {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  color: var(--text-2);
+}
+
+/* Was gerade angehängt werden soll, steht als Reihe von Marken über dem Antwortfeld. */
+.attach-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.6rem;
+}
+.attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0.3rem 0.4rem 0.3rem 0.6rem;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 0.8125rem;
+}
+.attach-chip .icon {
+  flex: none;
+  width: 0.9rem;
+  height: 0.9rem;
+  color: var(--text-2);
+}
+.attach-chip button {
+  display: flex;
+  padding: 0.15rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.attach-chip button:hover {
+  background: color-mix(in oklab, var(--bad) 15%, transparent);
+  color: var(--bad);
+}
+
 .chat-system {
   align-self: center;
   color: var(--text-2);
@@ -3581,6 +3691,11 @@ hr.rule {
   border-radius: 0 0 var(--r-2xl) var(--r-2xl);
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--line);
+}
+/* Eine Datei über das Antwortfeld ziehen ist der kürzeste Weg – der Kasten sagt, dass er sie nimmt. */
+.reply-box.is-drop {
+  background: color-mix(in oklab, var(--primary) 8%, var(--surface-2));
+  box-shadow: inset 0 0 0 2px var(--primary);
 }
 .reply-box textarea {
   resize: vertical;

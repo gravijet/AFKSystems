@@ -190,9 +190,11 @@ Zwei Dinge, die unabhängig voneinander laufen:
 * **Anmelden und Verknüpfen** (`server/oauth.js`) – braucht nur Client-ID und Secret. Dasselbe
   Modul bedient Google. Wer sich mit Discord oder Google anmeldet und noch kein Konto hat, bekommt
   eines; die Adresse kommt vom Anbieter.
-* **Der Bot** (`bot/`) – ein eigener Dienst. Tickets laufen in beide Richtungen, Rollen folgen dem
-  Tarif. Er hat keine eigene Konfiguration: Server-ID, Kanäle, Rollen und sein Token holt er sich
-  beim Start aus dem Panel, damit er sich ohne Änderung woanders hinstellen lässt.
+* **Der Bot** (`bot/`) – ein eigener Dienst. Tickets laufen in beide Richtungen (samt Anhängen),
+  Rollen folgen dem Tarif. Er hat keine eigene Konfiguration: Server-ID, Kanäle, Rollen und sein
+  Token holt er sich beim Start aus dem Panel, damit er sich ohne Änderung woanders hinstellen
+  lässt. Ein Ticket macht man am **Knopf im Support-Kanal** auf – Slash-Befehle dafür gibt es
+  bewusst nicht.
 
 Anleitungen: **[docs/discord-bot.md](docs/discord-bot.md)** und
 **[docs/google-anmeldung.md](docs/google-anmeldung.md)**.
@@ -231,12 +233,17 @@ nötig.
 ## Support und Proxys
 
 Proxys gehören dem Betreiber und werden **von Hand zugeteilt**: Ein zahlender Kunde macht ein Ticket
-der Kategorie „Proxy anfragen“ auf, der Admin legt den Proxy an und weist ihn zu. Auf dem Gratis-Platz
-gibt es keine. Danach lässt sich je Konto im Reiter „Proxys“ des Serverplatzes einer auswählen.
+auf und schreibt dazu, für welchen Serverplatz, der Admin legt den Proxy an und weist ihn zu. Auf dem
+Gratis-Platz gibt es keine. Danach lässt sich je Konto im Reiter „Proxys“ des Serverplatzes einer
+auswählen.
 
 Ein Ticket ist ein Gespräch: Nachrichten laufen live ein, man sieht, wenn das Gegenüber schreibt,
-und eine Antwort auf ein geschlossenes Ticket macht es wieder auf. Mehrere Kunden dürfen an einem
-Ticket hängen; das Team kann jemanden dazuholen. Läuft der Bot, gibt es dasselbe Ticket in Discord.
+und eine Antwort auf ein geschlossenes Ticket macht es wieder auf. Gefragt wird nach **Betreff und
+Text**, sonst nichts – die Kategorie davor („Allgemeine Frage“, „Missbrauch melden“) war ein
+Pflichtfeld, das nichts entschieden hat. **Screenshots und Dateien bis 20 MB** hängen an der
+Nachricht, im Panel wie im Discord-Kanal und in beide Richtungen abgeglichen. Mehrere Kunden dürfen
+an einem Ticket hängen; das Team kann jemanden dazuholen. Läuft der Bot, gibt es dasselbe Ticket in
+Discord.
 
 ## Aufbau
 
@@ -255,6 +262,7 @@ server/
   pages.js        Vorlagen                    landing.js    das Bewegliche der öffentlichen Seiten
   mail.js         SMTP, Vorlagen, Kategorien  oauth.js      Discord und Google
   tickets.js      Support                     notify.js     Discord-Webhooks
+  attachments.js  Anhänge an Tickets (20 MB), im Panel wie in Discord
   roles.js        welche Discord-Rolle wem    bridge.js     die Leitung zum Bot
   routes/         core, profiles, billing, admin, bot, node
 bot/
@@ -276,15 +284,18 @@ data/                 Datenbank, Client-Dateien, Konten je Nutzer, Logs  (nicht 
 
 ## Inhaltsschutz
 
-Website und Panel sind gegen bequemes Kopieren gesichert: CSS und JavaScript lassen sich nicht
-einzeln aufrufen (`Sec-Fetch-Dest`), liegen in keinem fremden Zwischenspeicher (`Cache-Control:
-private`), Website-Kopierer bekommen am Dashboard eine Absage, und im Browser sind Rechtsklick,
-Markieren, Ziehen, Drucken und die üblichen Tastenkürzel gesperrt. Offene Entwicklerwerkzeuge
-blenden den Inhalt aus.
+**Zwei Schalter, zwei verschiedene Dinge** (Administration → Einstellungen → Betrieb):
 
-Kopierbar bleibt, was zum Abschreiben da ist: Eingabefelder, Gutscheincodes, Verwendungszwecke,
-Standort-Token, Serveradressen. Abschalten: **Administration → Einstellungen → Betrieb →
-Inhaltsschutz**.
+* **Dateien schützen** (an): CSS und JavaScript lassen sich nicht einzeln aufrufen
+  (`Sec-Fetch-Dest`), liegen in keinem fremden Zwischenspeicher (`Cache-Control: private`), und
+  Website-Kopierer bekommen am Dashboard eine Absage.
+* **Bedienung sperren** (aus): Rechtsklick, Markieren, Ziehen, Drucken und die Entwicklerwerkzeuge.
+
+Ab Werk ist die Seite deshalb eine ganz normale Seite. Das war einmal ein einziger Schalter, und
+das war falsch: Wer seine Dateien nicht als Sammlung verschenken will, will deswegen noch lange
+nicht, dass seine Kunden eine Serveradresse nicht markieren können. Ist die Sperre an, bleibt
+trotzdem kopierbar, was zum Abschreiben da ist: Eingabefelder, Gutscheincodes, Verwendungszwecke,
+Standort-Token, Serveradressen.
 
 Was daran wirklich geht und was nicht, steht ehrlich in **[docs/schutz.md](docs/schutz.md)**.
 
@@ -313,6 +324,7 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | Automatik | `…/macros` (GET/POST/PATCH/DELETE, dazu `/test`) |
 | Guthaben | `GET /billing`, `POST /billing/voucher`, `POST /billing/topup` |
 | Support | `GET/POST /tickets`, `GET /tickets/:id`, `/messages`, `POST /tickets/:id/reply`, `/status`, `/typing` |
+| Anhänge | `POST /tickets/files` (Rumpf = die Datei), `GET /tickets/files/:id` |
 | Sonstiges | `GET /announcements`, `GET /nodes` |
 | Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/mails`, `/audit`, `/ledger` |
 | Bot | `/bot/config`, `/bot/tickets`, `/bot/users/:discordId`, `/bot/roles`, `/bot/events`, `WS /bot/stream` |
