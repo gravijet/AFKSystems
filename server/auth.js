@@ -6,6 +6,7 @@ import { config } from './config.js';
 import { token, hashPassword, verifyPassword, HttpError, bad } from './util.js';
 import { grant, planOf, isPayingUser, monthlyCost, freeAccess } from './billing.js';
 import * as mail from './mail.js';
+import * as linkedRoles from './linked-roles.js';
 
 const COOKIE = 'afk_session';
 /** So oft höchstens wird "zuletzt gesehen" nachgeführt. */
@@ -333,7 +334,10 @@ export function publicUser(user) {
     discord_vip: Boolean(user.discord_vip),
     discord_guild_member: Boolean(user.discord_guild_member),
     discord_guild_checked_at: user.discord_guild_checked_at || null,
-    linked_roles_available: user.role === 'admin' || Boolean(user.discord_moderator),
+    // Linked Roles kann jeder auffrischen, dessen Konto verknüpft ist – veröffentlicht wird nur,
+    // was das Panel über genau dieses Konto weiß. Sind gar keine Merkmale eingerichtet, gibt es
+    // auch nichts aufzufrischen, und der Punkt taucht nicht auf.
+    linked_roles_available: Boolean(user.discord_id) && linkedRoles.fields().length > 0,
     free_access: free,
     google: user.google_id ? { id: user.google_id, email: user.google_email } : null,
     mail_prefs: mail.prefsOf(user),

@@ -189,6 +189,29 @@ class Bot {
     this.panel.on('discord.config', () =>
       this.refreshDiscordConfig().catch((error) => console.warn('[config]', error.message))
     );
+    this.panel.on('bot.restart', (event) => this.restart(event));
+  }
+
+  /**
+   * Neu starten, weil das Panel darum gebeten hat.
+   *
+   * Ein Prozess kann sich nicht selbst neu starten – er kann nur aufhören. Zurück kommt der Bot
+   * durch den Dienst darüber (`Restart=always` in deploy/afksystems-bot.service); wer ihn von
+   * Hand gestartet hat, muss ihn auch von Hand wieder starten. Deshalb steht das genauso im
+   * Admin-Bereich an dem Knopf.
+   *
+   * Vorher sauber abmelden: Discord merkt sich eine Verbindung, die einfach abreißt, eine Weile
+   * als offen – der neue Prozess bekäme sonst beim Anmelden ein "already connected".
+   */
+  restart(event = {}) {
+    console.log(`[bot] restart requested${event.by ? ` by ${event.by}` : ''} – shutting down`);
+    // Erst antworten lassen, was gerade läuft, dann gehen. Eine Sekunde reicht für eine offene
+    // Interaktion und ist kurz genug, dass niemand auf den Knopf zweimal drückt.
+    setTimeout(() => {
+      this.panel.close();
+      this.client.destroy();
+      process.exit(0);
+    }, 1000).unref();
   }
 
   /** Apply role, channel and required-guild changes without restarting the Discord service. */

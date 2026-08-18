@@ -85,6 +85,18 @@ export const GROUPS = [
     },
   },
   {
+    key: 'linkedroles',
+    icon: 'external',
+    de: {
+      title: 'Discord Linked Roles',
+      text: 'Bedingungen, die Discord selbst prüft. Der Betreiber wählt hier, was es gibt und woraus der Wert kommt; in Discord hängt er unter Servereinstellungen → Rollen → Links eine Rolle daran. Die Verifizierungsadresse der Anwendung ist die Adresse unten.',
+    },
+    en: {
+      title: 'Discord linked roles',
+      text: 'Requirements Discord checks itself. Here you choose which ones exist and where their value comes from; in Discord you attach a role to them under Server Settings → Roles → Links. The application\'s verification URL is the address below.',
+    },
+  },
+  {
     key: 'google',
     icon: 'globe',
     de: { title: 'Google', text: 'Anmelden und Verknüpfen über ein Google-Konto. Die Anleitung steht in docs/google-anmeldung.md.' },
@@ -531,6 +543,23 @@ export const SETTINGS = [
     type: 'text',
     de: { label: 'Discord Moderator (Linked Role)', help: 'Discord vergibt diese Linked Role, wenn Moderator im Benutzerprofil gesetzt ist.' },
     en: { label: 'Discord Moderator (Linked Role)', help: 'Discord grants this linked role when the moderator flag is set in the user profile.' },
+  },
+
+  // ---------------------------------------------------------------- Linked Roles
+  // Eine Liste aus Objekten wie die Aufladepakete – und wie diese mit eigenem Editor, weil ein
+  // Textfeld hier nur eine Zeile "[object Object]" ergäbe. Was drinsteht, prüft linked-roles.js.
+  {
+    key: 'discord_role_metadata',
+    group: 'linkedroles',
+    type: 'linkedroles',
+    de: {
+      label: 'Bedingungen',
+      help: 'Höchstens fünf. Der Name steht in Discord als Bedingung im Rollen-Dialog, die Beschreibung als Zeile darunter. Nach dem Speichern meldet der Bot sie bei Discord an.',
+    },
+    en: {
+      label: 'Requirements',
+      help: 'At most five. The name appears in Discord as the condition in the role dialog, the description as the line below it. After saving, the bot registers them with Discord.',
+    },
   },
   {
     key: 'discord_role_team',

@@ -1159,8 +1159,8 @@ export const S = {
   'set.googleWhat': { en: 'Sign in with one click.', de: 'Anmelden mit einem Klick.' },
   'set.verifyRoles': { en: 'Refresh Discord roles', de: 'Discord-Rollen auffrischen' },
   'set.verifyRolesHint': {
-    en: 'Refreshes the Administrator or Discord Moderator linked-role status.',
-    de: 'Aktualisiert den Linked-Role-Status für Administrator oder Discord-Moderator.',
+    en: 'Sends your current status to Discord so it can grant the linked roles that depend on it.',
+    de: 'Schickt deinen aktuellen Stand an Discord, damit es die Linked Roles vergeben kann, die daran hängen.',
   },
   'set.freeDiscordOk': {
     en: 'AFKSystems membership confirmed — the free slot can run.',
@@ -1344,6 +1344,43 @@ export const S = {
   'adm.botStatus': { en: 'Discord bot', de: 'Discord-Bot' },
   'adm.botConnected': { en: 'connected', de: 'verbunden' },
   'adm.botAway': { en: 'not connected', de: 'nicht verbunden' },
+  'adm.botReload': { en: 'Reload settings', de: 'Einstellungen neu laden' },
+  'adm.botReloading': {
+    en: 'The bot is fetching the settings again.',
+    de: 'Der Bot holt die Einstellungen erneut.',
+  },
+  'adm.botRestart': { en: 'Restart bot', de: 'Bot neu starten' },
+  'adm.botRestartAsk': {
+    en: 'Restart the Discord bot? Tickets and roles pause for a few seconds.',
+    de: 'Den Discord-Bot neu starten? Tickets und Rollen pausieren für ein paar Sekunden.',
+  },
+  'adm.botRestarting': {
+    en: 'The bot is shutting down and the service starts it again.',
+    de: 'Der Bot fährt herunter, der Dienst startet ihn erneut.',
+  },
+  'adm.botRestartHint': {
+    en: 'Reloading is enough for anything set here. A restart is only needed for a new bot token or a stuck bot – it comes back through its service (Restart=always).',
+    de: 'Neu laden genügt für alles, was hier eingestellt wird. Ein Neustart ist nur für einen neuen Bot-Token oder einen hängenden Bot nötig – zurück kommt er über seinen Dienst (Restart=always).',
+  },
+
+  'adm.lrAdd': { en: 'Add requirement', de: 'Bedingung hinzufügen' },
+  'adm.lrNone': {
+    en: 'No requirements. Discord then offers nothing to attach a linked role to.',
+    de: 'Keine Bedingungen. Discord bietet dann nichts an, woran eine Linked Role hängen könnte.',
+  },
+  'adm.lrSource': { en: 'Value from the panel', de: 'Wert aus dem Panel' },
+  'adm.lrType': { en: 'Comparison', de: 'Vergleich' },
+  'adm.lrKey': { en: 'Key', de: 'Schlüssel' },
+  'adm.lrName': { en: 'Name in Discord', de: 'Name in Discord' },
+  'adm.lrDesc': { en: 'Description in Discord', de: 'Beschreibung in Discord' },
+  'adm.lrVerifyUrl': {
+    en: 'Linked Roles verification URL for the Discord Developer Portal',
+    de: 'Linked-Roles-Verifizierungsadresse für das Discord Developer Portal',
+  },
+  'adm.lrVerifyHint': {
+    en: 'Developer Portal → your application → OAuth2 → Linked Roles Verification URL. In Discord: Server Settings → Roles → a role → Links.',
+    de: 'Developer Portal → deine Anwendung → OAuth2 → Linked Roles Verification URL. In Discord: Servereinstellungen → Rollen → eine Rolle → Links.',
+  },
   'adm.secretSet': { en: 'stored', de: 'hinterlegt' },
   'adm.secretUnset': { en: 'not stored', de: 'nicht hinterlegt' },
   'adm.secretKeep': { en: 'Leave empty to keep the stored one.', de: 'Leer lassen behält das gespeicherte.' },
