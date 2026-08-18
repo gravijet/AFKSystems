@@ -160,7 +160,9 @@ function row(ticket) {
         ${ticket.shared ? `<span class="pill">${icon('users')}</span>` : ''}
       </div>
       <div class="small muted truncate">
-        ${escapeHtml(tr('tk.messages', { n: ticket.messages ?? 0 }))}
+        ${escapeHtml(
+          ticket.messages === 1 ? tr('tk.messagesOne') : tr('tk.messages', { n: ticket.messages ?? 0 })
+        )}
       </div>
     </div>
     <div class="row" style="gap:.4rem">
