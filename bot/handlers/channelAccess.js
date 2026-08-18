@@ -3,6 +3,11 @@
 // Discord-Moderatoren bekommen Leserechte in öffentlichen und rollenbasierten Kanälen, nicht
 // aber in Administrator- oder rein personenbezogenen Kanälen. Tickets fallen genau in diese
 // Ausnahme. Team bleibt unabhängig davon die automatisch vergebene gemeinsame Rolle.
+//
+// **Ganze Kategorien bleiben unangetastet.** Welche, steht in den Einstellungen des Panels
+// (`discord_skip_categories`). Dort ist "wer darf hinein" eine Entscheidung, die jemand von Hand
+// getroffen hat – und kein Zustand, den ein Dienst jede Stunde neu herstellen soll. Der Bot setzt
+// dort weder ein Recht noch nimmt er eines weg, und er legt auch keinen eigenen Eintrag an.
 
 import { OverwriteType, PermissionFlagsBits } from 'discord.js';
 
@@ -15,9 +20,26 @@ export class ChannelAccess {
     return this.bot.config;
   }
 
+  /** Die IDs der Kategorien, in denen nichts angefasst wird. */
+  get skipped() {
+    return new Set((this.config.skip_categories || []).map(String));
+  }
+
+  /**
+   * Gehört dieser Kanal zu einer Kategorie, die der Bot nicht anfassen darf?
+   *
+   * Die Kategorie selbst zählt mit: Wer sie ausnimmt, meint sie und alles darin.
+   */
+  isSkipped(channel) {
+    const skipped = this.skipped;
+    if (!skipped.size) return false;
+    return skipped.has(String(channel?.id || '')) || skipped.has(String(channel?.parentId || ''));
+  }
+
   /** Ist ein Kanal öffentlich oder für mindestens eine Nicht-Admin-Rolle sichtbar? */
   shouldGrant(channel, guild) {
     if (!channel?.permissionOverwrites || channel.isThread?.()) return false;
+    if (this.isSkipped(channel)) return false;
     const moderator = String(this.config.roles.mod || '');
     const admin = String(this.config.roles.admin || '');
     const team = String(this.config.roles.team || '');
@@ -45,6 +67,10 @@ export class ChannelAccess {
     const targetGuild = guild || (await this.bot.guild());
     const moderator = this.config.roles.mod;
     if (!targetGuild || !moderator || String(channel?.guildId || '') !== String(targetGuild.id)) return false;
+
+    // Ausgenommene Kategorien: nichts setzen und nichts wegnehmen. Ein bereits vorhandener
+    // Eintrag bleibt genau so stehen, wie ihn jemand hingesetzt hat.
+    if (this.isSkipped(channel)) return false;
 
     const current = channel.permissionOverwrites.cache.get(String(moderator));
     if (!this.shouldGrant(channel, targetGuild)) {

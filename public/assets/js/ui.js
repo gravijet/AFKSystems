@@ -103,6 +103,8 @@ const PATHS = {
   globe: '<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>',
   ticket: '<path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z"/><path d="M13 5v2"/><path d="M13 17v2"/><path d="M13 11v2"/>',
   copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  paperclip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  image: '<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>',
   chart: '<path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/>',
   cpu: '<rect width="16" height="16" x="4" y="4" rx="2"/><rect width="6" height="6" x="9" y="9" rx="1"/><path d="M15 2v2"/><path d="M15 20v2"/><path d="M2 15h2"/><path d="M2 9h2"/><path d="M20 15h2"/><path d="M20 9h2"/><path d="M9 2v2"/><path d="M9 20v2"/>',
   disk: '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/>',
@@ -382,6 +384,12 @@ export function formDialog(title, fields, { submit = tr('common.save'), note = '
             field.value ? 'checked' : ''
           }><span>${escapeHtml(field.label)}</span></label>`;
         }
+        if (field.type === 'files') {
+          return `<div class="field"><label for="${id}">${escapeHtml(field.label)}</label>
+            <input id="${id}" name="${field.key}" type="file" multiple
+              ${field.accept ? `accept="${escapeHtml(field.accept)}"` : ''}>
+            ${field.hint ? `<span class="hint">${escapeHtml(field.hint)}</span>` : ''}</div>`;
+        }
         if (field.type === 'textarea') {
           return `<div class="field"><label for="${id}">${escapeHtml(field.label)}</label>
             <textarea id="${id}" name="${field.key}" placeholder="${escapeHtml(field.placeholder || '')}">${value}</textarea>
@@ -423,7 +431,9 @@ export function formDialog(title, fields, { submit = tr('common.save'), note = '
         if (field.type === 'note') continue;
         const input = form.elements[field.key];
         if (!input) continue;
-        data[field.key] = field.type === 'checkbox' ? input.checked : input.value;
+        if (field.type === 'checkbox') data[field.key] = input.checked;
+        else if (field.type === 'files') data[field.key] = [...(input.files || [])];
+        else data[field.key] = input.value;
       }
       result = data;
     });
@@ -434,6 +444,13 @@ export function formDialog(title, fields, { submit = tr('common.save'), note = '
     dialog.showModal();
     dialog.querySelector('input, select, textarea')?.focus();
   });
+}
+
+/** Eine Dateigröße, wie ein Mensch sie liest. */
+export function fileSize(bytes) {
+  const value = Number(bytes) || 0;
+  if (value >= 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(value / 1024))} KB`;
 }
 
 /** Ruft `fn` erst, wenn eine Weile Ruhe war – gegen Neuzeichnen im Sekundentakt. */

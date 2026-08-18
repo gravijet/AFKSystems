@@ -6,15 +6,27 @@
 // (Featherpanel, ein anderer Rechner), ohne dass irgendwo zwei Wahrheiten entstehen.
 //
 // Was er tut:
-//   * Tickets in beide Richtungen (handlers/tickets.js)
+//   * Tickets in beide Richtungen, samt Anhängen (handlers/tickets.js)
 //   * Rollen nach Tarif und Verknüpfung (handlers/roles.js)
 //   * Discords Linked Roles anmelden (handlers/linkedRoles.js)
-//   * drei Slash-Befehle (handlers/commands.js)
+//   * einen Slash-Befehl fürs Team (handlers/commands.js)
+//
+// Tickets macht man **am Knopf im Support-Kanal** auf, nicht mit einem Befehl: Dort steht die
+// Erklärung daneben, und es gibt nur einen Weg statt zweier.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client, Events, GatewayIntentBits, MessageFlags, Partials, REST, Routes } from 'discord.js';
+import {
+  ActivityType,
+  Client,
+  Events,
+  GatewayIntentBits,
+  MessageFlags,
+  Partials,
+  REST,
+  Routes,
+} from 'discord.js';
 import { Panel } from './panel.js';
 import { Tickets } from './handlers/tickets.js';
 import { Roles } from './handlers/roles.js';
@@ -191,6 +203,7 @@ class Bot {
       token: this.client.token,
       fields: this.config.role_metadata,
     }).catch((error) => console.warn('[linked roles]', error.message));
+    this.presence();
     await this.tickets.ensurePanel();
     await this.tickets.enforceStaffAccess();
     await this.tickets.reconcileChannels();
@@ -207,7 +220,7 @@ class Bot {
 
   async onReady() {
     console.log(`[discord] signed in as ${this.client.user.tag}`);
-    this.client.user.setActivity(`${this.config.brand} · /account`);
+    this.presence();
 
     await this.registerCommands();
     await registerMetadata({
@@ -245,6 +258,23 @@ class Bot {
     setInterval(beat, 60_000).unref();
   }
 
+  /**
+   * Der Status unter dem Namen des Bots: die Adresse, sonst nichts.
+   *
+   * Als *Custom Status* (Typ 4), damit Discord nichts davorschreibt – "Spielt example.invalid"
+   * wäre eine Behauptung über ein Spiel. Der Text kommt aus der Panel-Adresse, damit auf einer
+   * anderen Installation auch deren Adresse dasteht.
+   */
+  presence() {
+    const host = String(this.config.panel_url || '')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '');
+    this.client.user.setPresence({
+      status: 'online',
+      activities: [{ name: host || 'example.invalid', state: host || 'example.invalid', type: ActivityType.Custom }],
+    });
+  }
+
   async registerCommands() {
     try {
       const rest = new REST().setToken(this.client.token);
@@ -262,11 +292,11 @@ class Bot {
   async onInteraction(interaction) {
     try {
       if (interaction.isChatInputCommand()) return await commands.handle(this, interaction);
-      if (interaction.isStringSelectMenu() && interaction.customId === 'ticket:new') {
-        return await this.tickets.onSelect(interaction);
+      if (interaction.isButton() && interaction.customId === 'ticket:new') {
+        return await this.tickets.onOpen(interaction);
       }
-      if (interaction.isModalSubmit() && interaction.customId.startsWith('ticket:create:')) {
-        return await this.tickets.onCreate(interaction, interaction.customId.split(':')[2]);
+      if (interaction.isModalSubmit() && interaction.customId === 'ticket:create') {
+        return await this.tickets.onCreate(interaction);
       }
       if (interaction.isButton() && interaction.customId.startsWith('ticket:close:')) {
         return await this.tickets.onClose(interaction, interaction.customId.split(':')[2]);

@@ -1,5 +1,12 @@
 // Inhaltsschutz auf der Serverseite.
 //
+// **Zwei Schalter, zwei Dinge.** `content_protection` ist das hier: CSS und JavaScript lassen sich
+// nicht einzeln abrufen und liegen in keinem fremden Zwischenspeicher. `content_lock_ui` ist das
+// andere: Rechtsklick, Markieren, Ziehen, Drucken und Entwicklerwerkzeuge im Browser. Das war
+// einmal ein Schalter, und das war falsch – wer seine Dateien nicht als Sammlung verschenken will,
+// will deswegen noch lange nicht, dass seine Kunden eine Serveradresse nicht markieren können.
+// Deshalb ist die Bedienung ab Werk frei und der Rest an.
+//
 // Was hier möglich ist und was nicht, gehört gleich am Anfang gesagt: Ein Browser **muss** CSS,
 // JavaScript und Bilder bekommen, sonst gibt es keine Seite. Es gibt keinen Schalter, der eine
 // Website unkopierbar macht – wer entschlossen genug ist, bekommt jede Datei. Was es gibt, ist
@@ -24,6 +31,14 @@
 import { getSetting } from './db.js';
 
 export const enabled = () => Boolean(Number(getSetting('content_protection') ?? 1));
+
+/**
+ * Ist die **Bedienung** gesperrt (Rechtsklick, Markieren, Ziehen, Drucken)?
+ *
+ * Aus ist die Vorgabe: eine ganz normale Seite. Wer sie einschaltet, bekommt das alte Verhalten
+ * zurück – dann greift shield.js im Browser und die `.shielded`-Regeln im CSS.
+ */
+export const uiLocked = () => Boolean(Number(getSetting('content_lock_ui') ?? 0));
 
 /** Werkzeuge, die eine Website am Stück mitnehmen. Kein Schutzwall, aber die erste Hürde. */
 const COPIERS =

@@ -170,6 +170,92 @@ export async function createCheckout({ user, pack, topup, lang = 'de' }) {
   return { url, reference: result.ident || null };
 }
 
+/**
+ * Die Einrichtung prüfen, ohne dass Geld fließt.
+ *
+ * Es gibt bei Tebex keinen zweiten, gefahrlosen Server zum Üben: `checkout.tebex.io` ist die
+ * einzige Adresse, und ob ein Kauf echt abgerechnet wird, entscheidet der **Testmodus des Stores**
+ * im Tebex-Panel, nicht die API. Was sich hier trotzdem beantworten lässt – und was beim
+ * Einrichten die eigentliche Frage ist –, ist: *Nimmt Tebex meine Zugangsdaten an und ist die
+ * Checkout-API für dieses Projekt überhaupt freigeschaltet?*
+ *
+ * Dafür wird ein echter Warenkorb über einen Cent angelegt und wieder liegengelassen. Er kostet
+ * nichts, läuft von selbst ab, und die Antwort ist eindeutig: entweder kommt eine Bezahladresse
+ * zurück oder Tebex sagt, was fehlt. Bezahlt wird dort nichts – die Adresse kommt nur mit zurück,
+ * damit der Betreiber den letzten Schritt einmal von Hand gehen kann.
+ */
+export async function selfTest({ lang = 'de' } = {}) {
+  const out = {
+    mode: mode(),
+    enabled: Boolean(Number(getSetting('tebex_enabled'))),
+    webhook_ready: webhookReady(),
+    webhook_url: `${config.publicUrl}/api/tebex/webhook`,
+    ok: false,
+    checkout_url: null,
+    message: '',
+  };
+
+  const missing = [];
+  if (mode() === 'headless') {
+    if (!text('tebex_store_token')) missing.push('Store-Token');
+  } else {
+    if (!text('tebex_project_id')) missing.push('Projekt-ID');
+    if (!text('tebex_private_key')) missing.push('Privater Schlüssel');
+  }
+  if (missing.length) {
+    out.message =
+      lang === 'en'
+        ? `Missing in the settings: ${missing.join(', ')}.`
+        : `In den Einstellungen fehlt: ${missing.join(', ')}.`;
+    return out;
+  }
+
+  if (mode() === 'headless') {
+    // Im Headless-Weg genügt ein leerer Warenkorb: er beweist, dass der Store-Token stimmt.
+    const basket = await call(`${HEADLESS_API}/${encodeURIComponent(text('tebex_store_token'))}/baskets`, {
+      body: {
+        complete_url: `${config.publicUrl}/`,
+        cancel_url: `${config.publicUrl}/`,
+        custom: { test: '1' },
+      },
+    });
+    out.ok = Boolean(basket?.data?.ident);
+    out.checkout_url = basket?.data?.links?.checkout || null;
+  } else {
+    const result = await call(`${CHECKOUT_API}/checkout`, {
+      headers: { authorization: basicAuth() },
+      body: {
+        basket: {
+          first_name: config.brand.slice(0, 40),
+          last_name: 'Test',
+          email: 'test@example.com',
+          return_url: `${config.publicUrl}/`,
+          complete_url: `${config.publicUrl}/`,
+          custom: { test: '1' },
+        },
+        items: [
+          {
+            type: 'single',
+            qty: 1,
+            package: { name: `${config.brand} · Verbindungstest`, price: 0.01, type: 'single', qty: 1 },
+          },
+        ],
+      },
+    });
+    out.ok = Boolean(result?.links?.checkout);
+    out.checkout_url = result?.links?.checkout || null;
+  }
+
+  out.message = out.ok
+    ? lang === 'en'
+      ? 'Tebex accepted the credentials and returned a checkout link.'
+      : 'Tebex hat die Zugangsdaten angenommen und eine Bezahladresse geliefert.'
+    : lang === 'en'
+      ? 'Tebex answered, but without a checkout link.'
+      : 'Tebex hat geantwortet, aber keine Bezahladresse geliefert.';
+  return out;
+}
+
 // ---------------------------------------------------------------- Webhook
 
 /**

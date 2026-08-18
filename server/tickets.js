@@ -1,7 +1,13 @@
-// Support-Tickets. Ein Ticket ist ein Betreff, eine Kategorie und ein Verlauf aus Nachrichten –
-// mehr braucht es nicht, und weniger würde beim Nachfragen nerven.
+// Support-Tickets. Ein Ticket ist ein Betreff und ein Verlauf aus Nachrichten – mehr braucht es
+// nicht, und weniger würde beim Nachfragen nerven.
 //
-// Drei Dinge kommen dazu, die ein Ticket vom Briefkasten unterscheiden:
+// Eine Kategorie gibt es bewusst **nicht** mehr. Sie stand als Pflichtfeld vor jedem Ticket
+// ("Allgemeine Frage", "Missbrauch melden") und hat nichts entschieden: gelesen wurde ohnehin
+// alles, sortiert wurde nach Zeit und Tarif. Wer schreibt, soll den Betreff und die Sache
+// hinschreiben, nicht erst ein Schubfach wählen. Die Spalte bleibt in der Datenbank, damit alte
+// Tickets ihren Eintrag behalten.
+//
+// Vier Dinge kommen dazu, die ein Ticket vom Briefkasten unterscheiden:
 //
 //   * An einem Ticket dürfen **mehrere Kunden** hängen. Wer zu zweit einen Serverplatz betreibt,
 //     soll nicht zwei Tickets über dieselbe Sache aufmachen müssen; das Team kann jemanden
@@ -10,32 +16,20 @@
 //     doch nicht stimmt, soll nicht bei null anfangen und den Verlauf verlieren.
 //   * Jedes Ticket kann einen **Kanal in Discord** haben. Was hier steht, steht dort, und
 //     umgekehrt – der Abgleich läuft über bridge.js.
-//
-// Die Kategorie `proxy` ist der Weg, über den Proxys vergeben werden: Proxys gibt es nur für
-// bezahlte Serverplätze, und zugeteilt werden sie von Hand, weil dahinter echte IP-Adressen
-// stehen, die jemand kaufen und pflegen muss.
+//   * An jede Nachricht dürfen **Dateien** (attachments.js): Screenshots und Anhänge bis 20 MB,
+//     im Panel wie im Discord-Kanal, in beide Richtungen.
 
 import { db, audit } from './db.js';
 import { config } from './config.js';
 import { bad, notFound, forbidden, requireString } from './util.js';
+import * as files from './attachments.js';
 import { isPayingUser } from './billing.js';
 import * as mail from './mail.js';
 import * as notify from './notify.js';
 import { bridge } from './bridge.js';
 
-export const CATEGORIES = [
-  { key: 'general', de: 'Allgemeine Frage', en: 'General question' },
-  { key: 'proxy', de: 'Proxy anfragen', en: 'Request a proxy' },
-  { key: 'billing', de: 'Guthaben und Tarife', en: 'Credits and plans' },
-  { key: 'bug', de: 'Etwas geht nicht', en: 'Something is broken' },
-  { key: 'abuse', de: 'Missbrauch melden', en: 'Report abuse' },
-];
-
 export const STATUSES = ['open', 'waiting', 'answered', 'closed'];
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
-
-export const categoriesFor = (lang = 'de') =>
-  CATEGORIES.map((entry) => ({ key: entry.key, label: entry[lang === 'en' ? 'en' : 'de'] }));
 
 const ticketRow = db.prepare('SELECT * FROM tickets WHERE id = ?');
 export const byId = (id) => ticketRow.get(id);
@@ -120,7 +114,12 @@ export function messages(ticketId, { staff = false } = {}) {
         WHERE m.ticket_id = ? ORDER BY m.id`
     )
     .all(ticketId);
-  return staff ? rows : rows.filter((row) => !row.internal);
+  const visible = staff ? rows : rows.filter((row) => !row.internal);
+  // Anhänge gehören zur Nachricht, nicht daneben. Sie hier anzuhängen heißt: jede Oberfläche,
+  // die Nachrichten liest, hat sie automatisch – ohne einen zweiten Aufruf und ohne dass jemand
+  // das Nachladen vergessen kann.
+  const attachments = files.byMessage(ticketId, { staff });
+  return visible.map((row) => ({ ...row, files: attachments.get(row.id) || [] }));
 }
 
 export function listFor(user) {
@@ -135,16 +134,12 @@ export function listFor(user) {
     .all(user.id, user.id, user.id);
 }
 
-export function listAll({ status = null, category = null, priority = null, search = '' } = {}) {
+export function listAll({ status = null, priority = null, search = '' } = {}) {
   const where = [];
   const values = [];
   if (status && status !== 'all') {
     where.push('t.status = ?');
     values.push(status);
-  }
-  if (category && category !== 'all') {
-    where.push('t.category = ?');
-    values.push(category);
   }
   if (priority && priority !== 'all') {
     where.push('t.priority = ?');
@@ -209,14 +204,14 @@ export function system(ticket, text) {
  * `owner` ist, wem das Ticket gehört; `by` wer es angelegt hat. Beide sind meist dieselbe Person –
  * anders nur, wenn ein Administrator für einen Kunden eines aufmacht.
  */
-export const create = db.transaction((owner, { subject, category, body, priority }, options = {}) => {
+export const create = db.transaction((owner, { subject, body, priority, files: fileIds }, options = {}) => {
   const { by = owner.id, source = 'panel', staffPriority = false } = options;
   const title = requireString(subject, 'Betreff', { max: 120 });
   // Der Betreff genügt. Wer auf "Abschicken" drückt, hat gesagt, worum es geht – dann darf das
   // Ticket nicht daran scheitern, dass das zweite Feld noch leer war. Fehlt der Text, steht das
-  // Ticket eben nur mit seinem Betreff da und das Team fragt nach.
+  // Ticket eben nur mit seinem Betreff da und das Team fragt nach. Ein Screenshot allein zählt
+  // dabei genauso: wer ein Bild anhängt, hat etwas gesagt.
   const text = requireString(body, 'Nachricht', { min: 0, max: 8000 });
-  const kind = CATEGORIES.some((entry) => entry.key === category) ? category : 'general';
 
   const open = db
     .prepare("SELECT COUNT(*) AS n FROM tickets WHERE user_id = ? AND status != 'closed'")
@@ -242,17 +237,24 @@ export const create = db.transaction((owner, { subject, category, body, priority
     .prepare(
       `INSERT INTO tickets (user_id, subject, category, status, priority, source, unread_staff,
                             unread_user, created_at, updated_at)
-       VALUES (?, ?, ?, 'open', ?, ?, 1, ?, ?, ?)`
+       VALUES (?, ?, 'general', 'open', ?, ?, 1, ?, ?, ?)`
     )
-    .run(owner.id, title, kind, boost, source, by === owner.id ? 0 : 1, now, now);
+    .run(owner.id, title, boost, source, by === owner.id ? 0 : 1, now, now);
   const id = info.lastInsertRowid;
-  if (text) {
-    db.prepare(
-      `INSERT INTO ticket_messages (ticket_id, user_id, role, body, created_at)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(id, by, by === owner.id ? 'user' : 'staff', text, now);
+  // Angehängte Dateien gehören an die erste Nachricht. Gibt es keinen Text, entsteht sie trotzdem –
+  // sonst hinge der Screenshot an nichts und stünde nirgends im Verlauf.
+  const chosen = Array.isArray(fileIds) ? fileIds : [];
+  let messageId = null;
+  if (text || chosen.length) {
+    messageId = db
+      .prepare(
+        `INSERT INTO ticket_messages (ticket_id, user_id, role, body, created_at)
+         VALUES (?, ?, ?, ?, ?)`
+      )
+      .run(id, by, by === owner.id ? 'user' : 'staff', text, now).lastInsertRowid;
   }
-  audit(by, 'ticket-create', { id, category: kind, owner: owner.id, source });
+  const attached = files.claim(chosen, { ticketId: id, messageId, userId: by });
+  audit(by, 'ticket-create', { id, owner: owner.id, source, files: attached.length });
   return ticketRow.get(id);
 });
 
@@ -268,8 +270,12 @@ export const reply = db.transaction((ticket, user, body, {
   authorName = null,
   discordId = null,
   staff = null,
+  files: fileIds = [],
 } = {}) => {
-  const text = requireString(body, 'Nachricht', { max: 8000 });
+  // Eine Antwort, die nur aus einem Screenshot besteht, ist eine Antwort. Ohne Anhang bleibt der
+  // Text Pflicht – eine leere Nachricht sagt niemandem etwas.
+  const chosen = Array.isArray(fileIds) ? fileIds : [];
+  const text = requireString(body, 'Nachricht', { min: chosen.length ? 0 : 1, max: 8000 });
   // Der Absender-Modus ist immer eine Entscheidung der aufrufenden Oberfläche – nie eine
   // Nebenwirkung der Konto-Rolle. Ein Admin ist unter „Meine Tickets“ Kunde, unter
   // „Administration → Alle Tickets“ Support.
@@ -286,6 +292,12 @@ export const reply = db.transaction((ticket, user, body, {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(ticket.id, user.id, isStaff ? 'staff' : 'user', text, internal ? 1 : 0, authorName, discordId, now);
+  const attached = files.claim(chosen, {
+    ticketId: ticket.id,
+    messageId: info.lastInsertRowid,
+    userId: user.id,
+    internal,
+  });
 
   if (internal) {
     db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(now, ticket.id);
@@ -316,6 +328,7 @@ export const reply = db.transaction((ticket, user, body, {
     // zurück zum Bot, damit er sie nicht noch einmal als Panel-Embed in denselben Kanal spiegelt.
     discord_id: discordId,
     body: text,
+    files: attached.map(files.view),
     created_at: now,
     status: fresh.status,
     reopened,
@@ -367,8 +380,6 @@ export function setChannel(ticketId, channelId) {
 
 // ---------------------------------------------------------------- Bescheid geben
 
-const CATEGORY_LABEL = Object.fromEntries(CATEGORIES.map((entry) => [entry.key, entry.en]));
-
 /** Das Team über ein neues Ticket informieren – Webhook und, wenn er läuft, der Bot. */
 export async function notifyStaff(ticket, user) {
   const paying = isPayingUser(user.id);
@@ -377,7 +388,6 @@ export async function notifyStaff(ticket, user) {
     url: `${config.publicUrl}/en/app#/admin/tickets/${ticket.id}`,
     description: [
       `**From** ${user.username}${paying ? ' · paying customer' : ''}`,
-      `**Category** ${CATEGORY_LABEL[ticket.category] || ticket.category}`,
       `**Priority** ${ticket.priority}`,
       ticket.source === 'discord' ? '**Via** Discord' : null,
     ]

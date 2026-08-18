@@ -379,7 +379,6 @@ async function staffTickets(root) {
   const search = params.get('q') || '';
 
   const data = await api(`/admin/tickets?status=${status}&q=${encodeURIComponent(search)}`);
-  const categories = data.categories || state.meta?.ticket_categories || [];
 
   root.innerHTML = `
     ${appbar(tr('adm.allTickets'), '', tr('adm.allTicketsSub'))}
@@ -406,7 +405,7 @@ async function staffTickets(root) {
       <div class="body" style="padding:0">
         ${
           data.tickets.length
-            ? `<ul class="ticket-list">${data.tickets.map((ticket) => staffRow(ticket, categories)).join('')}</ul>`
+            ? `<ul class="ticket-list">${data.tickets.map(staffRow).join('')}</ul>`
             : `<div class="empty" style="box-shadow:none;background:transparent">
                 <h3>${escapeHtml(tr('tk.none'))}</h3></div>`
         }
@@ -426,7 +425,7 @@ async function staffTickets(root) {
   $('#tk-status').addEventListener('change', reload);
   $('#tk-q').addEventListener('input', reload);
 
-  $('#tk-new-for').addEventListener('click', () => ticketForCustomer(categories));
+  $('#tk-new-for').addEventListener('click', () => ticketForCustomer());
 
   // Kommt ein Ticket herein oder eine Antwort, ist die Liste sofort veraltet.
   state.onLive = debounce((event) => {
@@ -439,7 +438,7 @@ async function staffTickets(root) {
   }, 500);
 }
 
-function staffRow(ticket, categories) {
+function staffRow(ticket) {
   return `<li class="ticket-row ${ticket.unread_staff ? 'is-unread' : ''}" data-open="${ticket.id}">
     <span class="ticket-dot ${ticket.status}"></span>
     <div class="grow" style="min-width:0">
@@ -449,8 +448,7 @@ function staffRow(ticket, categories) {
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
       </div>
       <div class="small muted truncate">
-        ${escapeHtml(categories.find((entry) => entry.key === ticket.category)?.label || ticket.category)}
-        ${ticket.username ? ` · ${escapeHtml(ticket.username)}` : ''}
+        ${escapeHtml(ticket.username || '')}
         ${ticket.assigned_name ? ` · ${escapeHtml(ticket.assigned_name)}` : ''}
       </div>
     </div>
@@ -476,7 +474,7 @@ function staffRow(ticket, categories) {
  * Das gehört hierher und nicht in den Support-Bildschirm eines Kunden: dort stand es bisher und
  * war für jeden zu sehen, der zufällig Administrator ist, aber gerade Kunde sein wollte.
  */
-async function ticketForCustomer(categories) {
+async function ticketForCustomer() {
   const { users: list } = await api('/admin/users?filter=all');
   const answer = await formDialog(
     tr('tk.newFor'),
@@ -489,13 +487,6 @@ async function ticketForCustomer(categories) {
         options: list.map((user) => ({ value: String(user.id), label: `${user.username} · ${user.email}` })),
       },
       { key: 'subject', label: tr('tk.subject'), required: true },
-      {
-        key: 'category',
-        label: tr('tk.category'),
-        type: 'select',
-        value: 'general',
-        options: categories.map((entry) => ({ value: entry.key, label: entry.label })),
-      },
       {
         key: 'priority',
         label: tr('tk.priority'),
@@ -865,16 +856,6 @@ async function userDetail(root, id) {
       [
         { type: 'note', key: 'note', label: user.username },
         { key: 'subject', label: tr('tk.subject'), required: true },
-        {
-          key: 'category',
-          label: tr('tk.category'),
-          type: 'select',
-          value: 'general',
-          options: (state.meta?.ticket_categories || []).map((entry) => ({
-            value: entry.key,
-            label: entry.label,
-          })),
-        },
         {
           key: 'priority',
           label: tr('tk.priority'),
@@ -2352,6 +2333,7 @@ async function settings(root) {
         <div class="setting-body stack">
           ${fields.map(field).join('')}
           ${group.key === 'mail' ? mailTools() : ''}
+          ${group.key === 'payments' ? tebexTools(data) : ''}
           ${group.key === 'discord' ? discordTools(data) : ''}
         </div>
       </section>
@@ -2458,6 +2440,29 @@ async function settings(root) {
         tr('adm.testMail')
       )}</button>
       <a class="btn btn-sm" href="#/admin/mails">${escapeHtml(tr('adm.mails'))}</a>
+    </div>`;
+  }
+
+  /**
+   * Der Selbsttest für Tebex.
+   *
+   * Beim Einrichten ist die Frage nie "läuft der Server", sondern "nimmt Tebex meine Schlüssel an".
+   * Der Knopf beantwortet genau das – ohne dass jemand erst etwas kaufen muss.
+   */
+  function tebexTools(data) {
+    const state_ = data.tebex || {};
+    return `<div class="note ${state_.ready ? '' : 'warn'}" style="margin:0">
+      ${icon(state_.ready ? 'check' : 'info')}
+      <div class="small grow">
+        <strong>${escapeHtml(tr('adm.tebexState'))}:</strong>
+        ${escapeHtml(
+          state_.ready ? tr('adm.tebexReady') : state_.enabled ? tr('adm.tebexKeys') : tr('adm.tebexOff')
+        )}
+        · ${escapeHtml(tr('adm.tebexHook'))}:
+        ${escapeHtml(state_.webhook_ready ? tr('adm.tebexSet') : tr('adm.tebexMissing'))}
+        <div id="tebex-result" class="small muted" style="margin-top:.35rem"></div>
+      </div>
+      <button type="button" class="btn btn-sm" id="tebex-test">${escapeHtml(tr('adm.tebexTest'))}</button>
     </div>`;
   }
 
@@ -2581,6 +2586,29 @@ async function settings(root) {
       ok(tr('adm.mailSent'));
     } catch (error) {
       fail(error);
+    }
+  });
+
+  $('#tebex-test')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    const box = $('#tebex-result');
+    button.disabled = true;
+    box.textContent = `${tr('common.loading')} …`;
+    try {
+      const result = await api('/admin/tebex/test', { method: 'POST' });
+      box.innerHTML = `${escapeHtml(result.message)}${
+        result.checkout_url
+          ? ` <a href="${escapeHtml(result.checkout_url)}" target="_blank" rel="noopener">${escapeHtml(
+              tr('adm.tebexOpen')
+            )}</a>`
+          : ''
+      }`;
+      if (result.ok) ok(result.message);
+    } catch (error) {
+      box.textContent = error.message;
+      fail(error);
+    } finally {
+      button.disabled = false;
     }
   });
 }

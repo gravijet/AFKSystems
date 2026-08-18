@@ -52,6 +52,21 @@ export class Panel extends EventEmitter {
     return data;
   }
 
+  /**
+   * Eine Datei beim Panel abholen – Anhänge eines Tickets.
+   *
+   * Bewusst nicht über `call()`: dort kommt JSON zurück, hier sind es Bytes. Zeit bekommt der
+   * Abruf mehr als ein gewöhnlicher Aufruf, denn 20 MB brauchen mehr als eine Sekunde.
+   */
+  async download(path) {
+    const response = await fetch(`${this.url}/api/bot${path}`, {
+      headers: { authorization: `Bearer ${this.secret}` },
+      signal: AbortSignal.timeout(60_000),
+    });
+    if (!response.ok) throw new Error(`Panel responded with ${response.status}`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
   /** Die Verbindung offen halten. Bricht sie ab, wird sie mit wachsender Pause neu aufgebaut. */
   connect() {
     if (this.closing) return;

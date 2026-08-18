@@ -711,7 +711,60 @@ const migrations = [
       db.prepare("UPDATE nodes SET kind = 'local' WHERE kind = 'local'").run();
     },
   },
+  {
+    name: '010-ticket-anhaenge-und-freier-inhalt',
+    sql: `
+      -- Anhänge eines Tickets. Die Datei selbst liegt unter data/tickets/<ticket>/<id>-<name>;
+      -- hier steht, wem sie gehört, wie sie heißt und woher sie kam. Eine Datei ohne Nachricht
+      -- gibt es nicht: sie hängt immer an dem Beitrag, mit dem sie geschickt wurde.
+      -- ticket_id und message_id sind offen, solange die Datei nur hochgeladen ist: Wer ein neues
+      -- Ticket schreibt, hängt seinen Screenshot an, bevor es das Ticket gibt. Erst das Abschicken
+      -- verbindet beides. Was nach einem Tag noch offen ist, war ein abgebrochener Entwurf.
+      CREATE TABLE ticket_files (
+        id         INTEGER PRIMARY KEY,
+        ticket_id  INTEGER REFERENCES tickets(id) ON DELETE CASCADE,
+        message_id INTEGER REFERENCES ticket_messages(id) ON DELETE CASCADE,
+        user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        name       TEXT NOT NULL,
+        mime       TEXT NOT NULL DEFAULT 'application/octet-stream',
+        size       INTEGER NOT NULL DEFAULT 0,
+        path       TEXT NOT NULL,
+        source     TEXT NOT NULL DEFAULT 'panel',   -- panel | discord
+        internal   INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX ticket_files_open ON ticket_files(user_id, created_at) WHERE ticket_id IS NULL;
+      CREATE INDEX ticket_files_ticket ON ticket_files(ticket_id, id);
+      CREATE INDEX ticket_files_message ON ticket_files(message_id);
+    `,
+    run() {
+      const put = db.prepare(
+        'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO NOTHING'
+      );
+      // Markieren und Rechtsklick gehören ab hier zur normalen Seite. Der Inhaltsschutz auf der
+      // Serverseite (CSS/JS nicht einzeln abrufbar) bleibt davon unberührt – das ist jetzt ein
+      // zweiter, eigener Schalter, damit man das eine haben kann, ohne das andere zu ertragen.
+      put.run('content_lock_ui', JSON.stringify(0));
+      // Kategorien, in denen der Bot keine Kanalrechte anfassen darf.
+      put.run('discord_skip_categories', JSON.stringify(DEFAULT_SKIP_CATEGORIES));
+    },
+  },
 ];
+
+/**
+ * Kategorien, in denen der Bot **nichts** an den Rechten ändert.
+ *
+ * Voreingestellt sind die Bereiche des AFKSystems-Servers, die von Hand geregelt sind: Tickets,
+ * das Ticket-Archiv und die internen Kategorien. Dort ist "wer darf hinein" eine Entscheidung,
+ * die jemand getroffen hat – kein Zustand, den ein Dienst jede Stunde neu herstellen soll.
+ */
+const DEFAULT_SKIP_CATEGORIES = [
+  '000000000000000000',
+  '000000000000000000',
+  '000000000000000000',
+  '000000000000000000',
+  '000000000000000000',
+].join(',');
 
 /**
  * Die Zusätze aus der Erstbefüllung. Preise sind Credits je 30 Tage, wie beim Tarif – und wie der
@@ -1031,15 +1084,24 @@ const defaults = {
   legal_terms: TERMS_DE,
   legal_terms_en: TERMS_EN,
 
+  // Kategorien, in denen der Bot keine Kanalrechte setzt (kommagetrennte IDs). Siehe oben.
+  discord_skip_categories: DEFAULT_SKIP_CATEGORIES,
+
   // Betrieb
-  // Inhaltsschutz: Rechtsklick, Markieren, Ziehen, Drucken und der einzelne Aufruf von CSS/JS
-  // sind gesperrt, offene Entwicklerwerkzeuge blenden den Inhalt aus (docs/schutz.md).
+  // Inhaltsschutz auf der **Serverseite**: CSS und JavaScript lassen sich nicht einzeln abrufen
+  // und liegen in keinem fremden Zwischenspeicher (docs/schutz.md). Am Verhalten der Seite im
+  // Browser ändert das nichts.
   content_protection: 1,
+  // Bedienung sperren: Rechtsklick, Markieren, Ziehen, Drucken und die Entwicklerwerkzeuge.
+  // Aus: die Seite verhält sich wie jede andere Website. Das ist die Vorgabe, denn eine Seite,
+  // auf der man eine Serveradresse nicht markieren kann, ärgert vor allem die eigenen Kunden.
+  content_lock_ui: 0,
   maintenance: 0,
   maintenance_text: '',
   max_bots_per_user: 25,
   support_hours: '',
 };
+
 
 const readSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
 const writeSetting = db.prepare(

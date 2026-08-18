@@ -12,6 +12,7 @@ import express from 'express';
 import { db, getSetting, audit } from '../db.js';
 import { config } from '../config.js';
 import * as tickets from '../tickets.js';
+import * as attachments from '../attachments.js';
 import * as roles from '../roles.js';
 import * as billing from '../billing.js';
 import { ROLE_METADATA } from '../oauth.js';
@@ -21,19 +22,70 @@ import { wrap, requireInt, requireString, bad, notFound, HttpError, safeEqual } 
 
 export const router = express.Router();
 
+/**
+ * Wie kurz ein "Geheimnis" sein darf, bevor es keines mehr ist.
+ *
+ * Hinter diesem einen Wort liegt der ganze Bereich: der Discord-Token, jedes Ticket samt Verlauf,
+ * die Discord-IDs aller verknüpften Konten. Ein vierstelliges Passwort davor ist in Minuten
+ * geraten – deshalb wird es nicht bloß bemängelt, sondern **nicht angenommen**. Lieber ein Bot,
+ * der sich meldet, dass er nicht hereinkommt, als eine Tür, die jeder aufbekommt.
+ */
+export const MIN_SECRET = 24;
+
+let warned = false;
+
 /** Das gemeinsame Geheimnis prüfen. */
 export function checkSecret(value) {
   const secret = String(getSetting('discord_bot_secret') || '').trim();
   if (!secret || !value) return false;
+  if (secret.length < MIN_SECRET) {
+    if (!warned) {
+      warned = true;
+      console.warn(
+        `[bot] Das Geheimnis zwischen Panel und Bot ist zu kurz (${secret.length} statt ${MIN_SECRET} Zeichen). ` +
+          'Der Bot-Bereich bleibt zu, bis unter Administration → Einstellungen → Discord ein langes ' +
+          'Geheimnis steht und dasselbe in bot/.env als PANEL_SECRET.'
+      );
+    }
+    return false;
+  }
   return safeEqual(value, secret);
 }
 
+/**
+ * Falsche Versuche bremsen.
+ *
+ * Ein gemeinsames Geheimnis lässt sich raten, wenn man es beliebig oft versuchen darf. Zwanzig
+ * Fehlversuche je Adresse und Viertelstunde reichen für jeden echten Bot (er hat es beim ersten
+ * Mal richtig) und für niemanden sonst.
+ */
+const failures = new Map();
+const FAIL_WINDOW_MS = 15 * 60_000;
+const FAIL_MAX = 20;
+
 router.use((req, res, next) => {
+  const now = Date.now();
+  const recent = (failures.get(req.ip) || []).filter((at) => now - at < FAIL_WINDOW_MS);
+  if (recent.length >= FAIL_MAX) {
+    failures.set(req.ip, recent);
+    return next(
+      new HttpError(429, 'Zu viele Versuche.', { en: 'Too many attempts.' })
+    );
+  }
+
   const header = String(req.headers.authorization || '');
   const value = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!checkSecret(value)) {
+    recent.push(now);
+    failures.set(req.ip, recent);
+    if (failures.size > 5_000) {
+      for (const [key, times] of failures) {
+        if (!times.some((at) => now - at < FAIL_WINDOW_MS)) failures.delete(key);
+      }
+    }
     return next(new HttpError(401, 'Der Bot ist nicht angemeldet.', { en: 'The bot is not signed in.' }));
   }
+  failures.delete(req.ip);
   next();
 });
 
@@ -58,8 +110,14 @@ router.get(
       roles: roles.managed(),
       managed_roles: roles.managedIds(),
       role_metadata: ROLE_METADATA,
-      categories: tickets.categoriesFor('en'),
+      // Kategorien, in denen der Bot keine Kanalrechte setzen darf. Sie kommen aus den
+      // Einstellungen, damit sich das ohne neuen Bot-Stand ändern lässt.
+      skip_categories: String(getSetting('discord_skip_categories') || '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
       statuses: tickets.STATUSES,
+      max_upload: attachments.MAX_BYTES,
       link_url: `${config.publicUrl}/en/app#/settings`,
       free_guild_id: billing.freeGuildId(),
       seq: bridge.sequence,
@@ -122,6 +180,17 @@ router.post(
 
     // Ein Austritt beendet jeden Gratis-Platz sofort. Gewollte Starts werden dabei ebenfalls
     // gelöscht; nach einem erneuten Beitritt entscheidet der Nutzer bewusst, was wieder startet.
+    //
+    // Andersherum gilt: Wer wieder da ist, bekommt zurück, was noch offen als "soll laufen"
+    // dasteht. Das ist der Normalfall nach einem Neustart des Servers – dort ist beim Hochfahren
+    // jede Mitgliedschaftsprüfung veraltet, die Bots warten auf den ersten Abgleich des Bots,
+    // und genau der ist dieser Aufruf.
+    for (const entry of changed) {
+      if (!entry.present) continue;
+      const started = supervisor.restoreUser(entry.user_id);
+      if (started) console.log(`[discord] Mitgliedschaft bestätigt – ${started} Bot(s) wieder gestartet.`);
+    }
+
     for (const entry of changed) {
       if (entry.present) continue;
       const profiles = db
@@ -148,7 +217,6 @@ function ticketView(ticket) {
   return {
     id: ticket.id,
     subject: ticket.subject,
-    category: ticket.category,
     status: ticket.status,
     priority: ticket.priority,
     source: ticket.source,
@@ -177,6 +245,7 @@ router.get(
         body: message.body,
         created_at: message.created_at,
         discord_id: message.discord_id,
+        files: message.files,
       })),
     });
   })
@@ -213,7 +282,7 @@ router.post(
 
     const ticket = tickets.create(
       user,
-      { subject: body.subject, category: body.category, body: body.body, priority: body.priority },
+      { subject: body.subject, body: body.body, priority: body.priority },
       { source: 'discord' }
     );
     if (body.channel_id) tickets.setChannel(ticket.id, body.channel_id);
@@ -236,10 +305,15 @@ router.patch(
   })
 );
 
-/** Eine Nachricht aus Discord in den Verlauf übernehmen. */
+/**
+ * Eine Nachricht aus Discord in den Verlauf übernehmen – mit ihren Anhängen.
+ *
+ * Die Dateien selbst holt sich das Panel: Der Bot meldet nur Name, Größe und die Adresse bei
+ * Discord. Damit liegt jeder Anhang danach bei uns und überlebt Discords ablaufende Adressen.
+ */
 router.post(
   '/tickets/:id/messages',
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const ticket = tickets.byId(requireInt(req.params.id, 'Ticket'));
     if (!ticket) throw notFound('Dieses Ticket gibt es nicht.', { en: 'No such ticket.' });
     const body = req.body || {};
@@ -264,10 +338,37 @@ router.post(
     // Support-Ansicht im Panel. Sonst würden eigene Antworten als Team-Antwort markiert und der
     // Status/Benachrichtigungen wären widersprüchlich.
     const staff = user.role === 'admin' && !tickets.isParticipant(ticket.id, user.id);
-    const updated = tickets.reply(ticket, user, body.body, {
+
+    // Erst die Anhänge holen, dann die Nachricht schreiben: so hängen sie von Anfang an daran,
+    // und der Verlauf im Panel ist nie kurz unvollständig. Eine Datei, die nicht kommt, hält die
+    // Nachricht nicht auf – sie wäre sonst ganz verloren.
+    const fileIds = [];
+    const failed = [];
+    for (const entry of (Array.isArray(body.attachments) ? body.attachments : []).slice(
+      0,
+      attachments.MAX_PER_MESSAGE
+    )) {
+      try {
+        const file = await attachments.fromUrl({
+          ticketId: null,
+          messageId: null,
+          userId: user.id,
+          name: entry?.name,
+          url: entry?.url,
+          size: Number(entry?.size) || 0,
+        });
+        fileIds.push(file.id);
+      } catch (error) {
+        failed.push(`${entry?.name || 'Anhang'}: ${error.message}`);
+      }
+    }
+
+    // Ohne Text, aber mit Bild: das ist in Discord der Normalfall und hier eine gültige Antwort.
+    const updated = tickets.reply(ticket, user, String(body.body || ''), {
       authorName: body.author_name || user.username,
       discordId: String(body.discord_id || '') || null,
       staff,
+      files: fileIds,
     });
     if (!staff) {
       tickets.notifyStaffReply(updated, user, body.body);
@@ -275,10 +376,32 @@ router.post(
     tickets.notifyParticipants(
       updated,
       'ticket_reply',
-      { preview: String(body.body).slice(0, 160) },
+      { preview: String(body.body || '').slice(0, 160) },
       user.id
     );
-    res.json({ ok: true, ticket: ticketView(updated) });
+    res.json({ ok: true, ticket: ticketView(updated), files: fileIds.length, failed });
+  })
+);
+
+/**
+ * Einen Anhang an den Bot ausliefern, damit er ihn in den Discord-Kanal hängen kann.
+ *
+ * Der Bot hat schon das gemeinsame Geheimnis; geprüft wird hier nur, dass die Datei wirklich zu
+ * diesem Ticket gehört und keine interne Notiz betrifft – die bleibt beim Team, auch in Discord.
+ */
+router.get(
+  '/tickets/:id/files/:fileId',
+  wrap((req, res) => {
+    const ticketId = requireInt(req.params.id, 'Ticket');
+    const file = attachments.byId(requireInt(req.params.fileId, 'Anhang'));
+    if (!file || file.ticket_id !== ticketId || file.internal) {
+      throw notFound('Diesen Anhang gibt es nicht.', { en: 'No such attachment.' });
+    }
+    const bytes = attachments.read(file);
+    if (!bytes) throw notFound('Diese Datei liegt nicht mehr vor.', { en: 'That file is gone.' });
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-File-Name', encodeURIComponent(file.name));
+    res.send(bytes);
   })
 );
 

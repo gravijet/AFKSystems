@@ -20,6 +20,7 @@ import * as pages from './pages.js';
 import * as protect from './protect.js';
 import * as landing from './landing.js';
 import * as tickets from './tickets.js';
+import * as attachments from './attachments.js';
 import { bridge } from './bridge.js';
 import { router as coreRouter } from './routes/core.js';
 import { router as profilesRouter } from './routes/profiles.js';
@@ -300,7 +301,9 @@ function renderPage(slug, lang) {
   // Stelle.
   const vars = {
     path: slug ? `/${slug}` : '',
-    shield: protect.enabled() ? '1' : '0',
+    // Nur die Bedienungssperre steht am <html>. Der Schutz der Dateien ist eine Sache des
+    // Servers und geht den Browser nichts an.
+    shield: protect.uiLocked() ? '1' : '0',
     ...landing.commonVars(lang),
   };
   if (entry.noindex) vars.robotsTag = NOINDEX;
@@ -314,7 +317,7 @@ function renderPage(slug, lang) {
 /** Das Dashboard – eine Seite, der Rest steht im Browser-Router. */
 const renderApp = (lang) =>
   pages.render('app', lang, {
-    shield: protect.enabled() ? '1' : '0',
+    shield: protect.uiLocked() ? '1' : '0',
     // Nicht "app": so heißt schon das Raster im Inneren der Seite (.app in app.css). Stand beides
     // da, war der <body> selbst ein Raster mit einer 17,5-rem-Spalte – und das ganze Dashboard
     // stand am PC zusammengequetscht am linken Rand.
@@ -646,6 +649,15 @@ function billingTick() {
  * Gratis-Plätze nur laufen lassen, solange Discord die Mitgliedschaft frisch bestätigt hat.
  * Gateway-Austritte stoppen bereits im Bot-Endpunkt; dieser Takt ist das Sicherheitsnetz für
  * einen ausgefallenen Bot oder einen veralteten positiven Cachewert.
+ *
+ * **Zwei Arten von Nein.** Wer nicht verknüpft ist oder ausgetreten ist, hat keinen Anspruch –
+ * da verfällt der Startwunsch, und nach einem erneuten Beitritt entscheidet der Kunde bewusst neu.
+ * "Konnte gerade nicht bestätigt werden" ist dagegen **unsere** Lücke, nicht seine: der Bot war
+ * kurz weg, oder der Server ist eben erst hochgefahren und der erste Abgleich steht noch aus. Dann
+ * gehen die Bots zwar aus (der Gratis-Platz läuft nie ohne Nachweis), aber der Wunsch bleibt
+ * stehen – und `restoreAll()` fährt sie wieder hoch, sobald der Nachweis da ist. Ohne diese
+ * Unterscheidung war jeder Neustart des Servers das Ende jedes Gratis-Bots: beim Hochfahren ist
+ * jede Prüfung veraltet, und der Wunsch war weg, bevor der Bot sich überhaupt melden konnte.
  */
 function enforceFreePlans() {
   const profiles = db
@@ -658,12 +670,13 @@ function enforceFreePlans() {
   for (const profile of profiles) {
     const access = billing.freeAccess(profile.user_id);
     if (access.ok) continue;
+    const definite = access.reason === 'discord-link' || access.reason === 'discord-join';
     const wanted = db
       .prepare('SELECT 1 FROM profile_accounts WHERE profile_id = ? AND wanted = 1 LIMIT 1')
       .get(profile.id);
     if (wanted || supervisor.runningOnProfile(profile.id)) stopped += 1;
     supervisor.stopProfile(profile.id, 'Discord membership required for the Free plan.', {
-      keepWanted: false,
+      keepWanted: !definite,
     });
   }
   return stopped;
@@ -680,6 +693,19 @@ function onceADay(key) {
 
 setInterval(billingTick, 3_600_000).unref();
 setInterval(enforceFreePlans, 60_000).unref();
+/**
+ * Und danach: hochfahren, was laufen soll und gerade nicht läuft.
+ *
+ * Derselbe Takt, aber in der anderen Richtung. Er ist das Netz für alles, was einen Bot
+ * vorübergehend unmöglich gemacht hat und wieder vorbei ist – eine noch nicht bestätigte
+ * Discord-Mitgliedschaft nach dem Hochfahren, ein Standort, der zurückkommt, ein Serverplatz, der
+ * nach dem Aufladen fortgesetzt wurde. Ein abgestürzter Client kommt so nicht wieder: der löscht
+ * seinen Startwunsch selbst.
+ */
+setInterval(() => {
+  const started = supervisor.restoreAll();
+  if (started) console.log(`${started} Bot(s) wieder gestartet.`);
+}, 60_000).unref();
 
 /**
  * Der eigene Zustand als Standort-Meldung.
@@ -697,9 +723,10 @@ function localNodeTick() {
 localNodeTick();
 setInterval(localNodeTick, 15_000).unref();
 
-// Stündlich: abgelaufene Sitzungen weg, Client-Release nachsehen.
+// Stündlich: abgelaufene Sitzungen weg, Client-Release nachsehen, liegengebliebene Anhänge weg.
 setInterval(() => {
   auth.cleanupSessions();
+  attachments.sweepOrphans();
   binaries.sync().then(() => agents.syncAll()).catch(() => {});
 }, 3_600_000).unref();
 
