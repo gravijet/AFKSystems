@@ -6,6 +6,7 @@
 // beim Start wieder einliest.
 
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import fs from 'node:fs';
 import path from 'node:path';
 import { userDir } from './config.js';
@@ -46,13 +47,17 @@ export function begin(user) {
 
   let out = '';
   let err = '';
+  // Derselbe Grund wie im Supervisor: Ein Datenstück darf mitten in einem Zeichen enden, und ein
+  // Kontoname mit Umlaut soll das überleben.
+  const decodeOut = new StringDecoder('utf8');
+  const decodeErr = new StringDecoder('utf8');
 
   proc.stdout.on('data', (chunk) => {
-    out += chunk.toString('utf8');
+    out += decodeOut.write(chunk);
   });
 
   proc.stderr.on('data', (chunk) => {
-    err += chunk.toString('utf8');
+    err += decodeErr.write(chunk);
     const lines = err.split('\n');
     err = lines.pop();
     for (const raw of lines) {

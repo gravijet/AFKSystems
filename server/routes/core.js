@@ -10,6 +10,7 @@ import * as notify from '../notify.js';
 import * as mail from '../mail.js';
 import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
+import { todosFor } from '../todos.js';
 import * as attachments from '../attachments.js';
 import * as nodes from '../nodes.js';
 import { features } from '../features.js';
@@ -344,9 +345,14 @@ router.get(
     const profiles = db
       .prepare('SELECT COUNT(*) AS n FROM profiles WHERE user_id = ?')
       .get(req.user.id).n;
+    // Was offen ist, kommt mit derselben Antwort wie alles andere über das Konto: Die Übersicht
+    // holt `/me` ohnehin bei jedem Zustandswechsel, und eine zweite Anfrage dafür wäre eine
+    // Anfrage mehr für dieselbe Sache.
+    const todos = todosFor(req.user, langOf(req));
     res.json({
       user: auth.publicUser(req.user),
       impersonator: req.impersonator || null,
+      todos,
       stats: {
         accounts: db.prepare('SELECT COUNT(*) AS n FROM mc_accounts WHERE user_id = ?').get(req.user.id).n,
         profiles,
@@ -356,6 +362,7 @@ router.get(
         free_slots_left: Math.max(0, billing.freeSlots() - billing.usedFreeSlots(req.user.id)),
         tickets_unread: tickets.unreadFor(req.user),
         staff_tickets: req.user.role === 'admin' ? tickets.openForStaff() : 0,
+        todos: todos.length,
       },
     });
   })
@@ -572,7 +579,14 @@ router.delete(
   auth.requireUser,
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Konto');
-    // Laufende Bots dieses Kontos zuerst anhalten.
+    // **Erst prüfen, wem das Konto gehört, dann Bots anhalten.** Vorher lief das Anhalten über
+    // jede Zuordnung dieser Kontonummer, und die Besitzprüfung kam erst danach in
+    // `removeAccount` – wer eine fremde Nummer eintippte, stoppte damit fremde Bots und löschte
+    // gleich noch deren Startwunsch. Die Absage kam erst hinterher, da war der Schaden da.
+    const account = db
+      .prepare('SELECT id FROM mc_accounts WHERE id = ? AND user_id = ?')
+      .get(id, req.user.id);
+    if (!account) throw notFound('Dieses Konto gibt es nicht.', { en: 'No such account.' });
     for (const row of db.prepare('SELECT profile_id FROM profile_accounts WHERE account_id = ?').all(id)) {
       supervisor.stop(row.profile_id, id);
     }
@@ -638,6 +652,9 @@ export const ticketView = (row) => ({
   email: row.email,
 });
 
+/** Wie viel an noch nicht abgeschickten Anhängen je Konto herumliegen darf. */
+const PENDING_BYTES_MAX = 100 * 1024 * 1024;
+
 /**
  * Einen Anhang hochladen.
  *
@@ -654,10 +671,16 @@ router.post(
   auth.requireUser,
   express.raw({ type: '*/*', limit: attachments.MAX_BYTES }),
   wrap((req, res) => {
+    // Zwei Grenzen, weil eine nicht reicht: Fünfzig Anhänge sind eine Menge Dateien, und fünfzig
+    // Dateien zu je 20 MB sind ein Gigabyte, das bis zum nächsten Aufräumen liegen bleibt. Gezählt
+    // wird deshalb beides – Anzahl **und** Größe dessen, was noch an keinem Ticket hängt.
     const open = db
-      .prepare('SELECT COUNT(*) AS n FROM ticket_files WHERE user_id = ? AND ticket_id IS NULL')
-      .get(req.user.id).n;
-    if (open >= 50) {
+      .prepare(
+        `SELECT COUNT(*) AS n, COALESCE(SUM(size), 0) AS bytes FROM ticket_files
+          WHERE user_id = ? AND ticket_id IS NULL`
+      )
+      .get(req.user.id);
+    if (open.n >= 50 || open.bytes >= PENDING_BYTES_MAX) {
       throw bad('Zu viele offene Anhänge. Bitte erst das Ticket abschicken.', {
         en: 'Too many pending attachments. Please send the ticket first.',
       });

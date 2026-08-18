@@ -194,7 +194,18 @@ export async function detect() {
     state.builds[key] = entry;
     if (!entry.present) continue;
     try {
-      fs.chmodSync(file, 0o755);
+      // Ausführbar machen, falls sie es noch nicht ist – aber nur dann, und ein Fehlschlag ist
+      // kein Grund, die Datei für nicht vorhanden zu erklären. Gehört sie einem anderen Benutzer
+      // und ist längst ausführbar (Verzeichnis von der Platte übernommen, Datei aus einem Paket,
+      // Verknüpfung auf eine Ablage), warf `chmod` EPERM – und weil das im selben `try` stand,
+      // galten danach **alle** Bauformen als fehlend und kein einziger Bot ließ sich starten.
+      // Ob eine Datei taugt, beantwortet ohnehin erst der Aufruf darunter.
+      try {
+        if (!(fs.statSync(file).mode & 0o111)) fs.chmodSync(file, 0o755);
+      } catch {
+        // Rechte lassen sich nicht setzen. Wenn sie stimmen, merkt es niemand; wenn nicht,
+        // scheitert gleich der `--help`-Aufruf mit einer Meldung, die das sagt.
+      }
       const { stdout } = await run(file, ['--help'], { timeout: 15_000 });
       const help = stdout;
       // "AFKSystems 2.0.0 – schlanker Minecraft-AFK-Client"
@@ -248,11 +259,15 @@ export function anyCaps() {
  */
 export function buildFor(profile, plan) {
   let want = 'slim';
-  // Der AFKSystems-Tarif Ultra nutzt auch dann die dafür gebaute Datei, wenn einzelne darin
-  // enthaltene Funktionen (derzeit die Terminal-POV) im Webpanel noch nicht freigeschaltet sind.
-  // gateCaps() hält solche Funktionen trotzdem aus der Oberfläche heraus.
-  if (plan?.slug === 'ultra' || (plan?.pov && plan?.premium)) want = 'ultra';
-  else if (plan?.pov) want = 'pov';
+  // **Die Live-Ansicht entscheidet, nicht der Tarifname.** Bis hierher bekam der Ultra-Tarif immer
+  // `ultra-afk-linux`, auch ohne gebuchte Live-Ansicht – "die Datei zum Tarif". Der Unterschied
+  // dieser Bauform zu `premium-items-afk-linux` ist aber genau eine Sache: Sie hält die geladene
+  // Welt vor, um daraus Bilder rechnen zu können. Wer keine Live-Ansicht gebucht hat, bekommt aus
+  // dieser Arbeit nichts – `gateCaps()` blendet sie ohnehin aus –, zahlt sie aber in
+  // Arbeitsspeicher und Rechenzeit mit, und trägt jeden Fehler mit, der nur in diesem Teil steckt.
+  // An den sichtbaren Fähigkeiten ändert das nichts: Beide Bauformen können Premium, Anzeigetafel,
+  // Menüs, Gegenstände und Bewegung.
+  if (plan?.pov) want = plan?.premium ? 'ultra' : 'pov';
   else if (plan?.premium && plan?.menus) want = 'premiumItems';
   else if (plan?.premium) want = 'premium';
   else if (plan?.menus) want = 'items';

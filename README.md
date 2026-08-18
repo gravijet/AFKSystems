@@ -148,7 +148,11 @@ fragt dort nach.
 | Ultra | `ultra-afk-linux` | Premium, Items und zuschaltbare POV |
 
 `server/binaries.js` sucht die passende Datei zum Tarif und fällt auf die nächstbeste zurück, wenn
-sie fehlt – ein vergessener Download legt damit keine Bots still.
+sie fehlt – ein vergessener Download legt damit keine Bots still. Was **POV** und **Ultra** von den
+übrigen unterscheidet, ist der Weltspeicher, aus dem die Live-Ansicht ihre Bilder rechnet; deshalb
+bekommt sie nur, wer die Ansicht gebucht hat. Ein Ultra-Platz ohne Live-Ansicht läuft auf
+`premium-items-afk-linux` – dieselben sichtbaren Fähigkeiten, ohne die Arbeit für ein Bild, das
+niemand ansieht.
 
 Alle Bauformen sprechen über `--mc` Minecraft 1.21.1, 1.21.11, 26.1 und 26.2. Nach einem Kick oder
 gewöhnlichen Verbindungsabbruch endet der Prozess absichtlich mit Fehlerstatus; das Panel startet
@@ -214,16 +218,36 @@ Was verschickt wurde, steht in `mails` – **mit Empfänger und Wortlaut**. Der 
 eigenen Nachrichten unter *Einstellungen → Nachrichten an dich*. Wer eine E-Mail mit unserem Namen
 bekommt und sich fragt, ob sie echt war, prüft das dort ohne Rückfrage.
 
+## Was zu tun ist
+
+Die **Übersicht** beginnt mit dem, was gerade offen ist: eine Antwort im Support, die auf eine
+Reaktion wartet, eine Überweisung mit noch nicht eingegangenem Betrag, ein stillgelegter
+Serverplatz, ein Minecraft-Konto, dessen Anmeldung nicht mehr taugt, ein Gratis-Platz ohne
+Discord-Mitgliedschaft. Keine eigene Seite – wer das Dashboard öffnet, sieht es sofort, und in der
+Seitenleiste steht die Zahl daneben.
+
+Berechnet wird die Liste an einer Stelle: `server/todos.js`. Sie kommt mit `GET /api/me`, damit
+die Übersicht sie ohne zweite Anfrage hat. Was nicht offen ist, steht nicht da – ist gar nichts
+offen, fehlt der ganze Abschnitt. Ein Kasten, der jeden Tag „alles in Ordnung“ sagt, wird nach
+einer Woche nicht mehr gelesen.
+
 ## Live-Ansicht
 
 Sehen, was der Bot sieht. Minecraft überträgt keine fertigen Bilder – der Client rechnet sie aus
 den geladenen Chunk-Paletten, Blockänderungen und Entities selbst aus und schreibt sie als Raster
-gefärbter Zeichen. Das Panel liest das Raster, zerlegt es in Farbabschnitte und zeichnet es im
-Browser auf ein Canvas: ein Pixel je Zeichen, ohne Glättung hochskaliert.
+aus Halbblöcken (`▀`) mit je einer Vorder- und einer Hintergrundfarbe: **ein Zeichen sind zwei
+Bildpunkte**. Das Panel zerlegt jede Zeichenzeile in ihre zwei Bildzeilen aus Farbläufen und
+zeichnet sie im Browser auf ein Canvas, ohne Glättung hochskaliert.
 
 Gebucht wird sie als Zusatz je Serverplatz (`pov`), in keinem Tarif enthalten – auch nicht in
-Ultra. Höchstens fünf Bilder je Sekunde gehen an den Browser, und beim Verlassen des Reiters hört
-sie von selbst auf: eine laufende Ansicht kostet deutlich mehr als ein stiller Bot.
+Ultra. Die Auflösung ist fest die größte, die der Client kann (160 × 80), und lässt sich nicht
+einstellen. Höchstens fünf Bilder je Sekunde gehen an den Browser; beim Verlassen des Reiters und
+spätestens zwanzig Sekunden nach der letzten geschlossenen Verbindung hört sie von selbst auf –
+eine laufende Ansicht kostet deutlich mehr als ein stiller Bot.
+
+**Ein Hinweis zum Client:** Auf normal erzeugten Welten brechen `pov-afk-linux` und
+`ultra-afk-linux` derzeit kurz nach dem Beitritt mit einem Fehler in `src/pov.rs` ab. Das steckt
+im Client und nicht hier; Einzelheiten in [docs/live-ansicht.md](docs/live-ansicht.md).
 
 Einzelheiten: **[docs/live-ansicht.md](docs/live-ansicht.md)**.
 
@@ -262,6 +286,7 @@ server/
   pages.js        Vorlagen                    landing.js    das Bewegliche der öffentlichen Seiten
   mail.js         SMTP, Vorlagen, Kategorien  oauth.js      Discord und Google
   tickets.js      Support                     notify.js     Discord-Webhooks
+  todos.js        was ein Kunde zu tun hat – die Liste in der Übersicht
   attachments.js  Anhänge an Tickets (20 MB), im Panel wie in Discord
   roles.js        welche Discord-Rolle wem    bridge.js     die Leitung zum Bot
   routes/         core, profiles, billing, admin, bot, node

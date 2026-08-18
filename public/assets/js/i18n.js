@@ -519,17 +519,13 @@ export const S = {
     en: 'Credits are running low: {credits} left, {cost} due per month.',
     de: 'Das Guthaben wird knapp: noch {credits}, fällig sind {cost} im Monat.',
   },
-  'ov.topUp': { en: 'Top up', de: 'Aufladen' },
-  'ov.brokenAccounts': {
-    en: '{n} account(s) need signing in again: {names}.',
-    de: '{n} Konto/Konten brauchen eine neue Anmeldung: {names}.',
-  },
-  'ov.renewNow': { en: 'Renew now', de: 'Jetzt erneuern' },
-  'ov.suspendedNote': {
-    en: '{names} – suspended. Resume once there are enough credits.',
-    de: '{names} – stillgelegt. Fortsetzen, sobald genug Guthaben da ist.',
-  },
   'ov.quick': { en: 'Quick links', de: 'Schnellzugriff' },
+
+  // ---------------------------------------------------------------- Zu erledigen
+  // Die Einträge selbst kommen vom Server (server/todos.js) – er weiß, was offen ist, und schreibt
+  // es gleich in der Sprache der Anfrage. Hier steht nur der Rahmen darum.
+  'todo.title': { en: 'To do', de: 'Zu erledigen' },
+  'todo.count': { en: '{n} open', de: '{n} offen' },
   'ov.connectAccount': { en: 'Connect a Minecraft account', de: 'Minecraft-Konto verbinden' },
   'ov.openTicket': { en: 'Ask support', de: 'Support fragen' },
   'ov.client': { en: 'What the client here can do', de: 'Was der Client hier kann' },
@@ -1070,21 +1066,17 @@ export const S = {
   // ---------------------------------------------------------------- Live-Ansicht
   'pov.title': { en: 'What the bot sees', de: 'Was der Bot sieht' },
   'pov.lead': {
-    en: 'The client works the picture out from the world data it has loaded and sends it here several times a second.',
-    de: 'Der Client rechnet das Bild aus den geladenen Weltdaten aus und schickt es mehrmals in der Sekunde hierher.',
+    en: 'The client works the picture out from the world data it has loaded and sends it here several times a second – always at the highest resolution it can render, 160 × 80.',
+    de: 'Der Client rechnet das Bild aus den geladenen Weltdaten aus und schickt es mehrmals in der Sekunde hierher – immer in der größten Auflösung, die er kann: 160 × 80.',
   },
   'pov.start': { en: 'Start live view', de: 'Live-Ansicht starten' },
   'pov.stop': { en: 'Stop', de: 'Stoppen' },
   'pov.frame': { en: 'Single frame', de: 'Einzelbild' },
-  'pov.size': { en: 'Resolution', de: 'Auflösung' },
-  'pov.small': { en: 'Small', de: 'Klein' },
-  'pov.medium': { en: 'Medium', de: 'Mittel' },
-  'pov.large': { en: 'Large', de: 'Groß' },
   'pov.waiting': { en: 'Waiting for the first frame …', de: 'Warte auf das erste Bild …' },
   'pov.offline': { en: 'Start the bot first – there is nothing to see yet.', de: 'Erst den Bot starten – noch gibt es nichts zu sehen.' },
   'pov.note': {
-    en: 'Minecraft never sends finished pictures or block textures. The view is rendered from chunk data, block changes and entities, so it costs the machine noticeably more than a quiet bot – it stops on its own when you leave this tab.',
-    de: 'Minecraft überträgt keine fertigen Bilder und keine Blocktexturen. Die Ansicht wird aus Chunk-Daten, Blockänderungen und Entities gerechnet und kostet die Maschine deutlich mehr als ein stiller Bot – sie hört von selbst auf, wenn du den Reiter verlässt.',
+    en: 'Minecraft never sends finished pictures or block textures. The view is rendered from chunk data, block changes and entities, so it costs the machine noticeably more than a quiet bot – it stops on its own when you leave this tab or close the window.',
+    de: 'Minecraft überträgt keine fertigen Bilder und keine Blocktexturen. Die Ansicht wird aus Chunk-Daten, Blockänderungen und Entities gerechnet und kostet die Maschine deutlich mehr als ein stiller Bot – sie hört von selbst auf, wenn du den Reiter verlässt oder das Fenster schließt.',
   },
   'vw.menu': { en: 'Menu', de: 'Menü' },
   'vw.fetch': { en: 'Fetch', de: 'Abrufen' },

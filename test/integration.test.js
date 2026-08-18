@@ -488,6 +488,66 @@ test('several One more bot add-ons are charged and applied in one booking', () =
   assert.throws(() => billing.addAddon(profile, addon, addon.max_qty), /höchstens|At most/);
 });
 
+test('a long-extended slot never refunds more than one month', () => {
+  const user = createUser({ credits: 10_000 });
+  const premium = billing.planBySlug('premium');
+  // So sieht ein Platz aus, dessen Laufzeit ein Administrator um ein Jahr verlängert hat
+  // (admin.patch /profiles/:id, bis zu 3650 Tage). Bezahlt ist trotzdem je 30 Tage.
+  const profile = createProfile(user, premium, {
+    paidUntil: Date.now() + 365 * 86_400_000,
+  });
+  const refund = billing.refundValue(profile);
+  assert.ok(refund > 0);
+  assert.ok(
+    refund <= premium.price_credits,
+    `Restwert ${refund} darf den Monatspreis ${premium.price_credits} nicht übersteigen`
+  );
+
+  // Und die Probe aufs Exempel: Löschen darf kein Guthaben erzeugen.
+  const before = billing.balance(user.id);
+  billing.move(user.id, billing.refundValue(profile), 'refund', 'Test');
+  assert.ok(billing.balance(user.id) - before <= premium.price_credits);
+});
+
+test('a refunded top-up is never credited a second time', () => {
+  const user = createUser();
+  const topup = billing.createTopup({
+    userId: user.id,
+    provider: 'transfer',
+    amountCent: 1000,
+    credits: 1000,
+  });
+  billing.settleTopup(topup.id);
+  assert.equal(billing.balance(user.id), 1000);
+
+  // Rücklastschrift: Das Geld ist weg, die Credits auch.
+  billing.refundTopup(topup.id);
+  assert.equal(billing.balance(user.id), 0);
+
+  // Ein Klick auf "als bezahlt buchen" darf sie jetzt nicht zurückholen.
+  billing.settleTopup(topup.id);
+  assert.equal(billing.balance(user.id), 0);
+});
+
+test('mail templates never put customer text into the HTML unescaped', async () => {
+  const mail = await import('../server/mail.js');
+  const user = createUser();
+  // Der Betreff kommt vom Kunden. Er darf in einer Nachricht **von uns** kein HTML werden –
+  // sonst steht darin, was jemand hineinschreibt, bis hin zu einem Link, der woanders hinführt.
+  const message = mail.render(user, 'ticket_reply', {
+    id: 7,
+    subject: '<img src=x onerror=alert(1)>',
+    preview: 'hallo',
+  });
+  assert.ok(!message.html.includes('<img src=x'), 'Kundentext steht roh im HTML');
+  assert.ok(message.html.includes('&lt;img src=x'), 'Kundentext ist nicht geschützt');
+  // Die Nur-Text-Fassung bleibt lesbar – dort schadet ein spitzes Klammernpaar niemandem.
+  assert.ok(message.text.includes('<img src=x'));
+  // Und der Rahmen der Nachricht steht weiterhin: die Vorlage darf ihre eigenen Auszeichnungen
+  // behalten, geschützt wird nur, was eingesetzt wird.
+  assert.ok(message.html.includes('<p style='));
+});
+
 test('new Rust build selection covers all released feature combinations', () => {
   const previous = binaries.state.builds;
   binaries.state.builds = Object.fromEntries(
@@ -502,7 +562,10 @@ test('new Rust build selection covers all released feature combinations', () => 
     assert.equal(binaries.buildFor({}, { premium: 1, menus: 0 }), 'premium');
     assert.equal(binaries.buildFor({}, { premium: 1, menus: 1 }), 'premiumItems');
     assert.equal(binaries.buildFor({}, { premium: 1, menus: 1, pov: 1 }), 'ultra');
-    assert.equal(binaries.buildFor({}, { slug: 'ultra', premium: 1, menus: 1, pov: 0 }), 'ultra');
+    // Ultra ohne gebuchte Live-Ansicht bekommt die Premium-Items-Datei: dieselben sichtbaren
+    // Fähigkeiten, ohne den Weltspeicher, den nur die Live-Ansicht braucht.
+    assert.equal(binaries.buildFor({}, { slug: 'ultra', premium: 1, menus: 1, pov: 0 }), 'premiumItems');
+    assert.equal(binaries.buildFor({}, { slug: 'ultra', premium: 1, menus: 1, pov: 1 }), 'ultra');
     assert.equal(binaries.buildFor({}, { premium: 0, menus: 1 }), 'items');
     assert.equal(binaries.buildFor({}, { premium: 0, pov: 1 }), 'pov');
   } finally {
@@ -590,6 +653,21 @@ test('chat colours survive the way from the client to the panel', () => {
   assert.deepEqual(heard, ['[Rang] Steve: hallo']);
 });
 
+/**
+ * Eine echte Bildzeile des Clients bauen: je Zelle Vordergrund-, Hintergrundfarbe und der obere
+ * Halbblock, am Ende ein Reset. Genau so kommt es aus `ultra-afk-linux 2.0.0` heraus – der Test
+ * davor hatte sich ein Format ausgedacht (eine Helligkeitsrampe, die `POV`-Zeile als Schluss),
+ * und weil er das prüfte, blieb der echte Fehler unsichtbar: Das Panel wartete ewig auf "das
+ * erste Bild", während jede Bildzeile hinten als Statuszeile im Chatverlauf landete.
+ */
+const povLine = (cells) =>
+  `${cells
+    .map(([top, bottom]) => `\u001b[38;2;${top.join(';')}m\u001b[48;2;${bottom.join(';')}m▀`)
+    .join('')}\u001b[0m`;
+
+const povHead = (prefix = '\u001b[H') =>
+  `${prefix}POV  x=9.5 y=-60.0 z=-8.5  Blick 0/0  Chunks 213  (:pov stop)`;
+
 test('a POV frame becomes a picture and never lands in the chat', () => {
   const user = createUser();
   const account = createAccount(user);
@@ -601,31 +679,121 @@ test('a POV frame becomes a picture and never lands in the chat', () => {
   );
 
   // Ohne angeforderte Ansicht ist jede Zeile gewöhnliche Ausgabe – die Erkennung kostet dann nichts.
-  bot.feed('err', Buffer.from('\u001b[2J\u001b[H\u001b[38;2;10;20;30m###\n', 'utf8'));
+  bot.feed('err', Buffer.from(`${povHead('\u001b[2J\u001b[H')}\n`, 'utf8'));
   assert.equal(bot.views.pov, null);
 
   bot.povWanted = true;
   const before = bot.chat.length;
+  const blue = [65, 130, 210];
+  const green = [70, 135, 70];
+  const stone = [130, 130, 130];
   const frame =
-    '\u001b[2J\u001b[H\n' +
-    '\u001b[38;2;10;20;30m..\u001b[38;2;200;30;40m##\n' +
-    '\u001b[38;2;10;20;30m====\n' +
-    'POV  x=12 y=64 z=-8  (:pov stop)\n';
+    `${povHead('\u001b[2J\u001b[H')}\n` +
+    `${povLine([[blue, blue], [blue, green], [stone, stone]])}\n` +
+    `${povLine([[green, green], [green, green], [stone, blue]])}\n`;
   bot.feed('err', Buffer.from(frame, 'utf8'));
 
+  // Ein Bild ist erst vollständig, wenn etwas kommt, das keine Bildzeile mehr ist – hier die
+  // Kopfzeile des nächsten Bildes. Bis dahin könnte noch eine Zeile folgen.
+  assert.equal(bot.views.pov, null);
+  bot.feed('err', Buffer.from(`${povHead()}\n`, 'utf8'));
+
   assert.equal(bot.views.pov.empty, false);
-  assert.equal(bot.views.pov.height, 2);
-  assert.equal(bot.views.pov.width, 4);
-  assert.deepEqual(bot.views.pov.rows[0], [['0a141e', '..'], ['c81e28', '##']]);
-  assert.match(bot.views.pov.status, /^POV {2}x=12/);
+  // Zwei Zeichenzeilen sind vier Bildzeilen: Der Halbblock trägt oben die Vorder-, unten die
+  // Hintergrundfarbe. Wer die Hintergrundfarbe wegwirft, wirft das halbe Bild weg.
+  assert.equal(bot.views.pov.height, 4);
+  assert.equal(bot.views.pov.width, 3);
+  assert.deepEqual(bot.views.pov.rows[0], [['4182d2', 2], ['828282', 1]]);
+  assert.deepEqual(bot.views.pov.rows[1], [['4182d2', 1], ['468746', 1], ['828282', 1]]);
+  assert.deepEqual(bot.views.pov.rows[2], [['468746', 2], ['828282', 1]]);
+  assert.deepEqual(bot.views.pov.rows[3], [['468746', 2], ['4182d2', 1]]);
+  assert.match(bot.views.pov.status, /^POV {2}x=9\.5/);
   assert.equal(views.at(-1).kind, 'pov');
   // Und keine einzige Zeile des Bildes steht im Chatverlauf.
   assert.equal(bot.chat.length, before);
 
   // Eine Meldung, die genauso beginnt, ist trotzdem eine Meldung.
   bot.povSentAt = 0;
-  bot.feed('err', Buffer.from('\u001b[2J\u001b[HLive-POV beendet.\n', 'utf8'));
+  bot.feed('err', Buffer.from('\u001b[0m\u001b[2J\u001b[H\u001b[90mLive-POV beendet.\u001b[0m\n', 'utf8'));
   assert.equal(bot.chat.at(-1).text, 'Live-POV beendet.');
+});
+
+test('frames beyond five per second are dropped without being taken apart', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const sent = [];
+  const bot = new Bot(
+    { emit: (type, payload) => type === 'bot-view' && sent.push(payload), macros: { onChat: () => {} } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+  bot.povWanted = true;
+  const row = povLine([[[1, 2, 3], [4, 5, 6]]]);
+
+  // Erstes Bild: geht durch, sobald die Kopfzeile des zweiten es abschließt.
+  bot.feed('err', Buffer.from(`${povHead()}\n${row}\n`, 'utf8'));
+  bot.feed('err', Buffer.from(`${povHead()}\n${row}\n`, 'utf8'));
+  assert.equal(sent.length, 1);
+  const before = bot.chat.length;
+
+  // Das zweite kam zu schnell: verworfen – und seine Zeilen dürfen trotzdem nicht im Chat landen.
+  bot.feed('err', Buffer.from(`${povHead()}\n${row}\n${row}\n`, 'utf8'));
+  assert.equal(sent.length, 1);
+  assert.equal(bot.chat.length, before);
+
+  // Nach der Sperrzeit wieder.
+  bot.povSentAt = 0;
+  bot.feed('err', Buffer.from(`${povHead()}\n${row}\n${povHead()}\n`, 'utf8'));
+  assert.equal(sent.length, 2);
+});
+
+test('a picture survives a chunk boundary inside a character', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const views = [];
+  const bot = new Bot(
+    { emit: (type, payload) => type === 'bot-view' && views.push(payload), macros: { onChat: () => {} } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+  bot.povWanted = true;
+
+  const cells = Array.from({ length: 20 }, (_, i) => [
+    [i, 2 * i, 3 * i],
+    [3 * i, 2 * i, i],
+  ]);
+  const text = `${povHead()}\n${povLine(cells)}\n${povLine(cells)}\n${povHead()}\n`;
+  const bytes = Buffer.from(text, 'utf8');
+
+  // Byte für Byte einspeisen: Damit endet jedes Datenstück garantiert auch einmal mitten im
+  // Halbblock, der drei Byte lang ist. `chunk.toString('utf8')` machte daraus ein Fragezeichen –
+  // die Zeile war damit keine Bildzeile mehr, das Bild brach ab und der Rest landete im Chat.
+  for (const byte of bytes) bot.feed('err', Buffer.from([byte]));
+
+  assert.equal(views.length, 1);
+  assert.equal(views[0].view.width, 20);
+  assert.equal(views[0].view.height, 4);
+  assert.equal(bot.chat.length, 0);
+  assert.equal(views[0].view.rows[0][0][0], '000000');
+  assert.equal(views[0].view.rows[1][0][0], '000000');
+  assert.equal(views[0].view.rows[0].at(-1)[0], '132639');
+  assert.equal(views[0].view.rows[1].at(-1)[0], '392613');
+});
+
+test('a chat line is never swallowed as part of a picture', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const bot = new Bot(
+    { emit: () => {}, macros: { onChat: () => {} } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+  bot.povWanted = true;
+  bot.feed('err', Buffer.from(`${povHead()}\n`, 'utf8'));
+  // Jemand schreibt den Halbblock in den Chat, während ein Bild läuft. Das sieht einer Bildzeile
+  // ähnlich, ist aber keine – und darf deshalb nicht verschwinden.
+  bot.feed('out', Buffer.from('<Steve> ▀▀▀ sieht aus wie ein Bild\n', 'utf8'));
+  assert.match(bot.chat.at(-1).text, /sieht aus wie ein Bild/);
 });
 
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {
@@ -1098,6 +1266,62 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(hijack.response.status, 200);
   const hijacked = await api(base, `/api/tickets/${hijack.data.ticket.id}`, { token: USER_TOKEN });
   assert.equal(hijacked.data.messages.at(-1).files.length, 0);
+
+  // Ein Minecraft-Konto eines anderen Kontos lässt sich nicht löschen – und die Absage muss
+  // kommen, **bevor** irgendetwas passiert. Vorher stoppte der Endpunkt erst alle Bots dieser
+  // Kontonummer und prüfte danach, wem sie gehört: Eine geratene Zahl legte damit fremde Bots
+  // still, samt ihres Startwunsches, und die 404 kam erst hinterher.
+  const victimAccount = createAccount(stranger, { name: 'VictimBot' });
+  const victimProfile = createProfile(stranger, billing.planBySlug('premium'));
+  db.prepare(
+    'INSERT INTO profile_accounts (profile_id, account_id, wanted, ordinal) VALUES (?, ?, 1, 0)'
+  ).run(victimProfile.id, victimAccount.id);
+
+  const theft = await api(base, `/api/accounts/${victimAccount.id}`, {
+    token: USER_TOKEN,
+    method: 'DELETE',
+  });
+  assert.equal(theft.response.status, 404);
+  // Das Konto steht noch, und der Startwunsch des fremden Bots ebenfalls.
+  assert.ok(db.prepare('SELECT 1 FROM mc_accounts WHERE id = ?').get(victimAccount.id));
+  assert.equal(
+    db
+      .prepare('SELECT wanted FROM profile_accounts WHERE profile_id = ? AND account_id = ?')
+      .get(victimProfile.id, victimAccount.id).wanted,
+    1
+  );
+
+  // Was zu tun ist, kommt mit `/me` und ist genau das, was für dieses Konto offen ist.
+  const suspendedProfile = createProfile(stranger, billing.planBySlug('premium'));
+  db.prepare('UPDATE profiles SET suspended = 1 WHERE id = ?').run(suspendedProfile.id);
+  const answered = tickets.create(stranger, { subject: 'Antwort bitte lesen', body: 'Frage' });
+  tickets.reply(answered, admin, 'Hier ist die Antwort.', { staff: true });
+
+  const mine = await api(base, '/api/me', { token: 'stranger-session' });
+  assert.equal(mine.response.status, 200);
+  const keys = mine.data.todos.map((entry) => entry.key);
+  assert.ok(keys.includes(`profile-suspended-${suspendedProfile.id}`), 'stillgelegter Platz fehlt');
+  assert.ok(keys.includes(`ticket-${answered.id}`), 'beantwortetes Ticket fehlt');
+  assert.equal(mine.data.stats.todos, mine.data.todos.length);
+  // Jeder Eintrag sagt, was zu tun ist und wohin es führt – sonst wäre er eine Meldung, kein To-do.
+  for (const entry of mine.data.todos) {
+    assert.ok(entry.title && entry.text && entry.href && entry.label, `unvollständig: ${entry.key}`);
+    assert.ok(['bad', 'warn', 'info'].includes(entry.kind));
+  }
+  // Und nichts davon gehört jemand anderem.
+  assert.ok(!mine.data.todos.some((entry) => entry.key.endsWith(`-${profile.id}`)));
+
+  // Ein Serverplatz, den die Verwaltung gesperrt hat, lässt sich vom Kunden nicht mehr löschen –
+  // sonst wäre die Sperre ein Knopf, den der Gesperrte selbst ausschalten kann (samt Gutschrift).
+  db.prepare("UPDATE profiles SET locked = 1, lock_reason = 'Missbrauch' WHERE id = ?").run(
+    suspendedProfile.id
+  );
+  const escape_ = await api(base, `/api/profiles/${suspendedProfile.id}`, {
+    token: 'stranger-session',
+    method: 'DELETE',
+  });
+  assert.equal(escape_.response.status, 403);
+  assert.ok(db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(suspendedProfile.id));
 
   assert.doesNotMatch(childOutput, /Unexpected server response: 404/);
 });

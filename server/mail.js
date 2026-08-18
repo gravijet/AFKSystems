@@ -617,23 +617,37 @@ const FOOT = {
 const FALLBACK = { de: 'Falls der Knopf nicht geht', en: 'If the button does not work' };
 
 /**
- * Eine Vorlage an einen Kunden schicken. Prüft vorher, ob er diese Kategorie überhaupt will –
- * der Aufrufer muss sich also nicht darum kümmern und kann die Nachricht einfach auslösen.
+ * Eine Vorlage ausfüllen: Betreff, Nur-Text-Fassung und HTML.
+ *
+ * Getrennt vom Verschicken, weil beides verschiedene Fragen sind. "Steht der richtige Name in der
+ * Verlängerungsmail?" und "kommt Kundentext geschützt ins HTML?" lassen sich so beantworten, ohne
+ * einen Mailserver zu brauchen – und beim Verschicken bleibt nur noch das Verschicken.
  */
-export async function sendTo(user, kind, vars = {}, { force = false } = {}) {
+export function render(user, kind, vars = {}) {
   const template = T[kind];
-  if (!template) return { ok: false, error: `Unbekannte Vorlage "${kind}".` };
-  if (!configured()) return { ok: false, error: 'SMTP ist nicht eingerichtet.' };
-  const category = vars.category || template.category;
-  if (!force && !wants(user, category)) return { ok: false, error: 'abbestellt', skipped: true };
-
+  if (!template) return null;
   const lang = langOf(user);
   const shape = template[lang];
   // Die Werte des Aufrufers stehen **hinten**: `name` ist in der Anrede der Benutzername, in
   // einer Nachricht über einen Serverplatz aber dessen Name. Andersherum stand in jeder
   // Verlängerungsmail der Kontoname statt des Servers.
   const values = { base: `${config.publicUrl}/${lang}`, name: user.username, ...vars };
-  const lines = shape.lines(values).filter(Boolean);
+
+  // Die Vorlagen bauen ihre Zeilen absichtlich mit ein wenig HTML (`<b>` um Beträge). Was aber
+  // von außen kommt – ein Ticketbetreff, ein Serverplatzname, der Textausschnitt einer Antwort –
+  // ging bisher ungeprüft mit hinein. Damit ließ sich in eine Nachricht **von uns** alles
+  // schreiben, was HTML hergibt, bis hin zu einem Link, der woanders hinführt, als er behauptet.
+  //
+  // Deshalb zwei Durchläufe: einmal mit geschützten Werten für die HTML-Fassung, einmal mit den
+  // rohen für die Textfassung. Die Vorlage selbst bleibt dieselbe und darf ihre Auszeichnungen
+  // behalten – geschützt wird, was eingesetzt wird.
+  const safe = Object.fromEntries(
+    Object.entries(values).map(([key, value]) => [key, typeof value === 'string' ? escape(value) : value])
+  );
+  const lines = shape.lines(safe).filter(Boolean);
+  const plainLines = shape.lines(values).filter(Boolean);
+  // Titel, Betreff und Adresse gehen roh weiter: `wrap` schützt den Titel selbst, und eine
+  // geschützte Adresse wäre keine Adresse mehr.
   const action = shape.action ? shape.action(values) : null;
 
   const html = wrap({
@@ -647,12 +661,30 @@ export async function sendTo(user, kind, vars = {}, { force = false } = {}) {
   const text = [
     shape.title(values),
     '',
-    ...lines.map((line) => line.replace(/<[^>]+>/g, '')),
+    // Nur die Auszeichnung der Vorlage entfernen, nicht alles zwischen spitzen Klammern: Ein
+    // Ticketbetreff wie "<urgent> Server weg" verlor sonst genau das Wort, um das es ging. Die
+    // Vorlagen benutzen ausschließlich <b>; käme eine andere hinzu, stünde sie sichtbar in der
+    // Textfassung – und das ist besser, als sie stillschweigend mitsamt Kundentext zu schlucken.
+    ...plainLines.map((line) => line.replace(/<\/?b>/g, '')),
     action ? `\n${action.label}: ${action.url}` : '',
     `\n${FOOT[lang](HOST)}`,
   ].join('\n');
 
-  return send({ to: user.email, subject: shape.subject(values), text, html, kind, userId: user.id });
+  return { subject: shape.subject(values), text, html };
+}
+
+/**
+ * Eine Vorlage an einen Kunden schicken. Prüft vorher, ob er diese Kategorie überhaupt will –
+ * der Aufrufer muss sich also nicht darum kümmern und kann die Nachricht einfach auslösen.
+ */
+export async function sendTo(user, kind, vars = {}, { force = false } = {}) {
+  const template = T[kind];
+  if (!template) return { ok: false, error: `Unbekannte Vorlage "${kind}".` };
+  if (!configured()) return { ok: false, error: 'SMTP ist nicht eingerichtet.' };
+  const category = vars.category || template.category;
+  if (!force && !wants(user, category)) return { ok: false, error: 'abbestellt', skipped: true };
+  const { subject, text, html } = render(user, kind, vars);
+  return send({ to: user.email, subject, text, html, kind, userId: user.id });
 }
 
 /** Die letzten Nachrichten an ein Konto – der Kunde sieht sie in seinen Einstellungen. */

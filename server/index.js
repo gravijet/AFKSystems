@@ -422,6 +422,30 @@ const nodeSockets = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 *
 /** user_id -> Menge offener Verbindungen. */
 const sockets = new Map();
 
+/**
+ * Niemand sieht mehr zu – Live-Ansichten abschalten.
+ *
+ * Der Browser stoppt sie beim Verlassen des Reiters selbst; ein zugeschlagener Laptop kommt dazu
+ * nicht mehr. Dann rechnet der Client weiter für niemanden, und das ist das Teuerste, was dieses
+ * Panel anstoßen kann. Die kurze Schonfrist ist für den Normalfall da: Ein Neuladen der Seite
+ * schließt die Verbindung und baut sie eine Sekunde später wieder auf – dafür soll niemand seine
+ * Ansicht neu starten müssen.
+ */
+const POV_IDLE_MS = 20_000;
+const povIdleTimers = new Map();
+
+function idlePov(userId) {
+  clearTimeout(povIdleTimers.get(userId));
+  const timer = setTimeout(() => {
+    povIdleTimers.delete(userId);
+    if (sockets.get(userId)?.size) return;
+    const stopped = supervisor.stopPovForUser(userId);
+    if (stopped) console.log(`[pov] ${stopped} Live-Ansicht(en) beendet – niemand sieht mehr zu.`);
+  }, POV_IDLE_MS);
+  timer.unref();
+  povIdleTimers.set(userId, timer);
+}
+
 server.on('upgrade', (req, socket, head) => {
   // Die Leitung zum Discord-Bot. Sie hängt nicht an einer Sitzung, sondern am gemeinsamen
   // Geheimnis – der Bot ist kein Nutzer.
@@ -484,6 +508,9 @@ server.on('upgrade', (req, socket, head) => {
     ws.isAlive = true;
     if (!sockets.has(row.id)) sockets.set(row.id, new Set());
     sockets.get(row.id).add(ws);
+    // Wer wieder da ist, hat seine Ansicht nicht aufgegeben (siehe idlePov).
+    clearTimeout(povIdleTimers.get(row.id));
+    povIdleTimers.delete(row.id);
     wss.emit('connection', ws, req);
   });
 });
@@ -502,7 +529,12 @@ wss.on('connection', (ws) => {
     }
   });
   ws.on('close', () => {
-    sockets.get(ws.userId)?.delete(ws);
+    const open = sockets.get(ws.userId);
+    open?.delete(ws);
+    if (open && !open.size) {
+      sockets.delete(ws.userId);
+      idlePov(ws.userId);
+    }
   });
 });
 

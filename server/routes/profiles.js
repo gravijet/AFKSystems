@@ -221,6 +221,12 @@ router.post(
       plan = billing.freeSlotAvailable(req.user.id) ? billing.freePlan() : billing.cheapestPaidPlan();
     }
     if (!plan) throw bad('Es ist kein Tarif eingerichtet.', { en: 'No plan is set up.' });
+    // `setPlan` prüft das auch – aber nur für bezahlte Tarife, denn für den Gratis-Platz wird es
+    // gar nicht erst aufgerufen. Ohne diese Zeile ließ sich ein abgeschalteter Gratis-Tarif über
+    // seine Nummer weiter buchen, obwohl der Betreiber ihn gerade aus dem Angebot genommen hat.
+    if (!plan.active) {
+      throw bad('Dieser Tarif wird nicht mehr angeboten.', { en: 'That plan is no longer offered.' });
+    }
     if (plan.free_slot && !billing.freeSlotAvailable(req.user.id)) {
       throw bad(
         `Der kostenlose Serverplatz ist schon vergeben (${billing.freeSlots()} je Konto). Für weitere Server bitte einen bezahlten Tarif wählen.`,
@@ -560,7 +566,10 @@ router.post(
 router.delete(
   '/:id',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    // Auch hier `notLocked`: Ein gesperrter Platz ist gesperrt, weil mit ihm etwas nicht stimmt.
+    // Ohne diese Zeile konnte man ihn löschen, bekam die Restlaufzeit gutgeschrieben und war die
+    // Sperre los – die Sperre war damit ein Knopf, den der Gesperrte selbst ausschalten konnte.
+    const profile = notLocked(ownedProfile(req));
     for (const member of membersOf(profile)) supervisor.stop(profile.id, member.account_id);
     // Restlaufzeit kommt aufs Guthaben zurück – gelöscht wird schließlich freiwillig.
     const refund = billing.refundValue(profile);
@@ -783,7 +792,7 @@ router.post(
       if (!need) throw bad(`Unbekannter örtlicher Befehl "${verb}".`, {
         en: `Unknown local command "${verb}".`,
       });
-      local = { verb, arg: rest.join(' '), need };
+      local = { verb, arg: localArg(verb, rest.join(' ')), need };
     }
     const results = [];
     for (const accountId of targets(req, profile)) {
@@ -827,16 +836,39 @@ const LOCAL_VERBS = {
   slot: 'items',
   inv: 'items',
   antiafk: 'antiafk',
-  // Live-Ansicht: `:pov live|stop|frame|size <b> <h>|info`.
+  // Live-Ansicht: `:pov live|stop|frame|info`.
   pov: 'pov',
 };
+
+/** Die Betriebsarten der Live-Ansicht. `size` steht bewusst nicht dabei – siehe `localArg`. */
+const POV_MODES = ['live', 'stop', 'frame', 'info'];
+
+/**
+ * Das Argument eines örtlichen Befehls prüfen.
+ *
+ * Nur die Live-Ansicht hat hier etwas zu melden: `:pov size …` gibt es nicht mehr, weil die
+ * Auflösung fest auf dem Größten steht, was der Client kann (`POV_SIZE` in supervisor.js). Ohne
+ * diese Stelle ließe sie sich am Panel vorbei doch wieder kleiner stellen – und das Bild wäre
+ * schlechter, ohne dass es billiger würde.
+ */
+function localArg(verb, raw) {
+  const arg = String(raw || '').slice(0, 60).trim();
+  if (verb !== 'pov') return arg;
+  const mode = (arg.split(/\s+/)[0] || 'live').toLowerCase();
+  if (!POV_MODES.includes(mode)) {
+    throw bad(`Für die Live-Ansicht gibt es nur ${POV_MODES.join(', ')}.`, {
+      en: `The live view takes only ${POV_MODES.join(', ')}.`,
+    });
+  }
+  return mode;
+}
 
 const runLocal = wrap((req, res) => {
   const profile = notLocked(ownedProfile(req));
   const verb = String(req.body?.verb || '').toLowerCase();
   const need = LOCAL_VERBS[verb];
   if (!need) throw bad(`Unbekannter Befehl "${verb}".`, { en: `Unknown command "${verb}".` });
-  const arg = String(req.body?.arg || '').slice(0, 60);
+  const arg = localArg(verb, req.body?.arg);
   const results = [];
   for (const accountId of targets(req, profile)) {
     const bot = supervisor.get(profile.id, accountId);

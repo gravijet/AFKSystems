@@ -245,11 +245,21 @@ export function monthlyCost(userId) {
     .get(userId, Date.now()).n;
 }
 
-/** Guthaben-Rest eines Platzes, wenn er jetzt gewechselt wird (auf ganze Credits abgerundet). */
+/**
+ * Guthaben-Rest eines Platzes, wenn er jetzt gewechselt oder gelöscht wird (abgerundet).
+ *
+ * Die Restzeit wird auf **einen Monat** gedeckelt, genau wie in `proratedPrice`. Ohne diesen
+ * Deckel war der Restwert die Rechnung „Monatspreis × Restzeit ÷ 30 Tage", und die stimmt nur,
+ * solange die Restzeit nie über 30 Tage hinausgeht. Sie geht aber hinaus: Ein Administrator kann
+ * eine Laufzeit um bis zu zehn Jahre verlängern (`admin.patch /profiles/:id`), und wer danach den
+ * Platz löschte, bekam den zwölffachen Monatspreis gutgeschrieben – Credits aus dem Nichts, für
+ * Zeit, die nie jemand bezahlt hat. Bezahlt wird je 30 Tage; mehr als 30 Tage kann deshalb auch
+ * nicht zurückkommen.
+ */
 export function refundValue(profile) {
   const plan = planOf(profile);
   if (plan.free_slot || !profile.paid_until) return 0;
-  const left = profile.paid_until - Date.now();
+  const left = Math.min(profile.paid_until - Date.now(), MONTH_MS);
   if (left <= 0) return 0;
   return Math.floor((monthlyPrice(profile) * left) / MONTH_MS);
 }
@@ -552,7 +562,10 @@ export function createTopup({ userId, provider, amountCent, credits, reference =
 const settle = db.transaction((topupId, note = '') => {
   const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
   if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
-  if (topup.status === 'paid') return { topup, already: true };
+  // Schon gebucht **oder schon zurückgenommen**: In beiden Fällen darf hier nichts mehr entstehen.
+  // Ohne den zweiten Fall schrieb ein Klick auf „als bezahlt buchen" eine zurückerstattete
+  // Aufladung ein zweites Mal gut – das Geld war weg und die Credits waren wieder da.
+  if (topup.status === 'paid' || topup.status === 'refunded') return { topup, already: true };
   db.prepare('UPDATE topups SET status = ?, paid_at = ? WHERE id = ?').run('paid', Date.now(), topupId);
   const balance = move(
     topup.user_id,

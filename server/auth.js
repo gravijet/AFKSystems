@@ -250,11 +250,21 @@ export function noticeNewDevice(user, req) {
 
 // ---------------------------------------------------------------- E-Mail bestätigen
 
+/** Wie lange ein Bestätigungslink gilt. Danach schickt „erneut senden" einen frischen. */
+const VERIFY_MS = 7 * 24 * 60 * 60 * 1000;
+
 export function verifyEmail(rawToken) {
   const value = String(rawToken || '').trim();
   if (!value) return null;
   const user = db.prepare('SELECT * FROM users WHERE verify_token = ?').get(value);
   if (!user) return null;
+  // Ein Bestätigungslink meldet an – also ist er ein Schlüssel zum Konto und darf nicht ewig
+  // gelten. Wer eine alte Mail wiederfindet oder weitergeleitet hat, bekommt hier eine Absage
+  // und über „erneut senden" einen neuen Link.
+  if (user.verify_sent_at && Date.now() - user.verify_sent_at > VERIFY_MS) {
+    db.prepare('UPDATE users SET verify_token = NULL WHERE id = ?').run(user.id);
+    return null;
+  }
   db.prepare('UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?').run(user.id);
   audit(user.id, 'email-verified');
   return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);

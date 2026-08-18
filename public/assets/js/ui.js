@@ -163,12 +163,15 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, { method = 'GET', body, raw = false } = {}) {
+export async function api(path, { method = 'GET', body, raw = false, keepalive = false } = {}) {
   const response = await fetch(`/api${path}`, {
     method,
     headers: body ? { 'content-type': 'application/json', 'accept-language': lang } : { 'accept-language': lang },
     body: body ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
+    // Für Anfragen, die noch hinausgehen sollen, während die Seite schon geht: "Live-Ansicht
+    // stoppen" ist genau das, und ohne diesen Zusatz bricht der Browser sie ab.
+    keepalive,
   });
   if (raw) return response;
   let data = null;
@@ -211,6 +214,26 @@ export function escapeHtml(text) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+/**
+ * Eine Adresse, die in ein `href` darf.
+ *
+ * `escapeHtml` macht aus `javascript:alert(1)` keinen harmlosen Link – es schützt das Attribut,
+ * nicht das Schema. Hier kommen nur Adressen durch, die wirklich irgendwohin führen: absolute
+ * `http(s)`-Adressen und Ziele innerhalb dieser Seite. Alles andere wird zu `#`, statt zu einem
+ * Knopf, der Code ausführt.
+ */
+export function safeLink(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return '#';
+  if (value.startsWith('/') || value.startsWith('#')) return value;
+  try {
+    const url = new URL(value, location.origin);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.href : '#';
+  } catch {
+    return '#';
+  }
 }
 
 export const $ = (selector, root = document) => root.querySelector(selector);

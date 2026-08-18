@@ -2445,6 +2445,71 @@ body.site {
   color: var(--bad);
 }
 
+/* ---------------------------------------------------------------- Zu erledigen
+   Eine Liste, keine Reihe von Hinweiskästen: Zwei offene Sachen untereinander sahen als zwei
+   gerahmte Kästen aus wie zwei Störungen; als Zeilen einer Liste sehen sie aus wie zwei Punkte
+   auf einem Zettel – und genau das sind sie. Der Rand links trägt die Dringlichkeit, damit die
+   Fläche ruhig bleibt und trotzdem auf einen Blick klar ist, was brennt. */
+
+.todo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.85rem 1.1rem 0.85rem 0.9rem;
+  border-left: 3px solid var(--info);
+  border-top: 1px solid var(--line);
+}
+.todo-item:first-child {
+  border-top: 0;
+}
+.todo-item.warn {
+  border-left-color: var(--warn);
+}
+.todo-item.bad {
+  border-left-color: var(--bad);
+}
+.todo-mark .icon {
+  width: 1.15rem;
+  height: 1.15rem;
+  color: var(--info);
+}
+.todo-item.warn .todo-mark .icon {
+  color: var(--warn);
+}
+.todo-item.bad .todo-mark .icon {
+  color: var(--bad);
+}
+.todo-text {
+  min-width: 0;
+  flex: 1;
+}
+.todo-text strong {
+  display: block;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+}
+.todo-text p {
+  margin: 0.15rem 0 0;
+}
+.todo-item > .btn {
+  flex: none;
+}
+
+/* Am Telefon steht der Knopf unter dem Text: nebeneinander bliebe für beides zu wenig übrig. */
+@media (max-width: 34rem) {
+  .todo-item {
+    flex-wrap: wrap;
+  }
+  .todo-item > .btn {
+    margin-left: 2rem;
+  }
+}
+
 /* ---------------------------------------------------------------- Dialoge */
 
 dialog {
