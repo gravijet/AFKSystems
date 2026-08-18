@@ -19,12 +19,11 @@ import * as billing from '../billing.js';
 import * as tebex from '../tebex.js';
 import { setLangCookie } from '../pages.js';
 import { bridge } from '../bridge.js';
-import { wrap, requireInt, bad, notFound, forbidden, token, HttpError } from '../util.js';
+import { wrap, requireInt, bad, notFound, forbidden, token, HttpError, langOf } from '../util.js';
 
 export const router = express.Router();
 
 /** Sprache dieser Anfrage – bestimmt, in welcher Sprache Listen zurückkommen. */
-const langOf = (req) => (String(req.query.lang || req.user?.language || 'en') === 'de' ? 'de' : 'en');
 
 // ---------------------------------------------------------------- Metadaten
 

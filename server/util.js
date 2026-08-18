@@ -96,6 +96,27 @@ export const forbidden = (message = 'Keine Berechtigung.', options = { en: 'Not 
 export const notFound = (message = 'Nicht gefunden.', options = { en: 'Not found.' }) =>
   new HttpError(404, message, options);
 
+/**
+ * In welcher Sprache diese Anfrage beantwortet werden will.
+ *
+ * Drei Quellen, in dieser Reihenfolge:
+ *
+ *   1. `?lang=` – wer es ausdrücklich hinschreibt, bekommt es.
+ *   2. `Accept-Language` – das Panel schickt in jedem Aufruf die Sprache mit, in der es gerade
+ *      angezeigt wird. Ohne diese Stufe kam die halbe Oberfläche in der Sprache des **Kontos**
+ *      zurück: Wer sein Konto auf Englisch stehen hat und /de/app benutzt, sah deutsche
+ *      Seitenleiste und englische Einstellungen nebeneinander.
+ *   3. Die am Konto gespeicherte Sprache – die entscheidet, in welcher Sprache E-Mails kommen.
+ */
+export function langOf(req) {
+  const wanted =
+    req?.query?.lang ||
+    String(req?.headers?.['accept-language'] || '').slice(0, 2) ||
+    req?.user?.language ||
+    'en';
+  return String(wanted).toLowerCase() === 'de' ? 'de' : 'en';
+}
+
 /** Express-Handler, bei dem geworfene Fehler in der Fehlerbehandlung landen. */
 export const wrap = (handler) => (req, res, next) => {
   Promise.resolve(handler(req, res, next)).catch(next);

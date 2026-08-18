@@ -22,21 +22,10 @@ import { botState, MIN_SECRET } from './bot.js';
 import { bridge } from '../bridge.js';
 import { SETTINGS, byKey as settingSchema, schemaFor } from '../settings-schema.js';
 import { mergeLines } from '../../public/assets/js/chatlog.js';
-import {
-  wrap,
-  requireInt,
-  requireString,
-  bad,
-  notFound,
-  hashPassword,
-  parseAddress,
-  formatCredits,
-} from '../util.js';
+import { wrap, requireInt, requireString, bad, notFound, hashPassword, parseAddress, formatCredits, langOf } from '../util.js';
 
 export const admin = express.Router();
 admin.use(auth.requireUser, auth.requireAdmin);
-
-const langOf = (req) => (String(req.query.lang || req.user?.language || 'en') === 'de' ? 'de' : 'en');
 
 // ---------------------------------------------------------------- Überblick
 

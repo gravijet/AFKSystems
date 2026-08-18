@@ -17,11 +17,9 @@ import * as billing from '../billing.js';
 import * as tebex from '../tebex.js';
 import * as notify from '../notify.js';
 import { planView } from './core.js';
-import { wrap, requireInt, bad, notFound, token, formatCredits } from '../util.js';
+import { wrap, requireInt, bad, notFound, token, formatCredits, langOf } from '../util.js';
 
 export const router = express.Router();
-
-const langOf = (req) => (String(req.query.lang || req.user?.language || 'en') === 'de' ? 'de' : 'en');
 
 router.get(
   '/billing',

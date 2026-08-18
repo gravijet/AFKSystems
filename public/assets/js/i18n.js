@@ -836,6 +836,7 @@ export const S = {
   'tk.subject': { en: 'Subject', de: 'Betreff' },
   'tk.message': { en: 'Message', de: 'Nachricht' },
   'tk.messages': { en: '{n} messages', de: '{n} Nachrichten' },
+  'tk.messagesOne': { en: 'one message', de: 'eine Nachricht' },
   'tk.files': { en: 'Attach', de: 'Anhängen' },
   'tk.filesHint': {
     en: 'Screenshots and files up to {max}. They appear in Discord as well.',

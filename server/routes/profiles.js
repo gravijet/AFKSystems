@@ -12,16 +12,7 @@ import * as nodes from '../nodes.js';
 import * as roles from '../roles.js';
 import { planView, addonView } from './core.js';
 import { mergeLines } from '../../public/assets/js/chatlog.js';
-import {
-  wrap,
-  requireString,
-  requireInt,
-  bad,
-  notFound,
-  parseAddress,
-  slugify,
-  HttpError,
-} from '../util.js';
+import { wrap, requireString, requireInt, bad, notFound, parseAddress, slugify, HttpError, langOf } from '../util.js';
 
 export const router = express.Router();
 router.use(requireUser);
@@ -167,8 +158,6 @@ function targets(req, profile) {
   });
   return list;
 }
-
-const langOf = (req) => (String(req.query.lang || req.user?.language || 'en') === 'de' ? 'de' : 'en');
 
 /** Fähigkeiten, die diesem Serverplatz zur Verfügung stehen – Client und Tarif zusammen. */
 const capsOf = (profile) => {
