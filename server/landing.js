@@ -287,8 +287,20 @@ export function homeVars(lang) {
     ...fromPrice(lang),
     ...discordVars(lang),
     freeSlots: String(billing.freeSlots()),
+    mcVersions: mcVersions(lang),
     rulesNote: rulesNote(lang),
   };
+}
+
+/**
+ * Welche Minecraft-Versionen die Bots sprechen – gelesen aus der Client-Datei, die auf **diesem**
+ * Server liegt. Damit steht in der Leiste nie eine Version, die hier niemand starten könnte.
+ */
+function mcVersions(lang) {
+  const list = binaries.state.versions || [];
+  if (!list.length) return escape(t('rail.versionsFallback', lang));
+  if (list.length <= 4) return escape(list.join(' · '));
+  return escape(`${list[0]} – ${list[list.length - 1]}`);
 }
 
 /** Platzhalter der Funktionsseite. */

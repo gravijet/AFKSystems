@@ -104,8 +104,14 @@ export async function render(root) {
       <div class="row wrap topup-foot">
         <button class="btn btn-sm" id="voucher">${icon('ticket')} ${escapeHtml(tr('bill.voucher'))}</button>
         ${
-          data.methods.stripe
-            ? `<span class="small muted">${escapeHtml(tr('bill.card'))}</span>`
+          data.methods.tebex
+            ? `<span class="small muted">${escapeHtml(tr('bill.card'))}${
+                data.tebex_store
+                  ? ` · <a href="${escapeHtml(data.tebex_store)}" target="_blank" rel="noopener">${escapeHtml(
+                      tr('bill.store')
+                    )}</a>`
+                  : ''
+              }</span>`
             : ''
         }
         ${data.methods.transfer ? `<span class="small muted">${escapeHtml(tr('bill.transfer'))}</span>` : ''}
@@ -246,7 +252,7 @@ export async function render(root) {
 /** Zahlweg wählen, dann je nach Anbieter weiterleiten oder die Anweisung zeigen. */
 async function startTopup(data, index) {
   const methods = [];
-  if (data.methods.stripe) methods.push({ value: 'stripe', label: tr('bill.card') });
+  if (data.methods.tebex) methods.push({ value: 'tebex', label: tr('bill.card') });
   if (data.methods.transfer) methods.push({ value: 'transfer', label: tr('bill.transfer') });
   if (data.methods.paypal) methods.push({ value: 'paypal', label: tr('bill.paypal') });
   if (!methods.length) return fail(new Error(tr('pricing.onRequest')));

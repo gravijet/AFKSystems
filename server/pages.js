@@ -60,6 +60,9 @@ export function render(name, lang, vars = {}) {
     title: t('meta.title', lang),
     description: t('meta.description', lang),
     robotsTag: '',
+    // Ob der Inhaltsschutz (shield.js) gilt. Der Wert kommt aus den Einstellungen; index.js
+    // setzt ihn bei jeder Seite mit.
+    shield: '1',
     bodyClass: 'site',
     path: '',
     ogLocale: lang === 'de' ? 'de_DE' : 'en_GB',

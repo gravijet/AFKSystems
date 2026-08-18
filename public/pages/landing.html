@@ -18,11 +18,29 @@
 
           </div>
 
+          <!-- Die Leiste unter dem Hero: vier Zahlen, die vor dem Anmelden zählen. Jede mit
+               einem Satz darunter, der sie erklärt – eine nackte Zahl ohne Einheit sagt nichts. -->
           <dl class="rail">
-            <div><dt>{{rail.free}}</dt><dd>{{freeSlots}}</dd></div>
-            <div><dt>{{rail.paid}}</dt><dd>{{fromEuro}}</dd></div>
-            <div><dt>{{rail.month}}</dt><dd>{{rail.monthValue}}</dd></div>
-            <div><dt>{{rail.reconnect}}</dt><dd>{{rail.reconnectValue}}</dd></div>
+            <div>
+              <dt>{{rail.free}}</dt>
+              <dd>{{freeSlots}}</dd>
+              <p>{{rail.freeNote}}</p>
+            </div>
+            <div>
+              <dt>{{rail.paid}}</dt>
+              <dd>{{fromEuro}}</dd>
+              <p>{{rail.paidNote}}</p>
+            </div>
+            <div>
+              <dt>{{rail.uptime}}</dt>
+              <dd>{{rail.uptimeValue}}</dd>
+              <p>{{rail.uptimeNote}}</p>
+            </div>
+            <div>
+              <dt>{{rail.versions}}</dt>
+              <dd class="rail-small">{{mcVersions}}</dd>
+              <p>{{rail.versionsNote}}</p>
+            </div>
           </dl>
         </div>
       </section>

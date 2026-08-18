@@ -215,16 +215,33 @@ function setLive(online) {
 }
 
 // ---------------------------------------------------------------- Seitenleiste
+//
+// Eine Seitenleiste, die mit dem Panel mitwächst: Serverplätze kommen dazu, der Admin-Bereich hat
+// zwanzig Punkte, und jeder Serverplatz bringt noch einmal seine eigenen Reiter mit. Drei Regeln
+// halten das zusammen:
+//
+//  1. **Kopf und Fuß stehen still, nur die Mitte scrollt.** Vorher scrollte die ganze Leiste –
+//     wer im Admin-Bereich nach unten ging, hatte weder Marke noch Guthaben noch Abmelden mehr
+//     vor sich, und "hoch scrollen" war der einzige Weg zurück.
+//  2. **Ein Suchfeld statt immer tieferer Verschachtelung.** Wer weiß, wie sein Serverplatz
+//     heißt, tippt drei Buchstaben. Das ist bei dreißig Einträgen schneller als jedes Aufklappen,
+//     und es macht Gruppen möglich, die zu sind, ohne etwas zu verstecken.
+//  3. **Eine Ebene weniger.** Die Reiter eines Serverplatzes standen in vier beschrifteten
+//     Untergruppen, drei Ebenen tief unter der Marke. Jetzt stehen sie flach untereinander, nur
+//     durch feine Linien getrennt – die Überschriften dazu stehen ohnehin schon als Reiterleiste
+//     über der Ansicht.
 
-const NAV_MAIN = [
+/** Die feste Navigation. Zwei Bündel, getrennt durch eine Linie, ohne Überschriften. */
+const NAV_PRIMARY = [
   { hash: '#/', key: 'dash.overview', icon: 'chart' },
+  { hash: '#/servers', key: 'dash.servers', icon: 'server' },
   { hash: '#/accounts', key: 'dash.accounts', icon: 'users' },
 ];
 
-const NAV_SERVICE = [
-  { hash: '#/proxies', key: 'dash.proxies', icon: 'globe' },
+const NAV_ACCOUNT = [
   { hash: '#/credits', key: 'dash.credits', icon: 'wallet' },
   { hash: '#/tickets', key: 'dash.tickets', icon: 'ticket' },
+  { hash: '#/proxies', key: 'dash.proxies', icon: 'globe' },
   { hash: '#/settings', key: 'dash.settings', icon: 'settings' },
 ];
 
@@ -285,7 +302,7 @@ export const ADMIN_GROUPS = [
   },
 ];
 
-const SIDE_COLLAPSED_KEY = 'afk-side-collapsed';
+const SIDE_RAIL_KEY = 'afk-side-collapsed';
 const SIDE_SECTION_PREFIX = 'afk-side-section-';
 
 function storedFlag(key, fallback = false) {
@@ -297,7 +314,19 @@ function storedFlag(key, fallback = false) {
   }
 }
 
-let sideCollapsed = storedFlag(SIDE_COLLAPSED_KEY);
+function storeFlag(key, value) {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    /* privater Modus: es funktioniert trotzdem, es merkt sich nur nichts */
+  }
+}
+
+/** Schmale Leiste: nur Symbole. Auf dem Handy gibt es sie nicht, dort ist die Leiste eine Schublade. */
+let railMode = storedFlag(SIDE_RAIL_KEY);
+
+/** Was im Suchfeld steht. Überlebt das Neuzeichnen, das bei jedem Zustandswechsel passiert. */
+let sideFilter = '';
 
 function sectionOpen(key, fallback = true) {
   // Der aktuelle Bereich ist beim allerersten Besuch geöffnet. Danach zählt ausschließlich die
@@ -306,7 +335,9 @@ function sectionOpen(key, fallback = true) {
 }
 
 function applySideLayout() {
-  document.body.classList.toggle('side-collapsed', sideCollapsed);
+  // Ob die schmale Leiste überhaupt greift, entscheidet allein die Fensterbreite – das steht im
+  // CSS. Hier wird nur der Wunsch angeschrieben.
+  document.body.classList.toggle('side-rail', railMode);
 }
 
 /**
@@ -321,17 +352,11 @@ export const TABS = [
   { key: 'macros', label: 'tab.macros', group: 'automation' },
   { key: 'board', label: 'tab.board', group: 'views', need: 'board' },
   { key: 'menu', label: 'tab.menu', group: 'views', need: 'menu' },
+  { key: 'pov', label: 'tab.pov', group: 'views', need: 'pov' },
   { key: 'proxies', label: 'tab.proxies', group: 'manage', need: 'proxy' },
   { key: 'plan', label: 'tab.plan', group: 'manage' },
   { key: 'addons', label: 'ad.title', group: 'manage', paidOnly: true },
   { key: 'settings', label: 'tab.settings', group: 'manage' },
-];
-
-const SERVER_TAB_GROUPS = [
-  { key: 'control', label: 'dash.serverGroup.control' },
-  { key: 'automation', label: 'dash.serverGroup.automation' },
-  { key: 'views', label: 'dash.serverGroup.views' },
-  { key: 'manage', label: 'dash.serverGroup.manage' },
 ];
 
 export const tabsFor = (profile) =>
@@ -342,156 +367,288 @@ export const tabsFor = (profile) =>
     return true;
   });
 
+// ---------------------------------------------------------------- Bausteine
+
+/** Ein Eintrag der Navigation: Symbol, Beschriftung, optional eine Zahl. */
+function navItem({ href, label, iconName, active, badge = 0, tone = '' }) {
+  return `<a class="side-item ${active ? 'active' : ''} ${tone}" href="${href}"
+    title="${escapeHtml(label)}" data-find="${escapeHtml(label.toLowerCase())}"
+    ${active ? 'aria-current="page"' : ''}>
+    <span class="side-item-icon">${icon(iconName)}</span>
+    <span class="side-item-label">${escapeHtml(label)}</span>
+    ${badge ? `<span class="side-badge">${badge > 99 ? '99+' : badge}</span>` : ''}
+  </a>`;
+}
+
+/** Ein Serverplatz in der Liste – Zustandspunkt, Name, wie viele Bots davon laufen. */
+function serverItem(profile, active) {
+  const tone = profile.suspended ? 'warn' : profile.online ? 'ok' : profile.total ? 'idle' : 'empty';
+  return `<a class="side-item side-server ${active ? 'active' : ''}"
+    href="#/servers/${profile.id}/connect" title="${escapeHtml(profile.name)}"
+    data-find="${escapeHtml(profile.name.toLowerCase())}">
+    <span class="side-item-icon"><span class="side-dot ${tone}"></span></span>
+    <span class="side-item-label">${escapeHtml(profile.name)}</span>
+    <span class="side-count">${profile.online}/${profile.total}</span>
+  </a>`;
+}
+
+/**
+ * Die Reiter des offenen Serverplatzes.
+ *
+ * Flach, nicht in vier beschrifteten Untergruppen: dieselbe Reihenfolge steht als Reiterleiste
+ * schon über der Ansicht, und eine zweite Beschriftung derselben Sache in der Seitenleiste ist
+ * kein Ordnungsgewinn, sondern ein Ebenengewinn. Die Gruppen bleiben als feine Linie erhalten.
+ */
 function serverTabs(profile, activeTab) {
   const tabs = tabsFor(profile);
-  return SERVER_TAB_GROUPS.map((group) => {
-    const entries = tabs.filter((tab) => tab.group === group.key);
-    if (!entries.length) return '';
-    return `<div class="side-tab-group">
-      <span class="side-subtabs-label">${escapeHtml(tr(group.label))}</span>
-      ${entries
-        .map(
-          (tab) =>
-            `<a class="profile-link ${activeTab === tab.key ? 'active' : ''}"
-                href="#/servers/${profile.id}/${tab.key}">${escapeHtml(tr(tab.label))}</a>`
+  return `<div class="side-sub">
+    ${tabs
+      .map((tab, index) => {
+        const boundary = index > 0 && tabs[index - 1].group !== tab.group ? ' is-new-group' : '';
+        const label = tr(tab.label);
+        return `<a class="side-sub-item${boundary}${activeTab === tab.key ? ' active' : ''}"
+          href="#/servers/${profile.id}/${tab.key}"
+          data-find="${escapeHtml(`${profile.name} ${label}`.toLowerCase())}">${escapeHtml(label)}</a>`;
+      })
+      .join('')}
+  </div>`;
+}
+
+/** Eine aufklappbare Gruppe. `key` merkt sich den Zustand im Browser. */
+function section({ key, title, iconName, open, headExtra = '', body }) {
+  return `<details class="side-section" data-side-section="${key}" ${open ? 'open' : ''}>
+    <summary title="${escapeHtml(title)}">
+      <span class="side-item-icon">${icon(iconName)}</span>
+      <span class="side-item-label">${escapeHtml(title)}</span>
+      ${headExtra}
+      <span class="side-caret">${icon('arrow')}</span>
+    </summary>
+    <div class="side-section-body">${body}</div>
+  </details>`;
+}
+
+/** Die gesamte Administration – eine Gruppe, darin vier Bündel mit kleiner Beschriftung. */
+function adminSection() {
+  if (state.me?.role !== 'admin') return '';
+  const requested = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
+  const current = requested === 'bots' ? 'accounts' : requested;
+  const waiting = state.stats?.staff_tickets || 0;
+
+  const body = ADMIN_GROUPS.map(
+    (group) => `<div class="side-block">
+      <span class="side-block-label">${escapeHtml(tr(group.label))}</span>
+      ${group.items
+        .map((item) =>
+          navItem({
+            href: `#/admin/${item.key}`,
+            label: tr(item.label),
+            iconName: item.icon,
+            active: current === item.key,
+            badge: item.key === 'tickets' ? waiting : 0,
+          })
         )
         .join('')}
-    </div>`;
-  }).join('');
+    </div>`
+  ).join('');
+
+  return section({
+    key: 'admin',
+    title: tr('dash.admin'),
+    iconName: 'shield',
+    open: sectionOpen('admin', state.route.name === 'admin'),
+    headExtra: waiting ? `<span class="side-badge">${waiting > 99 ? '99+' : waiting}</span>` : '',
+    body,
+  });
 }
+
+// ---------------------------------------------------------------- Zeichnen
 
 export function drawSide() {
   applySideLayout();
   const route = state.route;
-  const profiles = state.profiles
+  const unread = state.stats?.tickets_unread || 0;
+  const side = $('#side');
+
+  // Wer gerade tippt, darf beim Neuzeichnen nicht die Schreibmarke verlieren – und die Leiste
+  // wird bei jedem Zustandswechsel eines Bots neu gezeichnet.
+  const filterNode = $('#side-filter');
+  const hadFocus = document.activeElement === filterNode;
+  const caret = filterNode ? filterNode.selectionStart : null;
+
+  const servers = state.profiles
     .map((profile) => {
       const active = route.name === 'server' && route.id === profile.id;
-      const color = profile.suspended
-        ? 'var(--warn)'
-        : profile.online
-          ? 'var(--ok)'
-          : profile.total
-            ? 'var(--text-2)'
-            : 'var(--line)';
-      return `<a class="profile-link ${active ? 'active' : ''}" href="#/servers/${profile.id}/connect"
-          title="${escapeHtml(profile.name)}">
-        <span class="dot ${profile.online ? 'live' : ''}" style="color:${color}"></span>
-        <span class="grow truncate">${escapeHtml(profile.name)}</span>
-        <span class="count muted">${profile.online}/${profile.total}</span>
-      </a>${
-        active
-          ? `<div class="subtabs">
-              ${serverTabs(profile, route.tab)}
-            </div>`
-          : ''
-      }`;
+      return serverItem(profile, active) + (active ? serverTabs(profile, route.tab) : '');
     })
     .join('');
 
-  const unread = state.stats?.tickets_unread || 0;
-
-  $('#side').innerHTML = `
-    <div class="side-head">
-      <a class="brand" href="/${lang}">
-        <img class="logo" src="${LOGO}" alt="" /><span>AFKSystems</span>
-      </a>
-      <button class="btn btn-ghost side-collapse" data-collapse-side type="button"
-        aria-label="${escapeHtml(tr(sideCollapsed ? 'dash.expandNav' : 'dash.collapseNav'))}"
-        title="${escapeHtml(tr(sideCollapsed ? 'dash.expandNav' : 'dash.collapseNav'))}">${icon('arrow')}</button>
-      <button class="btn btn-ghost side-close" type="button" aria-label="${escapeHtml(
-        tr('common.close')
-      )}">${icon('x')}</button>
-    </div>
-
-    <div class="side-nav-block">
-      <span class="side-nav-label">${escapeHtml(tr('dash.group.panel'))}</span>
-      <nav class="nav side-primary" aria-label="${escapeHtml(tr('dash.group.panel'))}">
-      ${NAV_MAIN.map(
-        (item) =>
-          `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}"
-              title="${escapeHtml(tr(item.key))}">${icon(item.icon)}<span class="grow truncate">${escapeHtml(
-                tr(item.key)
-              )}</span>${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
-      ).join('')}
-      </nav>
-    </div>
-
-    <details class="side-section side-servers" data-side-section="servers" ${
-      sectionOpen('servers', route.name === 'server') ? 'open' : ''
-    }>
-      <summary title="${escapeHtml(tr('dash.servers'))}">
-        <span class="side-section-title">${icon('server')}<span>${escapeHtml(tr('dash.servers'))}</span></span>
-        ${icon('arrow', 'icon side-section-arrow')}
-      </summary>
-      <div class="side-section-content stack" style="gap:.25rem">
-        <button class="btn btn-ghost side-add" id="new-profile" title="${escapeHtml(tr('dash.newServer'))}">
-          ${icon('plus')}<span>${escapeHtml(tr('dash.newServer'))}</span>
-        </button>
-        ${profiles || `<p class="small muted side-empty">${escapeHtml(tr('dash.noServers'))}</p>`}
+  side.innerHTML = `
+    <div class="side-top">
+      <div class="side-brand-row">
+        <a class="side-brand" href="/${lang}" title="AFKSystems">
+          <img class="side-logo" src="${LOGO}" alt="" width="28" height="28" />
+          <span class="side-item-label">AFKSystems</span>
+        </a>
+        <button class="side-icon-btn side-rail-btn" data-collapse-side type="button"
+          aria-label="${escapeHtml(tr(railMode ? 'dash.expandNav' : 'dash.collapseNav'))}"
+          title="${escapeHtml(tr(railMode ? 'dash.expandNav' : 'dash.collapseNav'))}">${icon('menu')}</button>
+        <button class="side-icon-btn side-close" type="button"
+          aria-label="${escapeHtml(tr('common.close'))}">${icon('x')}</button>
       </div>
-    </details>
 
-    <div class="side-nav-block side-service">
-      <span class="side-nav-label">${escapeHtml(tr('dash.group.service'))}</span>
-      <nav class="nav" aria-label="${escapeHtml(tr('dash.group.service'))}">
-        ${NAV_SERVICE.map(
-          (item) =>
-            `<a class="${routeMatches(item.hash) ? 'active' : ''}" href="${item.hash}"
-                title="${escapeHtml(navLabel(item))}">${icon(item.icon)}<span class="grow truncate">${escapeHtml(
-                  navLabel(item)
-                )}</span>${item.hash === '#/tickets' && unread ? `<span class="count primary">${unread}</span>` : ''}</a>`
+      <div class="side-find">
+        <span class="side-find-icon">${icon('compass')}</span>
+        <input id="side-filter" type="search" autocomplete="off" spellcheck="false"
+          placeholder="${escapeHtml(tr('dash.search'))}"
+          aria-label="${escapeHtml(tr('dash.search'))}" value="${escapeHtml(sideFilter)}" />
+        <kbd>/</kbd>
+      </div>
+    </div>
+
+    <div class="side-scroll" id="side-scroll">
+      <nav class="side-block" aria-label="${escapeHtml(tr('dash.group.panel'))}">
+        ${NAV_PRIMARY.map((item) =>
+          navItem({
+            href: item.hash,
+            label: navLabel(item),
+            iconName: item.icon,
+            active: routeMatches(item.hash),
+          })
         ).join('')}
       </nav>
+
+      ${section({
+        key: 'servers',
+        title: tr('dash.servers'),
+        iconName: 'server',
+        open: sectionOpen('servers', true),
+        headExtra: `<span class="side-count">${state.profiles.length || ''}</span>`,
+        body: `<button class="side-item side-add" id="new-profile" type="button"
+            title="${escapeHtml(tr('dash.newServer'))}"
+            data-find="${escapeHtml(tr('dash.newServer').toLowerCase())}">
+            <span class="side-item-icon">${icon('plus')}</span>
+            <span class="side-item-label">${escapeHtml(tr('dash.newServer'))}</span>
+          </button>
+          ${servers || `<p class="side-empty side-item-label">${escapeHtml(tr('dash.noServers'))}</p>`}`,
+      })}
+
+      <nav class="side-block side-block-split" aria-label="${escapeHtml(tr('dash.group.service'))}">
+        ${NAV_ACCOUNT.map((item) =>
+          navItem({
+            href: item.hash,
+            label: navLabel(item),
+            iconName: item.icon,
+            active: routeMatches(item.hash),
+            badge: item.hash === '#/tickets' ? unread : 0,
+          })
+        ).join('')}
+      </nav>
+
+      ${adminSection()}
+
+      <p class="side-no-hits" hidden>${escapeHtml(tr('dash.noHits'))}</p>
     </div>
 
-    ${adminSection()}
-
-    <div class="foot stack" style="gap:.6rem">
+    <div class="side-bottom">
       ${
         state.meta?.discord_invite
-          ? `<a class="side-discord" href="${escapeHtml(state.meta.discord_invite)}"
-               target="_blank" rel="noopener">${icon('discord')}${escapeHtml(tr('discord.join'))}</a>`
+          ? `<a class="side-item side-discord" href="${escapeHtml(state.meta.discord_invite)}"
+               target="_blank" rel="noopener" title="${escapeHtml(tr('discord.join'))}">
+               <span class="side-item-icon">${icon('discord')}</span>
+               <span class="side-item-label">${escapeHtml(tr('discord.join'))}</span></a>`
           : ''
       }
-      <a class="card tight" href="#/credits" style="display:block">
-        <div class="row spread">
-          <span class="small muted">${escapeHtml(tr('dash.credits'))}</span>
-          <span class="dot" id="live-dot" style="color:var(--text-2)"></span>
-        </div>
-        <div class="mono strong" style="font-size:1.05rem">${credits(state.me?.credits ?? 0)}</div>
-        <div class="small muted">${escapeHtml(costLine())}</div>
+      <a class="side-balance" href="#/credits" title="${escapeHtml(tr('dash.credits'))}">
+        <span class="side-item-icon">${icon('wallet')}<span class="dot" id="live-dot"></span></span>
+        <span class="side-balance-text">
+          <span class="side-balance-value">${credits(state.me?.credits ?? 0)}</span>
+          <span class="side-balance-note">${escapeHtml(costLine())}</span>
+        </span>
       </a>
-      <div class="row spread">
-        <a class="row small grow" href="#/settings" style="gap:.5rem">
-          ${icon('user')}<span class="truncate">${escapeHtml(state.me?.username || '')}</span>
+      <div class="side-user">
+        <a class="side-user-name" href="#/settings" title="${escapeHtml(state.me?.username || '')}">
+          <span class="side-avatar">${escapeHtml((state.me?.username || '?').slice(0, 1).toUpperCase())}</span>
+          <span class="side-item-label">${escapeHtml(state.me?.username || '')}</span>
         </a>
         ${themeSwitch()}
+        <button class="side-icon-btn" id="logout" type="button"
+          title="${escapeHtml(tr('dash.logout'))}"
+          aria-label="${escapeHtml(tr('dash.logout'))}">${icon('power')}</button>
       </div>
-      <button class="btn btn-ghost btn-sm" id="logout">${escapeHtml(tr('dash.logout'))}</button>
     </div>`;
 
   $('#new-profile').addEventListener('click', () => import('./views/server.js').then((m) => m.newProfile()));
-  $('#side').querySelectorAll('[data-side-section]').forEach((details) => {
-    details.addEventListener('toggle', () => {
-      try {
-        localStorage.setItem(`${SIDE_SECTION_PREFIX}${details.dataset.sideSection}`, String(details.open));
-      } catch {
-        /* privater Modus: der Abschnitt funktioniert trotzdem */
-      }
-    });
+  side.querySelectorAll('[data-side-section]').forEach((details) => {
+    details.addEventListener('toggle', () =>
+      storeFlag(`${SIDE_SECTION_PREFIX}${details.dataset.sideSection}`, details.open)
+    );
   });
   $('#logout').addEventListener('click', async () => {
     await api('/auth/logout', { method: 'POST' });
     location.href = url('');
   });
+
+  const input = $('#side-filter');
+  input.addEventListener('input', () => {
+    sideFilter = input.value;
+    applyFilter();
+  });
+  // Escape leert das Feld, statt die Leiste zu schließen – wer sucht, will weitersuchen.
+  input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    event.stopPropagation();
+    sideFilter = '';
+    input.value = '';
+    applyFilter();
+  });
+  if (hadFocus) {
+    input.focus();
+    if (caret !== null) input.setSelectionRange(caret, caret);
+  }
+  applyFilter();
+
   drawMobileNav();
 }
 
+/**
+ * Das Suchfeld.
+ *
+ * Es filtert alles, was einen Namen hat: Navigationspunkte, Serverplätze, deren Reiter und jeden
+ * Punkt der Administration. Was nichts trifft, verschwindet; Gruppen ohne Treffer verschwinden
+ * mit. Kein Netzverkehr, keine Trefferliste – die Leiste selbst ist das Ergebnis.
+ */
+function applyFilter() {
+  const side = $('#side');
+  const needle = sideFilter.trim().toLowerCase();
+  side.classList.toggle('is-filtering', Boolean(needle));
+
+  let hits = 0;
+  for (const node of side.querySelectorAll('[data-find]')) {
+    const match = !needle || node.dataset.find.includes(needle);
+    node.hidden = !match;
+    if (match) hits += 1;
+  }
+  // Ein Bündel ohne sichtbaren Eintrag hat nichts mehr zu sagen.
+  for (const block of side.querySelectorAll('.side-block, .side-sub, .side-section')) {
+    const visible = [...block.querySelectorAll('[data-find]')].some((node) => !node.hidden);
+    block.hidden = Boolean(needle) && !visible;
+    // Bei einer Suche stehen alle Gruppen offen – sonst läge der Treffer hinter einem Klick.
+    if (needle && block.tagName === 'DETAILS' && visible) block.open = true;
+  }
+  const empty = side.querySelector('.side-no-hits');
+  if (empty) empty.hidden = !needle || hits > 0;
+}
+
+// ---------------------------------------------------------------- Handy-Leiste
+//
+// Unten am Bildschirmrand, wo der Daumen ist. Sie zeigt vier Ziele und den Knopf für die
+// Seitenleiste – mehr passt nicht nebeneinander, ohne dass die Beschriftungen abbrechen.
+
 const MOBILE_NAV = [
-  NAV_MAIN[0],
-  { hash: '#/servers', key: 'dash.servers', icon: 'server' },
-  NAV_MAIN[1],
-  NAV_SERVICE[2],
+  NAV_PRIMARY[0],
+  NAV_PRIMARY[1],
+  NAV_PRIMARY[2],
+  NAV_ACCOUNT[1],
 ];
 const ADMIN_MOBILE_NAV = [
   { hash: '#/admin/overview', key: 'adm.overview', icon: 'chart' },
@@ -506,52 +663,19 @@ function drawMobileNav() {
   const unread = state.stats?.tickets_unread || 0;
   const waiting = state.stats?.staff_tickets || 0;
   const items = state.me?.role === 'admin' ? ADMIN_MOBILE_NAV : MOBILE_NAV;
-  root.innerHTML = `${items.map((item) => {
-    const badge = item.staffBadge ? waiting : item.hash === '#/tickets' ? unread : 0;
-    return `<a href="${item.hash}" ${routeMatches(item.hash) ? 'aria-current="page"' : ''}>
+  root.innerHTML = `${items
+    .map((item) => {
+      const badge = item.staffBadge ? waiting : item.hash === '#/tickets' ? unread : 0;
+      return `<a href="${item.hash}" ${routeMatches(item.hash) ? 'aria-current="page"' : ''}>
       <span class="mobile-nav-icon">${icon(item.icon)}${badge ? `<i>${badge > 99 ? '99+' : badge}</i>` : ''}</span>
       <span>${escapeHtml(tr(item.hash === '#/accounts' ? 'dash.accountsShort' : item.key))}</span>
     </a>`;
-  }).join('')}
+    })
+    .join('')}
     <button type="button" data-open-side>
       <span class="mobile-nav-icon">${icon('menu')}</span>
       <span>${escapeHtml(tr('nav.menu'))}</span>
     </button>`;
-}
-
-function adminLink(item, current, waiting) {
-  return `<a class="${current === item.key ? 'active' : ''} ${
-    item.key === 'tickets' ? 'admin-ticket-link' : ''
-  }" href="#/admin/${item.key}" title="${escapeHtml(tr(item.label))}">${icon(item.icon)}
-    <span class="grow truncate">${escapeHtml(tr(item.label))}</span>
-    ${item.key === 'tickets' && waiting ? `<span class="count primary">${waiting}</span>` : ''}</a>`;
-}
-
-/** Die gesamte Administration steht gebündelt unter den normalen Panel- und Serverbereichen. */
-function adminSection() {
-  if (state.me?.role !== 'admin') return '';
-  const requested = state.route.name === 'admin' ? state.route.tab || 'overview' : null;
-  const current = requested === 'bots' ? 'accounts' : requested;
-  const waiting = state.stats?.staff_tickets || 0;
-
-  return `<details class="side-section admin-nav admin-tools" data-side-section="admin" ${
-    sectionOpen('admin', state.route.name === 'admin') ? 'open' : ''
-  }>
-    <summary title="${escapeHtml(tr('dash.admin'))}">
-      <span class="side-section-title">${icon('shield')}<span>${escapeHtml(tr('dash.admin'))}</span></span>
-      ${icon('arrow', 'icon side-section-arrow')}
-    </summary>
-    <div class="side-section-content admin-groups">
-    ${ADMIN_GROUPS.map((group) => {
-      return `<section class="admin-group">
-        <div class="admin-group-title">${escapeHtml(tr(group.label))}</div>
-        <nav class="nav" aria-label="${escapeHtml(tr(group.label))}">${group.items
-          .map((item) => adminLink(item, current, waiting))
-          .join('')}</nav>
-      </section>`;
-    }).join('')}
-    </div>
-  </details>`;
 }
 
 function routeMatches(hash) {
@@ -596,19 +720,31 @@ document.addEventListener('click', (event) => {
   const opener = event.target.closest('.side-toggle, [data-open-side]');
   const collapse = event.target.closest('[data-collapse-side]');
   if (collapse) {
-    sideCollapsed = !sideCollapsed;
-    try {
-      localStorage.setItem(SIDE_COLLAPSED_KEY, String(sideCollapsed));
-    } catch {
-      /* siehe gespeicherte Abschnitte */
+    // Auf dem Handy ist derselbe Knopf der Öffner der Schublade – dort gibt es keine schmale
+    // Leiste, sondern nur "auf" und "zu".
+    if (!widePanel.matches) {
+      toggleSide(!$('#side').classList.contains('open'), collapse);
+      return;
     }
+    railMode = !railMode;
+    storeFlag(SIDE_RAIL_KEY, railMode);
     drawSide();
   } else if (opener) toggleSide(true, opener);
   else if (event.target.closest('.side-close')) toggleSide(false);
   else if (event.target.closest('.side a')) toggleSide(false);
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && $('#side').classList.contains('open')) toggleSide(false);
+  if (event.key === 'Escape' && $('#side').classList.contains('open')) return toggleSide(false);
+  // "/" springt ins Suchfeld der Seitenleiste – aber nur, wenn gerade nicht ohnehin getippt wird.
+  if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
+  const active = document.activeElement;
+  if (active && (active.isContentEditable || /^(input|textarea|select)$/i.test(active.tagName))) return;
+  const field = $('#side-filter');
+  if (!field) return;
+  event.preventDefault();
+  if (!widePanel.matches) toggleSide(true, active);
+  field.focus();
+  field.select();
 });
 widePanel.addEventListener('change', () => toggleSide(false));
 toggleSide(false);

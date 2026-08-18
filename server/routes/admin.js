@@ -13,6 +13,7 @@ import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
 import * as roles from '../roles.js';
 import * as nodes from '../nodes.js';
+import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
 import { supervisor } from '../supervisor.js';
 import { planView, ticketView } from './core.js';
@@ -1096,8 +1097,22 @@ admin.patch(
             cent: requireInt(pack.cent, 'Betrag', { min: 100, max: 1_000_000 }),
             credits: requireInt(pack.credits, 'Credits', { min: 1, max: 1_000_000 }),
             label: String(pack.label || `${(pack.cent / 100).toFixed(2)} €`).slice(0, 40),
+            // Die Nummer, unter der dasselbe Paket im Tebex-Webstore liegt. Leer heißt: gibt es
+            // dort nicht – dann taugt das Paket nur für den Checkout-Weg.
+            tebex: String(pack.tebex || '').trim().slice(0, 40),
           }))
         );
+      } else if (entry.type === 'select') {
+        // Nur, was in der Beschreibung steht. Ein fremder Wert wäre eine Betriebsart, die es
+        // nirgends gibt – und die Wirkung hätte niemand vorhergesagt.
+        const allowed = (entry.options || []).map((option) => option.value);
+        const wanted = String(value ?? '');
+        if (!allowed.includes(wanted)) {
+          throw bad(`Unbekannter Wert für "${entry.de.label}".`, {
+            en: `Unknown value for "${entry.en.label}".`,
+          });
+        }
+        setSetting(key, wanted);
       } else if (entry.type === 'number' || entry.type === 'switch') {
         const limits = entry.type === 'switch' ? { min: 0, max: 1 } : { min: entry.min ?? 0, max: entry.max ?? 10_000_000 };
         setSetting(key, requireInt(entry.type === 'switch' ? (value ? 1 : 0) : value, entry.de.label, limits));
@@ -1198,6 +1213,9 @@ admin.post(
   '/client/sync',
   wrap(async (req, res) => {
     await binaries.sync({ force: Boolean(req.body?.force) });
+    // Die Standorte holen sich ihre Dateien vom Panel. Ohne diesen Zuruf hätten sie bis zum
+    // nächsten Stundentakt noch die alte Fassung – und ein Bot dort andere Fähigkeiten als hier.
+    agents.syncAll();
     audit(req.user.id, 'client-sync', { tag: binaries.state.tag });
     res.json({ client: clientState() });
   })
@@ -1560,7 +1578,21 @@ admin.get(
         .prepare('SELECT id, label, kind, host, port FROM proxies ORDER BY label COLLATE NOCASE')
         .all(),
       access: nodes.ACCESS,
+      kinds: nodes.KINDS,
+      // Der Befehl zum Einrichten – mit der Adresse, unter der dieses Panel wirklich erreichbar
+      // ist. Ohne sie müsste man sie beim Aufsetzen von Hand abtippen, und genau dabei geht es
+      // schief.
+      panel_url: config.publicUrl,
     });
+  })
+);
+
+/** Ein neues Token. Der Standort fliegt damit sofort heraus – das ist der Sinn. */
+admin.post(
+  '/nodes/:id/token',
+  wrap((req, res) => {
+    const node = nodes.rotateToken(requireInt(req.params.id, 'Standort'), req.user.id);
+    res.json({ node: nodes.adminView(node) });
   })
 );
 

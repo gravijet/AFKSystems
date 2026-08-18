@@ -1,0 +1,494 @@
+// Der AFKSystems-Standort-Agent.
+//
+// Ein Standort ist eine Maschine, auf der Bots laufen. Dieses Programm ist alles, was dafür auf
+// ihr liegen muss: es meldet sich beim Panel, holt sich die Client-Dateien, startet auf Zuruf
+// Prozesse und reicht deren Ein- und Ausgabe durch. Es hat keine Datenbank, keine offene
+// Portfreigabe und keinen Zustand, den man abgleichen müsste.
+//
+// Die Verbindung geht **von hier nach draußen**. Das ist der ganze Trick: ein neuer Standort
+// braucht deshalb keine öffentliche Adresse, kein TLS-Zertifikat und keine Firewall-Regel für
+// eingehenden Verkehr. Nur ausgehendes HTTPS – und das kann jeder VPS ab der ersten Minute.
+//
+//     Panel  ->  spawn / stdin / kill / sync / ping
+//     Panel  <-  hello / metrics / out / err / exit / files / error / pong
+//
+// Start:  PANEL_URL=https://afksystems.de NODE_TOKEN=… node index.js
+// Die Werte dürfen auch in einer `.env` neben dieser Datei stehen.
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
+import WebSocket from 'ws';
+
+const run = promisify(execFile);
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
+
+// ---------------------------------------------------------------- Konfiguration
+
+function loadEnvFile() {
+  const file = path.join(ROOT, '.env');
+  if (!fs.existsSync(file)) return;
+  for (const raw of fs.readFileSync(file, 'utf8').split('\n')) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) continue;
+    const key = line.slice(0, eq).trim();
+    let value = line.slice(eq + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+loadEnvFile();
+
+const config = {
+  version: '1.0.0',
+  panel: (process.env.PANEL_URL || 'https://afksystems.de').replace(/\/+$/, ''),
+  token: process.env.NODE_TOKEN || '',
+  dataDir: process.env.AGENT_DATA_DIR || path.join(ROOT, 'data'),
+  // Wie viele Bots dieser Standort höchstens gleichzeitig hält. 0 = so viele, wie das Panel
+  // schickt; die eigentliche Obergrenze steht im Panel am Standort.
+  maxJobs: Number(process.env.AGENT_MAX_JOBS) || 0,
+};
+
+if (!config.token) {
+  console.error('NODE_TOKEN fehlt. Es steht im Panel unter Administration → Standorte.');
+  process.exit(1);
+}
+
+const paths = {
+  bin: path.join(config.dataDir, 'bin'),
+  users: path.join(config.dataDir, 'users'),
+};
+for (const dir of [config.dataDir, paths.bin, paths.users]) fs.mkdirSync(dir, { recursive: true });
+
+const log = (...parts) => console.log(new Date().toISOString(), ...parts);
+
+// ---------------------------------------------------------------- Messwerte
+//
+// Alles aus /proc und `df`. Kein Fremdprogramm, nichts wird gespeichert. Zwei Messungen braucht
+// es für die CPU-Last: in /proc stehen Summen seit dem Hochfahren, interessant ist die Differenz.
+
+const CLOCK_TICKS = 100;
+const PAGE_SIZE = 4096;
+let lastCpu = null;
+const lastProcCpu = new Map();
+
+const readFile = (file) => {
+  try {
+    return fs.readFileSync(file, 'utf8');
+  } catch {
+    return '';
+  }
+};
+
+function cpuPercent() {
+  const parts = readFile('/proc/stat').split('\n')[0].split(/\s+/).slice(1).map(Number).filter(Number.isFinite);
+  if (parts.length < 4) return null;
+  const total = parts.reduce((sum, value) => sum + value, 0);
+  const idle = parts[3] + (parts[4] || 0);
+  const previous = lastCpu;
+  lastCpu = { total, idle };
+  if (!previous) return null;
+  const deltaTotal = total - previous.total;
+  if (deltaTotal <= 0) return null;
+  return Math.max(0, Math.min(100, ((deltaTotal - (idle - previous.idle)) / deltaTotal) * 100));
+}
+
+function memory() {
+  const info = {};
+  for (const line of readFile('/proc/meminfo').split('\n')) {
+    const match = /^(\w+):\s+(\d+) kB$/.exec(line);
+    if (match) info[match[1]] = Number(match[2]) * 1024;
+  }
+  const total = info.MemTotal || os.totalmem();
+  const available = info.MemAvailable ?? os.freemem();
+  return {
+    total,
+    available,
+    used: total - available,
+    percent: total ? ((total - available) / total) * 100 : 0,
+    swap_total: info.SwapTotal || 0,
+    swap_used: (info.SwapTotal || 0) - (info.SwapFree || 0),
+  };
+}
+
+async function disk() {
+  try {
+    const { stdout } = await run('df', ['-kP', config.dataDir], { timeout: 5000 });
+    const row = stdout.trim().split('\n').pop().split(/\s+/);
+    const total = Number(row[1]) * 1024;
+    const used = Number(row[2]) * 1024;
+    if (!Number.isFinite(total) || !total) return null;
+    return { total, used, free: Number(row[3]) * 1024, percent: (used / total) * 100, mount: row[5] || '/' };
+  } catch {
+    return null;
+  }
+}
+
+/** CPU-Zeit und Speicher eines Prozesses. Ohne zweite Messung gibt es keinen Prozentwert. */
+function processStats(pid) {
+  const stat = readFile(`/proc/${pid}/stat`);
+  if (!stat) return null;
+  const after = stat.slice(stat.lastIndexOf(')') + 2).split(' ');
+  const ticks = Number(after[11]) + Number(after[12]);
+  if (!Number.isFinite(ticks)) return null;
+  const rss = Number(after[21]) * PAGE_SIZE;
+  const at = Date.now();
+  const previous = lastProcCpu.get(pid);
+  lastProcCpu.set(pid, { at, ticks });
+  let percent = null;
+  if (previous && at > previous.at) {
+    percent = Math.max(0, ((ticks - previous.ticks) / CLOCK_TICKS / ((at - previous.at) / 1000)) * 100);
+  }
+  return { rss, cpu_percent: percent };
+}
+
+function dirSize(dir, depth = 0) {
+  let bytes = 0;
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (depth < 6) bytes += dirSize(full, depth + 1);
+    } else {
+      try {
+        bytes += fs.statSync(full).size;
+      } catch {
+        /* gerade gelöscht */
+      }
+    }
+  }
+  return bytes;
+}
+
+async function metrics() {
+  const mem = memory();
+  const cores = os.cpus().length || 1;
+  let botRss = 0;
+  let botCpu = 0;
+  for (const job of jobs.values()) {
+    if (!job.proc?.pid) continue;
+    const stats = processStats(job.proc.pid);
+    if (!stats) continue;
+    botRss += stats.rss;
+    botCpu += stats.cpu_percent || 0;
+  }
+  const own = processStats(process.pid);
+  return {
+    at: Date.now(),
+    hostname: os.hostname(),
+    platform: `${os.type()} ${os.release()}`,
+    cores,
+    uptime_sec: Math.round(os.uptime()),
+    agent_uptime_sec: Math.round(process.uptime()),
+    load: os.loadavg().map((value) => Math.round(value * 100) / 100),
+    cpu_percent: cpuPercent(),
+    memory: mem,
+    disk: await disk(),
+    bots: jobs.size,
+    // Wie viel davon auf AFKSystems geht. Prozentwerte je Prozess beziehen sich auf einen Kern;
+    // geteilt durch die Kernzahl steht dieselbe Zahl neben der Maschinenauslastung.
+    afksystems: {
+      cpu_percent: Math.round((((own?.cpu_percent || 0) + botCpu) / cores) * 100) / 100,
+      memory_bytes: (own?.rss || 0) + botRss,
+      memory_percent: mem.total ? (((own?.rss || 0) + botRss) / mem.total) * 100 : 0,
+      bots_memory_bytes: botRss,
+      disk: { data: dirSize(config.dataDir), binaries: dirSize(paths.bin), accounts: dirSize(paths.users) },
+    },
+  };
+}
+
+// ---------------------------------------------------------------- Client-Dateien
+
+const sha256 = async (file) => {
+  const { createHash } = await import('node:crypto');
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+};
+
+/**
+ * Die Client-Dateien vom Panel holen – aber nur, was fehlt oder sich geändert hat.
+ *
+ * Damit gibt es hier nie eine andere Fassung als im Panel, und niemand muss auf diesem Rechner
+ * einen GitHub-Zugang einrichten.
+ */
+async function syncBinaries() {
+  const response = await fetch(`${config.panel}/api/node/manifest`, {
+    headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
+  });
+  if (!response.ok) throw new Error(`Manifest ${response.status}`);
+  const manifest = await response.json();
+  let loaded = 0;
+
+  for (const entry of manifest.files || []) {
+    const target = path.join(paths.bin, entry.name);
+    if (fs.existsSync(target) && fs.statSync(target).size === entry.size) {
+      if ((await sha256(target)) === entry.sha256) continue;
+    }
+    const file = await fetch(`${config.panel}/api/node/binaries/${encodeURIComponent(entry.name)}`, {
+      headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
+    });
+    if (!file.ok) throw new Error(`Download ${entry.name}: ${file.status}`);
+    const temp = `${target}.neu`;
+    fs.writeFileSync(temp, Buffer.from(await file.arrayBuffer()));
+    fs.chmodSync(temp, 0o755);
+    fs.renameSync(temp, target);
+    loaded += 1;
+  }
+  if (loaded) log(`${loaded} Client-Datei(en) geholt.`);
+  return fs.readdirSync(paths.bin).filter((name) => !name.endsWith('.neu'));
+}
+
+// ---------------------------------------------------------------- Bots
+
+/** job-id -> { proc, userId, home } */
+const jobs = new Map();
+
+/** Nur Konten und die gemerkten Bewegungspunkte reisen zwischen Panel und Standort. */
+const WANTED = /^(accounts\/[A-Za-z0-9._-]{1,64}\.json|movement\.json)$/;
+
+function userHome(userId) {
+  const home = path.join(paths.users, String(Number(userId) || 0));
+  fs.mkdirSync(path.join(home, 'afksystems', 'accounts'), { recursive: true });
+  return home;
+}
+
+/** Die Dateien, die das Panel mitgeschickt hat, ins Kontoverzeichnis legen. */
+function writeFiles(home, files) {
+  const base = path.join(home, 'afksystems');
+  for (const [name, content] of Object.entries(files || {})) {
+    if (!WANTED.test(name) || typeof content !== 'string') continue;
+    const target = path.join(base, name);
+    if (!target.startsWith(base + path.sep)) continue;
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content, { mode: 0o600 });
+  }
+}
+
+/** Und der Rückweg: was der Client dort geändert hat (aufgefrischte Microsoft-Token). */
+function readFiles(home) {
+  const base = path.join(home, 'afksystems');
+  const out = {};
+  const add = (relative) => {
+    try {
+      out[relative] = fs.readFileSync(path.join(base, relative), 'utf8');
+    } catch {
+      /* gibt es nicht */
+    }
+  };
+  add('movement.json');
+  try {
+    for (const name of fs.readdirSync(path.join(base, 'accounts'))) {
+      if (WANTED.test(`accounts/${name}`)) add(`accounts/${name}`);
+    }
+  } catch {
+    /* noch kein Konto */
+  }
+  return out;
+}
+
+function startJob(link, message) {
+  const { job, file, args, user_id: userId } = message;
+  if (jobs.has(job)) return;
+  if (config.maxJobs && jobs.size >= config.maxJobs) {
+    link.send({ type: 'error', job, error: `Dieser Standort nimmt höchstens ${config.maxJobs} Bots.` });
+    return;
+  }
+  const binary = path.join(paths.bin, path.basename(String(file || '')));
+  if (!fs.existsSync(binary)) {
+    link.send({ type: 'error', job, error: `Die Client-Datei "${file}" liegt auf diesem Standort nicht.` });
+    return;
+  }
+
+  const home = userHome(userId);
+  try {
+    writeFiles(home, message.files);
+    fs.chmodSync(binary, 0o755);
+  } catch (error) {
+    link.send({ type: 'error', job, error: `Vorbereitung fehlgeschlagen: ${error.message}` });
+    return;
+  }
+
+  const proc = spawn(binary, Array.isArray(args) ? args.map(String) : [], {
+    cwd: home,
+    env: { ...process.env, ...(message.env || {}), XDG_CONFIG_HOME: home, HOME: home, TERM: 'dumb' },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  jobs.set(job, { proc, userId, home });
+
+  proc.stdout.on('data', (chunk) => link.send({ type: 'out', job, data: chunk.toString('utf8') }));
+  proc.stderr.on('data', (chunk) => link.send({ type: 'err', job, data: chunk.toString('utf8') }));
+  proc.on('error', (error) => {
+    jobs.delete(job);
+    link.send({ type: 'error', job, error: error.message });
+  });
+  proc.on('exit', (code, signal) => {
+    jobs.delete(job);
+    lastProcCpu.delete(proc.pid);
+    // Erst die Dateien, dann das Ende: sonst wäre der aufgefrischte Token unterwegs, während das
+    // Panel den Bot schon abgeräumt hat.
+    link.send({ type: 'files', job, user_id: userId, files: readFiles(home) });
+    link.send({ type: 'exit', job, code, signal });
+  });
+  log(`Bot gestartet: ${path.basename(binary)} (Auftrag ${job.slice(0, 8)})`);
+}
+
+/**
+ * Kontodateien regelmäßig zurückschicken.
+ *
+ * Der Client schreibt einen aufgefrischten Microsoft-Token, sobald der alte abläuft – also
+ * mitten im Lauf. Käme er erst beim Beenden zurück, wäre er nach einem harten Neustart weg und
+ * das Konto müsste neu verbunden werden.
+ */
+function pushAccountFiles(link) {
+  const seen = new Set();
+  for (const job of jobs.values()) {
+    if (seen.has(job.userId)) continue;
+    seen.add(job.userId);
+    link.send({ type: 'files', user_id: job.userId, files: readFiles(job.home) });
+  }
+}
+
+function stopAll(signal = 'SIGTERM') {
+  for (const job of jobs.values()) {
+    try {
+      job.proc.kill(signal);
+    } catch {
+      /* schon weg */
+    }
+  }
+}
+
+// ---------------------------------------------------------------- Leitung
+
+let socket = null;
+let retry = 0;
+let timers = [];
+
+const link = {
+  send(message) {
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+  },
+};
+
+function connect() {
+  const address = `${config.panel.replace(/^http/, 'ws')}/api/node/stream`;
+  socket = new WebSocket(address, {
+    headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
+    handshakeTimeout: 20_000,
+  });
+
+  socket.on('open', async () => {
+    retry = 0;
+    log(`Verbunden mit ${config.panel}`);
+    let binaries = [];
+    try {
+      binaries = await syncBinaries();
+    } catch (error) {
+      log(`Client-Dateien konnten nicht geholt werden: ${error.message}`);
+      binaries = fs.existsSync(paths.bin) ? fs.readdirSync(paths.bin) : [];
+    }
+    link.send({
+      type: 'hello',
+      version: config.version,
+      hostname: os.hostname(),
+      platform: `${os.type()} ${os.release()}`,
+      cores: os.cpus().length || 1,
+      binaries,
+    });
+    // Einmal sofort messen, damit im Panel nicht bis zum ersten Takt ein leerer Kasten steht.
+    metrics().then((stats) => link.send({ type: 'metrics', stats })).catch(() => {});
+
+    timers.push(
+      setInterval(() => {
+        metrics().then((stats) => link.send({ type: 'metrics', stats })).catch(() => {});
+      }, 15_000)
+    );
+    timers.push(setInterval(() => pushAccountFiles(link), 5 * 60_000));
+  });
+
+  socket.on('message', async (data) => {
+    let message;
+    try {
+      message = JSON.parse(data);
+    } catch {
+      return;
+    }
+    switch (message.type) {
+      case 'spawn':
+        startJob(link, message);
+        break;
+      case 'stdin': {
+        const job = jobs.get(message.job);
+        if (job?.proc.stdin.writable) job.proc.stdin.write(String(message.data));
+        break;
+      }
+      case 'kill': {
+        const job = jobs.get(message.job);
+        if (!job) break;
+        try {
+          job.proc.kill(message.signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM');
+        } catch {
+          /* schon weg */
+        }
+        break;
+      }
+      case 'sync':
+        try {
+          const binaries = await syncBinaries();
+          link.send({ type: 'hello', version: config.version, hostname: os.hostname(), binaries });
+        } catch (error) {
+          link.send({ type: 'error', error: `Abgleich fehlgeschlagen: ${error.message}` });
+        }
+        break;
+      case 'ping':
+        link.send({ type: 'pong', t: message.t });
+        break;
+      default:
+        break;
+    }
+  });
+
+  const down = (why) => {
+    for (const timer of timers) clearInterval(timer);
+    timers = [];
+    if (socket) socket.removeAllListeners();
+    socket = null;
+    // **Die Bots gehen mit.** Ein Bot ohne Leitung zum Panel ist keiner, den noch jemand lesen
+    // oder steuern könnte – er säße unsichtbar auf einem Minecraft-Server. Außerdem wäre er beim
+    // Wiederaufbau der Leitung ein Doppelgänger: das Panel hält ihn längst für beendet und würde
+    // ihn ein zweites Mal starten. Der Wunsch bleibt im Panel stehen; sobald die Verbindung wieder
+    // steht, fährt es sie von selbst hoch.
+    if (jobs.size) log(`${jobs.size} Bot(s) gestoppt – keine Leitung zum Panel.`);
+    stopAll();
+    retry += 1;
+    const wait = Math.min(60_000, 1000 * 2 ** Math.min(retry, 6));
+    log(`Verbindung ${why}. Neuer Versuch in ${Math.round(wait / 1000)} s.`);
+    setTimeout(connect, wait);
+  };
+
+  socket.on('close', (code) => down(`geschlossen (${code})`));
+  socket.on('error', (error) => down(`gestört (${error.message})`));
+}
+
+for (const signal of ['SIGINT', 'SIGTERM']) {
+  process.on(signal, () => {
+    log('Beende – stoppe alle Bots ...');
+    stopAll();
+    setTimeout(() => process.exit(0), 3000).unref();
+  });
+}
+
+log(`AFKSystems-Standort-Agent ${config.version} – Panel ${config.panel}`);
+connect();

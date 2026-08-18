@@ -15,11 +15,141 @@ import path from 'node:path';
 import { config, paths, userDir } from './config.js';
 import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
+import * as agents from './agents.js';
 import { featuresOf, isActive, gateCaps, freeAccess } from './billing.js';
 import { HttpError, codeUrl, MS_LINK } from './util.js';
+import { stripFormatting } from '../public/assets/js/chatlog.js';
 
-const ANSI = /\x1b\[[0-9;]*m/g;
+// Jede Steuersequenz, nicht nur Farben: die Live-Ansicht setzt den Cursor mit `ESC[H` nach oben
+// und löscht mit `ESC[2J`. Blieben die stehen, stünde `[H` als Text in einer Statusmeldung.
+const ANSI = /\x1b\[[0-9;?]*[A-Za-z]/g;
 const stripAnsi = (text) => text.replace(ANSI, '');
+
+/**
+ * Die Farben des Clients zurück in Minecraft-Farbcodes.
+ *
+ * Der Client bekommt vom Server `§`-Codes bzw. Chat-Komponenten und schreibt sie als ANSI-Farben
+ * auf die Standardausgabe – das ist für ein Terminal richtig und für ein Webpanel unbrauchbar.
+ * Diese Tabelle ist der Rückweg: aus `ESC[91m` wird wieder `§c`, aus `ESC[38;2;r;g;bm` die
+ * moderne Schreibweise `§x§r§r§g§g§b§b`. Damit läuft die Chatzeile durch dieselbe Anzeige wie
+ * Anzeigetafel und Gegenstände (chatlog.parseFormatting), und der Chat sieht aus wie im Spiel.
+ *
+ * Früher startete das Panel den Client mit `--no-color`. Dann kam die Zeile ohne jede Farbe an –
+ * die Information war schon weg, bevor sie hier ankam.
+ */
+const ANSI_COLORS = {
+  30: '0', 34: '1', 32: '2', 36: '3', 31: '4', 35: '5', 33: '6', 37: '7',
+  90: '8', 94: '9', 92: 'a', 96: 'b', 91: 'c', 95: 'd', 93: 'e', 97: 'f',
+};
+const ANSI_STYLES = { 1: 'l', 3: 'o', 4: 'n', 9: 'm' };
+
+/** Eine SGR-Anweisung ("1;38;2;255;0;0") in `§`-Codes übersetzen. */
+function sgrToMinecraft(params) {
+  const parts = params.split(';');
+  let out = '';
+  for (let i = 0; i < parts.length; i++) {
+    const code = Number(parts[i]);
+    if (!Number.isFinite(code)) continue;
+    // Echtfarbe: 38;2;r;g;b. Minecraft schreibt sie als §x gefolgt von sechs §-Ziffern.
+    if (code === 38 && Number(parts[i + 1]) === 2) {
+      const hex = [parts[i + 2], parts[i + 3], parts[i + 4]]
+        .map((value) => Math.max(0, Math.min(255, Number(value) || 0)).toString(16).padStart(2, '0'))
+        .join('');
+      out += `§x${[...hex].map((char) => `§${char}`).join('')}`;
+      i += 4;
+      continue;
+    }
+    if (code === 0) out += '§r';
+    else if (ANSI_COLORS[code]) out += `§${ANSI_COLORS[code]}`;
+    else if (ANSI_STYLES[code]) out += `§${ANSI_STYLES[code]}`;
+    // 39 (Standardfarbe), 22 (nicht mehr fett) und alles Unbekannte fällt weg: ein Farbcode setzt
+    // in Minecraft ohnehin alles zurück, was davor stand.
+  }
+  return out;
+}
+
+/** ANSI-gefärbter Text -> derselbe Text mit `§`-Codes. Alles andere an Steuerzeichen fällt weg. */
+export function ansiToMinecraft(raw) {
+  const text = String(raw ?? '');
+  if (!text.includes('\x1b')) return text;
+  let out = '';
+  let index = 0;
+  while (index < text.length) {
+    const start = text.indexOf('\x1b[', index);
+    if (start < 0) {
+      out += text.slice(index);
+      break;
+    }
+    out += text.slice(index, start);
+    const match = /^\x1b\[([0-9;?]*)([A-Za-z])/.exec(text.slice(start));
+    if (!match) {
+      // Ein abgeschnittenes Escape am Zeilenende – der Rest kommt mit dem nächsten Stück.
+      out += text.slice(start + 2);
+      break;
+    }
+    if (match[2] === 'm') out += sgrToMinecraft(match[1]);
+    index = start + match[0].length;
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------- Live-Ansicht (POV)
+//
+// Die POV-Bauformen zeichnen ein Bild ins Terminal: Cursor nach oben (`ESC[H`), dann Zeile für
+// Zeile Zeichen aus einer Helligkeitsrampe, jedes in seiner Echtfarbe, darunter eine Fußzeile mit
+// der Position. Das ist kein Chat und darf nicht durch die Chatverarbeitung laufen; hier wird das
+// Bild wieder in Daten zerlegt, die der Browser als Raster zeichnen kann.
+
+/** Die Zeichen, aus denen der Client ein Bild baut (dunkel nach hell) – plus Leerraum. */
+const POV_RAMP = new Set([...' .:-=+*#%@']);
+
+/** "POV  x=12 y=64 z=-8  gier=90  (:pov stop)" – die Zeile unter dem Bild. */
+const POV_FOOTER = /^POV\s/;
+
+/** Höchstens so oft geht ein Bild an den Browser. Der Client zeichnet schneller, als es nützt. */
+const POV_MIN_GAP_MS = 200;
+
+const isPovRow = (text) => text.length > 0 && [...text].every((char) => POV_RAMP.has(char));
+
+/**
+ * Eine gefärbte Bildzeile in Abschnitte zerlegen: [["7f9b3a", "  ..#"], …].
+ *
+ * Ohne diese Bündelung wären es 80 Einzelzellen je Zeile; so sind es meist ein paar Dutzend, und
+ * das Bild passt auch bei mehreren Bildern je Sekunde durch die Leitung.
+ */
+function povCells(raw) {
+  const runs = [];
+  let color = null;
+  let index = 0;
+  const push = (text) => {
+    if (!text) return;
+    const last = runs[runs.length - 1];
+    if (last && last[0] === color) last[1] += text;
+    else runs.push([color, text]);
+  };
+  while (index < raw.length) {
+    const start = raw.indexOf('\x1b[', index);
+    if (start < 0) {
+      push(raw.slice(index));
+      break;
+    }
+    push(raw.slice(index, start));
+    const match = /^\x1b\[([0-9;?]*)([A-Za-z])/.exec(raw.slice(start));
+    if (!match) break;
+    if (match[2] === 'm') {
+      const parts = match[1].split(';').map(Number);
+      if (parts[0] === 38 && parts[1] === 2) {
+        color = [parts[2], parts[3], parts[4]]
+          .map((value) => Math.max(0, Math.min(255, value || 0)).toString(16).padStart(2, '0'))
+          .join('');
+      } else if (parts[0] === 0 || Number.isNaN(parts[0])) {
+        color = null;
+      }
+    }
+    index = start + match[0].length;
+  }
+  return runs;
+}
 
 /**
  * Zustandszeilen des Clients für den Fall, dass `--events` fehlt. Sobald der Client Ereignisse
@@ -200,8 +330,16 @@ class Bot extends EventEmitter {
     // Anzeigetafel und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
     // dem Client; gesammelt werden sie nur, wenn das Panel gerade danach gefragt hat (siehe
     // `capture`). Ohne das stünden dreizehn Zeilen Seitenleiste zwischen den Chatnachrichten.
-    this.views = { board: null, menu: null, position: null };
+    this.views = { board: null, menu: null, position: null, pov: null };
     this.capture = null;
+    // Live-Ansicht: `povWanted` ist der Schalter (`:pov live`), `povRows` das Bild, das gerade
+    // Zeile für Zeile hereinkommt. Solange niemand die Ansicht angefordert hat, kostet die
+    // Erkennung genau eine Abfrage je Zeile.
+    this.povWanted = false;
+    this.povRows = null;
+    this.povStatus = '';
+    this.povSentAt = 0;
+    this.povSize = { width: 80, height: 40 };
     this.stopping = false;
     this.timers = new Set();
     this.buffers = { out: '', err: '' };
@@ -244,8 +382,10 @@ class Bot extends EventEmitter {
       String(profile.join_delay),
       '--chat-delay',
       String(profile.chat_delay),
-      '--no-color',
     ];
+    // Kein `--no-color`: der Client schreibt Chatfarben als ANSI, und genau daraus baut
+    // `ansiToMinecraft` die `§`-Codes wieder auf. Mit `--no-color` wäre die Farbe schon weg,
+    // bevor das Panel die Zeile überhaupt sieht – und der Chat stünde grau im Browser.
 
     if (this.account.kind === 'offline' && caps.offline) args.push('--offline', this.account.name);
     else args.push('--account', this.account.name);
@@ -310,9 +450,15 @@ class Bot extends EventEmitter {
     return `${row.kind === 'http' ? 'http' : 'socks5'}://${auth}${row.host}:${row.port}`;
   }
 
+  /** Der Standort, auf dem dieser Bot laufen soll. Ohne Eintrag: diese Maschine. */
+  node() {
+    if (!this.profile.node_id) return null;
+    return db.prepare('SELECT * FROM nodes WHERE id = ?').get(this.profile.node_id) || null;
+  }
+
   start() {
     if (this.proc) return this;
-    const { command, build } = binaries.command(this.profile, this.plan);
+    const { command, file, build } = binaries.command(this.profile, this.plan);
     this.build = build;
     // `this.caps` erst nach `this.build` lesen – es hängt an der Bauform, die gerade gewählt wurde.
     const caps = this.caps;
@@ -321,19 +467,40 @@ class Bot extends EventEmitter {
     const home = userDir(this.userId);
 
     this.stopping = false;
+    // `pov-afk-linux` beginnt gleich nach dem Beitritt zu zeichnen; da wartet niemand auf
+    // `:pov live`. Bei `ultra-afk-linux` bleibt die Ansicht aus, bis sie jemand einschaltet.
+    this.povWanted = build === 'pov' && Boolean(caps.pov);
     this.setState('starting', `${this.profile.host} · MC ${this.profile.mc_version}`);
 
-    this.proc = spawn(command, args, {
-      cwd: home,
-      env: {
-        ...process.env,
-        XDG_CONFIG_HOME: home,
-        HOME: home,
-        // Der Client richtet sich nach der Umgebung; ohne TERM bleibt alles zeilenweise.
-        TERM: 'dumb',
-      },
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
+    // Örtlich oder auf einem Standort? Beides sieht von hier aus gleich aus: `agents.spawn`
+    // liefert ein Objekt mit stdout/stderr/stdin/kill, genau wie `child_process.spawn`. Nur so
+    // bleibt der ganze Rest dieser Klasse frei von der Frage, wo der Prozess wirklich liegt.
+    const node = this.node();
+    this.nodeId = node?.id || null;
+    this.remote = node?.kind === 'agent';
+    if (this.remote) {
+      try {
+        this.proc = agents.spawn(node.id, { file, args, userId: this.userId });
+      } catch (error) {
+        this.setState('error', error.message);
+        this.lastError = error.message;
+        throw new HttpError(503, error.message, {
+          en: `Location "${node.name}" is not reachable right now.`,
+        });
+      }
+    } else {
+      this.proc = spawn(command, args, {
+        cwd: home,
+        env: {
+          ...process.env,
+          XDG_CONFIG_HOME: home,
+          HOME: home,
+          // Der Client richtet sich nach der Umgebung; ohne TERM bleibt alles zeilenweise.
+          TERM: 'dumb',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    }
 
     this.startedAt = Date.now();
     this.proc.stdout.on('data', (chunk) => this.feed('out', chunk));
@@ -345,14 +512,22 @@ class Bot extends EventEmitter {
       this.cleanup();
     });
     this.proc.on('exit', (code, signal) => {
-      const reason = this.stopping ? 'gestoppt' : `Client beendet (${signal || `Code ${code}`})`;
+      const reason = this.stopping
+        ? 'gestoppt'
+        : signal === 'LINK'
+          ? 'Die Verbindung zum Standort ist abgerissen.'
+          : `Client beendet (${signal || `Code ${code}`})`;
       if (!this.stopping && code !== 0) this.lastError = reason;
       this.push('system', reason);
       this.setState(this.stopping ? 'offline' : code === 0 ? 'offline' : 'error', reason);
       this.cleanup();
       // Der neue Rust-Client beendet nach Kick oder Netzabbruch absichtlich die Sitzung. Das Panel
       // respektiert das: kein versteckter Prozess-Neustart, sondern ein bewusster neuer Start.
-      if (!this.stopping) {
+      //
+      // Ausnahme: `LINK` heißt, dass die Leitung zum Standort abgerissen ist. Das ist keine
+      // Entscheidung des Kunden und kein Ende der Sitzung im Spiel – der Wunsch bleibt stehen,
+      // und `restoreNode()` fährt den Bot wieder hoch, sobald der Standort zurück ist.
+      if (!this.stopping && signal !== 'LINK') {
         db.prepare(
           'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
         ).run(this.profile.id, this.account.id);
@@ -401,7 +576,10 @@ class Bot extends EventEmitter {
     this.startedAt = null;
     this.auth = null;
     this.menu = null;
-    this.views = { board: null, menu: null, position: null };
+    this.views = { board: null, menu: null, position: null, pov: null };
+    this.povWanted = false;
+    this.povRows = null;
+    this.povStatus = '';
     if (this.capture) {
       clearTimeout(this.capture.timer);
       this.capture = null;
@@ -425,17 +603,85 @@ class Bot extends EventEmitter {
     const lines = this.buffers[stream].split('\n');
     this.buffers[stream] = lines.pop();
     for (const raw of lines) {
-      const line = stripAnsi(raw).replace(/\r$/, '');
+      const source = raw.replace(/\r$/, '');
+      // Zuerst die Live-Ansicht: ein Bild besteht aus vielen Zeilen, die weder Chat noch Zustand
+      // sind. Welcher der beiden Kanäle es trägt, entscheidet der Client – deshalb beide fragen.
+      if (this.povFeed(source)) continue;
+      const line = stripAnsi(source);
       if (!line.trim()) continue;
-      if (stream === 'out') this.onChat(line);
+      if (stream === 'out') this.onChat(source);
       else if (line.startsWith('@event ')) this.onEvent(line);
       else this.onStatus(line);
     }
   }
 
-  onChat(line) {
-    this.push('chat', line);
-    this.supervisor.macros.onChat(this, line);
+  /**
+   * Eine Chatzeile, wie sie hereinkam – mit Farben.
+   *
+   * Im Verlauf steht sie mit `§`-Codes: der Browser macht daraus dieselben Farben, die im Spiel
+   * zu sehen wären. Macros dagegen bekommen den nackten Text; sonst fände "willkommen" nichts
+   * mehr, sobald der Server das Wort einfärbt.
+   */
+  onChat(raw) {
+    const colored = ansiToMinecraft(raw);
+    this.push('chat', colored);
+    this.supervisor.macros.onChat(this, stripFormatting(colored));
+  }
+
+  // ------------------------------------------------------------ Live-Ansicht
+
+  /**
+   * Gehört diese Rohzeile zu einem POV-Bild? Dann wird sie hier verbraucht (Rückgabe `true`).
+   *
+   * Ein Bild beginnt mit `ESC[H`, besteht danach nur aus Zeichen der Helligkeitsrampe und endet
+   * an der Fußzeile mit der Position. Kommt nach `ESC[H` etwas anderes – etwa die Meldung
+   * "Live-POV gestartet." –, ist es kein Bild und die Zeile geht ihren gewohnten Weg.
+   */
+  povFeed(raw) {
+    if (!this.povWanted) return false;
+    let body = raw;
+    const home = raw.lastIndexOf('\x1b[H');
+    if (home >= 0) {
+      this.flushPov();
+      this.povRows = [];
+      body = raw.slice(home + 3);
+      if (!stripAnsi(body).trim()) return true;
+    }
+    if (!this.povRows) return false;
+
+    const text = stripAnsi(body);
+    if (POV_FOOTER.test(text)) {
+      this.povStatus = text.trim();
+      this.flushPov();
+      return true;
+    }
+    if (!isPovRow(text)) {
+      this.povRows = null;
+      return false;
+    }
+    // Ein Bild bleibt ein Bild: mehr als 120 Zeilen kann keine eingestellte Größe ergeben, und
+    // ohne diese Grenze könnte ein hängender Client den Speicher volllaufen lassen.
+    if (this.povRows.length < 120) this.povRows.push(povCells(body));
+    return true;
+  }
+
+  /** Das gesammelte Bild an den Browser geben – höchstens alle POV_MIN_GAP_MS. */
+  flushPov() {
+    const rows = this.povRows;
+    this.povRows = null;
+    if (!rows || !rows.length) return;
+    const now = Date.now();
+    if (now - this.povSentAt < POV_MIN_GAP_MS) return;
+    this.povSentAt = now;
+    this.views.pov = {
+      empty: false,
+      width: Math.max(...rows.map((row) => row.reduce((sum, run) => sum + run[1].length, 0))),
+      height: rows.length,
+      rows,
+      status: this.povStatus,
+      at: now,
+    };
+    this.emitView('pov');
   }
 
   /** Maschinenlesbares Ereignis – das ist der verlässliche Weg. */
@@ -770,7 +1016,9 @@ class Bot extends EventEmitter {
     const hardLimit = limit + 200;
     if (this.chat.length > hardLimit) this.chat.splice(0, this.chat.length - hardLimit);
     if (type === 'chat' || type === 'error') {
-      const record = `${new Date(entry.t).toISOString()} ${type} ${text}\n`;
+      // Ins Protokoll kommt der nackte Text. Wer eine Datei mit `grep` durchsucht, will nicht
+      // gegen "§a" antreten müssen – die Farben stehen ohnehin im Verlauf des Panels.
+      const record = `${new Date(entry.t).toISOString()} ${type} ${stripFormatting(text)}\n`;
       this.rotateLog(Buffer.byteLength(record));
       fs.appendFile(this.logFile, record, () => {});
     }
@@ -816,23 +1064,54 @@ class Bot extends EventEmitter {
    */
   local(verb, arg = '', need = 'movement') {
     if (!this.caps[need]) {
-      throw new HttpError(
-        409,
-        need === 'movement'
-          ? 'Bewegung gibt es ab einem bezahlten Serverplatz (Premium-Client).'
-          : 'Dieser Befehl braucht den Premium-Client.',
-        {
-          en:
-            need === 'movement'
-              ? 'Movement needs a paid server slot (premium client).'
-              : 'This command needs the premium client.',
-        }
-      );
+      const messages = {
+        movement: [
+          'Bewegung gibt es ab einem bezahlten Serverplatz (Premium-Client).',
+          'Movement needs a paid server slot (premium client).',
+        ],
+        pov: [
+          'Die Live-Ansicht ist für diesen Serverplatz nicht gebucht.',
+          'The live view is not booked for this server slot.',
+        ],
+      };
+      const message = messages[need] || [
+        'Dieser Befehl braucht den Premium-Client.',
+        'This command needs the premium client.',
+      ];
+      throw new HttpError(409, message[0], { en: message[1] });
     }
     // Abfragen, deren Antwort als Ansicht gehört und nicht als Textzeilen.
     if (verb === 'board' || verb === 'menu') this.beginCapture(verb);
     if (verb === 'pos' || verb === 'position') this.beginCapture('position');
+    if (verb === 'pov') this.setPov(arg);
     return this.send(`:${verb}${arg ? ` ${arg}` : ''}`, { local: true });
+  }
+
+  /**
+   * Was `:pov …` im Panel bedeutet.
+   *
+   * Der Client zeichnet, sobald er soll; das Panel muss nur wissen, ob es die Bildzeilen ab jetzt
+   * als Bild lesen soll oder als gewöhnliche Ausgabe. Ohne diesen Schalter würde jede Zeile jedes
+   * Bots gegen die Bilderkennung laufen, auch wenn niemand die Ansicht offen hat.
+   */
+  setPov(arg) {
+    const [mode, width, height] = String(arg || 'live').trim().split(/\s+/);
+    if (mode === 'stop') {
+      this.povWanted = false;
+      this.povRows = null;
+      this.views.pov = { empty: true };
+      this.emitView('pov');
+      return;
+    }
+    if (mode === 'size') {
+      this.povSize = {
+        width: Math.max(24, Math.min(160, Number(width) || this.povSize.width)),
+        height: Math.max(12, Math.min(80, Number(height) || this.povSize.height)),
+      };
+      return;
+    }
+    // live, frame und info liefern alle Bildzeilen – ab jetzt zuhören.
+    this.povWanted = true;
   }
 
   snapshot() {
@@ -849,7 +1128,10 @@ class Bot extends EventEmitter {
       last_error: this.lastError,
       build: this.build,
       menu: this.menu,
-      views: this.views,
+      // Ohne das Bild: ein Zustandswechsel wird bei laufender Live-Ansicht sonst zu einem
+      // Datenpaket von zig Kilobyte. Bilder gehen ihren eigenen Weg (`bot-view`).
+      views: { board: this.views.board, menu: this.views.menu, position: this.views.position },
+      pov: this.povWanted ? { on: true, ...this.povSize } : { on: false, ...this.povSize },
       uptime: this.startedAt ? Date.now() - this.startedAt : 0,
       // Nur gesetzt, wenn der Client gerade auf eine neue Microsoft-Anmeldung wartet.
       auth: this.state === 'auth' ? this.auth : null,
@@ -1128,6 +1410,38 @@ class Supervisor extends EventEmitter {
       }
     }
     return out;
+  }
+
+  /**
+   * Die Bots eines Standorts wieder hochfahren, nachdem er sich zurückgemeldet hat.
+   *
+   * Beim Abriss der Leitung stoppt der Standort seine Prozesse – ein Bot, den niemand mehr lesen
+   * oder steuern kann, ist kein laufender Bot. Umgekehrt bleibt der **Wunsch** stehen, und hier
+   * wird er wieder eingelöst.
+   */
+  restoreNode(nodeId) {
+    const rows = db
+      .prepare(
+        `SELECT pa.profile_id, pa.account_id FROM profile_accounts pa
+           JOIN profiles p ON p.id = pa.profile_id
+          WHERE pa.wanted = 1 AND p.node_id = ?`
+      )
+      .all(nodeId);
+    let started = 0;
+    for (const row of rows) {
+      if (this.get(row.profile_id, row.account_id)?.running) continue;
+      const context = this.context(row.profile_id, row.account_id);
+      if (!context) continue;
+      if (context.user.blocked || context.profile.locked || context.account.suspended) continue;
+      if (!isActive(context.profile)) continue;
+      try {
+        this.start(context);
+        started += 1;
+      } catch {
+        /* einer weniger, der Rest läuft trotzdem */
+      }
+    }
+    return started;
   }
 
   /** Nach einem Neustart des Dienstes alles wieder hochfahren, was laufen soll. */

@@ -183,6 +183,7 @@ async function renderProfile(root, route) {
     movement: tabMovement,
     board: tabBoard,
     menu: tabMenu,
+    pov: tabPov,
     macros: tabMacros,
     proxies: tabProxies,
     plan: tabPlan,
@@ -917,6 +918,176 @@ function boardCard(member, view) {
     </ol>
     <footer>${escapeHtml(member.name)}</footer>
   </article>`;
+}
+
+// ---------------------------------------------------------------- Live-Ansicht (POV)
+//
+// Der Client rechnet aus den geladenen Chunks, Blockänderungen und Entities ein Bild und schreibt
+// es als gefärbte Zeichen. Minecraft überträgt keine fertigen Bildschirmbilder – was hier steht,
+// ist also wirklich das, was der Bot an seiner Position sieht, und kein Bildschirmabgriff.
+//
+// Gezeichnet wird auf ein Canvas in der Auflösung des Bildes und dann hochskaliert. Ein Raster aus
+// dreitausend <span> je Bild wäre bei fünf Bildern in der Sekunde nichts, was ein Browser gern tut.
+
+/** Die Helligkeitsrampe des Clients – dunkel nach hell. */
+const POV_RAMP = ' .:-=+*#%@';
+
+const POV_SIZES = [
+  { key: 'small', width: 48, height: 24 },
+  { key: 'medium', width: 80, height: 40 },
+  { key: 'large', width: 120, height: 60 },
+];
+
+async function tabPov(root, profile) {
+  const members = profile.accounts;
+  if (!members.length) return noAccounts(root, profile);
+
+  root.innerHTML = `
+    <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
+      <div style="max-width:44rem;min-width:0">
+        <h2 style="font-size:1.25rem;margin:0 0 .35rem">${escapeHtml(tr('pov.title'))}</h2>
+        <p class="small muted" style="margin:0">${escapeHtml(tr('pov.lead'))}</p>
+      </div>
+    </div>
+    ${accountPicker(members)}
+    <div class="row wrap" style="margin-bottom:1rem">
+      <button class="btn btn-primary btn-sm" id="pov-live">${icon('play')} ${escapeHtml(tr('pov.start'))}</button>
+      <button class="btn btn-sm" id="pov-frame">${icon('eye')} ${escapeHtml(tr('pov.frame'))}</button>
+      <button class="btn btn-sm" id="pov-stop">${icon('stop')} ${escapeHtml(tr('pov.stop'))}</button>
+      <label class="row small" style="gap:.4rem;align-self:center">
+        <span class="muted">${escapeHtml(tr('pov.size'))}</span>
+        <select id="pov-size" style="width:auto">
+          ${POV_SIZES.map(
+            (size) =>
+              `<option value="${size.key}" ${size.key === 'medium' ? 'selected' : ''}>${escapeHtml(
+                tr(`pov.${size.key}`)
+              )} · ${size.width}×${size.height}</option>`
+          ).join('')}
+        </select>
+      </label>
+    </div>
+    <div class="pov-grid" id="pov-views"></div>
+    <p class="small muted" style="margin-top:1rem">${escapeHtml(tr('pov.note'))}</p>`;
+
+  const run = commandRunner(profile);
+  const canvases = new Map();
+
+  const sizeOf = () => POV_SIZES.find((entry) => entry.key === $('#pov-size').value) || POV_SIZES[1];
+
+  const start = async () => {
+    const size = sizeOf();
+    await run('pov', `size ${size.width} ${size.height}`);
+    await run('pov', 'live');
+  };
+
+  $('#pov-live').addEventListener('click', start);
+  $('#pov-frame').addEventListener('click', async () => {
+    const size = sizeOf();
+    await run('pov', `size ${size.width} ${size.height}`);
+    await run('pov', 'frame');
+  });
+  $('#pov-stop').addEventListener('click', () => run('pov', 'stop'));
+  $('#pov-size').addEventListener('change', () => {
+    const size = sizeOf();
+    run('pov', `size ${size.width} ${size.height}`);
+  });
+
+  // Wer den Reiter verlässt, will nicht, dass der Client weiterrechnet. Ein laufendes Bild kostet
+  // auf der Maschine deutlich mehr als ein stiller Bot.
+  const stopOnLeave = () => {
+    api(`/profiles/${profile.id}/command`, {
+      method: 'POST',
+      body: { verb: 'pov', arg: 'stop', accounts: members.map((member) => member.account_id) },
+    }).catch(() => {});
+  };
+  window.addEventListener('hashchange', stopOnLeave, { once: true });
+
+  function shell(member) {
+    const bot = state.bots.get(`${profile.id}:${member.account_id}`);
+    return `<article class="pov" data-account="${member.account_id}">
+      <header>
+        <span class="truncate">${escapeHtml(member.name)}</span>
+        <span class="small muted pov-status"></span>
+      </header>
+      <div class="pov-stage">
+        <canvas class="pov-canvas" width="640" height="320"></canvas>
+        <p class="pov-hint">${escapeHtml(bot?.online ? tr('pov.waiting') : tr('pov.offline'))}</p>
+      </div>
+    </article>`;
+  }
+
+  $('#pov-views').innerHTML = members.map(shell).join('');
+  for (const node of $$('.pov')) canvases.set(Number(node.dataset.account), node);
+
+  /** Ein Bild zeichnen: erst in der Auflösung des Bildes, dann ohne Glättung hochskaliert. */
+  function paint(accountId, view) {
+    const card = canvases.get(accountId);
+    if (!card || !view || view.empty || !view.rows?.length) return;
+    const canvas = card.querySelector('.pov-canvas');
+    const cols = view.width || Math.max(...view.rows.map((row) => rowLength(row)));
+    const rows = view.rows.length;
+    if (!cols || !rows) return;
+
+    const buffer = document.createElement('canvas');
+    buffer.width = cols;
+    buffer.height = rows;
+    const source = buffer.getContext('2d');
+    const image = source.createImageData(cols, rows);
+
+    for (let y = 0; y < rows; y++) {
+      let x = 0;
+      for (const [color, text] of view.rows[y]) {
+        const rgb = color ? [
+          parseInt(color.slice(0, 2), 16),
+          parseInt(color.slice(2, 4), 16),
+          parseInt(color.slice(4, 6), 16),
+        ] : [140, 150, 160];
+        for (const char of text) {
+          // Das Zeichen ist die Helligkeit, die Farbe der Block. Beides zusammen ergibt ein Bild,
+          // in dem eine Höhle dunkel und eine Wiese hell ist – wie im Spiel.
+          const level = Math.max(0, POV_RAMP.indexOf(char)) / (POV_RAMP.length - 1);
+          const shade = 0.3 + 0.7 * level;
+          const at = (y * cols + x) * 4;
+          image.data[at] = Math.round(rgb[0] * shade);
+          image.data[at + 1] = Math.round(rgb[1] * shade);
+          image.data[at + 2] = Math.round(rgb[2] * shade);
+          image.data[at + 3] = 255;
+          x += 1;
+          if (x >= cols) break;
+        }
+        if (x >= cols) break;
+      }
+    }
+    source.putImageData(image, 0, 0);
+
+    const target = canvas.getContext('2d');
+    canvas.width = Math.min(960, cols * 8);
+    canvas.height = Math.round((canvas.width * rows) / cols);
+    target.imageSmoothingEnabled = false;
+    target.drawImage(buffer, 0, 0, canvas.width, canvas.height);
+
+    card.classList.add('has-frame');
+    card.querySelector('.pov-status').textContent = view.status || '';
+  }
+
+  const rowLength = (row) => row.reduce((sum, part) => sum + part[1].length, 0);
+
+  for (const member of members) {
+    const bot = state.bots.get(`${profile.id}:${member.account_id}`);
+    if (bot?.views?.pov) paint(member.account_id, bot.views.pov);
+  }
+
+  state.onLive = (event) => {
+    if (event.type !== 'view' || event.kind !== 'pov') return;
+    const [profileId, accountId] = event.key.split(':').map(Number);
+    if (profileId !== profile.id) return;
+    if (event.view?.empty) {
+      const card = canvases.get(accountId);
+      card?.classList.remove('has-frame');
+      return;
+    }
+    paint(accountId, event.view);
+  };
 }
 
 // ---------------------------------------------------------------- Menüs

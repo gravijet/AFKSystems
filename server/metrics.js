@@ -174,6 +174,36 @@ export const diskOfUser = (userId) => dirSize(path.join(paths.users, String(user
 // ---------------------------------------------------------------- Gesamtbild
 
 /**
+ * Dieselben Zahlen in der Form, die ein Standort meldet.
+ *
+ * Der Haupt-Standort ist diese Maschine. Damit die Standort-Ansicht nicht zwei Formate kennen
+ * muss – eines für "hier" und eines für "dort" –, wird der eigene Zustand hier in dasselbe
+ * Format gebracht, das agent/index.js schickt.
+ */
+export function asNodeStats(snapshot_) {
+  return {
+    at: snapshot_.at,
+    hostname: snapshot_.host.hostname,
+    platform: snapshot_.host.platform,
+    cores: snapshot_.host.cores,
+    uptime_sec: snapshot_.host.uptime_sec,
+    agent_uptime_sec: snapshot_.afksystems.uptime_sec,
+    load: snapshot_.host.load,
+    cpu_percent: snapshot_.host.cpu_percent,
+    memory: snapshot_.host.memory,
+    disk: snapshot_.host.disk,
+    bots: snapshot_.afksystems.bots,
+    afksystems: {
+      cpu_percent: snapshot_.afksystems.cpu_percent,
+      memory_bytes: snapshot_.afksystems.memory_bytes,
+      memory_percent: snapshot_.afksystems.memory_percent,
+      bots_memory_bytes: snapshot_.afksystems.bots_memory_bytes,
+      disk: snapshot_.afksystems.disk,
+    },
+  };
+}
+
+/**
  * Alles auf einmal, für den Admin-Bereich: was die Maschine tut, was davon auf AFKSystems geht,
  * und wie viel Platz die eigenen Verzeichnisse brauchen.
  */

@@ -838,6 +838,8 @@ const LOCAL_VERBS = {
   slot: 'items',
   inv: 'items',
   antiafk: 'antiafk',
+  // Live-Ansicht: `:pov live|stop|frame|size <b> <h>|info`.
+  pov: 'pov',
 };
 
 const runLocal = wrap((req, res) => {

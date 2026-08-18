@@ -532,6 +532,10 @@ export function packages() {
     label: entry.label || `${(entry.cent / 100).toFixed(2)} €`,
     euro: (entry.cent / 100).toFixed(2),
     bonus: Math.max(0, entry.credits - entry.cent),
+    // Nur für den Headless-Weg von Tebex: dort liegt das Paket fertig im Webstore und hat dort
+    // eine eigene Nummer. Leer heißt "gibt es dort nicht" – dann taugt das Paket nur für den
+    // Checkout-Weg, bei dem der Preis von hier kommt.
+    tebex: entry.tebex ? String(entry.tebex) : null,
   }));
 }
 
@@ -565,7 +569,7 @@ const settle = db.transaction((topupId, note = '') => {
  * Eine Aufladung als bezahlt verbuchen.
  *
  * Der Beleg per E-Mail gehört dazu und steht deshalb hier und nicht an den drei Stellen, die
- * aufladen können (Stripe-Webhook, Admin-Bestätigung, Gutschrift von Hand). Er geht nach der
+ * aufladen können (Tebex-Webhook, Admin-Bestätigung, Gutschrift von Hand). Er geht nach der
  * Transaktion raus – ein hängender Mailserver darf keine Buchung aufhalten.
  */
 export function settleTopup(topupId, note = '') {
@@ -586,6 +590,34 @@ export function settleTopup(topupId, note = '') {
 export function cancelTopup(topupId) {
   db.prepare("UPDATE topups SET status = 'cancelled' WHERE id = ? AND status = 'open'").run(topupId);
 }
+
+/**
+ * Eine bezahlte Aufladung zurücknehmen – Rückerstattung, Rücklastschrift, verlorener Fall.
+ *
+ * Abgezogen wird höchstens, was noch da ist: **ins Minus geht es hier nie**, das ist im ganzen
+ * Panel so und bleibt auch hier so. Was nicht mehr abzuziehen war, steht in der Rückgabe und
+ * gehört auf den Tisch des Betreibers, nicht in eine stille Schuld beim Kunden.
+ */
+export const refundTopup = db.transaction((topupId, note = '') => {
+  const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
+  if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
+  if (topup.status === 'refunded') return { topup, taken: 0, missing: 0, already: true };
+  db.prepare("UPDATE topups SET status = 'refunded' WHERE id = ?").run(topupId);
+  if (topup.status !== 'paid') return { topup, taken: 0, missing: 0, already: false };
+
+  const have = balance(topup.user_id);
+  const take = Math.min(have, topup.credits);
+  if (take > 0) {
+    move(topup.user_id, -take, 'refund', note || `Rückerstattung ${(topup.amount_cent / 100).toFixed(2)} €`, String(topupId));
+  }
+  audit(topup.user_id, 'topup-refunded', { id: topupId, taken: take, missing: topup.credits - take });
+  return {
+    topup: db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId),
+    taken: take,
+    missing: topup.credits - take,
+    already: false,
+  };
+});
 
 // ---------------------------------------------------------------- Auswertung
 

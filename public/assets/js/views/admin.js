@@ -1394,10 +1394,63 @@ async function accounts(root) {
 }
 
 // ---------------------------------------------------------------- Standorte
+//
+// Ein Standort ist eine Maschine: dort laufen Prozesse, dort werden CPU, Arbeitsspeicher und
+// Platte verbraucht. Deshalb steht auf jeder Karte, was die Maschine gerade tut – und deshalb
+// steht das an einem Proxy nirgends: eine Adresse hat keine Auslastung.
 
 async function nodes(root) {
   const data = await api('/admin/nodes');
   const { users: userList } = await api('/admin/users?filter=all');
+
+  /** Die drei Balken, die einen Standort beschreiben. Fehlen die Zahlen, fehlt der Block. */
+  function load(node) {
+    const stats = node.resources;
+    if (!stats) {
+      return `<p class="small muted" style="margin:1rem 0 0">${escapeHtml(
+        node.kind === 'egress' ? tr('nd.noResources') : tr('nd.noStats')
+      )}</p>`;
+    }
+    const rows = [
+      {
+        label: tr('adm.cpu'),
+        percent: stats.cpu_percent ?? 0,
+        text: `${Math.round(stats.cpu_percent ?? 0)} % ${escapeHtml(tr('nd.ofCores', { n: stats.cores || 1 }))}`,
+        limit: node.max_cpu_percent,
+      },
+      {
+        label: tr('adm.ram'),
+        percent: stats.memory?.percent ?? 0,
+        text: `${bytes(stats.memory?.used || 0)} / ${bytes(stats.memory?.total || 0)}`,
+        limit: node.max_mem_percent,
+      },
+      {
+        label: tr('adm.disk'),
+        percent: stats.disk?.percent ?? 0,
+        text: stats.disk ? `${bytes(stats.disk.used)} / ${bytes(stats.disk.total)}` : '–',
+        limit: 0,
+      },
+    ];
+    return `<div class="node-load">
+      ${rows
+        .map(
+          (row) => `<div>
+            <div class="row spread small">
+              <span class="muted">${escapeHtml(row.label)}</span>
+              <span class="mono">${row.text}${
+                row.limit ? ` <span class="muted">· max ${row.limit} %</span>` : ''
+              }</span>
+            </div>
+            ${meter(row.percent, { label: `${row.label} ${Math.round(row.percent)} %` })}
+          </div>`
+        )
+        .join('')}
+    </div>`;
+  }
+
+  /** Der Einzeiler, mit dem ein neuer Standort eingerichtet wird. */
+  const setupCommand = (node) =>
+    `sudo PANEL_URL=${data.panel_url} NODE_TOKEN=${node.token} ./install-agent.sh`;
 
   root.innerHTML = `
     <div class="row wrap spread" style="margin-bottom:1rem;gap:1rem">
@@ -1412,15 +1465,24 @@ async function nodes(root) {
           (node) => `<article class="card node-card ${node.active ? '' : 'is-off'}">
             <div class="row spread" style="align-items:flex-start">
               <div style="min-width:0">
-                <div class="row" style="gap:.5rem">${icon('pin')}
+                <div class="row wrap" style="gap:.5rem">${icon('pin')}
                   <span class="strong">${escapeHtml(node.name)}</span>
-                  ${node.kind === 'local' ? `<span class="pill">${escapeHtml(tr('nd.main'))}</span>` : ''}
+                  <span class="pill">${escapeHtml(tr(`nd.kind.${node.kind}`))}</span>
+                  ${
+                    node.kind === 'agent'
+                      ? `<span class="pill ${node.online ? 'primary' : 'missing'}">${escapeHtml(
+                          node.online ? tr('nd.connected') : tr('nd.disconnected')
+                        )}</span>`
+                      : ''
+                  }
                   ${node.full ? `<span class="pill missing">${escapeHtml(tr('nd.full'))}</span>` : ''}
                   ${node.active ? '' : `<span class="pill missing">${escapeHtml(tr('srv.off'))}</span>`}</div>
                 <p class="small muted" style="margin:.4rem 0 0">${escapeHtml(node.note || '')}</p>
               </div>
               <span class="pill">${escapeHtml(tr(`nd.access.${node.access}`))}</span>
             </div>
+
+            ${load(node)}
 
             <dl class="facts" style="margin-top:1rem">
               <div><dt>${escapeHtml(tr('adm.profiles'))}</dt>
@@ -1431,13 +1493,27 @@ async function nodes(root) {
                 <dd class="mono small">${
                   node.proxy ? `${escapeHtml(node.proxy.kind)}://${escapeHtml(node.proxy.host)}:${node.proxy.port}` : '–'
                 }</dd></div>
-              <div><dt>${escapeHtml(tr('adm.users'))}</dt>
-                <dd class="small">${
-                  node.access === 'listed'
-                    ? escapeHtml(node.users.map((user) => user.username).join(', ') || '–')
-                    : escapeHtml(tr(`nd.access.${node.access}`))
-                }</dd></div>
+              <div><dt>${escapeHtml(tr('nd.machine'))}</dt>
+                <dd class="small truncate">${escapeHtml(
+                  node.resources?.hostname || (node.kind === 'egress' ? tr('nd.viaProxy') : '–')
+                )}${node.agent?.version ? ` · Agent ${escapeHtml(node.agent.version)}` : ''}</dd></div>
             </dl>
+
+            ${
+              node.kind === 'agent'
+                ? `<details class="node-setup" ${node.online ? '' : 'open'}>
+                    <summary>${escapeHtml(tr('nd.setup'))}</summary>
+                    <p class="small muted" style="margin:.5rem 0">${escapeHtml(tr('nd.setupHint'))}</p>
+                    <code class="node-token">${escapeHtml(setupCommand(node))}</code>
+                    <div class="row" style="margin-top:.6rem">
+                      <button class="btn btn-ghost btn-sm" data-copy="${node.id}">${icon('copy')}
+                        ${escapeHtml(tr('common.copy'))}</button>
+                      <button class="btn btn-ghost btn-sm" data-token="${node.id}">${icon('refresh')}
+                        ${escapeHtml(tr('nd.newToken'))}</button>
+                    </div>
+                  </details>`
+                : ''
+            }
 
             <div class="row" style="margin-top:1rem">
               <button class="btn btn-sm" data-edit="${node.id}">${escapeHtml(tr('common.edit'))}</button>
@@ -1454,13 +1530,25 @@ async function nodes(root) {
 
   const fields = (node = {}) => [
     { key: 'name', label: tr('common.name'), value: node.name || '', required: true },
+    ...(node.kind === 'local'
+      ? []
+      : [
+          {
+            key: 'kind',
+            label: tr('nd.kindLabel'),
+            type: 'select',
+            value: node.kind || 'agent',
+            hint: tr('nd.kindHint'),
+            options: data.kinds.map((value) => ({ value, label: tr(`nd.kind.${value}`) })),
+          },
+        ]),
     { key: 'region', label: 'Region', value: node.region || '', placeholder: 'Falkenstein' },
     {
       key: 'proxy_id',
       label: tr('px.title'),
       type: 'select',
       value: String(node.proxy_id || ''),
-      hint: tr('nd.sub'),
+      hint: tr('nd.proxyHint'),
       options: [
         { value: '', label: '–' },
         ...data.proxies.map((proxy) => ({
@@ -1471,6 +1559,24 @@ async function nodes(root) {
     },
     { key: 'max_profiles', label: tr('adm.profiles'), type: 'number', min: 0, value: node.max_profiles ?? 0 },
     { key: 'max_bots', label: tr('adm.bots'), type: 'number', min: 0, value: node.max_bots ?? 0 },
+    {
+      key: 'max_cpu_percent',
+      label: tr('nd.maxCpu'),
+      type: 'number',
+      min: 0,
+      max: 100,
+      hint: tr('nd.maxHint'),
+      value: node.max_cpu_percent ?? 0,
+    },
+    {
+      key: 'max_mem_percent',
+      label: tr('nd.maxMem'),
+      type: 'number',
+      min: 0,
+      max: 100,
+      hint: tr('nd.maxHint'),
+      value: node.max_mem_percent ?? 0,
+    },
     {
       key: 'access',
       label: tr('nd.access.all'),
@@ -1484,7 +1590,7 @@ async function nodes(root) {
       hint: `${tr('nd.access.listed')} — IDs, Komma getrennt`,
       value: (node.users || []).map((user) => user.id).join(', '),
     },
-    { key: 'note', label: tr('common.edit'), value: node.note || '' },
+    { key: 'note', label: tr('nd.note'), value: node.note || '' },
     { key: 'active', label: tr('srv.on'), type: 'checkbox', value: node.active !== false },
   ];
 
@@ -1496,6 +1602,29 @@ async function nodes(root) {
       .filter(Boolean)
       .map(Number),
   });
+
+  $$('[data-copy]').forEach((button) =>
+    button.addEventListener('click', () => {
+      const node = data.nodes.find((entry) => entry.id === Number(button.dataset.copy));
+      navigator.clipboard?.writeText(setupCommand(node)).then(
+        () => ok(tr('common.copied')),
+        () => fail(new Error(tr('common.error')))
+      );
+    })
+  );
+
+  $$('[data-token]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('nd.newTokenWarn'), { confirm: tr('nd.newToken') }))) return;
+      try {
+        await api(`/admin/nodes/${button.dataset.token}/token`, { method: 'POST' });
+        ok(tr('adm.saved'));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
 
   $('#new').addEventListener('click', async () => {
     const answer = await formDialog(tr('common.create'), fields(), {
@@ -2265,6 +2394,24 @@ async function settings(root) {
       </div>`;
     }
 
+    // Eine Auswahl aus festen Möglichkeiten. Sie stehen in der Beschreibung der Einstellung und
+    // kommen von dort mit – das Panel kennt sie nicht selbst.
+    if (entry.type === 'select') {
+      const current = String(value(entry.key));
+      return `<div class="field"><label for="${id}">${escapeHtml(entry.label)}</label>
+        <select id="${id}" data-set="${entry.key}">
+          ${(entry.options || [])
+            .map(
+              (option) =>
+                `<option value="${escapeHtml(option.value)}" ${
+                  option.value === current ? 'selected' : ''
+                }>${escapeHtml(option.label)}</option>`
+            )
+            .join('')}
+        </select>
+        ${help}</div>`;
+    }
+
     if (entry.type === 'password') {
       // Ein Geheimnis kommt nie zurück – das Feld ist deshalb immer leer und sagt nur, ob eines
       // hinterlegt ist. So steht ein Bot-Token nicht im HTML einer Seite, die offen liegen bleibt.
@@ -2340,6 +2487,7 @@ async function settings(root) {
           <span>${escapeHtml(tr('adm.packCent'))}</span>
           <span>${escapeHtml(tr('common.credits'))}</span>
           <span>${escapeHtml(tr('adm.packLabel'))}</span>
+          <span>${escapeHtml(tr('adm.packTebex'))}</span>
           <span></span>
         </div>
         ${packages
@@ -2351,6 +2499,9 @@ async function settings(root) {
                 value="${Number(pack.credits) || 0}" aria-label="${escapeHtml(tr('common.credits'))}">
               <input type="text" data-pack="${index}" data-key="label"
                 value="${escapeHtml(pack.label || '')}" aria-label="${escapeHtml(tr('adm.packLabel'))}">
+              <input type="text" data-pack="${index}" data-key="tebex" inputmode="numeric"
+                value="${escapeHtml(pack.tebex || '')}" placeholder="–"
+                aria-label="${escapeHtml(tr('adm.packTebex'))}">
               <button type="button" class="btn btn-ghost btn-sm btn-danger"
                 data-pack-del="${index}" title="${escapeHtml(tr('common.delete'))}">${icon('x')}</button>
             </div>`
@@ -2362,7 +2513,7 @@ async function settings(root) {
       input.addEventListener('input', () => {
         const index = Number(input.dataset.pack);
         const key = input.dataset.key;
-        packages[index][key] = key === 'label' ? input.value : Number(input.value);
+        packages[index][key] = key === 'label' || key === 'tebex' ? input.value : Number(input.value);
       })
     );
     $$('[data-pack-del]', box).forEach((button) =>
@@ -2374,7 +2525,7 @@ async function settings(root) {
   };
   paintPackages();
   $('#add-package')?.addEventListener('click', () => {
-    packages.push({ cent: 500, credits: 500, label: '5 €' });
+    packages.push({ cent: 500, credits: 500, label: '5 €', tebex: '' });
     paintPackages();
   });
 

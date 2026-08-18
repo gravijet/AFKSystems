@@ -9,12 +9,26 @@
 // `secret: true` heißt: der Wert verlässt den Server nie. Das Panel bekommt nur "gesetzt" oder
 // "nicht gesetzt" und schickt beim Speichern entweder einen neuen Wert oder gar nichts.
 
+import { config } from './config.js';
+
 export const GROUPS = [
   {
     key: 'money',
     icon: 'wallet',
     de: { title: 'Guthaben und Tarife', text: 'Was ein Konto geschenkt bekommt, ab wann gewarnt wird, wie viele Plätze gratis sind.' },
     en: { title: 'Credits and plans', text: 'What an account gets for free, when it is warned, how many slots are free.' },
+  },
+  {
+    key: 'payments',
+    icon: 'wallet',
+    de: {
+      title: 'Bezahlen mit Tebex',
+      text: `Tebex wickelt Karte, PayPal und die übrigen Zahlarten ab und kümmert sich um die Umsatzsteuer – AFKSystems fasst nie Geld an. Guthaben entsteht ausschließlich über den Webhook: trage im Tebex-Panel unter Developers → Webhooks diese Adresse ein: ${config.publicUrl}/api/tebex/webhook`,
+    },
+    en: {
+      title: 'Paying with Tebex',
+      text: `Tebex handles cards, PayPal and the rest, and takes care of VAT – AFKSystems never touches the money. Credits are only ever created by the webhook: in the Tebex panel under Developers → Webhooks, add this address: ${config.publicUrl}/api/tebex/webhook`,
+    },
   },
   {
     key: 'signup',
@@ -149,6 +163,87 @@ export const SETTINGS = [
     type: 'packages',
     de: { label: 'Aufladepakete', help: 'Betrag in Cent, dafür so viele Credits. Alles über dem Betrag ist Bonus und wird auf der Preisseite als solcher ausgewiesen.' },
     en: { label: 'Top-up packages', help: 'Amount in cents, for that many credits. Anything above the amount is a bonus and is shown as one on the pricing page.' },
+  },
+
+  // ---------------------------------------------------------------- Bezahlen (Tebex)
+  {
+    key: 'tebex_enabled',
+    group: 'payments',
+    type: 'switch',
+    de: {
+      label: 'Bezahlen mit Tebex',
+      help: 'Aus heißt: im Panel steht die Zahlart nicht zur Auswahl. Gutschein, Überweisung und Aufbuchen durch den Admin bleiben davon unberührt.',
+    },
+    en: {
+      label: 'Paying with Tebex',
+      help: 'Off means the method is not offered in the panel. Vouchers, bank transfer and admin top-ups are unaffected.',
+    },
+  },
+  {
+    key: 'tebex_mode',
+    group: 'payments',
+    type: 'select',
+    options: [
+      { value: 'checkout', de: 'Checkout-API (Preise kommen von hier)', en: 'Checkout API (prices come from here)' },
+      { value: 'headless', de: 'Headless-API (Pakete liegen im Tebex-Store)', en: 'Headless API (packages live in the Tebex store)' },
+    ],
+    de: {
+      label: 'Weg',
+      help: 'Checkout-API: der Warenkorb wird hier gebaut, die Aufladepakete dieses Panels bestimmen Namen und Preis – Tebex muss sie für dein Konto freischalten. Headless-API: die Pakete liegen fertig im Tebex-Webstore, hier steht je Aufladepaket nur noch die Paket-ID. Der Headless-Weg braucht keine Freischaltung.',
+    },
+    en: {
+      label: 'Method',
+      help: 'Checkout API: the basket is built here and this panel\'s top-up packages set name and price – Tebex has to enable it for your account. Headless API: the packages live in the Tebex webstore and each top-up package only carries its package id. The headless route needs no approval.',
+    },
+  },
+  {
+    key: 'tebex_project_id',
+    group: 'payments',
+    type: 'text',
+    de: { label: 'Projekt-ID (Checkout)', help: 'Steht in creator.tebex.io unter Developers → API Keys. Nur für den Checkout-Weg.' },
+    en: { label: 'Project ID (checkout)', help: 'Found at creator.tebex.io under Developers → API Keys. Checkout route only.' },
+  },
+  {
+    key: 'tebex_private_key',
+    group: 'payments',
+    type: 'password',
+    secret: true,
+    de: {
+      label: 'Privater Schlüssel (Checkout)',
+      help: 'Derselbe Ort wie die Projekt-ID. Er darf nirgends sonst stehen – wer ihn hat, kann in deinem Namen kassieren.',
+    },
+    en: {
+      label: 'Private key (checkout)',
+      help: 'Same place as the project ID. It must live nowhere else – whoever has it can take payments in your name.',
+    },
+  },
+  {
+    key: 'tebex_store_token',
+    group: 'payments',
+    type: 'text',
+    de: { label: 'Store-Token (Headless)', help: 'Der öffentliche Token des Webstores. Nur für den Headless-Weg.' },
+    en: { label: 'Store token (headless)', help: 'The public token of the webstore. Headless route only.' },
+  },
+  {
+    key: 'tebex_webhook_secret',
+    group: 'payments',
+    type: 'password',
+    secret: true,
+    de: {
+      label: 'Webhook-Geheimnis',
+      help: 'Steht im Tebex-Panel neben dem Endpunkt. Ohne dieses Geheimnis nimmt AFKSystems keine einzige Zahlungsmeldung an – auch keine echte.',
+    },
+    en: {
+      label: 'Webhook secret',
+      help: 'Shown next to the endpoint in the Tebex panel. Without it AFKSystems accepts no payment notification at all – not even a real one.',
+    },
+  },
+  {
+    key: 'tebex_store_url',
+    group: 'payments',
+    type: 'text',
+    de: { label: 'Adresse des Stores', help: 'Optional. Steht im Panel als Link neben der Zahlart.' },
+    en: { label: 'Store address', help: 'Optional. Shown next to the payment method as a link.' },
   },
 
   // ---------------------------------------------------------------- Registrierung
@@ -466,6 +561,19 @@ export const SETTINGS = [
 
   // ---------------------------------------------------------------- Betrieb
   {
+    key: 'content_protection',
+    group: 'ops',
+    type: 'switch',
+    de: {
+      label: 'Inhaltsschutz',
+      help: 'Rechtsklick, Markieren, Ziehen und Drucken sind gesperrt, CSS und JavaScript lassen sich nicht einzeln herunterladen, und offene Entwicklerwerkzeuge blenden den Inhalt aus. Eingabefelder, Codes und Adressen bleiben kopierbar. Aus heißt: nichts davon gilt.',
+    },
+    en: {
+      label: 'Content protection',
+      help: 'Right-click, selecting, dragging and printing are blocked, CSS and JavaScript cannot be downloaded on their own, and open developer tools hide the content. Input fields, codes and addresses stay copyable. Off means none of it applies.',
+    },
+  },
+  {
     key: 'maintenance',
     group: 'ops',
     type: 'switch',
@@ -533,6 +641,11 @@ export function schemaFor(lang = 'de') {
       needs: entry.needs || null,
       min: entry.min,
       max: entry.max,
+      // Auswahlfelder tragen ihre Möglichkeiten mit – sonst müsste das Panel sie kennen, und die
+      // Beschreibung wäre wieder an zwei Stellen.
+      options: entry.options
+        ? entry.options.map((option) => ({ value: option.value, label: option[key] }))
+        : null,
       ...entry[key],
     })),
   };

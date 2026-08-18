@@ -16,7 +16,7 @@ AFKSystems ist der Verantwortliche für die Verarbeitung personenbezogener Daten
 - Verknüpfte Dienste: bei freiwilliger Nutzung die von Discord oder Google übermittelte Konto-ID, Name, E-Mail-Adresse, Profilbild und Status der Discord-Mitgliedschaft. AFKSystems erhält dabei niemals das Passwort des jeweiligen Anbieters.
 - Minecraft-Betriebsdaten: Kontoname und UUID, Zielserver, Version, Bot-Einstellungen, Befehle, Makros, Verbindungszustände und technische Protokolle. Für Microsoft-Konten wird die von Microsoft bereitgestellte Geräteanmeldung verwendet; Zugangsdaten werden nicht im Browser abgefragt.
 - Kommunikationsdaten: Ticketinhalte, Beteiligte, Status, Discord-Zuordnung, Chat- und Supportnachrichten sowie vom Dienst versandte E-Mails.
-- Abrechnungsdaten: Guthabenbewegungen, gebuchte Tarife und Zusätze, Zahlungsbetrag, Zahlungsart, Referenz und Status. Vollständige Kartenangaben werden bei Stripe direkt von Stripe verarbeitet und AFKSystems nicht mitgeteilt.
+- Abrechnungsdaten: Guthabenbewegungen, gebuchte Tarife und Zusätze, Zahlungsbetrag, Zahlungsart, Referenz und Status. Zahlungen laufen über Tebex (Tebex Limited) als Verkäufer im eigenen Namen; Kartendaten, Rechnungsanschrift und Umsatzsteuer werden dort verarbeitet und AFKSystems nicht mitgeteilt. Zurück kommt nur, dass eine Zahlung erfolgreich war, in welcher Höhe und zu welcher Aufladung sie gehört.
 - Sicherheits- und Betriebsdaten: Audit-Ereignisse, Fehlermeldungen, Missbrauchsindikatoren sowie Server- und Prozessmetriken.
 
 ## 3. Zwecke und Rechtsgrundlagen
@@ -25,7 +25,7 @@ Die Daten werden verarbeitet, um das Konto und die gebuchten Bot-Dienste bereitz
 
 ## 4. Empfänger und externe Dienste
 
-Daten erhalten nur Personen und Dienstleister, die sie für Betrieb, Hosting, Support oder Abrechnung benötigen. Je nach freiwillig genutzter Funktion werden Daten an Discord, Google, Microsoft oder Stripe übermittelt. Beim Verbinden eines Bots sieht der gewählte Minecraft-Server technisch notwendige Angaben wie Minecraft-Name, UUID, Verbindungs-IP und die gesendeten Spielaktionen. E-Mail-Anbieter verarbeiten Absender, Empfänger und Nachrichteninhalt. Eine Weitergabe zu Werbezwecken oder ein Verkauf personenbezogener Daten findet nicht statt.
+Daten erhalten nur Personen und Dienstleister, die sie für Betrieb, Hosting, Support oder Abrechnung benötigen. Je nach freiwillig genutzter Funktion werden Daten an Discord, Google, Microsoft oder Tebex übermittelt. Beim Verbinden eines Bots sieht der gewählte Minecraft-Server technisch notwendige Angaben wie Minecraft-Name, UUID, Verbindungs-IP und die gesendeten Spielaktionen. E-Mail-Anbieter verarbeiten Absender, Empfänger und Nachrichteninhalt. Eine Weitergabe zu Werbezwecken oder ein Verkauf personenbezogener Daten findet nicht statt.
 
 Diese Anbieter können Daten in Ländern außerhalb des Wohnsitzlandes oder außerhalb der EU/des EWR verarbeiten. In diesem Fall richtet sich die Übermittlung nach den anwendbaren gesetzlichen Voraussetzungen und den Schutzmechanismen des jeweiligen Anbieters. Die Datenschutzbestimmungen des gewählten Drittanbieters gelten zusätzlich.
 
@@ -62,7 +62,7 @@ AFKSystems is the controller for personal data processed by this service. AFKSys
 - Linked services: when used voluntarily, the account ID, name, email address, avatar and Discord membership status supplied by Discord or Google. AFKSystems never receives the password used with those providers.
 - Minecraft operations: account name and UUID, destination server, version, bot settings, commands, macros, connection states and technical logs. Microsoft accounts use Microsoft's device sign-in flow; credentials are not requested in the browser.
 - Communications: ticket contents, participants, status, Discord mapping, chat and support messages, and emails sent by the service.
-- Billing data: credit movements, plans and add-ons, payment amount, method, reference and status. Full card details are processed directly by Stripe and are not disclosed to AFKSystems.
+- Billing data: credit movements, plans and add-ons, payment amount, method, reference and status. Payments run through Tebex (Tebex Limited) as merchant of record; card details, billing address and VAT are handled there and are not disclosed to AFKSystems. All that comes back is that a payment succeeded, for how much, and which top-up it belongs to.
 - Security and operations: audit events, errors, abuse signals, and server or process metrics.
 
 ## 3. Purposes and legal bases
@@ -71,7 +71,7 @@ Data is processed to provide accounts and booked bot services, handle payments a
 
 ## 4. Recipients and external services
 
-Data is available only to people and providers that need it for operation, hosting, support or billing. Depending on features chosen voluntarily, data is sent to Discord, Google, Microsoft or Stripe. When a bot connects, the selected Minecraft server necessarily receives information such as Minecraft name, UUID, connection IP address and game actions sent. Email providers process sender, recipient and message contents. Personal data is not sold or disclosed for advertising.
+Data is available only to people and providers that need it for operation, hosting, support or billing. Depending on features chosen voluntarily, data is sent to Discord, Google, Microsoft or Tebex. When a bot connects, the selected Minecraft server necessarily receives information such as Minecraft name, UUID, connection IP address and game actions sent. Email providers process sender, recipient and message contents. Personal data is not sold or disclosed for advertising.
 
 Those providers may process information outside the user's country or outside the EU/EEA. Such transfers are made in accordance with applicable legal requirements and the safeguards offered by the provider. The privacy terms of a selected third-party service also apply.
 

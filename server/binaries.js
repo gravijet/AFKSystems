@@ -279,7 +279,12 @@ export function command(profile, plan) {
   if (!build) {
     throw new Error('Der Client wurde noch nicht geladen. Im Admin-Bereich "Client abgleichen".');
   }
-  return { command: path.join(paths.bin, BUILDS[build].file), build, caps: caps(build) };
+  return {
+    command: path.join(paths.bin, BUILDS[build].file),
+    file: BUILDS[build].file,
+    build,
+    caps: caps(build),
+  };
 }
 
 /** Der Weg für Aufgaben ohne Profil (Anmeldung, Kontenliste). Nimmt, was da ist. */

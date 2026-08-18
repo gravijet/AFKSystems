@@ -219,17 +219,18 @@ const LIST = [
   {
     key: 'pov',
     group: 'game',
-    // Kein `need`: was als "kommt später" ausgeschildert ist, darf dastehen, bevor der Client es
-    // kann. Es verspricht ja nichts für heute.
+    // Jetzt mit `need`: die Live-Ansicht gibt es wirklich, aber nur, wenn die Client-Datei auf
+    // diesem Server sie mitbringt. Fehlt sie, verschwindet der Eintrag – statt etwas zu
+    // versprechen, das hier niemand einlösen könnte.
+    need: 'pov',
     premium: true,
-    tag: 'soon',
     de: {
       title: 'Live-Ansicht',
-      text: 'Sehen, was der Bot sieht. Wird je Konto und Serverplatz einzeln gebucht und steckt in keinem Tarif – auch nicht in Ultra.',
+      text: 'Sehen, was der Bot sieht: Der Client rechnet aus den geladenen Weltdaten ein Bild, das Panel zeichnet es. Je Serverplatz buchbar und in keinem Tarif enthalten – auch nicht in Ultra.',
     },
     en: {
       title: 'Live view',
-      text: 'See what the bot sees. Booked per account and server slot, and part of no plan – not even Ultra.',
+      text: 'See what the bot sees: the client works a picture out from the world data it has loaded and the panel draws it. Booked per server slot and part of no plan – not even Ultra.',
     },
   },
 

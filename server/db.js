@@ -672,6 +672,45 @@ const migrations = [
       ).run();
     },
   },
+  {
+    // Standorte sind ab hier **Maschinen**, nicht mehr bloß Ausgangsadressen: auf einem Standort
+    // laufen Bot-Prozesse, und darum gehören CPU, Arbeitsspeicher und Platte dazu. Ein Proxy
+    // bleibt, was er war – eine Adresse ohne eigene Rechenleistung.
+    //
+    // Ein entfernter Standort meldet sich mit einem Token beim Panel (er baut die Verbindung auf,
+    // nicht umgekehrt). Deshalb braucht er weder eine öffentliche Adresse noch ein Zertifikat
+    // noch eine offene Portfreigabe – das ist der Unterschied zwischen "in fünf Minuten fertig"
+    // und "ein Nachmittag mit nginx".
+    name: '009-standorte-als-maschinen-und-live-ansicht',
+    sql: `
+      ALTER TABLE nodes ADD COLUMN token           TEXT;
+      ALTER TABLE nodes ADD COLUMN agent_version   TEXT;
+      ALTER TABLE nodes ADD COLUMN last_seen       INTEGER;
+      ALTER TABLE nodes ADD COLUMN max_cpu_percent INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE nodes ADD COLUMN max_mem_percent INTEGER NOT NULL DEFAULT 0;
+      -- Der zuletzt gemeldete Zustand. Nach einem Neustart des Panels steht damit sofort etwas da,
+      -- statt einer leeren Tabelle bis zur nächsten Meldung.
+      ALTER TABLE nodes ADD COLUMN stats           TEXT;
+      CREATE UNIQUE INDEX nodes_token ON nodes(token) WHERE token IS NOT NULL;
+    `,
+    run() {
+      // Die Live-Ansicht gibt es jetzt wirklich: das Panel zeichnet die Bilder des Clients.
+      db.prepare(
+        `UPDATE addons SET available = 1, active = 1, max_qty = 1,
+           text_de = 'Sehen, was der Bot sieht – der Client rechnet das Bild aus den geladenen Weltdaten und das Panel zeichnet es. Je Serverplatz buchbar, in keinem Tarif enthalten.',
+           text_en = 'See what the bot sees – the client works the picture out from loaded world data and the panel draws it. Booked per server slot, part of no plan.'
+         WHERE key = 'pov'`
+      ).run();
+      // Mehrfachbuchungen aus der Zeit, als der Zusatz je Konto gedacht war, auf eins zusammen-
+      // ziehen: freigeschaltet ist er ohnehin für den ganzen Serverplatz.
+      db.prepare(
+        "UPDATE profile_addons SET qty = 1 WHERE addon_id IN (SELECT id FROM addons WHERE key = 'pov')"
+      ).run();
+
+      // Der Haupt-Standort ist diese Maschine – er hat immer Ressourcen und braucht kein Token.
+      db.prepare("UPDATE nodes SET kind = 'local' WHERE kind = 'local'").run();
+    },
+  },
 ];
 
 /**
@@ -922,6 +961,16 @@ const defaults = {
     { cent: 5000, credits: 5600, label: '50 €' },
   ],
 
+  // Bezahlen läuft über Tebex. Alles hier, damit der Betreiber seinen Shop einrichten kann, ohne
+  // eine Datei auf dem Server anzufassen. Ohne Schlüssel bleibt die Zahlart einfach aus.
+  tebex_enabled: 0,
+  tebex_mode: 'checkout', // checkout | headless
+  tebex_project_id: '',
+  tebex_private_key: '',
+  tebex_store_token: '',
+  tebex_webhook_secret: '',
+  tebex_store_url: '',
+
   // Registrierung und Post
   registration_open: 1,
   email_verify: 0, // erst sinnvoll, wenn SMTP eingerichtet ist – sonst bleibt es unsichtbar
@@ -983,6 +1032,9 @@ const defaults = {
   legal_terms_en: TERMS_EN,
 
   // Betrieb
+  // Inhaltsschutz: Rechtsklick, Markieren, Ziehen, Drucken und der einzelne Aufruf von CSS/JS
+  // sind gesperrt, offene Entwicklerwerkzeuge blenden den Inhalt aus (docs/schutz.md).
+  content_protection: 1,
   maintenance: 0,
   maintenance_text: '',
   max_bots_per_user: 25,

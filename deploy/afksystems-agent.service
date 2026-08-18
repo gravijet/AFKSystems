@@ -1,0 +1,57 @@
+# systemd-Unit für einen Standort-Agent.
+#
+# Diese Datei gehört auf den **Standort**, nicht auf den Panel-Server:
+#
+#   sudo cp deploy/afksystems-agent.service /etc/systemd/system/afksystems-agent.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now afksystems-agent
+#   journalctl -u afksystems-agent -f
+#
+# Die ganze Einrichtung steht in docs/standorte.md.
+
+[Unit]
+Description=AFKSystems Standort-Agent
+Documentation=https://afksystems.de
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=afkagent
+Group=afkagent
+WorkingDirectory=/opt/afksystems-agent
+Environment=NODE_ENV=production
+EnvironmentFile=/opt/afksystems-agent/.env
+ExecStart=/usr/bin/node index.js
+
+# Beim Stoppen bekommen die Client-Prozesse ihre Chance, sich sauber abzumelden.
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+Restart=always
+RestartSec=5
+
+# Ein Bot je Konto ist ein eigener Prozess – die Grenzen entsprechend großzügig.
+LimitNOFILE=65535
+TasksMax=4096
+
+# Der Agent braucht nur sein eigenes Verzeichnis und ausgehendes Netz.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/afksystems-agent/data
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=afksystems-agent
+
+[Install]
+WantedBy=multi-user.target
