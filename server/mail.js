@@ -189,30 +189,68 @@ const escape = (text) =>
 const HOST = config.publicUrl.replace(/^https?:\/\//, '');
 
 /**
- * Der Rahmen um jede Nachricht: Logo, Überschrift, Text, ein Knopf. Bewusst schlicht – E-Mail-
- * Programme können weniger als jeder Browser, und eine Nachricht, die überall ankommt, ist mehr
- * wert als eine, die in dreien von zehn zerfällt.
+ * Der Rahmen um jede Nachricht: Kopfleiste mit Logo, Überschrift, Text, ein Knopf.
+ *
+ * Bewusst schlicht – E-Mail-Programme können weniger als jeder Browser, und eine Nachricht, die
+ * überall ankommt, ist mehr wert als eine, die in dreien von zehn zerfällt. Deshalb Tabellen für
+ * das Grundgerüst und keine Datei ohne Ersatzdarstellung.
+ *
+ * Zwei Dinge waren vorher falsch:
+ *
+ *  * **Das Logo stand auf Weiß.** Es ist eine Plakette mit weißer Schrift und weißem Rand – auf
+ *    weißem Grund verschwand die halbe Zeichnung, und was blieb, sah aus wie ein Ladefehler.
+ *    Jetzt sitzt es auf einer dunklen Leiste, für die es gezeichnet wurde.
+ *  * **Alles war zu klein.** 34 rem breit und 16 px Text ist eine Nachricht, die man auf einem
+ *    Telefon liest und auf einem Bildschirm sucht. Jetzt: 40 rem, größere Schrift, mehr Luft.
  */
 function wrap({ title, body, action, footer }) {
+  const logo = `${config.publicUrl}/assets/img/logo-256.png`;
   return `<!doctype html>
-<html><body style="margin:0;background:#f2f5f9;padding:32px 16px;
-  font:16px/1.55 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#171717">
-  <div style="max-width:34rem;margin:0 auto;background:#fff;border-radius:16px;padding:32px">
-    <img src="${config.publicUrl}/assets/img/logo-256.png" width="44" height="44" alt="${escape(config.brand)}"
-      style="display:block;border:0;margin-bottom:1.25rem">
-    <h1 style="font-size:1.35rem;margin:0 0 1rem;letter-spacing:-.02em">${escape(title)}</h1>
-    ${body}
-    ${
-      action
-        ? `<p style="margin:1.75rem 0 0"><a href="${action.url}"
-             style="display:inline-block;background:#206cfe;color:#fff;text-decoration:none;
-             padding:.7rem 1.2rem;border-radius:10px;font-weight:600">${escape(action.label)}</a></p>
-           <p style="margin:1.25rem 0 0;font-size:.8125rem;color:#6b7280;word-break:break-all">
-             ${escape(action.fallback)}: ${action.url}</p>`
-        : ''
-    }
-  </div>
-  <p style="max-width:34rem;margin:1rem auto 0;font-size:.75rem;color:#6b7280;text-align:center">
+<html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>${escape(title)}</title></head>
+<body style="margin:0;background:#eef1f6;padding:32px 16px;
+  font:17px/1.6 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#15181d;
+  -webkit-font-smoothing:antialiased">
+  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"
+    style="max-width:40rem;margin:0 auto;border-collapse:separate;border-spacing:0;
+    background:#ffffff;border-radius:18px;overflow:hidden;
+    box-shadow:0 1px 2px rgba(15,23,42,.06),0 12px 32px rgba(15,23,42,.08)">
+    <tr>
+      <td style="background:#12151b;padding:22px 36px">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+          <tr>
+            <td style="vertical-align:middle;padding-right:14px">
+              <img src="${logo}" width="52" height="52" alt=""
+                style="display:block;border:0;width:52px;height:52px">
+            </td>
+            <td style="vertical-align:middle;color:#ffffff;font-size:1.05rem;font-weight:700;
+              letter-spacing:-.01em">${escape(config.brand)}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:36px">
+        <h1 style="font-size:1.6rem;line-height:1.25;margin:0 0 1.1rem;letter-spacing:-.02em;
+          font-weight:700">${escape(title)}</h1>
+        ${body}
+        ${
+          action
+            ? `<p style="margin:2rem 0 0"><a href="${action.url}"
+                 style="display:inline-block;background:#206cfe;color:#ffffff;text-decoration:none;
+                 padding:.85rem 1.5rem;border-radius:12px;font-weight:600;font-size:1rem">${escape(
+                   action.label
+                 )}</a></p>
+               <p style="margin:1.4rem 0 0;font-size:.85rem;line-height:1.5;color:#5b6472;
+                 word-break:break-all">${escape(action.fallback)}: ${action.url}</p>`
+            : ''
+        }
+      </td>
+    </tr>
+  </table>
+  <p style="max-width:40rem;margin:1.25rem auto 0;font-size:.8125rem;color:#5b6472;text-align:center">
     ${escape(footer || HOST)}</p>
 </body></html>`;
 }
@@ -523,7 +561,7 @@ export async function sendTo(user, kind, vars = {}, { force = false } = {}) {
 
   const html = wrap({
     title: shape.title(values),
-    body: lines.map((line) => `<p style="margin:0 0 .85rem">${line}</p>`).join(''),
+    body: lines.map((line) => `<p style="margin:0 0 1.05rem;line-height:1.6">${line}</p>`).join(''),
     action: action && { ...action, fallback: FALLBACK[lang] },
     footer: FOOT[lang](HOST),
   });

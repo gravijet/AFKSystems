@@ -63,9 +63,9 @@ export const config = {
 
   registrationOpen: bool('REGISTRATION_OPEN', true),
 
-  // Zahlungen. Ohne Schlüssel bleibt Stripe aus und es zählen Gutscheine, Überweisung und Admin.
-  stripeSecret: process.env.STRIPE_SECRET_KEY || '',
-  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || '',
+  // Zahlungen laufen über Tebex. Alles dafür steht in den Einstellungen im Panel (siehe
+  // settings-schema.js) und nicht hier: der Betreiber soll seinen Shop einrichten können, ohne
+  // eine Datei auf dem Server anzufassen und den Dienst neu zu starten.
   bankTransfer: {
     holder: process.env.BANK_HOLDER || '',
     iban: process.env.BANK_IBAN || '',

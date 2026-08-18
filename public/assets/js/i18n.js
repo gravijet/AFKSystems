@@ -106,12 +106,28 @@ export const S = {
   },
 
   'rail.free': { en: 'Free slots per account', de: 'Gratis-Plätze je Konto' },
+  'rail.freeNote': {
+    en: 'For as long as your linked Discord account is with us.',
+    de: 'Solange dein verknüpftes Discord-Konto bei uns ist.',
+  },
   'rail.paid': { en: 'Further slots from', de: 'Weitere Plätze ab' },
+  'rail.paidNote': {
+    en: 'Per 30 days, paid from your credit balance.',
+    de: 'Je 30 Tage, bezahlt aus dem Guthaben.',
+  },
   'rail.perMonth': { en: 'per 30 days', de: 'je 30 Tage' },
-  'rail.month': { en: 'Billing period', de: 'Abrechnung je' },
-  'rail.monthValue': { en: '30 days', de: '30 Tage' },
-  'rail.reconnect': { en: 'After a disconnect', de: 'Nach einem Abbruch' },
-  'rail.reconnectValue': { en: 'stops safely', de: 'stoppt sicher' },
+  'rail.uptime': { en: 'The bot runs', de: 'Der Bot läuft' },
+  'rail.uptimeValue': { en: 'around the clock', de: 'rund um die Uhr' },
+  'rail.uptimeNote': {
+    en: 'On our machines. Your own PC can stay off.',
+    de: 'Auf unseren Maschinen. Dein PC darf aus bleiben.',
+  },
+  'rail.versions': { en: 'Minecraft versions', de: 'Minecraft-Versionen' },
+  'rail.versionsNote': {
+    en: 'Picked per server slot when you create it.',
+    de: 'Beim Anlegen je Serverplatz wählbar.',
+  },
+  'rail.versionsFallback': { en: 'Java Edition', de: 'Java Edition' },
 
   'home.what.title': { en: 'What you can do with it', de: 'Was du damit machen kannst' },
   'home.what.lead': {
@@ -425,6 +441,14 @@ export const S = {
   'dash.noServers': { en: 'No server yet.', de: 'Noch keiner angelegt.' },
   'dash.collapseNav': { en: 'Collapse navigation', de: 'Navigation einklappen' },
   'dash.expandNav': { en: 'Expand navigation', de: 'Navigation ausklappen' },
+  'dash.search': { en: 'Search the panel', de: 'Im Panel suchen' },
+
+  // Der Hinweis, der anstelle des Inhalts steht, solange die Entwicklerwerkzeuge offen sind.
+  'shield.note': {
+    en: 'The content is hidden while the developer tools are open.\nClose them and everything comes back.',
+    de: 'Der Inhalt ist ausgeblendet, solange die Entwicklerwerkzeuge offen sind.\nSchließe sie, dann ist alles wieder da.',
+  },
+  'dash.noHits': { en: 'Nothing matches that.', de: 'Dazu gibt es hier nichts.' },
   'dash.live': { en: 'Live connection', de: 'Live verbunden' },
   'dash.offline': { en: 'Connection to the panel lost', de: 'Verbindung zum Panel unterbrochen' },
   'dash.hello': { en: 'Hello, {name}', de: 'Hallo, {name}' },
@@ -446,6 +470,7 @@ export const S = {
   'tab.movement': { en: 'Movement', de: 'Bewegung' },
   'tab.board': { en: 'Scoreboard', de: 'Scoreboard' },
   'tab.menu': { en: 'Menus', de: 'Menüs' },
+  'tab.pov': { en: 'Live view', de: 'Live-Ansicht' },
   'tab.proxies': { en: 'Proxies', de: 'Proxys' },
   'tab.macros': { en: 'Macros', de: 'Macros' },
   'tab.plan': { en: 'Plan', de: 'Tarif' },
@@ -782,7 +807,8 @@ export const S = {
   'bill.voucherCode': { en: 'Voucher code', de: 'Gutscheincode' },
   'bill.voucherOk': { en: '{n} credits added.', de: '{n} Credits gutgeschrieben.' },
   'bill.method': { en: 'How would you like to pay?', de: 'Wie möchtest du zahlen?' },
-  'bill.card': { en: 'Card / Stripe', de: 'Karte / Stripe' },
+  'bill.card': { en: 'Card, PayPal and more', de: 'Karte, PayPal und mehr' },
+  'bill.store': { en: 'Open the store', de: 'Zum Shop' },
   'bill.transfer': { en: 'Bank transfer', de: 'Überweisung' },
   'bill.paypal': { en: 'PayPal', de: 'PayPal' },
   'bill.transferNote': {
@@ -880,6 +906,7 @@ export const S = {
   'adm.group.logs': { en: 'Logs and health', de: 'Protokolle und Zustand' },
   'adm.packCent': { en: 'Amount in cents', de: 'Betrag in Cent' },
   'adm.packLabel': { en: 'Label', de: 'Beschriftung' },
+  'adm.packTebex': { en: 'Tebex package', de: 'Tebex-Paket' },
   'adm.overview': { en: 'Overview', de: 'Übersicht' },
   'adm.users': { en: 'Users', de: 'Nutzer' },
   'adm.plans': { en: 'Plans', de: 'Tarife' },
@@ -982,8 +1009,73 @@ export const S = {
   'nd.access.listed': { en: 'Only listed users', de: 'Nur ausgewählte Nutzer' },
   'nd.access.admin': { en: 'Administrators only', de: 'Nur Administratoren' },
 
+  // Ein Standort ist eine Maschine. Was sie leistet, steht auf seiner Karte – ein Proxy dagegen
+  // ist nur eine Adresse und hat nichts davon.
+  'nd.kindLabel': { en: 'Kind', de: 'Art' },
+  'nd.kind.local': { en: 'This machine', de: 'Diese Maschine' },
+  'nd.kind.agent': { en: 'Own machine', de: 'Eigene Maschine' },
+  'nd.kind.egress': { en: 'Address only', de: 'Nur Adresse' },
+  'nd.kindHint': {
+    en: 'Own machine: the agent runs there and bots use its CPU, memory and disk. Address only: the bots stay on this server and go out through a proxy.',
+    de: 'Eigene Maschine: dort läuft der Agent, und die Bots verbrauchen deren CPU, Speicher und Platte. Nur Adresse: die Bots bleiben auf diesem Server und gehen über einen Proxy hinaus.',
+  },
+  'nd.connected': { en: 'connected', de: 'verbunden' },
+  'nd.disconnected': { en: 'not connected', de: 'nicht verbunden' },
+  'nd.machine': { en: 'Machine', de: 'Maschine' },
+  'nd.viaProxy': { en: 'this server, via proxy', de: 'dieser Server, über Proxy' },
+  'nd.noStats': {
+    en: 'No report yet. The location sends its load every 15 seconds once the agent is connected.',
+    de: 'Noch keine Meldung. Der Standort schickt seine Auslastung alle 15 Sekunden, sobald der Agent verbunden ist.',
+  },
+  'nd.noResources': {
+    en: 'Nothing runs here – this location only supplies an outgoing address.',
+    de: 'Hier läuft nichts – dieser Standort liefert nur eine Ausgangsadresse.',
+  },
+  'nd.ofCores': { en: 'of {n} cores', de: 'von {n} Kernen' },
+  'nd.maxCpu': { en: 'CPU limit (%)', de: 'CPU-Grenze (%)' },
+  'nd.maxMem': { en: 'Memory limit (%)', de: 'Speichergrenze (%)' },
+  'nd.maxHint': {
+    en: '0 = no limit. Above the limit the location counts as full and takes no new server slots.',
+    de: '0 = keine Grenze. Darüber gilt der Standort als voll und nimmt keine neuen Serverplätze an.',
+  },
+  'nd.note': { en: 'Note', de: 'Notiz' },
+  'nd.proxyHint': {
+    en: 'Optional. An outgoing address for every bot on this location.',
+    de: 'Optional. Eine Ausgangsadresse für alle Bots dieses Standorts.',
+  },
+  'nd.setup': { en: 'Set up this location', de: 'Diesen Standort einrichten' },
+  'nd.setupHint': {
+    en: 'Run this on the new machine, in the folder with install-agent.sh. The full walkthrough is in docs/standorte.md.',
+    de: 'Auf der neuen Maschine ausführen, im Ordner mit install-agent.sh. Die ganze Anleitung steht in docs/standorte.md.',
+  },
+  'nd.newToken': { en: 'New token', de: 'Neues Token' },
+  'nd.newTokenWarn': {
+    en: 'The location drops out immediately and has to be set up again with the new token. Continue?',
+    de: 'Der Standort fliegt sofort heraus und muss mit dem neuen Token neu eingerichtet werden. Weiter?',
+  },
+
   // ---------------------------------------------------------------- Anzeigetafel und Menüs
   'vw.board': { en: 'Scoreboard', de: 'Scoreboard' },
+
+  // ---------------------------------------------------------------- Live-Ansicht
+  'pov.title': { en: 'What the bot sees', de: 'Was der Bot sieht' },
+  'pov.lead': {
+    en: 'The client works the picture out from the world data it has loaded and sends it here several times a second.',
+    de: 'Der Client rechnet das Bild aus den geladenen Weltdaten aus und schickt es mehrmals in der Sekunde hierher.',
+  },
+  'pov.start': { en: 'Start live view', de: 'Live-Ansicht starten' },
+  'pov.stop': { en: 'Stop', de: 'Stoppen' },
+  'pov.frame': { en: 'Single frame', de: 'Einzelbild' },
+  'pov.size': { en: 'Resolution', de: 'Auflösung' },
+  'pov.small': { en: 'Small', de: 'Klein' },
+  'pov.medium': { en: 'Medium', de: 'Mittel' },
+  'pov.large': { en: 'Large', de: 'Groß' },
+  'pov.waiting': { en: 'Waiting for the first frame …', de: 'Warte auf das erste Bild …' },
+  'pov.offline': { en: 'Start the bot first – there is nothing to see yet.', de: 'Erst den Bot starten – noch gibt es nichts zu sehen.' },
+  'pov.note': {
+    en: 'Minecraft never sends finished pictures or block textures. The view is rendered from chunk data, block changes and entities, so it costs the machine noticeably more than a quiet bot – it stops on its own when you leave this tab.',
+    de: 'Minecraft überträgt keine fertigen Bilder und keine Blocktexturen. Die Ansicht wird aus Chunk-Daten, Blockänderungen und Entities gerechnet und kostet die Maschine deutlich mehr als ein stiller Bot – sie hört von selbst auf, wenn du den Reiter verlässt.',
+  },
   'vw.menu': { en: 'Menu', de: 'Menü' },
   'vw.fetch': { en: 'Fetch', de: 'Abrufen' },
   'vw.empty': { en: 'The server is not showing one right now.', de: 'Der Server zeigt gerade keine an.' },

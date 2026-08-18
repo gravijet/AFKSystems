@@ -79,8 +79,11 @@ journalctl -u afksystems -f
 * `deploy/afksystems.service` – systemd-Unit fürs Panel; startet beim Hochfahren alle Bots wieder,
   die zuletzt laufen sollten, und stoppt sie beim Beenden sauber.
 * `deploy/afksystems-bot.service` – systemd-Unit für den Discord-Bot (eigener Dienst).
-* `deploy/nginx-example.invalid.conf` – vHost samt WebSocket-Durchreichung für Live-Chat und
-  Discord-Bot; insbesondere `/api/bot/stream` darf nicht als normales HTTP-GET am Panel landen.
+* `deploy/afksystems-agent.service` + `deploy/install-agent.sh` – für einen **Standort**; beides
+  gehört auf den anderen Rechner, nicht hierher (siehe [docs/standorte.md](docs/standorte.md)).
+* `deploy/nginx-example.invalid.conf` – vHost samt WebSocket-Durchreichung für Live-Chat,
+  Discord-Bot und Standorte; insbesondere `/api/bot/stream` und `/api/node/stream` dürfen nicht
+  als normales HTTP-GET am Panel landen.
 
 ## Geld
 
@@ -95,8 +98,10 @@ journalctl -u afksystems -f
 * Reicht es nicht, wird der Platz **stillgelegt**: Bots gehen aus, gelöscht wird nichts, ins Minus
   geht es nie. Nach dem Aufladen genügt „Fortsetzen“.
 * Tarifwechsel und Löschen schreiben den ungenutzten Rest des Monats anteilig gut.
-* Aufladen: Gutschein, Überweisung/PayPal (Admin bestätigt), Stripe (mit Schlüssel), oder der Admin
-  bucht direkt auf.
+* Aufladen: **Tebex** (Karte, PayPal und alles Weitere, samt Umsatzsteuer), Gutschein,
+  Überweisung/PayPal von Hand (Admin bestätigt), oder der Admin bucht direkt auf. Guthaben
+  entsteht an genau einer Stelle im Code – dem geprüften Webhook. Einrichtung:
+  **[docs/tebex.md](docs/tebex.md)**.
 
 Die Tarife stehen in der Tabelle `plans` und sind im Admin-Bereich vollständig änderbar – Name,
 Beschreibungstext, Preis, Anzahl Bots, Chatverlauf, Macros, Premium-Client, Proxys,
@@ -115,7 +120,7 @@ wird. In der Tabelle `addons` steht, was sich dazubuchen lässt; `profile_addons
 | --- | --- |
 | `slot` | ein Bot mehr auf diesem Platz (mehrfach buchbar) |
 | `menus` | Menüs bedienen – in Ultra enthalten, auf Premium dazubuchbar |
-| `pov` | Live-Ansicht – angekündigt, `available = 0`, noch nicht buchbar; je Konto **und** Platz, in keinem Tarif enthalten |
+| `pov` | Live-Ansicht – je Serverplatz buchbar, in keinem Tarif enthalten, auch nicht in Ultra |
 
 Das Scoreboard war einmal ein Zusatz (`board`) und gehört seit Migration 006 zu jedem bezahlten
 Tarif. Der Eintrag steht als `active = 0` noch in der Tabelle, damit alte Buchungen nachvollziehbar
@@ -152,15 +157,31 @@ derselben Sitzung. Tablist und Playerlist gibt es in den Rust-Clients nicht mehr
 
 ## Standorte
 
-Ein Standort ist die **Ausgangsadresse**, über die ein Serverplatz ins Netz geht, plus die Regeln,
-wer sie benutzen darf und wie viel dort laufen darf. Aus Sicht eines Minecraft-Servers ist ein Bot
-seine IP-Adresse; wo der Prozess läuft, sieht dort niemand.
+Ein Standort ist eine **Maschine, auf der Bots laufen**. Dort werden CPU, Arbeitsspeicher und
+Platte verbraucht, und genau die begrenzt ein Standort auch: Neben "höchstens so viele Bots" gibt
+es "höchstens so viel CPU" und "höchstens so viel Speicher", gemessen und nicht geschätzt.
 
-Es gibt immer genau einen Standort vom Typ `local` – diese Maschine. Jeder weitere zeigt auf einen
-Proxy (ein zweiter VPS, eine zweite IP). Zugang: `all`, `listed` (namentlich) oder `admin`.
+Ein **Proxy** ist etwas anderes: nur eine Ausgangsadresse, ohne eigene Rechenleistung. An einem
+Proxy steht deshalb nie eine Auslastung.
 
-Wie man einen anlegt, steht Schritt für Schritt in **[docs/standorte.md](docs/standorte.md)** – mit
-den Befehlen zum Kopieren.
+| Art | Bedeutung |
+| --- | --- |
+| `local` | diese Maschine. Gibt es genau einmal, nicht löschbar, nicht abschaltbar |
+| `agent` | ein anderer Rechner mit `agent/index.js` darauf – der Normalfall |
+| `egress` | kein eigener Rechner: die Bots bleiben hier und gehen über einen Proxy hinaus |
+
+Der Standort **ruft beim Panel an**, nicht umgekehrt (`WS /api/node/stream`, Token am Standort).
+Damit braucht ein neuer Rechner weder eine öffentliche Adresse noch ein Zertifikat noch eine
+Portfreigabe – nur ausgehendes HTTPS. Über dieselbe Leitung holt er sich die Client-Dateien, bekommt
+Bots zugewiesen, reicht deren Ein- und Ausgabe durch und meldet alle 15 Sekunden seine Auslastung.
+
+Die Microsoft-Anmeldungen reisen beim Start eines Bots mit und kommen aufgefrischt zurück – ohne
+das müsste dasselbe Konto auf jedem Standort einzeln verbunden werden.
+
+`agents.js` verpackt das in einen `RemoteProcess`, der sich verhält wie ein Kindprozess von
+`child_process`. Der Supervisor merkt deshalb nicht, wo sein Bot läuft.
+
+Einrichten Schritt für Schritt: **[docs/standorte.md](docs/standorte.md)**.
 
 ## Discord
 
@@ -191,13 +212,21 @@ Was verschickt wurde, steht in `mails` – **mit Empfänger und Wortlaut**. Der 
 eigenen Nachrichten unter *Einstellungen → Nachrichten an dich*. Wer eine E-Mail mit unserem Namen
 bekommt und sich fragt, ob sie echt war, prüft das dort ohne Rückfrage.
 
-## Noch nicht im Webpanel
+## Live-Ansicht
 
-Der Rust-Client enthält inzwischen eine echte **Terminal-POV**: `pov-afk-linux` startet sie direkt,
-bei `ultra-afk-linux` schaltet `:pov live` sie zu. Das Webpanel hat dafür noch keinen
-Browser-Renderer; der Zusatz steht deshalb weiterhin mit `available = 0` in der Datenbank und wird
-nicht verkauft. **Bedrock** bleibt ebenfalls außen vor: Dafür wäre ein eigener Protokollstapel und
-damit ein zweiter Client nötig.
+Sehen, was der Bot sieht. Minecraft überträgt keine fertigen Bilder – der Client rechnet sie aus
+den geladenen Chunk-Paletten, Blockänderungen und Entities selbst aus und schreibt sie als Raster
+gefärbter Zeichen. Das Panel liest das Raster, zerlegt es in Farbabschnitte und zeichnet es im
+Browser auf ein Canvas: ein Pixel je Zeichen, ohne Glättung hochskaliert.
+
+Gebucht wird sie als Zusatz je Serverplatz (`pov`), in keinem Tarif enthalten – auch nicht in
+Ultra. Höchstens fünf Bilder je Sekunde gehen an den Browser, und beim Verlassen des Reiters hört
+sie von selbst auf: eine laufende Ansicht kostet deutlich mehr als ein stiller Bot.
+
+Einzelheiten: **[docs/live-ansicht.md](docs/live-ansicht.md)**.
+
+**Bedrock** bleibt außen vor: Dafür wäre ein eigener Protokollstapel und damit ein zweiter Client
+nötig.
 
 ## Support und Proxys
 
@@ -218,27 +247,53 @@ server/
   auth.js         Sitzungen, Passwörter       billing.js    Credits, Tarife, Zusätze, Ledger
   binaries.js     Client + Fähigkeiten        supervisor.js ein Prozess je Bot, Zustandsautomat
   mslogin.js      Microsoft-Gerätecode        macros.js     Macros, Spam, Anti-AFK
-  nodes.js        Standorte                   metrics.js    CPU, Speicher, Platte aus /proc
+  nodes.js        Standorte                   agents.js     die Leitung zu den Standorten
+  metrics.js      CPU, Speicher, Platte aus /proc
+  tebex.js        Bezahlen                    protect.js    Inhaltsschutz auf der Serverseite
   features.js     die Funktionsliste der öffentlichen Seiten, gefiltert nach dem echten Client
   settings-schema.js  Beschreibung jeder Einstellung: Gruppe, Beschriftung, Erklärung, Art
   pages.js        Vorlagen                    landing.js    das Bewegliche der öffentlichen Seiten
   mail.js         SMTP, Vorlagen, Kategorien  oauth.js      Discord und Google
   tickets.js      Support                     notify.js     Discord-Webhooks
   roles.js        welche Discord-Rolle wem    bridge.js     die Leitung zum Bot
-  routes/         core, profiles, billing, admin, bot
+  routes/         core, profiles, billing, admin, bot, node
 bot/
   index.js        der Discord-Bot             panel.js      seine Leitung zum Panel
   handlers/       tickets, roles, linkedRoles, commands
+agent/
+  index.js        der Standort-Agent – läuft auf einer anderen Maschine und führt dort Bots aus
 public/
   pages/          die festen Seiten als Vorlagen ({{> partial}} und {{schlüssel}})
   assets/js/i18n.js     alle Texte, beide Sprachen, von Server und Browser genutzt
   assets/js/chatlog.js  Chatzeilen zusammenlegen, §-Farben zerlegen – ebenfalls von beiden
+  assets/js/shield.js   Inhaltsschutz im Browser
   assets/js/views/      Übersicht, Konten, Server, Guthaben, Tickets, Proxys, Admin …
-docs/             Standorte, Discord-Bot, Google-Anmeldung
+docs/             Aufbau, Standorte, Tebex, Live-Ansicht, Schutz, Discord-Bot, Google
 scripts/
   build-movement.sh   baut die Bewegungs-Bauform (liegt nicht im Release)
 data/                 Datenbank, Client-Dateien, Konten je Nutzer, Logs  (nicht im Repo)
 ```
+
+## Inhaltsschutz
+
+Website und Panel sind gegen bequemes Kopieren gesichert: CSS und JavaScript lassen sich nicht
+einzeln aufrufen (`Sec-Fetch-Dest`), liegen in keinem fremden Zwischenspeicher (`Cache-Control:
+private`), Website-Kopierer bekommen am Dashboard eine Absage, und im Browser sind Rechtsklick,
+Markieren, Ziehen, Drucken und die üblichen Tastenkürzel gesperrt. Offene Entwicklerwerkzeuge
+blenden den Inhalt aus.
+
+Kopierbar bleibt, was zum Abschreiben da ist: Eingabefelder, Gutscheincodes, Verwendungszwecke,
+Standort-Token, Serveradressen. Abschalten: **Administration → Einstellungen → Betrieb →
+Inhaltsschutz**.
+
+Was daran wirklich geht und was nicht, steht ehrlich in **[docs/schutz.md](docs/schutz.md)**.
+
+## Dokumentation
+
+Alles Weitere in **[docs/](docs/README.md)**: [wie alles funktioniert](docs/aufbau.md),
+[Standorte](docs/standorte.md), [Tebex](docs/tebex.md), [Live-Ansicht](docs/live-ansicht.md),
+[Inhaltsschutz](docs/schutz.md), [Discord-Bot](docs/discord-bot.md),
+[Google-Anmeldung](docs/google-anmeldung.md).
 
 ## API
 
@@ -261,4 +316,6 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | Sonstiges | `GET /announcements`, `GET /nodes` |
 | Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/mails`, `/audit`, `/ledger` |
 | Bot | `/bot/config`, `/bot/tickets`, `/bot/users/:discordId`, `/bot/roles`, `/bot/events`, `WS /bot/stream` |
+| Standorte | `GET /node/manifest`, `GET /node/binaries/:name`, `WS /node/stream` – alle mit dem Token des Standorts |
+| Tebex | `POST /tebex/webhook` – mit `X-Signature` geprüft, die einzige Stelle, an der Guthaben entsteht |
 | Live | `GET /api/ws` – WebSocket mit Chatzeilen, Zustandswechseln, Ansichten, Tickets, Guthaben |

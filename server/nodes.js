@@ -1,22 +1,34 @@
 // Standorte.
 //
-// Ein Standort ist der Ort, über den ein Serverplatz nach draußen geht. Es gibt genau einen vom
-// Typ `local` – diese Maschine – und beliebig viele weitere, hinter denen eine andere Adresse
-// steckt: ein zweiter VPS mit einem SOCKS5-Dienst darauf, oder eine zweite IP dieses Servers.
+// Ein Standort ist eine **Maschine**, auf der Bots laufen. Dort werden CPU, Arbeitsspeicher und
+// Platte verbraucht, und genau die begrenzt ein Standort auch. Ein Proxy ist etwas anderes: nur
+// eine Ausgangsadresse, ohne eigene Rechenleistung – deshalb steht an einem Proxy nie eine
+// Auslastung.
 //
-// Warum das so und nicht anders: Was einen zweiten Standort ausmacht, ist aus Sicht eines
-// Minecraft-Servers seine **IP-Adresse**. Ob der Bot-Prozess neben dem Panel oder auf dem anderen
-// Rechner läuft, sieht dort niemand – die Adresse dagegen schon, und an ihr hängt, wie viele
-// Konten auf denselben Server dürfen. Ein Standort ist deshalb eine Ausgangsadresse plus die
-// Regeln, wer sie benutzen darf und wie viel dort laufen darf.
+// Drei Arten:
+//
+//   local   diese Maschine. Gibt es immer genau einmal, braucht kein Token, lässt sich nicht
+//           abschalten und nicht löschen.
+//   agent   ein anderer Rechner mit dem Standort-Agenten darauf (agent/index.js). Er meldet sich
+//           mit seinem Token beim Panel und bekommt von dort Bots zugewiesen; die Prozesse laufen
+//           auf ihm, und er meldet seine Auslastung zurück.
+//   egress  nur eine Ausgangsadresse: die Bots laufen weiter auf der Panel-Maschine und gehen
+//           über einen Proxy hinaus. Das war früher die einzige Art; sie bleibt für alles, wo es
+//           wirklich nur um eine zweite IP geht.
+//
+// Aus Sicht eines Minecraft-Servers ist ein Bot seine IP-Adresse. Ein `agent`-Standort bringt
+// beides mit: eine eigene Adresse **und** eigene Rechenleistung. Ein `egress`-Standort nur die
+// Adresse.
 //
 // Wie man einen anlegt, steht Schritt für Schritt in docs/standorte.md.
 
 import { db, audit } from './db.js';
 import { supervisor } from './supervisor.js';
-import { bad, notFound, requireInt, requireString } from './util.js';
+import * as agents from './agents.js';
+import { bad, notFound, requireInt, requireString, token as randomToken } from './util.js';
 
 export const ACCESS = ['all', 'listed', 'admin'];
+export const KINDS = ['agent', 'egress'];
 
 export const list = ({ includeInactive = false } = {}) =>
   db
@@ -48,6 +60,31 @@ export function usage(nodeId) {
   return { profiles, accounts, bots_running: supervisor.runningOnNode(nodeId) };
 }
 
+/**
+ * Was die Maschine hinter einem Standort gerade tut.
+ *
+ * Für `local` kommt das aus dem eigenen /proc (metrics.js sammelt es und legt es hier ab), für
+ * `agent` aus dem, was der Standort zuletzt gemeldet hat. Für `egress` gibt es nichts – dort
+ * läuft kein Prozess, dort ist nur eine Adresse.
+ */
+let localStats = null;
+export const setLocalStats = (stats) => {
+  localStats = stats;
+};
+
+export function resources(node) {
+  if (node.kind === 'local') return localStats;
+  if (node.kind === 'agent') return agents.stats(node.id);
+  return null;
+}
+
+/** Ist der Standort gerade ansprechbar? `local` immer, `egress` immer, `agent` nur mit Leitung. */
+export function reachable(node) {
+  if (!node?.active) return false;
+  if (node.kind === 'agent') return agents.isOnline(node.id);
+  return true;
+}
+
 /** Darf dieser Nutzer hier einen Serverplatz anlegen? */
 export function canUse(node, user) {
   if (!node || !node.active) return false;
@@ -66,15 +103,28 @@ export function visibleFor(user) {
     .map((node) => ({ ...view(node), full: isFull(node) }));
 }
 
+/**
+ * Ist hier kein Platz mehr?
+ *
+ * Neben den gezählten Grenzen (Serverplätze, Bots) zählen jetzt auch die gemessenen: ein Standort,
+ * dessen Maschine bei 95 % CPU steht, ist voll, auch wenn rechnerisch noch Bots hineinpassten.
+ * Das ist der Unterschied zwischen einer Zahl im Formular und der Wirklichkeit.
+ */
 export function isFull(node) {
   const used = usage(node.id);
   if (node.max_profiles > 0 && used.profiles >= node.max_profiles) return true;
   if (node.max_bots > 0 && used.bots_running >= node.max_bots) return true;
+  const stats = resources(node);
+  if (stats) {
+    if (node.max_cpu_percent > 0 && (stats.cpu_percent ?? 0) >= node.max_cpu_percent) return true;
+    if (node.max_mem_percent > 0 && (stats.memory?.percent ?? 0) >= node.max_mem_percent) return true;
+  }
   return false;
 }
 
 /** Was ein Kunde von einem Standort zu sehen bekommt – ohne Innereien wie die Proxy-Zugangsdaten. */
 export function view(node) {
+  const stats = resources(node);
   return {
     id: node.id,
     name: node.name,
@@ -82,6 +132,15 @@ export function view(node) {
     region: node.region || '',
     note: node.note || '',
     shared: node.access === 'all',
+    online: reachable(node),
+    // Grob genug, um einen vollen Standort zu erkennen, und zu grob, um daraus etwas über die
+    // Maschine zu lernen, das einen Kunden nichts angeht.
+    load: stats
+      ? {
+          cpu: Math.round(stats.cpu_percent ?? 0),
+          memory: Math.round(stats.memory?.percent ?? 0),
+        }
+      : null,
   };
 }
 
@@ -97,6 +156,10 @@ export function adminView(node) {
     users: usersOf(node.id),
     usage: usage(node.id),
     full: isFull(node),
+    online: reachable(node),
+    // Ressourcen gibt es nur, wo etwas läuft. Ein reiner Ausgangs-Standort hat keine.
+    resources: resources(node),
+    agent: node.kind === 'agent' ? agents.info(node.id) : null,
   };
 }
 
@@ -119,9 +182,19 @@ export function pick(user, wantedId = null) {
         en: `Location "${node.name}" is full. Please pick another one.`,
       });
     }
+    // Ein Standort ohne Leitung kann keinen Bot starten. Das jetzt zu sagen ist ehrlicher, als
+    // den Serverplatz dort anzulegen und den Fehler beim ersten Startversuch zu zeigen.
+    if (!reachable(node) && user.role !== 'admin') {
+      throw bad(`Der Standort "${node.name}" ist gerade nicht erreichbar.`, {
+        en: `Location "${node.name}" is not reachable right now.`,
+      });
+    }
     return node;
   }
-  const open = list().filter((node) => canUse(node, user) && !isFull(node));
+  // Ein Standort, dessen Agent gerade nicht verbunden ist, ist keine stille Zuweisung wert:
+  // dort ließe sich kein Bot starten, und der Kunde stünde vor einer Fehlermeldung, die er sich
+  // nicht erklären kann.
+  const open = list().filter((node) => canUse(node, user) && !isFull(node) && reachable(node));
   if (!open.length) {
     const any = list().filter((node) => canUse(node, user));
     if (!any.length) {
@@ -141,26 +214,55 @@ export function pick(user, wantedId = null) {
 export function create(body, by) {
   const name = requireString(body.name, 'Name', { max: 60 });
   const access = ACCESS.includes(body.access) ? body.access : 'all';
+  const kind = KINDS.includes(body.kind) ? body.kind : 'agent';
+  // Ein Standort mit eigener Maschine bekommt sein Token beim Anlegen. Es ist das Einzige, was
+  // der andere Rechner braucht – und es steht danach nur noch im Admin-Bereich.
+  const token = kind === 'agent' ? randomToken(32) : null;
   const info = db
     .prepare(
-      `INSERT INTO nodes (name, kind, region, proxy_id, max_bots, max_profiles, access, note, active, sort, created_at)
-       VALUES (?, 'egress', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO nodes (name, kind, region, proxy_id, max_bots, max_profiles, max_cpu_percent,
+                          max_mem_percent, access, note, active, sort, token, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       name,
+      kind,
       String(body.region || '').slice(0, 60),
       body.proxy_id ? requireInt(body.proxy_id, 'Proxy') : null,
       requireInt(body.max_bots ?? 0, 'Bots', { max: 10_000 }),
       requireInt(body.max_profiles ?? 0, 'Server', { max: 10_000 }),
+      requireInt(body.max_cpu_percent ?? 0, 'CPU-Grenze', { max: 100 }),
+      requireInt(body.max_mem_percent ?? 0, 'Speichergrenze', { max: 100 }),
       access,
       String(body.note || '').slice(0, 400) || null,
       body.active === false ? 0 : 1,
       requireInt(body.sort ?? 50, 'Reihenfolge', { max: 999 }),
+      token,
       Date.now()
     );
   if (Array.isArray(body.users)) setUsers(info.lastInsertRowid, body.users);
-  audit(by, 'node-create', { id: info.lastInsertRowid, name, access });
+  audit(by, 'node-create', { id: info.lastInsertRowid, name, kind, access });
   return byId(info.lastInsertRowid);
+}
+
+/**
+ * Ein neues Token setzen.
+ *
+ * Nötig, wenn eines abhandengekommen ist. Der Standort fliegt damit sofort heraus und muss mit
+ * dem neuen Token wieder eingerichtet werden – das ist der Sinn der Sache.
+ */
+export function rotateToken(id, by) {
+  const node = byId(id);
+  if (!node) throw notFound('Diesen Standort gibt es nicht.', { en: 'No such location.' });
+  if (node.kind !== 'agent') {
+    throw bad('Nur ein Standort mit eigener Maschine hat ein Token.', {
+      en: 'Only a location with its own machine has a token.',
+    });
+  }
+  const token = randomToken(32);
+  db.prepare('UPDATE nodes SET token = ? WHERE id = ?').run(token, node.id);
+  audit(by, 'node-token', { id: node.id, name: node.name });
+  return byId(node.id);
 }
 
 export function update(id, body, by) {
@@ -186,6 +288,19 @@ export function update(id, body, by) {
   if (body.max_bots !== undefined) put('max_bots', requireInt(body.max_bots, 'Bots', { max: 10_000 }));
   if (body.max_profiles !== undefined) {
     put('max_profiles', requireInt(body.max_profiles, 'Server', { max: 10_000 }));
+  }
+  if (body.max_cpu_percent !== undefined) {
+    put('max_cpu_percent', requireInt(body.max_cpu_percent, 'CPU-Grenze', { max: 100 }));
+  }
+  if (body.max_mem_percent !== undefined) {
+    put('max_mem_percent', requireInt(body.max_mem_percent, 'Speichergrenze', { max: 100 }));
+  }
+  // Die Art lässt sich nachträglich ändern – aus einer reinen Adresse wird eine Maschine, sobald
+  // jemand den Agenten darauf installiert. Ein Token entsteht dabei von selbst.
+  if (body.kind !== undefined && node.kind !== 'local') {
+    if (!KINDS.includes(body.kind)) throw bad('Unbekannte Art.', { en: 'Unknown kind.' });
+    put('kind', body.kind);
+    if (body.kind === 'agent' && !node.token) put('token', randomToken(32));
   }
   if (body.access !== undefined) {
     if (!ACCESS.includes(body.access)) throw bad('Unbekannte Zugangsregel.', { en: 'Unknown access rule.' });

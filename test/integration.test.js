@@ -22,7 +22,9 @@ const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const tickets = await import('../server/tickets.js');
 const { Tickets } = await import('../bot/handlers/tickets.js');
-const { Bot, simpleChatMacro, parseEvent, parseView } = await import('../server/supervisor.js');
+const { Bot, simpleChatMacro, parseEvent, parseView, ansiToMinecraft } = await import(
+  '../server/supervisor.js'
+);
 const { parseFormatting } = await import('../public/assets/js/chatlog.js');
 const { Roles } = await import('../bot/handlers/roles.js');
 const { ChannelAccess } = await import('../bot/handlers/channelAccess.js');
@@ -482,6 +484,70 @@ test('coordinates, formatted Scoreboards and item menus are parsed without losin
   assert.equal(simpleChatMacro([{ type: 'chat', text: ':pov live' }]), false);
 });
 
+test('chat colours survive the way from the client to the panel', () => {
+  // Der Client schreibt Minecraft-Farben als ANSI. Ohne diese Rückübersetzung käme die Chatzeile
+  // grau im Browser an – oder mit "[91m" als Text mittendrin.
+  assert.equal(ansiToMinecraft('\u001b[91mHallo\u001b[0m Welt'), '§cHallo§r Welt');
+  assert.equal(ansiToMinecraft('\u001b[92m\u001b[1mfett grün'), '§a§lfett grün');
+  assert.equal(ansiToMinecraft('\u001b[38;2;255;0;64mHex'), '§x§f§f§0§0§4§0Hex');
+  // Alles, was keine Farbe ist – Cursorbefehle der Live-Ansicht –, fällt weg.
+  assert.equal(ansiToMinecraft('\u001b[2J\u001b[HText'), 'Text');
+  assert.equal(ansiToMinecraft('ohne alles'), 'ohne alles');
+
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const bot = new Bot(
+    { emit: () => {}, macros: { onChat: (_, line) => heard.push(line) } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+  const heard = [];
+  bot.feed('out', Buffer.from('\u001b[93m[Rang] \u001b[97mSteve\u001b[0m: hallo\n', 'utf8'));
+  const line = bot.chat.at(-1);
+  assert.equal(line.type, 'chat');
+  assert.equal(line.text, '§e[Rang] §fSteve§r: hallo');
+  // Macros sehen den nackten Text – sonst fände "hallo" nichts mehr, sobald der Server färbt.
+  assert.deepEqual(heard, ['[Rang] Steve: hallo']);
+});
+
+test('a POV frame becomes a picture and never lands in the chat', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const views = [];
+  const bot = new Bot(
+    { emit: (type, payload) => type === 'bot-view' && views.push(payload), macros: { onChat: () => {} } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+
+  // Ohne angeforderte Ansicht ist jede Zeile gewöhnliche Ausgabe – die Erkennung kostet dann nichts.
+  bot.feed('err', Buffer.from('\u001b[2J\u001b[H\u001b[38;2;10;20;30m###\n', 'utf8'));
+  assert.equal(bot.views.pov, null);
+
+  bot.povWanted = true;
+  const before = bot.chat.length;
+  const frame =
+    '\u001b[2J\u001b[H\n' +
+    '\u001b[38;2;10;20;30m..\u001b[38;2;200;30;40m##\n' +
+    '\u001b[38;2;10;20;30m====\n' +
+    'POV  x=12 y=64 z=-8  (:pov stop)\n';
+  bot.feed('err', Buffer.from(frame, 'utf8'));
+
+  assert.equal(bot.views.pov.empty, false);
+  assert.equal(bot.views.pov.height, 2);
+  assert.equal(bot.views.pov.width, 4);
+  assert.deepEqual(bot.views.pov.rows[0], [['0a141e', '..'], ['c81e28', '##']]);
+  assert.match(bot.views.pov.status, /^POV {2}x=12/);
+  assert.equal(views.at(-1).kind, 'pov');
+  // Und keine einzige Zeile des Bildes steht im Chatverlauf.
+  assert.equal(bot.chat.length, before);
+
+  // Eine Meldung, die genauso beginnt, ist trotzdem eine Meldung.
+  bot.povSentAt = 0;
+  bot.feed('err', Buffer.from('\u001b[2J\u001b[HLive-POV beendet.\n', 'utf8'));
+  assert.equal(bot.chat.at(-1).text, 'Live-POV beendet.');
+});
+
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {
   const BOT_SECRET = 'bot-test-secret';
   const USER_TOKEN = 'user-test-session';
@@ -565,10 +631,24 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.match(homeResponse.headers.get('permissions-policy'), /camera=\(\)/);
   const stylesheetPath = englishHome.match(/href="([^"]+\/css\/app\.css)"/)?.[1];
   assert.ok(stylesheetPath);
-  const stylesheet = await (await fetch(`${base}${stylesheetPath}`)).text();
+  // Inhaltsschutz: einzeln aufgerufen kommt die Datei nicht heraus, als Stylesheet einer Seite
+  // schon. Genau das ist der Unterschied zwischen "Speichern unter" und "die Seite lädt".
+  assert.equal((await fetch(`${base}${stylesheetPath}`)).status, 403);
+  assert.equal(
+    (await fetch(`${base}${stylesheetPath}`, { headers: { 'sec-fetch-dest': 'document' } })).status,
+    403
+  );
+  const stylesheetResponse = await fetch(`${base}${stylesheetPath}`, {
+    headers: { 'sec-fetch-dest': 'style' },
+  });
+  assert.equal(stylesheetResponse.status, 200);
+  assert.equal(stylesheetResponse.headers.get('x-robots-tag'), 'noarchive, noimageindex');
+  const stylesheet = await stylesheetResponse.text();
   assert.match(stylesheet, /\.mobile-nav\s*\{/);
   assert.match(stylesheet, /\.side-section\s*>\s*summary/);
-  assert.match(stylesheet, /body\.side-collapsed/);
+  // Die schmale Schiene der Seitenleiste (früher: side-collapsed).
+  assert.match(stylesheet, /body\.side-rail/);
+  assert.match(stylesheet, /\.side-find/);
   assert.match(stylesheet, /@media \(max-width: 640px\)/);
   assert.match(stylesheet, /\.site-menu\.open/);
 
@@ -717,13 +797,16 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(savedPlan.response.status, 200);
   assert.equal(savedPlan.data.plan.features_de, premiumFeatures);
 
+  // Örtliche Client-Befehle dürfen nicht als Chatzeile hineinrutschen: Was mit ':' anfängt, geht
+  // durch dieselbe Prüfung wie der Befehlsendpunkt, und was dort nicht steht, gibt es nicht.
+  // (':pov' steht dort inzwischen – deshalb hier ein Verb, das es wirklich nicht gibt.)
   const blockedLocalBypass = await api(base, `/api/profiles/${profile.id}/chat`, {
     token: USER_TOKEN,
     method: 'POST',
-    body: { text: ':pov live', accounts: [account.id] },
+    body: { text: ':teleport 0 64 0', accounts: [account.id] },
   });
   assert.equal(blockedLocalBypass.response.status, 400);
-  assert.equal(blockedLocalBypass.data.error, 'Unknown local command "pov".');
+  assert.equal(blockedLocalBypass.data.error, 'Unknown local command "teleport".');
 
   db.prepare(
     'UPDATE profile_accounts SET wanted = 1 WHERE profile_id = ? AND account_id = ?'

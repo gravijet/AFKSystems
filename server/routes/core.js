@@ -15,6 +15,7 @@ import { features } from '../features.js';
 import { actionsFor, eventsFor } from '../macros.js';
 import { supervisor } from '../supervisor.js';
 import * as billing from '../billing.js';
+import * as tebex from '../tebex.js';
 import { setLangCookie } from '../pages.js';
 import { bridge } from '../bridge.js';
 import { wrap, requireInt, bad, notFound, HttpError } from '../util.js';
@@ -72,7 +73,7 @@ router.get(
       ticket_categories: tickets.categoriesFor(lang),
       support_hours: String(getSetting('support_hours') || ''),
       payment: {
-        stripe: Boolean(config.stripeSecret),
+        tebex: tebex.configured(),
         transfer: Boolean(config.bankTransfer.iban),
         paypal: Boolean(config.bankTransfer.paypal),
         voucher: true,

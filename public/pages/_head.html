@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="{{lang}}">
+<html lang="{{lang}}" data-shield="{{shield}}">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -24,5 +24,7 @@
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="stylesheet" href="{{assets}}/css/app.css" />
     <script src="{{assets}}/js/theme.js"></script>
+    <!-- Steht bewusst im Kopf: der Schutz soll gelten, bevor der erste Inhalt zu sehen ist. -->
+    <script src="{{assets}}/js/shield.js"></script>
   </head>
-  <body class="{{bodyClass}}">
+  <body class="{{bodyClass}}" data-shield-note="{{shield.note}}">
