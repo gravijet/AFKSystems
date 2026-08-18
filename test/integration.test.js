@@ -29,6 +29,7 @@ const { parseFormatting } = await import('../public/assets/js/chatlog.js');
 const { Roles } = await import('../bot/handlers/roles.js');
 const { ChannelAccess } = await import('../bot/handlers/channelAccess.js');
 const { Panel } = await import('../bot/panel.js');
+const linkedRoles = await import('../server/linked-roles.js');
 
 let sequence = 0;
 let serverProcess = null;
@@ -235,11 +236,18 @@ test('Admin and moderator are Linked Roles; Ultra includes Premium and staff rec
   assert.equal(roles.managedIds().includes('10006'), true);
   assert.equal(roles.managedIds().includes('19998'), false);
   assert.equal(roles.managedIds().includes('19999'), false);
-  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.key), ['administrator', 'discord_moderator']);
+  // Ohne eigene Einstellung gilt weiterhin genau das, was früher fest im Quelltext stand.
+  assert.deepEqual(oauth.roleMetadataFields().map((entry) => entry.key), [
+    'administrator',
+    'discord_moderator',
+  ]);
   // Der Name ist das, was Discord im Rollen-Dialog als Bedingung anzeigt: genau der Rollenname,
   // ohne Marke davor. Den Namen der Anwendung setzt Discord selbst davor.
-  assert.deepEqual(oauth.ROLE_METADATA.map((entry) => entry.name), ['Administrator', 'Discord Moderator']);
-  assert.ok(oauth.ROLE_METADATA.every((entry) => entry.description && entry.description !== entry.name));
+  assert.deepEqual(oauth.roleMetadataFields().map((entry) => entry.name), [
+    'Administrator',
+    'Discord Moderator',
+  ]);
+  assert.ok(oauth.roleMetadataFields().every((entry) => entry.description && entry.description !== entry.name));
   assert.deepEqual(oauth.roleMetadataFor(user.id), { administrator: 0, discord_moderator: 1 });
 
   db.prepare('UPDATE profiles SET locked = 1 WHERE id = ?').run(profile.id);
@@ -251,6 +259,75 @@ test('Admin and moderator are Linked Roles; Ultra includes Premium and staff rec
   const manualPremium = roles.targetFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
   assert.equal(manualPremium.badges.includes('premium'), true);
   assert.equal(manualPremium.roles.includes('10002'), true);
+});
+
+test('Linked-role requirements are configurable and only publish values that fit their comparison', () => {
+  const user = createUser({ discordId: '200000000000000042', member: true });
+  const plan = billing.planBySlug('ultra');
+  createProfile(user, plan);
+
+  const fail = (message, alt) => Object.assign(new Error(message), alt);
+
+  // Ein Schlüssel, den Discord nicht annimmt, darf gar nicht erst gespeichert werden.
+  assert.throws(() => linkedRoles.validate([{ key: 'Groß!', source: 'premium', type: 7 }], { fail }));
+  // Eine Zahl lässt sich nicht mit "ist Ja" vergleichen – sonst stünde in Discord eine Bedingung,
+  // die nie zutrifft.
+  assert.throws(() => linkedRoles.validate([{ key: 'credits', source: 'credits', type: 7 }], { fail }));
+  // Derselbe Schlüssel zweimal wäre bei Discord ein Feld, das sich selbst überschreibt.
+  assert.throws(() =>
+    linkedRoles.validate(
+      [
+        { key: 'premium', source: 'premium', type: 7 },
+        { key: 'premium', source: 'ultra', type: 7 },
+      ],
+      { fail }
+    )
+  );
+  // Mehr als fünf nimmt Discord nicht an.
+  assert.throws(() =>
+    linkedRoles.validate(
+      linkedRoles.SOURCES.slice(0, 6).map((entry) => ({
+        key: entry.key,
+        source: entry.key,
+        type: entry.kind === 'boolean' ? 7 : entry.kind === 'date' ? 6 : 2,
+      })),
+      { fail }
+    )
+  );
+
+  setSetting(
+    'discord_role_metadata',
+    linkedRoles.validate(
+      [
+        { key: 'paid', source: 'premium', type: 7, name: 'Kunde', description: 'Bezahlt gerade.' },
+        { key: 'slots', source: 'paid_servers', type: 2, name: 'Serverplätze' },
+        { key: 'seit', source: 'member_since', type: 6, name: 'Dabei seit' },
+      ],
+      { fail }
+    )
+  );
+
+  assert.deepEqual(oauth.roleMetadataFields().map((entry) => entry.key), ['paid', 'slots', 'seit']);
+  // Ohne eigene Beschreibung springt die der Quelle ein: eine Bedingung ohne Zeile darunter
+  // erklärt im Rollen-Dialog gar nichts.
+  assert.ok(oauth.roleMetadataFields().every((entry) => entry.description));
+
+  const values = oauth.roleMetadataFor(user.id);
+  assert.deepEqual(Object.keys(values), ['paid', 'slots', 'seit']);
+  assert.equal(values.paid, 1);
+  assert.equal(values.slots, 1);
+  assert.equal(String(values.seit), new Date(user.created_at).toISOString());
+
+  // Eine leere Liste ist eine Aussage und keine fehlende Einstellung: Discord räumt dann auf.
+  setSetting('discord_role_metadata', []);
+  assert.deepEqual(oauth.roleMetadataFields(), []);
+  assert.deepEqual(oauth.roleMetadataFor(user.id), {});
+
+  db.prepare('DELETE FROM settings WHERE key = ?').run('discord_role_metadata');
+  assert.deepEqual(oauth.roleMetadataFields().map((entry) => entry.key), [
+    'administrator',
+    'discord_moderator',
+  ]);
 });
 
 test('Discord moderators may view public and role-based channels, never admin-only or member-only channels', () => {

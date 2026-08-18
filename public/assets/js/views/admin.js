@@ -2304,6 +2304,11 @@ async function settings(root) {
   const { groups, settings: schema } = data.schema;
   const value = (key) => data.settings[key] ?? '';
   const packages = structuredClone(data.settings.packages || []);
+  // Die Linked-Role-Bedingungen kommen fertig geprüft vom Server – auch dann, wenn noch nie
+  // etwas gespeichert wurde. Dann sind es die Vorgaben, und der Editor zeigt, was gerade gilt.
+  const meta = data.linked_roles || { max: 5, types: [], sources: [], fields: [] };
+  const linked = structuredClone(meta.fields || []);
+  const sourceByKey = Object.fromEntries((meta.sources || []).map((entry) => [entry.key, entry]));
 
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const wanted = params.get('group');
@@ -2335,6 +2340,7 @@ async function settings(root) {
           ${group.key === 'mail' ? mailTools() : ''}
           ${group.key === 'payments' ? tebexTools(data) : ''}
           ${group.key === 'discord' ? discordTools(data) : ''}
+          ${group.key === 'linkedroles' ? linkedRolesTools(data) : ''}
         </div>
       </section>
     </div>
@@ -2372,6 +2378,18 @@ async function settings(root) {
         <div class="pack-editor" id="packages"></div>
         <button type="button" class="btn btn-sm" id="add-package" style="align-self:flex-start;margin-top:.6rem">
           ${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
+        ${help}
+      </div>`;
+    }
+
+    // Die Linked-Role-Bedingungen. Wie die Aufladepakete eine Liste aus Objekten, nur mit fünf
+    // Angaben je Eintrag statt vier – und mit zwei Auswahlfeldern, die voneinander abhängen.
+    if (entry.type === 'linkedroles') {
+      return `<div class="field">
+        <label>${escapeHtml(entry.label)}</label>
+        <div class="lr-editor" id="linked-roles"></div>
+        <button type="button" class="btn btn-sm" id="add-linked" style="align-self:flex-start;margin-top:.6rem">
+          ${icon('plus')} ${escapeHtml(tr('adm.lrAdd'))}</button>
         ${help}
       </div>`;
     }
@@ -2466,11 +2484,19 @@ async function settings(root) {
     </div>`;
   }
 
+  /**
+   * Der Zustand des Bots und die beiden Knöpfe dazu.
+   *
+   * "Neu laden" ist der Alltag: der Bot holt die Einstellungen erneut und richtet Rollen, Rechte
+   * und Linked Roles danach aus, ohne dass jemand etwas merkt. "Neu starten" beendet den Prozess –
+   * das braucht es, wenn ein neuer Bot-Token gilt oder der Bot hängt. Dass er zurückkommt, ist
+   * Sache des Dienstes; deshalb steht genau das an dem Knopf und nicht bloß "Neustart".
+   */
   function discordTools(data) {
     const bot = data.bot || {};
     return `<div class="note ${bot.connected ? '' : 'warn'}" style="margin:0">
       ${icon(bot.connected ? 'check' : 'info')}
-      <div class="small">
+      <div class="small grow">
         <strong>${escapeHtml(tr('adm.botStatus'))}:</strong>
         ${escapeHtml(bot.connected ? tr('adm.botConnected') : tr('adm.botAway'))}
         ${
@@ -2479,9 +2505,165 @@ async function settings(root) {
             : ''
         }
         <br>${escapeHtml(tr('adm.detail'))}: <span class="mono">docs/discord-bot.md</span>
+        <div class="row wrap" style="gap:.5rem;margin-top:.6rem">
+          <button type="button" class="btn btn-sm" id="bot-reload" ${bot.connected ? '' : 'disabled'}>
+            ${icon('refresh')} ${escapeHtml(tr('adm.botReload'))}</button>
+          <button type="button" class="btn btn-sm btn-danger" id="bot-restart" ${
+            bot.connected ? '' : 'disabled'
+          }>${icon('power')} ${escapeHtml(tr('adm.botRestart'))}</button>
+        </div>
+        <div class="small muted" style="margin-top:.35rem">${escapeHtml(tr('adm.botRestartHint'))}</div>
       </div>
     </div>`;
   }
+
+  /** Die Adresse, die im Developer Portal als Linked-Roles-Verifizierung eintragen wird. */
+  function linkedRolesTools(data) {
+    const url = data.linked_roles?.verification_url || '';
+    return `<div class="note" style="margin:0">${icon('info')}
+      <div class="small grow">
+        <strong>${escapeHtml(tr('adm.lrVerifyUrl'))}</strong>
+        <div class="mono" style="margin-top:.3rem;word-break:break-all">${escapeHtml(url)}</div>
+        <div class="muted" style="margin-top:.35rem">${escapeHtml(tr('adm.lrVerifyHint'))}</div>
+      </div>
+    </div>`;
+  }
+
+  /**
+   * Die Bedingungen für Discords Linked Roles.
+   *
+   * Die **Quelle** ist die eigentliche Angabe: sie sagt, welchen Wert das Panel veröffentlicht.
+   * Alles andere hängt daran – der Vergleich muss zur Art des Werts passen (eine Zahl lässt sich
+   * nicht mit "ist Ja" prüfen), und Name und Beschreibung sind das, was in Discord im
+   * Rollen-Dialog steht. Deshalb füllt eine neu gewählte Quelle die Felder, die noch unberührt
+   * sind, gleich mit; wer eigene Worte will, überschreibt sie und behält sie.
+   */
+  const typesFor = (kind) => (meta.types || []).filter((entry) => entry.kind === kind);
+
+  const paintLinked = () => {
+    const box = $('#linked-roles');
+    if (!box) return;
+
+    box.innerHTML = linked.length
+      ? linked
+          .map((row, index) => {
+            const source = sourceByKey[row.source];
+            const kinds = typesFor(source?.kind);
+            return `<div class="lr-card">
+              <div class="lr-grid">
+                <div class="field">
+                  <label for="lr-src-${index}">${escapeHtml(tr('adm.lrSource'))}</label>
+                  <select id="lr-src-${index}" data-lr="${index}" data-key="source">
+                    ${(meta.sources || [])
+                      .map(
+                        (entry) =>
+                          `<option value="${escapeHtml(entry.key)}" ${
+                            entry.key === row.source ? 'selected' : ''
+                          }>${escapeHtml(entry.label)}</option>`
+                      )
+                      .join('')}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="lr-type-${index}">${escapeHtml(tr('adm.lrType'))}</label>
+                  <select id="lr-type-${index}" data-lr="${index}" data-key="type">
+                    ${kinds
+                      .map(
+                        (entry) =>
+                          `<option value="${entry.value}" ${
+                            Number(entry.value) === Number(row.type) ? 'selected' : ''
+                          }>${escapeHtml(entry.label)}</option>`
+                      )
+                      .join('')}
+                  </select>
+                </div>
+                <div class="field">
+                  <label for="lr-key-${index}">${escapeHtml(tr('adm.lrKey'))}</label>
+                  <input id="lr-key-${index}" type="text" data-lr="${index}" data-key="key"
+                    value="${escapeHtml(row.key || '')}" spellcheck="false" autocapitalize="off">
+                </div>
+                <button type="button" class="btn btn-ghost btn-sm btn-danger" data-lr-del="${index}"
+                  title="${escapeHtml(tr('common.delete'))}">${icon('x')}</button>
+              </div>
+              <div class="lr-grid lr-text">
+                <div class="field">
+                  <label for="lr-name-${index}">${escapeHtml(tr('adm.lrName'))}</label>
+                  <input id="lr-name-${index}" type="text" data-lr="${index}" data-key="name"
+                    maxlength="100" value="${escapeHtml(row.name || '')}">
+                </div>
+                <div class="field">
+                  <label for="lr-desc-${index}">${escapeHtml(tr('adm.lrDesc'))}</label>
+                  <input id="lr-desc-${index}" type="text" data-lr="${index}" data-key="description"
+                    maxlength="200" value="${escapeHtml(row.description || '')}">
+                </div>
+              </div>
+              <p class="small muted" style="margin:0">${escapeHtml(source?.help || '')}</p>
+            </div>`;
+          })
+          .join('')
+      : `<p class="small muted">${escapeHtml(tr('adm.lrNone'))}</p>`;
+
+    $$('[data-lr]', box).forEach((input) =>
+      input.addEventListener(input.tagName === 'SELECT' ? 'change' : 'input', () => {
+        const index = Number(input.dataset.lr);
+        const key = input.dataset.key;
+        const row = linked[index];
+
+        if (key === 'source') {
+          const before = sourceByKey[row.source];
+          const after = sourceByKey[input.value];
+          row.source = input.value;
+          // Der Schlüssel, der Name und die Beschreibung folgen der Quelle, solange sie nicht von
+          // Hand geändert wurden. Wer "Administrator" gegen "Premium" tauscht, will keine
+          // Bedingung, die in Discord weiterhin "Administrator" heißt.
+          if (!row.key || row.key === before?.key) row.key = after?.key || row.key;
+          if (!row.name || row.name === before?.label) row.name = after?.label || '';
+          if (!row.description || row.description === before?.help) row.description = after?.help || '';
+          if (!typesFor(after?.kind).some((entry) => Number(entry.value) === Number(row.type))) {
+            row.type = typesFor(after?.kind)[0]?.value ?? row.type;
+          }
+          paintLinked();
+          return;
+        }
+
+        if (key === 'type') row.type = Number(input.value);
+        else if (key === 'key') row.key = input.value.toLowerCase().replace(/[^a-z0-9_]/g, '');
+        else row[key] = input.value;
+
+        // Der Schlüssel wird beim Tippen bereinigt – ohne diese Zeile stünde im Feld weiter, was
+        // gerade herausgefiltert wurde, und der Wert dahinter wäre ein anderer.
+        if (key === 'key' && input.value !== row.key) input.value = row.key;
+      })
+    );
+
+    $$('[data-lr-del]', box).forEach((button) =>
+      button.addEventListener('click', () => {
+        linked.splice(Number(button.dataset.lrDel), 1);
+        paintLinked();
+      })
+    );
+
+    const add = $('#add-linked');
+    if (add) add.disabled = linked.length >= (meta.max || 5);
+  };
+  paintLinked();
+
+  $('#add-linked')?.addEventListener('click', () => {
+    if (linked.length >= (meta.max || 5)) return;
+    // Die erste Quelle, die noch nicht benutzt ist – zwei Bedingungen auf denselben Wert wären
+    // in Discord zwei Felder, die immer dasselbe sagen.
+    const taken = new Set(linked.map((row) => row.source));
+    const source = (meta.sources || []).find((entry) => !taken.has(entry.key)) || meta.sources?.[0];
+    if (!source) return;
+    linked.push({
+      key: source.key,
+      source: source.key,
+      type: typesFor(source.kind)[0]?.value ?? 7,
+      name: source.label,
+      description: source.help,
+    });
+    paintLinked();
+  });
 
   /** Die Aufladepakete: Betrag in Cent, dafür so viele Credits, dazu die Beschriftung. */
   const paintPackages = () => {
@@ -2566,6 +2748,7 @@ async function settings(root) {
       else body[input.dataset.set] = input.value;
     }
     if (fields.some((entry) => entry.type === 'packages')) body.packages = packages;
+    if (fields.some((entry) => entry.type === 'linkedroles')) body.discord_role_metadata = linked;
     try {
       await api('/admin/settings', { method: 'PATCH', body });
       ok(tr('adm.saved'));
@@ -2588,6 +2771,35 @@ async function settings(root) {
       fail(error);
     }
   });
+
+  /**
+   * Bot neu laden oder neu starten.
+   *
+   * Der Neustart wird nachgefragt: er unterbricht laufende Ticket-Gespräche für ein paar
+   * Sekunden, und wer nur eine geänderte Rolle übernehmen will, ist mit "Neu laden" besser
+   * bedient. Ein Knopf, der ohne Rückfrage einen Dienst beendet, gehört an keine Stelle, an der
+   * man auch nur etwas speichern wollte.
+   */
+  for (const [selector, action, ask] of [
+    ['#bot-reload', 'reload', false],
+    ['#bot-restart', 'restart', true],
+  ]) {
+    $(selector)?.addEventListener('click', async (event) => {
+      if (ask && !(await confirmDialog(tr('adm.botRestartAsk'), { confirm: tr('adm.botRestart') }))) {
+        return;
+      }
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await api(`/admin/bot/${action}`, { method: 'POST' });
+        ok(tr(action === 'restart' ? 'adm.botRestarting' : 'adm.botReloading'));
+      } catch (error) {
+        fail(error);
+      } finally {
+        button.disabled = false;
+      }
+    });
+  }
 
   $('#tebex-test')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;

@@ -12,6 +12,7 @@ import * as mail from '../mail.js';
 import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
 import * as roles from '../roles.js';
+import * as linkedRoles from '../linked-roles.js';
 import * as nodes from '../nodes.js';
 import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
@@ -1062,6 +1063,13 @@ admin.get(
       oauth: oauth.state(),
       bot: botState(),
       tebex: tebex.status(),
+      // Was der Editor für die Linked Roles braucht: die Quellen, die Vergleichsarten und das,
+      // was gerade gilt (auch wenn noch nie etwas gespeichert wurde – dann sind es die Vorgaben).
+      linked_roles: {
+        ...linkedRoles.schemaFor(langOf(req)),
+        fields: linkedRoles.fields(),
+        verification_url: `${config.publicUrl}/api/auth/discord/start?mode=verify`,
+      },
     })
   )
 );
@@ -1076,7 +1084,11 @@ admin.patch(
       // Versuch – beides gehört nicht in die Tabelle.
       if (!entry) continue;
 
-      if (entry.type === 'packages') {
+      if (entry.type === 'linkedroles') {
+        // Was Discord ablehnt, soll gar nicht erst in der Tabelle landen: eine halb gültige Liste
+        // hieße, dass im Rollen-Dialog eine Bedingung steht, die nie einen Wert bekommt.
+        setSetting(key, linkedRoles.validate(value, { fail: bad }));
+      } else if (entry.type === 'packages') {
         if (!Array.isArray(value)) {
           throw bad('Pakete müssen eine Liste sein.', { en: 'Packages have to be a list.' });
         }
@@ -1145,6 +1157,53 @@ admin.delete(
       bridge.emit('discord.config', { keys: [entry.key] });
     }
     res.json({ settings: safeSettings() });
+  })
+);
+
+// ---------------------------------------------------------------- Der Discord-Bot
+
+/**
+ * Zwei Knöpfe für den Bot, und der Unterschied zwischen ihnen ist wichtig.
+ *
+ * **Neu laden** schickt ihm nur die Nachricht, dass sich etwas geändert hat: er holt die
+ * Einstellungen erneut, meldet die Linked Roles bei Discord an, richtet Kanalrechte und Rollen
+ * neu aus – ohne Unterbrechung. Das reicht für alles, was im Panel eingestellt wird, und ist
+ * deshalb der Weg, der nach dem Speichern von selbst geht.
+ *
+ * **Neu starten** beendet den Prozess. Nötig ist das, wenn der Bot selbst hängt oder ein neuer
+ * Bot-Token gilt – Discord lässt einen laufenden Anmeldevorgang nicht wechseln. Dass er
+ * anschließend wiederkommt, ist Sache des Dienstes (`Restart=always` in der systemd-Unit); wer
+ * ihn von Hand gestartet hat, muss ihn auch von Hand wieder starten.
+ *
+ * Die Sperre von 20 Sekunden ist keine Schikane: Discord sperrt einen Token, der zu oft
+ * hintereinander eine Verbindung aufbaut, und die systemd-Unit gibt nach zehn Starts in fünf
+ * Minuten auf. Ein doppelt geklickter Knopf soll den Bot nicht für den Rest des Tages abschalten.
+ */
+const BOT_COMMAND_PAUSE_MS = 20_000;
+let lastBotCommand = 0;
+
+admin.post(
+  '/bot/:action(restart|reload)',
+  wrap((req, res) => {
+    const action = req.params.action;
+    if (!bridge.connected) {
+      throw bad('Der Bot ist gerade nicht verbunden – es gibt niemanden, der den Befehl annimmt.', {
+        en: 'The bot is not connected right now – nobody is there to take the command.',
+      });
+    }
+    const since = Date.now() - lastBotCommand;
+    if (since < BOT_COMMAND_PAUSE_MS) {
+      throw bad(`Bitte noch ${Math.ceil((BOT_COMMAND_PAUSE_MS - since) / 1000)} Sekunden warten.`, {
+        en: `Please wait another ${Math.ceil((BOT_COMMAND_PAUSE_MS - since) / 1000)} seconds.`,
+      });
+    }
+    lastBotCommand = Date.now();
+
+    if (action === 'restart') bridge.emit('bot.restart', { by: req.user.username });
+    else bridge.emit('discord.config', { by: req.user.username, keys: [] });
+
+    audit(req.user.id, `admin-bot-${action}`, null, req.ip);
+    res.json({ ok: true, action });
   })
 );
 

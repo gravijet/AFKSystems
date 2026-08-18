@@ -376,16 +376,21 @@ export class Tickets {
           attachments: files,
         },
       });
-      await message.react('✅').catch(() => {});
+      // Keine Reaktion auf übernommene Nachrichten. Der Bot hat früher jede Zeile eines
+      // Ticket-Kanals mit einem grünen Haken versehen – bei einem Gespräch aus dreissig
+      // Nachrichten steht dann unter jeder einzelnen ein Häkchen, und der Kanal ist zugemüllt.
+      // Dass eine Nachricht angekommen ist, ist der Normalfall und braucht keine Bestätigung;
+      // gemeldet wird nur noch, was **nicht** geklappt hat, und das als lesbare Antwort.
+      //
       // Ein Anhang, der nicht übernommen werden konnte (zu groß, Adresse tot), darf nicht still
       // verschwinden: sonst glaubt der Kunde, das Team habe sein Bild.
       for (const note of result?.failed || []) {
         await message.reply(`This attachment did not make it into the panel – ${note}`).catch(() => {});
       }
     } catch (error) {
-      // Wer nicht verknüpft ist, soll wissen warum – und nicht ins Leere schreiben.
+      // Wer nicht verknüpft ist, soll wissen warum – und nicht ins Leere schreiben. Die Antwort
+      // sagt alles; eine zusätzliche Reaktion wäre dieselbe Nachricht ein zweites Mal.
       await message.reply(`This was not saved in the panel: ${error.message}`).catch(() => {});
-      await message.react('⚠️').catch(() => {});
     }
   }
 

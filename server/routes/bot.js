@@ -15,7 +15,7 @@ import * as tickets from '../tickets.js';
 import * as attachments from '../attachments.js';
 import * as roles from '../roles.js';
 import * as billing from '../billing.js';
-import { ROLE_METADATA } from '../oauth.js';
+import { roleMetadataFields } from '../oauth.js';
 import { bridge } from '../bridge.js';
 import { supervisor } from '../supervisor.js';
 import { wrap, requireInt, requireString, bad, notFound, HttpError, safeEqual } from '../util.js';
@@ -109,7 +109,7 @@ router.get(
       invite: String(getSetting('discord_invite') || ''),
       roles: roles.managed(),
       managed_roles: roles.managedIds(),
-      role_metadata: ROLE_METADATA,
+      role_metadata: roleMetadataFields(),
       // Kategorien, in denen der Bot keine Kanalrechte setzen darf. Sie kommen aus den
       // Einstellungen, damit sich das ohne neuen Bot-Stand ändern lässt.
       skip_categories: String(getSetting('discord_skip_categories') || '')

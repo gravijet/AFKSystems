@@ -41,7 +41,8 @@ https://discord.com/oauth2/authorize?client_id=<APP-ID>&scope=bot%20applications
 ```
 
 Die Zahl enthält: Kanäle verwalten, Kanäle sehen, Nachrichten senden, Verlauf lesen, Nachrichten
-anheften, Reaktionen setzen, Rollen verwalten.
+anheften, Reaktionen setzen, Rollen verwalten. Reaktionen setzt der Bot nicht mehr; das Recht
+bleibt in der Zahl, damit eine bereits erteilte Einladung nicht neu bestätigt werden muss.
 
 **Wichtig:** In Discord unter *Servereinstellungen → Rollen* die Bot-Rolle **über** alle Rollen
 ziehen, die er vergeben soll. Discord lässt niemanden eine Rolle vergeben, die über der eigenen
@@ -65,7 +66,7 @@ Unter *Administration → Einstellungen → Discord* und *→ Discord-Rollen*:
 | Customer | normale Rolle für jedes verknüpfte Konto |
 | Premium / Ultra | Rollen für die Tarife |
 | Partner / VIP | normale Rollen, die im Benutzerprofil vergeben werden |
-| Administrator / Discord Moderator | Discord Linked Roles; Discord vergibt sie nach der Verknüpfung anhand des Benutzerprofils |
+| Administrator / Discord Moderator | Discord Linked Roles; Discord vergibt sie anhand der Bedingungen unter *Einstellungen → Discord Linked Roles* |
 | Team | normale Rolle; der Bot vergibt sie automatisch an Admins und Discord-Mods |
 
 Für das Geheimnis:
@@ -139,6 +140,10 @@ samt Zeitpunkt des letzten Lebenszeichens.
   Datei nicht an (ohne Boosts sind dort 10 MB Schluss), steht im Kanal ein Link ins Panel statt
   der Datei.
 * Wer im Panel ein Ticket aufmacht, bekommt trotzdem einen Kanal in Discord.
+* Der Bot setzt **keine Reaktionen**. Dass eine Nachricht im Panel angekommen ist, ist der
+  Normalfall und braucht keine Bestätigung – ein grüner Haken unter jeder einzelnen Zeile machte
+  aus einem Gespräch eine Häkchenliste. Gemeldet wird nur, was **nicht** geklappt hat, und das als
+  lesbare Antwort im Kanal.
 * Der Knopf **Schließen** schließt es an beiden Stellen. Eine Antwort macht es wieder auf.
 * Nur Administratoren können Tickets in Discord bearbeiten; Team und Discord-Moderatoren erhalten keinen Zugang zu Ticket-Kanälen.
 * Geschlossene Kanäle wandern in die Kategorie `archived Tickets` und werden nach sieben Tagen gelöscht.
@@ -168,24 +173,46 @@ Selbstbedienungsrollen – bleibt unberührt.
 
 ### Linked Roles
 
-Der Bot meldet beim Start zwei Merkmale an, mit denen Discord die beiden Statusrollen an
-Bedingungen geknüpft werden:
+Eine Linked Role vergibt **Discord**, nicht der Bot. Discord fragt für jedes verknüpfte Konto eine
+Handvoll Werte bei uns ab; im Rollen-Dialog wird darauf eine Bedingung eingestellt.
 
-| Feld | Bedeutung |
+**Welche Bedingungen es gibt, steht im Panel** unter *Administration → Einstellungen → Discord
+Linked Roles*. Je Bedingung wird eingetragen:
+
+| Angabe | Was sie bedeutet |
 | --- | --- |
-| `administrator` | ist Administrator im AFKSystems-Panel |
-| `discord_moderator` | ist im Panel als Discord Moderator markiert |
+| Wert aus dem Panel | woher der Wert kommt – „Bezahlter Tarif läuft“, „Guthaben in Credits“, „Kunde seit“ … |
+| Vergleich | wie Discord ihn prüft: Ja/Nein, „mindestens“, „höchstens“, „liegt … Tage zurück“ |
+| Schlüssel | der Name des Feldes bei Discord (Kleinbuchstaben, Ziffern, Unterstrich) |
+| Name in Discord | was im Rollen-Dialog als Bedingung steht |
+| Beschreibung in Discord | die Zeile darunter |
 
-Einrichten: *Servereinstellungen → Rollen → Rolle → Links → AFKSystems → Bedingung*.
+Die Auswahl bei **Wert aus dem Panel** ist die eigentliche Angabe: Sie legt fest, was
+veröffentlicht wird. Ein frei eingetippter Schlüssel wäre für Discord nur ein Feld, das nie einen
+Wert bekommt – deshalb gibt es hier eine feste Liste. Der **Vergleich** muss zur Art des Wertes
+passen; das Panel bietet nur an, was zusammengeht, und lehnt beim Speichern ab, was nicht passt.
 
-Im Bedingungsfeld steht `AFKSystems` und dahinter `Discord Moderator`. Der zweite Teil ist der
-Name des Merkmals und kommt von hier (`ROLE_METADATA` in `server/oauth.js`); den ersten setzt
+Ohne eigene Einstellung gilt, was seit jeher galt: `administrator` und `discord_moderator`.
+
+**Discord nimmt höchstens fünf Bedingungen je Anwendung an.** Eine leere Liste ist erlaubt und
+heißt „keine Linked Roles“ – Discord räumt die vorhandenen dann weg.
+
+Nach dem Speichern meldet der Bot das Schema neu bei Discord an; ein Neustart ist dafür nicht
+nötig. Sichtbar wird eine Änderung in Discord unter *Servereinstellungen → Rollen → Rolle → Links
+→ AFKSystems → Bedingung*.
+
+Im Bedingungsfeld steht `AFKSystems` und dahinter der Name der Bedingung. Den ersten Teil setzt
 Discord selbst davor – es ist der **Name der Anwendung** aus dem Developer Portal. Ändern lässt er
-sich nur dort, und damit heißt auch der Bot anders. Die Werte
-schreibt das Panel nach der Zustimmung über **Discord-Rollen auffrischen**. Diese Schaltfläche wird
-nur Administratoren und Discord-Moderatoren gezeigt. Customer, Premium, Ultra, Partner, VIP und
-**Team** sind normale Rollen und werden vom Bot direkt synchronisiert; Administrator und Discord
-Moderator sind die beiden Linked Roles.
+sich nur dort, und damit heißt auch der Bot anders.
+
+Die **Werte** je Konto schreibt das Panel, sobald jemand auf **Discord-Rollen auffrischen**
+klickt (Einstellungen → Verknüpfte Konten). Das darf jeder mit verknüpftem Konto: veröffentlicht
+wird ausschließlich, was das Panel ohnehin über dieses eine Konto weiß, und zugestimmt hat der
+Nutzer bei Discord gerade selbst. Wäre es anders, käme kein Kunde je an den Wert heran, mit dem
+seine Bedingung erfüllt wird – die Bedingung stünde in Discord und ginge nie auf.
+
+Customer, Premium, Ultra, Partner, VIP und **Team** sind dagegen normale Serverrollen und werden
+vom Bot direkt synchronisiert; dafür braucht es Discord nicht als Schiedsrichter.
 
 ### Befehle
 
@@ -202,6 +229,27 @@ veraltet, sobald sie geschrieben ist.
 
 Unter dem Namen des Bots steht die Adresse des Panels, sonst nichts. Sie kommt aus der
 Konfiguration; steht das Panel woanders, steht dort auch dessen Adresse.
+
+### Neu laden und neu starten
+
+In *Administration → Einstellungen → Discord* stehen zwei Knöpfe, und der Unterschied ist wichtig:
+
+* **Einstellungen neu laden** – der Bot holt die Konfiguration erneut, meldet die Linked Roles bei
+  Discord an und richtet Kanalrechte und Rollen neu aus. Ohne Unterbrechung. Das reicht für alles,
+  was im Panel eingestellt wird, und geschieht nach dem Speichern ohnehin von selbst.
+* **Bot neu starten** – der Prozess beendet sich. Nötig ist das bei einem **neuen Bot-Token**
+  (Discord lässt eine laufende Anmeldung nicht wechseln) oder wenn der Bot hängt.
+
+Ein Prozess kann sich nicht selbst neu starten, er kann nur aufhören. Zurück kommt der Bot durch
+den Dienst darüber – `Restart=always` in `deploy/afksystems-bot.service`. Wer ihn von Hand
+gestartet hat, muss ihn auch von Hand wieder starten.
+
+Zwischen zwei Befehlen liegen mindestens 20 Sekunden. Discord sperrt einen Token, der zu oft
+hintereinander eine Verbindung aufbaut, und die systemd-Unit gibt nach zehn Starts in fünf Minuten
+auf; ein doppelt geklickter Knopf soll den Bot nicht für den Rest des Tages abschalten.
+
+Ist der Bot gerade nicht verbunden, sagen die Knöpfe das und tun nichts – es gibt dann niemanden,
+der den Befehl annehmen könnte.
 
 ---
 

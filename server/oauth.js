@@ -17,6 +17,7 @@ import { bad, HttpError, hashPassword, safeEqual, token as randomToken } from '.
 import * as mail from './mail.js';
 import { grant, freeGuildId } from './billing.js';
 import { bridge } from './bridge.js';
+import * as linkedRoles from './linked-roles.js';
 
 // ---------------------------------------------------------------- Anbieter
 
@@ -128,15 +129,8 @@ export function startUrl(key, { mode = 'link', userId = null, lang = 'en', next 
     if (key !== 'discord') {
       throw bad('Linked Roles gibt es nur für Discord.', { en: 'Linked Roles are only available for Discord.' });
     }
-    const user = db
-      .prepare('SELECT role, discord_moderator, discord_id FROM users WHERE id = ?')
-      .get(userId);
-    if (!user || (user.role !== 'admin' && !user.discord_moderator)) {
-      throw new HttpError(403, 'Linked Roles sind nur für Administratoren und Discord-Moderatoren.', {
-        en: 'Linked Roles are only available to administrators and Discord moderators.',
-      });
-    }
-    if (!user.discord_id) {
+    const user = db.prepare('SELECT discord_id FROM users WHERE id = ?').get(userId);
+    if (!user?.discord_id) {
       throw new HttpError(409, 'Verknüpfe zuerst dein Discord-Konto.', {
         en: 'Link your Discord account first.',
       });
@@ -433,50 +427,42 @@ export async function refreshDiscordMembership(userId, discordId = null) {
 }
 
 /**
- * Administrator und Discord Moderator sind die beiden Linked Roles. Customer, Tarife, Partner,
- * VIP und Team sind normale Serverrollen; sie synchronisiert der Bot ohne OAuth-Zustimmung für
- * `role_connections.write`.
- */
-/**
- * Die beiden Linked-Role-Merkmale.
+ * Welche Merkmale es gibt und was sie über ein Konto aussagen, steht in `linked-roles.js` und
+ * lässt sich im Admin-Bereich einstellen. Hier wird nur weitergereicht.
  *
- * `name` ist das, was Discord im Rollen-Dialog als Bedingung anzeigt – deshalb steht dort genau
- * das, was die Rolle heißt, und sonst nichts. Den Namen der Anwendung ("AFKSystems") setzt Discord
- * selbst davor; das ist keine Angabe von hier, sondern der Name im Developer Portal.
- * `description` ist die Zeile darunter und darf erklären, worum es geht.
+ * Customer, Tarife, Partner, VIP und Team bleiben **normale** Serverrollen: die vergibt der Bot
+ * ohne Umweg über Discord, und dafür braucht es keine Zustimmung zu `role_connections.write`.
  */
-export const ROLE_METADATA = [
-  {
-    key: 'administrator',
-    name: 'Administrator',
-    type: 7,
-    description: 'Runs the panel.',
-  },
-  {
-    key: 'discord_moderator',
-    name: 'Discord Moderator',
-    type: 7,
-    description: 'Moderates the Discord server.',
-  },
-];
+export const roleMetadataFields = () => linkedRoles.fields();
 
 /** Die Werte, die Discord über einen Nutzer bekommen soll. */
-export function roleMetadataFor(userId) {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-  if (!user) return null;
-  return {
-    administrator: user.role === 'admin' ? 1 : 0,
-    discord_moderator: user.discord_moderator ? 1 : 0,
-  };
-}
+export const roleMetadataFor = (userId) => linkedRoles.valuesFor(userId);
 
+/**
+ * Die Werte an Discord schicken.
+ *
+ * Das darf **jeder mit verknüpftem Konto**, und das ist kein Nachlassen: veröffentlicht wird
+ * ausschließlich, was das Panel ohnehin über dieses eine Konto weiß, und die Zustimmung dazu gibt
+ * der Nutzer gerade selbst bei Discord. Ob daraus eine Rolle wird, entscheidet die Bedingung, die
+ * der Betreiber in Discord eingestellt hat.
+ *
+ * Früher stand hier eine Sperre auf Administratoren und Moderatoren – damals gab es auch nur
+ * diese beiden Merkmale. Mit frei einstellbaren Bedingungen („bezahlter Tarif läuft“, „seit 90
+ * Tagen dabei“) wäre sie das Gegenteil einer Absicherung: die Bedingung stünde in Discord, und
+ * kein Kunde käme je an den Wert heran, mit dem sie erfüllt wird.
+ */
 async function writeRoleConnection(accessToken, userId) {
   const applicationId = String(getSetting('discord_client_id') || '').trim();
   if (!applicationId) throw bad('Discord ist nicht eingerichtet.', { en: 'Discord is not set up.' });
-  const user = db.prepare('SELECT username, role, discord_moderator FROM users WHERE id = ?').get(userId);
-  if (!user || (user.role !== 'admin' && !user.discord_moderator)) {
-    throw new HttpError(403, 'Linked Roles sind nur für Administratoren und Discord-Moderatoren.', {
-      en: 'Linked Roles are only available to administrators and Discord moderators.',
+  const user = db.prepare('SELECT username, discord_id FROM users WHERE id = ?').get(userId);
+  if (!user?.discord_id) {
+    throw new HttpError(409, 'Verknüpfe zuerst dein Discord-Konto.', {
+      en: 'Link your Discord account first.',
+    });
+  }
+  if (!linkedRoles.fields().length) {
+    throw bad('Für diese Anwendung sind keine Linked-Role-Merkmale eingerichtet.', {
+      en: 'No linked-role requirements are set up for this application.',
     });
   }
   const response = await fetch(

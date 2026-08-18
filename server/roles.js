@@ -9,8 +9,11 @@
 //
 // Administrator, Discord-Moderator, Partner und VIP sind Zustände des Panel-Kontos. Reguläre
 // Discord-Rollen (Customer, Premium, Ultra, Partner, VIP und Team) werden daraus automatisch für
-// jedes verknüpfte Discord-Konto abgeleitet. Nur Administrator und Discord Moderator werden
-// zusätzlich als Discord Linked-Role-Metadaten veröffentlicht (siehe oauth.js).
+// jedes verknüpfte Discord-Konto abgeleitet.
+//
+// Davon getrennt sind Discords **Linked Roles**: dort vergibt Discord selbst anhand von Werten,
+// die wir veröffentlichen. Welche das sind, stellt der Betreiber ein (linked-roles.js); voreingestellt
+// sind Administrator und Discord Moderator. Der Bot fasst diese Rollen nie an.
 
 import { db, getSetting } from './db.js';
 import { bridge } from './bridge.js';
