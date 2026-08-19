@@ -384,6 +384,14 @@ router.patch(
     }
     if (body.discord_webhook !== undefined) {
       const hook = String(body.discord_webhook || '').trim();
+      // Die Länge gehört dazu: Ohne sie steht in der Spalte eine Adresse von einem Viertelmegabyte
+      // (so viel lässt der Rumpf zu), die bei jeder Benachrichtigung mitgelesen und mitgeschickt
+      // wird. Ein echter Discord-Webhook ist keine 200 Zeichen lang.
+      if (hook.length > 300) {
+        throw bad('Diese Adresse ist zu lang für einen Discord-Webhook.', {
+          en: 'That address is too long for a Discord webhook.',
+        });
+      }
       if (hook && !/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(hook)) {
         throw bad('Das sieht nicht nach einem Discord-Webhook aus.', {
           en: 'That does not look like a Discord webhook.',
@@ -460,11 +468,36 @@ router.delete(
   })
 );
 
+/**
+ * Wann jedes Konto zuletzt eine Testnachricht ausgelöst hat.
+ *
+ * Der Aufruf unten benutzt bewusst einen Schlüssel mit Zeitstempel, damit die gewöhnliche Sperre
+ * in notify.js ihn *nicht* zurückhält – eine Testnachricht, die stumm verschluckt wird, wäre als
+ * Test wertlos. Genau dadurch war der Knopf aber auch völlig ungebremst: eine Schleife darauf
+ * schickt beliebig viele Anfragen aus unserem Netz an Discord, bis Discord den Absender sperrt,
+ * und das ist dieser Server. Die Sperre steht deshalb hier, mit einer Absage, die das auch sagt.
+ */
+const lastDiscordTest = new Map();
+const DISCORD_TEST_PAUSE_MS = 30_000;
+
 router.post(
   '/me/discord-test',
   auth.requireUser,
   wrap(async (req, res) => {
     if (!req.user.discord_webhook) throw bad('Es ist kein Webhook hinterlegt.', { en: 'No webhook is stored.' });
+    const since = Date.now() - (lastDiscordTest.get(req.user.id) || 0);
+    if (since < DISCORD_TEST_PAUSE_MS) {
+      const wait = Math.ceil((DISCORD_TEST_PAUSE_MS - since) / 1000);
+      throw bad(`Gerade erst getestet. Bitte noch ${wait} Sekunden warten.`, {
+        en: `Just tested. Please wait another ${wait} seconds.`,
+      });
+    }
+    lastDiscordTest.set(req.user.id, Date.now());
+    if (lastDiscordTest.size > 5_000) {
+      for (const [id, at] of lastDiscordTest) {
+        if (Date.now() - at > DISCORD_TEST_PAUSE_MS) lastDiscordTest.delete(id);
+      }
+    }
     const sent = await notify.notify(
       req.user.id,
       { de: 'Testnachricht', en: 'Test message' },
@@ -656,6 +689,15 @@ export const ticketView = (row) => ({
 const PENDING_BYTES_MAX = 100 * 1024 * 1024;
 
 /**
+ * Und wie viel insgesamt – abgeschickte Anhänge eingerechnet.
+ *
+ * Die Grenze oben zählt nur, was **noch an keinem Ticket hängt**. Sobald eine Datei abgeschickt
+ * ist, fällt sie aus der Zählung, und damit war der Weg offen: Ticket aufmachen, zwanzig Megabyte
+ * anhängen, abschicken, von vorn. Der Platte ist es egal, an welchem Ticket eine Datei hängt.
+ */
+const TOTAL_BYTES_MAX = 500 * 1024 * 1024;
+
+/**
  * Einen Anhang hochladen.
  *
  * Ohne Ticketnummer: Wer ein neues Ticket schreibt, hängt seinen Screenshot an, bevor es das
@@ -683,6 +725,14 @@ router.post(
     if (open.n >= 50 || open.bytes >= PENDING_BYTES_MAX) {
       throw bad('Zu viele offene Anhänge. Bitte erst das Ticket abschicken.', {
         en: 'Too many pending attachments. Please send the ticket first.',
+      });
+    }
+    const stored = db
+      .prepare('SELECT COALESCE(SUM(size), 0) AS bytes FROM ticket_files WHERE user_id = ?')
+      .get(req.user.id).bytes;
+    if (stored >= TOTAL_BYTES_MAX) {
+      throw bad('Für dieses Konto liegen schon sehr viele Anhänge. Bitte melde dich beim Support.', {
+        en: 'This account already stores a lot of attachments. Please contact support.',
       });
     }
     let name = 'anhang';

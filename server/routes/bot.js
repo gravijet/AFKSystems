@@ -63,29 +63,44 @@ const failures = new Map();
 const FAIL_WINDOW_MS = 15 * 60_000;
 const FAIL_MAX = 20;
 
-router.use((req, res, next) => {
+/**
+ * Ein Anmeldeversuch des Bots – für HTTP **und** für den WebSocket-Aufbau.
+ *
+ * Die Bremse stand vorher nur vor den HTTP-Endpunkten. Die Leitung `/api/bot/stream` prüfte
+ * dasselbe Geheimnis ohne jede Zählung, und weil dort pro Verbindung geraten werden darf, war die
+ * teure Tür vorn verriegelt und die daneben offen. Beide gehen jetzt durch dieselbe Zählung.
+ */
+export function tryBotSecret(ip, value) {
   const now = Date.now();
-  const recent = (failures.get(req.ip) || []).filter((at) => now - at < FAIL_WINDOW_MS);
+  const recent = (failures.get(ip) || []).filter((at) => now - at < FAIL_WINDOW_MS);
   if (recent.length >= FAIL_MAX) {
-    failures.set(req.ip, recent);
-    return next(
-      new HttpError(429, 'Zu viele Versuche.', { en: 'Too many attempts.' })
-    );
+    failures.set(ip, recent);
+    return 'throttled';
   }
-
-  const header = String(req.headers.authorization || '');
-  const value = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!checkSecret(value)) {
     recent.push(now);
-    failures.set(req.ip, recent);
+    failures.set(ip, recent);
     if (failures.size > 5_000) {
       for (const [key, times] of failures) {
         if (!times.some((at) => now - at < FAIL_WINDOW_MS)) failures.delete(key);
       }
     }
+    return 'wrong';
+  }
+  failures.delete(ip);
+  return 'ok';
+}
+
+router.use((req, res, next) => {
+  const header = String(req.headers.authorization || '');
+  const value = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const result = tryBotSecret(req.ip, value);
+  if (result === 'throttled') {
+    return next(new HttpError(429, 'Zu viele Versuche.', { en: 'Too many attempts.' }));
+  }
+  if (result === 'wrong') {
     return next(new HttpError(401, 'Der Bot ist nicht angemeldet.', { en: 'The bot is not signed in.' }));
   }
-  failures.delete(req.ip);
   next();
 });
 
@@ -333,11 +348,22 @@ router.post(
         en: 'That Discord account is not linked to an AFKSystems account.',
       });
     }
+    // **Wer hier schreiben darf, ist dieselbe Frage wie im Panel.** Geprüft wurde sie nicht: Es
+    // genügte, dass irgendein verknüpftes Discord-Konto genannt wurde – und die Nachricht landete
+    // im Verlauf eines fremden Tickets, unter dem Namen dieses Kontos, samt Post an alle
+    // Beteiligten. Ein Kanal, den jemand versehentlich (oder absichtlich) offen hat, wurde damit
+    // zum Schreibzugang zu fremden Support-Gesprächen.
+    const participant = tickets.isParticipant(ticket.id, user.id);
+    if (!participant && user.role !== 'admin') {
+      throw new HttpError(403, 'Du gehörst nicht zu diesem Ticket.', {
+        en: 'You are not part of this ticket.',
+      });
+    }
     // Nur Panel-Administratoren bearbeiten Tickets. Ist ein Administrator selbst Beteiligter,
     // schreibt er in *seinem* Ticket jedoch als Kunde – genau wie in der persönlichen
     // Support-Ansicht im Panel. Sonst würden eigene Antworten als Team-Antwort markiert und der
     // Status/Benachrichtigungen wären widersprüchlich.
-    const staff = user.role === 'admin' && !tickets.isParticipant(ticket.id, user.id);
+    const staff = user.role === 'admin' && !participant;
 
     // Erst die Anhänge holen, dann die Nachricht schreiben: so hängen sie von Anfang an daran,
     // und der Verlauf im Panel ist nie kurz unvollständig. Eine Datei, die nicht kommt, hält die

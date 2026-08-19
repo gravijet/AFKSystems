@@ -202,7 +202,13 @@ admin.get(
                 (SELECT COUNT(*) FROM profiles p WHERE p.user_id = u.id) AS profiles,
                 (SELECT COUNT(*) FROM profiles p JOIN plans pl ON pl.id = p.plan_id
                   WHERE p.user_id = u.id AND pl.free_slot = 0 AND p.paid_until > ${Date.now()}) AS paid_profiles,
-                (SELECT COALESCE(SUM(pl.price_credits), 0) FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+                -- Die Zusätze gehören mit hinein. Ohne sie stand in der Nutzerliste ein anderer
+                -- Monatsbetrag als überall sonst im Panel (billing.monthlyCost rechnet sie mit) –
+                -- wer die Liste zum Abgleich benutzte, verglich zwei verschiedene Zahlen.
+                (SELECT COALESCE(SUM(pl.price_credits + COALESCE(
+                          (SELECT SUM(a.price_credits * pa.qty) FROM profile_addons pa
+                             JOIN addons a ON a.id = pa.addon_id WHERE pa.profile_id = p.id), 0)), 0)
+                   FROM profiles p JOIN plans pl ON pl.id = p.plan_id
                   WHERE p.user_id = u.id AND pl.free_slot = 0 AND p.paid_until > ${Date.now()}) AS monthly
            FROM users u
           ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -353,7 +359,15 @@ admin.patch(
       audit(req.user.id, 'admin-password', { user: id });
     }
     if (body.premium_until !== undefined) {
-      const until = body.premium_until ? Number(body.premium_until) : null;
+      // `Number("morgen")` ist `NaN`, und `NaN` bindet SQLite nicht: Der Aufruf flog mit einem
+      // Serverfehler heraus, **nachdem** ein vorheriges Feld derselben Anfrage (etwa eine
+      // Gutschrift) schon geschrieben war. Eine halb ausgeführte Änderung ist schlimmer als eine
+      // abgelehnte – also hier prüfen und mit einem Satz absagen.
+      let until = null;
+      if (body.premium_until) {
+        until = Math.trunc(Number(body.premium_until));
+        if (!Number.isFinite(until) || until < 0) throw bad('Kein gültiges Datum für Premium.');
+      }
       db.prepare('UPDATE users SET premium_until = ? WHERE id = ?').run(until, id);
       discordRolesChanged = true;
     }
@@ -658,11 +672,15 @@ admin.get(
 admin.post(
   '/topups/:id/settle',
   wrap((req, res) => {
+    // `force` gilt nur für zurückgezogene Aufladungen: Eine Überweisung, die schon unterwegs war,
+    // als der Kunde die Aufladung abgebrochen hat, kommt trotzdem an. Bezahlte und zurückerstattete
+    // bucht auch das nicht ein zweites Mal.
     const topup = billing.settleTopup(
       requireInt(req.params.id, 'Aufladung'),
-      `bestätigt von ${req.user.username}`
+      `bestätigt von ${req.user.username}`,
+      { force: Boolean(req.body?.force) }
     );
-    audit(req.user.id, 'topup-settle', { id: topup.id });
+    audit(req.user.id, 'topup-settle', { id: topup.id, force: Boolean(req.body?.force) }, req.ip);
     res.json({ topup });
   })
 );
@@ -795,7 +813,7 @@ admin.get(
   wrap((req, res) => {
     res.json({
       tickets: tickets.listAll({
-        status: req.query.status,
+        status: req.query.status === undefined ? null : String(req.query.status),
         search: String(req.query.q || '').trim(),
       }),
       statuses: tickets.STATUSES,
@@ -1090,9 +1108,14 @@ admin.patch(
   wrap((req, res) => {
     const changed = [];
     for (const [key, value] of Object.entries(req.body || {})) {
-      const entry = settingSchema[key];
       // Nur, was in der Beschreibung steht. Ein unbekannter Schlüssel ist ein Tippfehler oder ein
       // Versuch – beides gehört nicht in die Tabelle.
+      //
+      // `Object.hasOwn` statt einer bloßen Wahrheitsprüfung: Ohne sie war `constructor` ein
+      // "bekannter" Schlüssel (er kommt aus der Prototypenkette), fiel durch jede Fallunter-
+      // scheidung darunter hindurch und landete als Zeile in den Einstellungen.
+      if (!Object.hasOwn(settingSchema, key)) continue;
+      const entry = settingSchema[key];
       if (!entry) continue;
 
       if (entry.type === 'linkedroles') {
@@ -1160,7 +1183,7 @@ admin.patch(
 admin.delete(
   '/settings/:key',
   wrap((req, res) => {
-    const entry = settingSchema[req.params.key];
+    const entry = Object.hasOwn(settingSchema, req.params.key) ? settingSchema[req.params.key] : null;
     if (!entry?.secret) throw notFound('Dieses Feld gibt es nicht.');
     setSetting(entry.key, '');
     audit(req.user.id, 'admin-settings-clear', { key: entry.key }, req.ip);

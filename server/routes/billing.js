@@ -110,6 +110,17 @@ router.post(
     if (!list.length) {
       throw bad('Es sind keine Aufladepakete eingerichtet.', { en: 'No top-up packages are set up.' });
     }
+    // Jede Aufladung legt eine Zeile im Kontoauszug an und – bei Tebex – einen Warenkorb bei
+    // einem fremden Dienst. Ohne Grenze ist dieser Endpunkt ein Knopf, mit dem sich beides ohne
+    // Anmeldung bei Tebex und ohne einen Cent beliebig oft auslösen lässt.
+    const open = db
+      .prepare("SELECT COUNT(*) AS n FROM topups WHERE user_id = ? AND status = 'open'")
+      .get(req.user.id).n;
+    if (open >= 10) {
+      throw bad('Es sind schon zehn Aufladungen offen. Bitte erst eine davon abschließen.', {
+        en: 'Ten top-ups are already open. Please finish one of them first.',
+      });
+    }
     const index = requireInt(req.body?.package ?? 0, 'Paket', { min: 0, max: list.length - 1 });
     const chosen = list[index];
     const provider = String(req.body?.provider || (tebex.configured() ? 'tebex' : 'transfer'));
@@ -175,6 +186,14 @@ router.delete(
     const id = requireInt(req.params.id, 'Aufladung');
     const topup = db.prepare('SELECT * FROM topups WHERE id = ? AND user_id = ?').get(id, req.user.id);
     if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
+    // Eine Tebex-Aufladung zieht niemand hier zurück: Die Bezahlseite bleibt offen, und ein
+    // Zurückziehen im Panel würde nur die Zeile verstecken, auf die der Webhook später zeigt.
+    // Wer dort nicht bezahlt, dessen Aufladung bleibt einfach offen und stört niemanden.
+    if (topup.provider === 'tebex') {
+      throw bad('Eine Zahlung über Tebex wird auf der Bezahlseite abgebrochen, nicht hier.', {
+        en: 'A Tebex payment is cancelled on the payment page, not here.',
+      });
+    }
     billing.cancelTopup(id);
     res.json({ ok: true });
   })
@@ -220,6 +239,23 @@ export const tebexWebhook = wrap(async (req, res) => {
       : null;
     if (!topup) {
       console.warn(`[tebex] Zahlung ${payment.transaction} ohne zugehörige Aufladung.`);
+      return res.json({ received: true });
+    }
+    // Die Aufladung muss zu dem Konto gehören, das im Warenkorb steht. `custom` reist über Tebex
+    // und kommt aus einem Warenkorb, den im Headless-Weg der Browser des Kunden mit anlegt –
+    // deshalb wird beides verglichen, statt der Nummer der Aufladung allein zu glauben. Passt es
+    // nicht zusammen, ist das kein Zahlungsvorgang, den wir zuordnen können.
+    if (payment.userId && payment.userId !== topup.user_id) {
+      console.warn(
+        `[tebex] Zahlung ${payment.transaction}: Aufladung #${topup.id} gehört Konto ` +
+          `${topup.user_id}, im Warenkorb steht ${payment.userId}. Nicht gebucht.`
+      );
+      notify.staff({
+        title: 'Tebex: Konto passt nicht',
+        description:
+          `Zahlung \`${payment.transaction}\` nennt Konto ${payment.userId}, Aufladung ` +
+          `#${topup.id} gehört Konto ${topup.user_id}. **Nicht gebucht.**`,
+      });
       return res.json({ received: true });
     }
     // Bezahlt wurde in der Währung des Tebex-Stores. Steht dort etwas anderes als Euro, stimmt

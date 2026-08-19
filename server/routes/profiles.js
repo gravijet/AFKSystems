@@ -145,9 +145,28 @@ function profileView(profile, lang = 'en') {
   };
 }
 
+/**
+ * Wie viele Kontonummern eine Anfrage nennen darf.
+ *
+ * Der Rumpf darf 256 KB groß sein, also passen dort weit über zehntausend Zahlen hinein – und
+ * jede einzelne wurde geprüft, oft mit einer eigenen Datenbankabfrage. Ein Serverplatz hat
+ * höchstens ein paar Dutzend Konten; alles darüber ist keine Anfrage, sondern eine Last.
+ */
+const MAX_ACCOUNT_IDS = 200;
+
+const accountIds = (raw) => {
+  const list = Array.isArray(raw) ? raw : [];
+  if (list.length > MAX_ACCOUNT_IDS) {
+    throw bad(`Höchstens ${MAX_ACCOUNT_IDS} Konten je Anfrage.`, {
+      en: `At most ${MAX_ACCOUNT_IDS} accounts per request.`,
+    });
+  }
+  return list;
+};
+
 /** Aus dem Wunsch "diese Konten" eine geprüfte Liste machen; leer = alle des Platzes. */
 function targets(req, profile) {
-  const wanted = Array.isArray(req.body?.accounts) ? req.body.accounts.map(Number) : [];
+  const wanted = accountIds(req.body?.accounts).map(Number);
   const members = db
     .prepare('SELECT account_id FROM profile_accounts WHERE profile_id = ?')
     .all(profile.id)
@@ -470,7 +489,10 @@ router.get(
         : '',
       addons: billing.addons().map((addon) => {
         const qty = booked[addon.id] || 0;
-        const remaining = Math.max(0, addon.max_qty - qty);
+        // Gedeckelt: `max_qty` steht in der Verwaltung und darf bis in die Millionen gehen. Ohne
+        // Deckel baute diese Antwort ein Verzeichnis mit einer Zeile je Stück – eine Million
+        // Einträge je Aufruf, für eine Auswahlliste, die niemand so weit herunterscrollt.
+        const remaining = Math.min(50, Math.max(0, addon.max_qty - qty));
         return {
           ...addonView(addon, lang, caps),
           qty,
@@ -588,7 +610,9 @@ router.post(
   wrap((req, res) => {
     const profile = notLocked(ownedProfile(req));
     const plan = billing.featuresOf(profile);
-    const wanted = Array.isArray(req.body?.accounts) ? req.body.accounts : [req.body?.account_id];
+    const wanted = Array.isArray(req.body?.accounts)
+      ? accountIds(req.body.accounts)
+      : [req.body?.account_id];
     // Jedes Konto gehört einmal geprüft und einmal gezählt. Doppelte Einträge in der Anfrage und
     // solche, die schon auf dem Platz sitzen, haben vorher gegen das Tariflimit gezählt – damit
     // ließ sich ein voller Serverplatz melden, obwohl noch Platz war.
@@ -655,7 +679,10 @@ router.patch(
 router.delete(
   '/:id/accounts/:accountId',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    // Auch hier `notLocked`: Ein gesperrter Platz ist gesperrt, weil mit ihm etwas nicht stimmt.
+    // Ihn leerzuräumen ist eine Änderung wie jede andere – und wer die Konten abzieht, nimmt dem
+    // Support genau das weg, was er sich ansehen soll.
+    const profile = notLocked(ownedProfile(req));
     const account = ownedAccount(req, req.params.accountId);
     supervisor.stop(profile.id, account.id);
     db.prepare('DELETE FROM profile_accounts WHERE profile_id = ? AND account_id = ?').run(
@@ -1028,7 +1055,7 @@ router.post(
         event,
         JSON.stringify(cleanConfig(body.config, event)),
         JSON.stringify(actions),
-        JSON.stringify((body.accounts || []).map(Number)),
+        JSON.stringify(accountIds(body.accounts).map(Number)),
         body.enabled === false ? 0 : 1,
         Date.now()
       );
@@ -1040,7 +1067,7 @@ router.post(
 router.patch(
   '/:id/macros/:macroId',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const macroId = requireInt(req.params.macroId, 'Macro');
     const macro = db.prepare('SELECT * FROM macros WHERE id = ? AND profile_id = ?').get(macroId, profile.id);
     if (!macro) throw notFound('Dieses Macro gibt es nicht.', { en: 'No such macro.' });
@@ -1073,7 +1100,7 @@ router.patch(
     }
     if (body.accounts !== undefined) {
       set.push('accounts = ?');
-      values.push(JSON.stringify((body.accounts || []).map(Number)));
+      values.push(JSON.stringify(accountIds(body.accounts).map(Number)));
     }
     if (body.enabled !== undefined) {
       set.push('enabled = ?');
@@ -1090,7 +1117,7 @@ router.patch(
 router.delete(
   '/:id/macros/:macroId',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     db.prepare('DELETE FROM macros WHERE id = ? AND profile_id = ?').run(
       requireInt(req.params.macroId, 'Macro'),
       profile.id
@@ -1104,7 +1131,7 @@ router.delete(
 router.post(
   '/:id/macros/:macroId/test',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const macro = db
       .prepare('SELECT * FROM macros WHERE id = ? AND profile_id = ?')
       .get(requireInt(req.params.macroId, 'Macro'), profile.id);
@@ -1144,11 +1171,21 @@ router.get(
 router.post(
   '/:id/spam',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const message = requireString(req.body?.message, 'Nachricht', { max: 256 });
     if (message.trim().startsWith(':')) {
       throw bad('Wiederholte Nachrichten dürfen keine örtlichen Client-Befehle sein.', {
         en: 'Repeated messages cannot be local client commands.',
+      });
+    }
+    // Wiederholte Nachrichten kosten dasselbe wie Macros: je Eintrag und Bot einen Zeitgeber im
+    // Panel. Für Macros stand die Grenze aus dem Tarif längst da, hier stand **keine** – wer wollte,
+    // legte zehntausend an, und der Dienst tickte sich zu Tode, ohne dass ein Credit floss.
+    const limit = billing.featuresOf(profile).max_macros;
+    const have = db.prepare('SELECT COUNT(*) AS n FROM spam WHERE profile_id = ?').get(profile.id).n;
+    if (have >= limit) {
+      throw new HttpError(402, `Dieser Tarif erlaubt ${limit} wiederholte Nachrichten je Serverplatz.`, {
+        en: `This plan allows ${limit} repeated messages per server slot.`,
       });
     }
     const interval = requireInt(req.body?.interval_sec ?? 300, 'Intervall', { min: 5, max: 86400 });
@@ -1161,7 +1198,7 @@ router.post(
         profile.id,
         message,
         interval,
-        JSON.stringify((req.body?.accounts || []).map(Number)),
+        JSON.stringify(accountIds(req.body?.accounts).map(Number)),
         req.body?.enabled === false ? 0 : 1,
         Date.now()
       );
@@ -1173,7 +1210,7 @@ router.post(
 router.patch(
   '/:id/spam/:spamId',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const spamId = requireInt(req.params.spamId, 'Eintrag');
     const row = db.prepare('SELECT * FROM spam WHERE id = ? AND profile_id = ?').get(spamId, profile.id);
     if (!row) throw notFound('Diesen Eintrag gibt es nicht.', { en: 'No such entry.' });
@@ -1196,7 +1233,7 @@ router.patch(
     }
     if (body.accounts !== undefined) {
       set.push('accounts = ?');
-      values.push(JSON.stringify((body.accounts || []).map(Number)));
+      values.push(JSON.stringify(accountIds(body.accounts).map(Number)));
     }
     if (body.enabled !== undefined) {
       set.push('enabled = ?');
@@ -1213,7 +1250,7 @@ router.patch(
 router.delete(
   '/:id/spam/:spamId',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     db.prepare('DELETE FROM spam WHERE id = ? AND profile_id = ?').run(
       requireInt(req.params.spamId, 'Eintrag'),
       profile.id
@@ -1227,7 +1264,7 @@ router.delete(
 router.post(
   '/:id/spam/:spamId/test',
   wrap((req, res) => {
-    const profile = ownedProfile(req);
+    const profile = notLocked(ownedProfile(req));
     const row = db
       .prepare('SELECT * FROM spam WHERE id = ? AND profile_id = ?')
       .get(requireInt(req.params.spamId, 'Eintrag'), profile.id);

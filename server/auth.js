@@ -115,6 +115,12 @@ export function requireUser(req, _res, next) {
 
 export function requireAdmin(req, _res, next) {
   if (!req.user) return next(new HttpError(401, 'Bitte anmelden.', { en: 'Please log in.' }));
+  // Auch hier, nicht nur in `requireUser`: Der Admin-Router hängt beide hintereinander, aber diese
+  // Funktion wird auch einzeln benutzt, und eine Rechteprüfung, die von der Reihenfolge ihrer
+  // Nachbarn abhängt, ist keine.
+  if (req.user.blocked) {
+    return next(new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' }));
+  }
   if (req.user.role !== 'admin') {
     return next(new HttpError(403, 'Nur für Administratoren.', { en: 'Administrators only.' }));
   }
@@ -258,6 +264,13 @@ export function verifyEmail(rawToken) {
   if (!value) return null;
   const user = db.prepare('SELECT * FROM users WHERE verify_token = ?').get(value);
   if (!user) return null;
+  // Ein Bestätigungslink meldet an (siehe unten) – er ist damit ein zweiter Weg ins Konto, und der
+  // muss dieselbe Tür sein wie das Anmeldeformular. Ohne diese Zeile kam ein gesperrtes Konto über
+  // eine alte Bestätigungsmail wieder herein: `login()` weist es ab, `/auth/verify` legte ihm eine
+  // Sitzung an.
+  if (user.blocked) {
+    throw new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' });
+  }
   // Ein Bestätigungslink meldet an – also ist er ein Schlüssel zum Konto und darf nicht ewig
   // gelten. Wer eine alte Mail wiederfindet oder weitergeleitet hat, bekommt hier eine Absage
   // und über „erneut senden" einen neuen Link.
@@ -310,6 +323,12 @@ export function applyReset(rawToken, password, repeat) {
     ? db.prepare('SELECT * FROM users WHERE reset_token = ? AND reset_expires > ?').get(value, Date.now())
     : null;
   if (!user) throw bad('Dieser Link gilt nicht mehr.', { en: 'This link is no longer valid.', code: 'reset-invalid' });
+  // Ein gesperrtes Konto bekommt kein neues Passwort. Anmelden könnte es sich damit zwar ohnehin
+  // nicht, aber ein Zurücksetzen, das "erledigt" meldet und nichts nützt, ist eine Auskunft über
+  // ein Konto, die niemandem zusteht – und die Sperre bliebe eine Frage der Reihenfolge.
+  if (user.blocked) {
+    throw new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' });
+  }
   checkPasswordPair(password, repeat);
   db.prepare(
     'UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?'

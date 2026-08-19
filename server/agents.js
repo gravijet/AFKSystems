@@ -63,6 +63,16 @@ class NodeLink {
     return true;
   }
 
+  /** Läuft auf diesem Standort gerade ein Auftrag für dieses Konto? */
+  servesUser(userId) {
+    const id = Number(userId);
+    if (!Number.isInteger(id) || id <= 0) return false;
+    for (const job of this.jobs.values()) {
+      if (job.userId === id) return true;
+    }
+    return false;
+  }
+
   onMessage(data) {
     let message;
     try {
@@ -112,7 +122,13 @@ class NodeLink {
       case 'files':
         // Der Client schreibt aufgefrischte Microsoft-Token in seine Kontodatei. Käme sie nicht
         // zurück, müsste dasselbe Konto beim nächsten Start neu angemeldet werden.
-        writeBackFiles(message.user_id, message.files);
+        //
+        // **Nur für Konten, für die dieser Standort gerade wirklich arbeitet.** Die Kontonummer
+        // steht in der Nachricht, kommt also von der anderen Maschine – ohne diese Prüfung schrieb
+        // ein Standort mit einem Bot eines beliebigen Kunden die Anmeldedatei *jedes* Kunden neu.
+        // Ein übernommener oder schlicht fehlerhafter Standort hätte damit alle Minecraft-Konten
+        // des Panels überschreiben können.
+        if (this.servesUser(message.user_id)) writeBackFiles(message.user_id, message.files);
         break;
 
       case 'exit': {
@@ -163,10 +179,13 @@ class NodeLink {
  * vorzutäuschen wäre gelogen – eine PID etwa gibt es hier nicht, die gehört dem anderen Rechner.
  */
 class RemoteProcess extends EventEmitter {
-  constructor(link, job) {
+  constructor(link, job, userId = null) {
     super();
     this.link = link;
     this.job = job;
+    // Wem dieser Auftrag gehört. Der Standort schickt Kontodateien zurück und nennt dabei selbst
+    // eine Kontonummer – hier steht, welche das sein darf (siehe NodeLink#servesUser).
+    this.userId = Number(userId) || null;
     this.pid = null;
     this.killed = false;
     this.stdout = new EventEmitter();
@@ -238,7 +257,7 @@ export function spawn(nodeId, { file, args, userId, env = {} }) {
     throw new Error(`Der Standort "${node?.name || nodeId}" ist gerade nicht erreichbar.`);
   }
   const job = crypto.randomUUID();
-  const proc = new RemoteProcess(link, job);
+  const proc = new RemoteProcess(link, job, userId);
   link.jobs.set(job, proc);
   link.send({
     type: 'spawn',

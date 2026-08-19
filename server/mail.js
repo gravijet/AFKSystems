@@ -15,6 +15,7 @@ import path from 'node:path';
 import nodemailer from 'nodemailer';
 import { db, getSetting } from './db.js';
 import { config, ROOT } from './config.js';
+import { safeUrl } from './util.js';
 
 /** Ist der Versand eingerichtet? */
 export function configured() {
@@ -315,13 +316,13 @@ function wrap({ title, body, action, footer }) {
         ${body}
         ${
           action
-            ? `<p style="margin:2rem 0 0"><a href="${action.url}" class="m-btn"
+            ? `<p style="margin:2rem 0 0"><a href="${escape(action.url)}" class="m-btn"
                  style="display:inline-block;background:#206cfe;color:#ffffff;text-decoration:none;
                  padding:.85rem 1.5rem;border-radius:12px;font-weight:600;font-size:1rem">${escape(
                    action.label
                  )}</a></p>
                <p class="m-muted" style="margin:1.4rem 0 0;font-size:.85rem;line-height:1.5;color:#5b6472;
-                 word-break:break-all">${escape(action.fallback)}: ${action.url}</p>`
+                 word-break:break-all">${escape(action.fallback)}: ${escape(action.url)}</p>`
             : ''
         }
       </td>
@@ -646,9 +647,15 @@ export function render(user, kind, vars = {}) {
   );
   const lines = shape.lines(safe).filter(Boolean);
   const plainLines = shape.lines(values).filter(Boolean);
-  // Titel, Betreff und Adresse gehen roh weiter: `wrap` schützt den Titel selbst, und eine
-  // geschützte Adresse wäre keine Adresse mehr.
-  const action = shape.action ? shape.action(values) : null;
+  // Titel und Betreff gehen roh weiter – `wrap` schützt den Titel selbst.
+  //
+  // Die **Adresse** ging bisher ebenfalls roh ins `href`, und das war eine Lücke mit zwei Seiten:
+  // Der Knopf einer Ankündigung nimmt seine Adresse aus den Einstellungen, und ein
+  // Anführungszeichen darin brach aus dem Attribut aus, ein `javascript:` davor brauchte nicht
+  // einmal das. Beides steht danach in einer E-Mail **von uns**, mit unserem Logo darüber. Also:
+  // nur http(s), und maskiert eingesetzt.
+  const raw = shape.action ? shape.action(values) : null;
+  const action = raw && safeUrl(raw.url) ? { ...raw, url: safeUrl(raw.url) } : null;
 
   const html = wrap({
     title: shape.title(values),

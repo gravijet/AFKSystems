@@ -26,13 +26,35 @@ const insertLedger = db.prepare(
 
 // ---------------------------------------------------------------- Guthaben
 
-/** Guthaben ändern (positiv = gutschreiben, negativ = abbuchen). Gibt den neuen Stand zurück. */
+/**
+ * Guthaben ändern (positiv = gutschreiben, negativ = abbuchen). Gibt den neuen Stand zurück.
+ *
+ * **Unter null geht es hier nicht.** Das steht an einem Dutzend Stellen als Absicht im Text und war
+ * an keiner einzigen durchgesetzt: Jeder Aufrufer prüfte selbst, ob das Guthaben reicht, und wer es
+ * vergaß (oder zwischen Prüfung und Abbuchung etwas anderes abbuchte), schrieb einen negativen
+ * Stand in die Datenbank. Ein negativer Stand ist keine Schuld, sondern ein kaputter Kontoauszug:
+ * jede Rechnung, die auf „Guthaben ≥ Preis" prüft, rechnet danach mit Vorzeichen, und der Kunde
+ * lädt auf und sieht nichts davon. Deshalb ist es ab hier ein Fehler und keine stille Zahl.
+ *
+ * Wer bewusst nur nimmt, was da ist (Rückerstattung, Rücklastschrift), deckelt vorher selbst und
+ * sagt es mit `allowZero` – siehe `refundTopup`.
+ */
 export const move = db.transaction((userId, delta, kind, note, ref = null) => {
   const user = readUser.get(userId);
   if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
-  const balance = user.credits + Math.round(delta);
+  const amount = Math.round(Number(delta));
+  if (!Number.isFinite(amount)) {
+    throw bad('Ungültiger Betrag.', { en: 'Invalid amount.' });
+  }
+  const balance = user.credits + amount;
+  if (balance < 0) {
+    throw bad(
+      `Zu wenig Guthaben: es fehlen ${-balance} Credits.`,
+      { en: `Not enough credits: ${-balance} short.` }
+    );
+  }
   updateBalance.run(balance, userId);
-  insertLedger.run(userId, Math.round(delta), balance, kind, note || null, ref, Date.now());
+  insertLedger.run(userId, amount, balance, kind, note || null, ref, Date.now());
   return balance;
 });
 
@@ -155,10 +177,15 @@ export function monthlyPrice(profile) {
 
 /** Anteiliger Preis für den Rest der laufenden Periode – für Zusätze, die mittendrin dazukommen. */
 export function proratedPrice(profile, credits) {
-  if (!profile.paid_until) return 0;
-  const left = profile.paid_until - Date.now();
+  const until = Number(profile.paid_until);
+  const amount = Number(credits);
+  // Ein kaputtes Datum oder ein kaputter Preis darf hier keine Zahl erzeugen, mit der danach
+  // gerechnet und gebucht wird: `NaN` bindet SQLite nicht, und ein Preis von `NaN` bestünde jede
+  // Prüfung "Guthaben < Preis" (jeder Vergleich mit NaN ist falsch).
+  if (!Number.isFinite(until) || !until || !Number.isFinite(amount)) return 0;
+  const left = until - Date.now();
   if (left <= 0) return 0;
-  return Math.ceil((credits * Math.min(left, MONTH_MS)) / MONTH_MS);
+  return Math.ceil((amount * Math.min(left, MONTH_MS)) / MONTH_MS);
 }
 
 /** Wie viele kostenlose Plätze ein Konto hat (Einstellung, Vorgabe 1). */
@@ -246,6 +273,23 @@ export function monthlyCost(userId) {
 }
 
 /**
+ * Die Zusätze eines Platzes gelten als für die ganze laufende Periode bezahlt.
+ *
+ * Aufgerufen wird das genau dort, wo der volle Monatspreis abgebucht wurde: beim Tarifwechsel und
+ * bei der Verlängerung. Ohne diese Zeile bliebe an einem Zusatz der anteilige Betrag stehen, mit
+ * dem er einmal mittendrin dazugekauft wurde – und der Deckel in `removeAddon` gäbe nach einer
+ * frisch bezahlten Verlängerung weniger zurück, als der Kunde eben bezahlt hat.
+ */
+function markAddonsPaidForPeriod(profileId) {
+  db.prepare(
+    `UPDATE profile_addons SET paid_credits =
+       COALESCE((SELECT a.price_credits * profile_addons.qty FROM addons a
+                  WHERE a.id = profile_addons.addon_id), 0)
+      WHERE profile_id = ?`
+  ).run(profileId);
+}
+
+/**
  * Guthaben-Rest eines Platzes, wenn er jetzt gewechselt oder gelöscht wird (abgerundet).
  *
  * Die Restzeit wird auf **einen Monat** gedeckelt, genau wie in `proratedPrice`. Ohne diesen
@@ -258,10 +302,11 @@ export function monthlyCost(userId) {
  */
 export function refundValue(profile) {
   const plan = planOf(profile);
-  if (plan.free_slot || !profile.paid_until) return 0;
-  const left = Math.min(profile.paid_until - Date.now(), MONTH_MS);
+  const until = Number(profile.paid_until);
+  if (plan.free_slot || !Number.isFinite(until) || !until) return 0;
+  const left = Math.min(until - Date.now(), MONTH_MS);
   if (left <= 0) return 0;
-  return Math.floor((monthlyPrice(profile) * left) / MONTH_MS);
+  return Math.max(0, Math.floor((monthlyPrice(profile) * left) / MONTH_MS));
 }
 
 /**
@@ -335,6 +380,8 @@ export const setPlan = db.transaction((profile, plan, { by = null } = {}) => {
     chatLimit,
     profile.id
   );
+  // Der Preis oben enthielt die Zusätze zum vollen Monatspreis – dann steht das auch an ihnen.
+  markAddonsPaidForPeriod(profile.id);
   audit(by ?? profile.user_id, 'plan-set', { profile: profile.id, plan: plan.slug, price });
   return db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id);
 });
@@ -376,6 +423,8 @@ export function renewDue(now = Date.now()) {
       // Ab jetzt weiterrechnen, nicht ab dem alten Ende – sonst schrumpft die Laufzeit bei
       // jedem Ausfall des Dienstes um die Zeit, die er stand.
       db.prepare('UPDATE profiles SET paid_until = ? WHERE id = ?').run(now + MONTH_MS, profile.id);
+      // `price` kam aus `monthlyPrice` und enthielt die Zusätze zum vollen Preis.
+      markAddonsPaidForPeriod(profile.id);
       renewed.push({ userId: profile.user_id, profileId: profile.id, name: profile.name, price });
     } else {
       db.prepare('UPDATE profiles SET suspended = 1 WHERE id = ?').run(profile.id);
@@ -398,6 +447,12 @@ export function renewDue(now = Date.now()) {
  */
 export function expiringSoon(days = 3) {
   const until = Date.now() + days * 86_400_000;
+  // Der Vergleich steht als eigener Ausdruck da und nicht als Verweis auf den Spaltennamen oben.
+  // `price_credits` gibt es zweimal: als Alias dieser Rechnung **und** als Spalte in `plans`. In
+  // der WHERE-Bedingung gewinnt die Spalte – die Warnung rechnete also mit dem nackten Tarifpreis
+  // und übersah genau die Fälle, in denen die dazugebuchten Zusätze das Guthaben sprengen. Wer
+  // einen Tarif für 249 und Zusätze für 200 Credits fährt und 300 auf dem Konto hat, bekam keine
+  // Warnung und stand am nächsten Morgen still.
   return db
     .prepare(
       `SELECT p.id, p.name, p.user_id, p.paid_until, p.renew, u.credits,
@@ -407,7 +462,9 @@ export function expiringSoon(days = 3) {
          FROM profiles p JOIN plans pl ON pl.id = p.plan_id JOIN users u ON u.id = p.user_id
         WHERE pl.free_slot = 0 AND p.suspended = 0 AND p.renew = 1
           AND p.paid_until BETWEEN ? AND ?
-          AND u.credits < price_credits`
+          AND u.credits < pl.price_credits + COALESCE((SELECT SUM(a.price_credits * pa.qty)
+                  FROM profile_addons pa JOIN addons a ON a.id = pa.addon_id
+                 WHERE pa.profile_id = p.id), 0)`
     )
     .all(Date.now(), until);
 }
@@ -435,6 +492,14 @@ export const addAddon = db.transaction((profile, addon, qty = 1) => {
       en: 'The free server slot takes no extras. Pick a paid plan first.',
     });
   }
+  // Auf einem stillgelegten Platz ist die Laufzeit abgelaufen: `proratedPrice` wäre 0, der Zusatz
+  // also gratis, und beim Fortsetzen zahlte man ihn zwar mit – dazwischen aber stünde er
+  // freigeschaltet da, ohne dass je etwas dafür abgebucht wurde. Erst fortsetzen, dann buchen.
+  if (profile.suspended || !profile.paid_until || profile.paid_until <= Date.now()) {
+    throw bad('Dieser Serverplatz läuft gerade nicht. Setze ihn zuerst fort.', {
+      en: 'This server slot is not running. Resume it first.',
+    });
+  }
   if (!addon.active || !addon.available) {
     throw bad('Dieser Zusatz ist gerade nicht buchbar.', { en: 'That extra cannot be booked right now.' });
   }
@@ -443,7 +508,7 @@ export const addAddon = db.transaction((profile, addon, qty = 1) => {
   }
 
   const have = db
-    .prepare('SELECT qty FROM profile_addons WHERE profile_id = ? AND addon_id = ?')
+    .prepare('SELECT qty, paid_credits FROM profile_addons WHERE profile_id = ? AND addon_id = ?')
     .get(profile.id, addon.id);
   const wanted = Math.max(1, Math.trunc(qty));
   const next = (have?.qty || 0) + wanted;
@@ -469,35 +534,49 @@ export const addAddon = db.transaction((profile, addon, qty = 1) => {
       String(profile.id)
     );
   }
+  // Was wirklich abgebucht wurde, bleibt am Eintrag stehen – daraus rechnet `removeAddon` seine
+  // Gutschrift, und nicht aus dem Listenpreis von heute.
+  const paid = (have?.paid_credits || 0) + price;
   db.prepare(
-    `INSERT INTO profile_addons (profile_id, addon_id, qty, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(profile_id, addon_id) DO UPDATE SET qty = ?`
-  ).run(profile.id, addon.id, next, Date.now(), next);
+    `INSERT INTO profile_addons (profile_id, addon_id, qty, paid_credits, created_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(profile_id, addon_id) DO UPDATE SET qty = ?, paid_credits = ?`
+  ).run(profile.id, addon.id, next, paid, Date.now(), next, paid);
   audit(profile.user_id, 'addon-add', { profile: profile.id, addon: addon.key, qty: next, price });
   return { qty: next, charged: price, balance: balance(profile.user_id) };
 });
 
-/** Einen Zusatz abbestellen. Der nicht verbrauchte Rest kommt aufs Guthaben zurück. */
+/**
+ * Einen Zusatz abbestellen. Der nicht verbrauchte Rest kommt aufs Guthaben zurück.
+ *
+ * **Höchstens das, was dafür bezahlt wurde.** Vorher stand hier der anteilige *Listenpreis von
+ * heute*, ganz gleich, ob je etwas abgebucht worden war. Zwei Wege führten damit zu Credits aus
+ * dem Nichts: Ein Zusatz, den die Verwaltung von Hand auf einen Platz legte (`POST
+ * /admin/servers/:id/addons` bucht bewusst nichts ab), ließ sich vom Kunden sofort gegen echtes
+ * Guthaben abbestellen; und wurde ein Preis nachträglich erhöht, bekam jeder Altbucher die
+ * Differenz geschenkt. `paid_credits` sagt, was der Platz für diese Stücke wirklich gezahlt hat –
+ * mehr kann nicht zurückkommen.
+ */
 export const removeAddon = db.transaction((profile, addon, qty = 1) => {
   const have = db
-    .prepare('SELECT qty FROM profile_addons WHERE profile_id = ? AND addon_id = ?')
+    .prepare('SELECT qty, paid_credits FROM profile_addons WHERE profile_id = ? AND addon_id = ?')
     .get(profile.id, addon.id);
   if (!have) throw notFound('Dieser Zusatz ist nicht gebucht.', { en: 'That extra is not booked.' });
   const drop = Math.min(have.qty, Math.max(1, Math.trunc(qty)));
   const rest = have.qty - drop;
+  // Der Anteil am Bezahlten, der auf die abbestellten Stücke entfällt.
+  const paidShare = Math.floor((Math.max(0, have.paid_credits || 0) * drop) / have.qty);
   if (rest > 0) {
-    db.prepare('UPDATE profile_addons SET qty = ? WHERE profile_id = ? AND addon_id = ?').run(
-      rest,
-      profile.id,
-      addon.id
-    );
+    db.prepare(
+      'UPDATE profile_addons SET qty = ?, paid_credits = ? WHERE profile_id = ? AND addon_id = ?'
+    ).run(rest, Math.max(0, (have.paid_credits || 0) - paidShare), profile.id, addon.id);
   } else {
     db.prepare('DELETE FROM profile_addons WHERE profile_id = ? AND addon_id = ?').run(
       profile.id,
       addon.id
     );
   }
-  const refund = proratedPrice(profile, addon.price_credits * drop);
+  const refund = Math.min(proratedPrice(profile, addon.price_credits * drop), paidShare);
   if (refund > 0) {
     move(profile.user_id, refund, 'refund', `${addon.name_de} · ${profile.name} · Rest`, String(profile.id));
   }
@@ -516,32 +595,76 @@ export function createVoucher({ credits, uses = 1, note = '', createdBy = null, 
   return db.prepare('SELECT * FROM vouchers WHERE code = ?').get(code);
 }
 
+/**
+ * Einen Gutschein einlösen.
+ *
+ * Drei Dinge, die vorher fehlten und jedes für sich Guthaben verschenkt haben:
+ *
+ *   1. **Einmal je Konto.** `uses_left` zählt Einlösungen, nicht Personen. Ein Gutschein für
+ *      hundert Leute war deshalb ein Knopf, den ein einziges Konto hundertmal drücken konnte –
+ *      hundertmal Guthaben aus einem Code, der für eine Aktion gedacht war. Wer schon eingelöst
+ *      hat, steht ab jetzt in `voucher_redemptions`.
+ *   2. **Der Zähler wird in der Bedingung geprüft, nicht davor.** `SET uses_left = uses_left - 1`
+ *      ohne `WHERE uses_left > 0` zählt fröhlich ins Negative, sobald zwei Anfragen zwischen Lesen
+ *      und Schreiben aneinander vorbeikommen.
+ *   3. **Kein negatives Guthaben.** Ein Gutschein über einen negativen Betrag (Tippfehler in der
+ *      Verwaltung) hätte hier abgebucht statt gutgeschrieben.
+ */
 export const redeemVoucher = db.transaction((userId, rawCode) => {
   const code = String(rawCode || '').trim().toUpperCase();
   const voucher = db.prepare('SELECT * FROM vouchers WHERE code = ?').get(code);
   if (!voucher) throw bad('Diesen Gutscheincode gibt es nicht.', { en: 'No such voucher code.' });
-  if (voucher.uses_left <= 0) throw bad('Dieser Gutschein ist schon eingelöst.', { en: 'That voucher is used up.' });
   if (voucher.expires_at && voucher.expires_at < Date.now()) {
     throw bad('Dieser Gutschein ist abgelaufen.', { en: 'That voucher has expired.' });
   }
-  db.prepare('UPDATE vouchers SET uses_left = uses_left - 1 WHERE code = ?').run(code);
-  const after = move(userId, voucher.credits, 'voucher', `Gutschein ${code}`, code);
-  audit(userId, 'voucher-redeem', { code, credits: voucher.credits });
-  return { credits: voucher.credits, balance: after };
+  if (
+    db.prepare('SELECT 1 FROM voucher_redemptions WHERE code = ? AND user_id = ?').get(code, userId)
+  ) {
+    throw bad('Diesen Gutschein hast du schon eingelöst.', {
+      en: 'You have already redeemed that voucher.',
+    });
+  }
+  const credits = Math.max(0, Math.round(Number(voucher.credits) || 0));
+  if (credits <= 0) {
+    throw bad('Dieser Gutschein bringt kein Guthaben.', { en: 'That voucher carries no credits.' });
+  }
+  const taken = db
+    .prepare('UPDATE vouchers SET uses_left = uses_left - 1 WHERE code = ? AND uses_left > 0')
+    .run(code).changes;
+  if (!taken) throw bad('Dieser Gutschein ist schon eingelöst.', { en: 'That voucher is used up.' });
+  db.prepare(
+    'INSERT INTO voucher_redemptions (code, user_id, credits, created_at) VALUES (?, ?, ?, ?)'
+  ).run(code, userId, credits, Date.now());
+  const after = move(userId, credits, 'voucher', `Gutschein ${code}`, code);
+  audit(userId, 'voucher-redeem', { code, credits });
+  return { credits, balance: after };
 });
 
 // ---------------------------------------------------------------- Aufladungen
 
-/** Aufladepakete aus den Einstellungen, um Euro-Preis und Bonus ergänzt. */
+/**
+ * Aufladepakete aus den Einstellungen, um Euro-Preis und Bonus ergänzt.
+ *
+ * Die Werte kommen aus einer JSON-Spalte und sind damit alles, was jemals dort hineingeschrieben
+ * wurde – auch aus einer Fassung vor der heutigen Prüfung. Ein Paket ohne Betrag hätte hier eine
+ * Aufladung über `NaN` Cent erzeugt: `createTopup` schreibt sie, die Datenbank nimmt sie, und im
+ * Kontoauszug steht danach eine Zeile, die niemand mehr zuordnen kann. Was nicht rechnet, fällt
+ * deshalb hier heraus, statt später Geld zu berühren.
+ */
 export function packages() {
-  const list = getSetting('packages') || [];
+  const raw = getSetting('packages');
+  const list = (Array.isArray(raw) ? raw : []).filter((entry) => {
+    const cent = Math.round(Number(entry?.cent));
+    const credits = Math.round(Number(entry?.credits));
+    return Number.isFinite(cent) && cent > 0 && Number.isFinite(credits) && credits > 0;
+  });
   return list.map((entry, index) => ({
     index,
-    cent: entry.cent,
-    credits: entry.credits,
+    cent: Math.round(Number(entry.cent)),
+    credits: Math.round(Number(entry.credits)),
     label: entry.label || `${(entry.cent / 100).toFixed(2)} €`,
     euro: (entry.cent / 100).toFixed(2),
-    bonus: Math.max(0, entry.credits - entry.cent),
+    bonus: Math.max(0, Math.round(Number(entry.credits)) - Math.round(Number(entry.cent))),
     // Nur für den Headless-Weg von Tebex: dort liegt das Paket fertig im Webstore und hat dort
     // eine eigene Nummer. Leer heißt "gibt es dort nicht" – dann taugt das Paket nur für den
     // Checkout-Weg, bei dem der Preis von hier kommt.
@@ -550,22 +673,40 @@ export function packages() {
 }
 
 export function createTopup({ userId, provider, amountCent, credits, reference = null, externalId = null }) {
+  // Eine Aufladung ohne Betrag ist keine. Sie hier abzulehnen ist die letzte Stelle, an der das
+  // ohne Folgen geht – danach steht sie im Kontoauszug und wartet auf eine Zahlung, die zu ihr
+  // nicht passen kann.
+  const cents = Math.round(Number(amountCent));
+  const value = Math.round(Number(credits));
+  if (!Number.isFinite(cents) || cents <= 0 || !Number.isFinite(value) || value <= 0) {
+    throw bad('Dieses Aufladepaket ist nicht gültig eingerichtet.', {
+      en: 'That top-up package is not set up correctly.',
+    });
+  }
   const info = db
     .prepare(
       `INSERT INTO topups (user_id, provider, amount_cent, credits, status, reference, external_id, created_at)
        VALUES (?, ?, ?, ?, 'open', ?, ?, ?)`
     )
-    .run(userId, provider, amountCent, credits, reference, externalId, Date.now());
+    .run(userId, provider, cents, value, reference, externalId, Date.now());
   return db.prepare('SELECT * FROM topups WHERE id = ?').get(info.lastInsertRowid);
 }
 
-const settle = db.transaction((topupId, note = '') => {
+const settle = db.transaction((topupId, note = '', force = false) => {
   const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
   if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
   // Schon gebucht **oder schon zurückgenommen**: In beiden Fällen darf hier nichts mehr entstehen.
   // Ohne den zweiten Fall schrieb ein Klick auf „als bezahlt buchen" eine zurückerstattete
   // Aufladung ein zweites Mal gut – das Geld war weg und die Credits waren wieder da.
+  //
+  // **Abgebrochen zählt genauso.** Eine Aufladung, die der Kunde selbst zurückgezogen hat
+  // (`DELETE /billing/topup/:id`), ist erledigt. Sie danach noch zu buchen hieße: Guthaben für
+  // einen Vorgang, den beide Seiten für beendet hielten – und weil das Abbrechen dem Kunden offen
+  // steht, war das ein Weg, den er selbst öffnen konnte. Kommt das Geld dennoch später an (eine
+  // Überweisung, die schon unterwegs war), bucht die Verwaltung sie mit „trotzdem buchen" – dann
+  // steht eine Entscheidung eines Menschen dahinter und nicht ein Klick des Kunden.
   if (topup.status === 'paid' || topup.status === 'refunded') return { topup, already: true };
+  if (topup.status === 'cancelled' && !force) return { topup, already: true };
   db.prepare('UPDATE topups SET status = ?, paid_at = ? WHERE id = ?').run('paid', Date.now(), topupId);
   const balance = move(
     topup.user_id,
@@ -585,8 +726,8 @@ const settle = db.transaction((topupId, note = '') => {
  * aufladen können (Tebex-Webhook, Admin-Bestätigung, Gutschrift von Hand). Er geht nach der
  * Transaktion raus – ein hängender Mailserver darf keine Buchung aufhalten.
  */
-export function settleTopup(topupId, note = '') {
-  const { topup, balance, already } = settle(topupId, note);
+export function settleTopup(topupId, note = '', { force = false } = {}) {
+  const { topup, balance, already } = settle(topupId, note, force);
   if (!already) {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(topup.user_id);
     if (user) {
@@ -615,8 +756,21 @@ export const refundTopup = db.transaction((topupId, note = '') => {
   const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
   if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
   if (topup.status === 'refunded') return { topup, taken: 0, missing: 0, already: true };
+  // **Nur eine bezahlte Aufladung wird zurückgenommen.** Vorher wurde der Zustand *vor* dieser
+  // Prüfung auf "refunded" gesetzt – eine noch offene Aufladung war damit für immer tot, und
+  // `settleTopup` verweigerte sie später zu Recht. Das traf den echten Fall: Tebex meldet einen
+  // eröffneten Streitfall oder eine Rücklastschrift zu einem Vorgang, dessen `payment.completed`
+  // noch unterwegs ist. Das Geld kam an, die Credits nie.
+  if (topup.status !== 'paid') {
+    db.prepare("UPDATE topups SET status = 'cancelled' WHERE id = ? AND status = 'open'").run(topupId);
+    return {
+      topup: db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId),
+      taken: 0,
+      missing: 0,
+      already: false,
+    };
+  }
   db.prepare("UPDATE topups SET status = 'refunded' WHERE id = ?").run(topupId);
-  if (topup.status !== 'paid') return { topup, taken: 0, missing: 0, already: false };
 
   const have = balance(topup.user_id);
   const take = Math.min(have, topup.credits);

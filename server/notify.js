@@ -75,6 +75,15 @@ export async function notify(userId, title, text, { key = null, color = COLORS.i
   const now = Date.now();
   if (now - (lastSent.get(mapKey) || 0) < quiet) return false;
   lastSent.set(mapKey, now);
+  // Aufräumen, sonst wächst diese Tabelle für immer: Der Schlüssel enthält den Serverplatznamen
+  // (und bei der Testnachricht sogar einen Zeitstempel), also entsteht bei jedem umbenannten Platz
+  // ein neuer Eintrag, den niemand je wieder liest. Über Monate ist das ein stiller Speicherfraß
+  // in einem Dienst, der nicht neu startet.
+  if (lastSent.size > 5_000) {
+    for (const [entry, at] of lastSent) {
+      if (now - at > DAILY_MS) lastSent.delete(entry);
+    }
+  }
 
   return post(user.discord_webhook, {
     embeds: [{ title: pick(title, lang), description: pick(text, lang), color }],

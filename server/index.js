@@ -26,7 +26,7 @@ import { router as coreRouter } from './routes/core.js';
 import { router as profilesRouter } from './routes/profiles.js';
 import { router as billingRouter, tebexWebhook } from './routes/billing.js';
 import { admin as adminRouter } from './routes/admin.js';
-import { router as botRouter, checkSecret } from './routes/bot.js';
+import { router as botRouter, tryBotSecret } from './routes/bot.js';
 import { router as nodeRouter, nodeByToken } from './routes/node.js';
 import * as agents from './agents.js';
 import { HttpError } from './util.js';
@@ -70,13 +70,35 @@ app.use((req, res, next) => {
   next();
 });
 
+/**
+ * Was für diesen Server "die eigene Website" ist.
+ *
+ * Die eingestellte Adresse gilt immer. Dazu kommt der Host, unter dem die Anfrage wirklich
+ * hereinkam – hinter Cloudflare oder nginx ist das nicht zwingend dieselbe Zeichenkette, und ohne
+ * diesen zweiten Eintrag lehnte das Panel unter einer zweiten Domain jede Eingabe ab.
+ *
+ * **`req.hostname` statt der rohen Kopfzeilen.** Vorher wurde `X-Forwarded-Host` direkt gelesen –
+ * eine Kopfzeile, die jeder mitschicken darf. Wer sie setzte, schrieb sich damit selbst in die
+ * Liste der erlaubten Herkünfte, und die Prüfung darunter sagte zu allem ja. Express wertet
+ * dieselbe Kopfzeile aus, aber nur so weit, wie `trust proxy` es erlaubt (hier: ein Sprung, also
+ * der eigene Reverse Proxy) – und genau das ist der Unterschied zwischen "der Proxy sagt es" und
+ * "irgendwer behauptet es".
+ */
 function allowedOrigins(req) {
   const origins = new Set([new URL(config.publicUrl).origin]);
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '').split(',')[0].trim();
-  const protocol = String(req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http'))
-    .split(',')[0]
-    .trim();
-  if (host && /^(https?|wss?)$/.test(protocol)) origins.add(`${protocol.replace(/^ws/, 'http')}://${host}`);
+  // Die Adresse, an die diese Anfrage wirklich gerichtet war – **`Host`, nicht `X-Forwarded-Host`**.
+  // Der Unterschied ist der ganze Punkt: `Host` setzt der Browser auf das Ziel, das er anspricht,
+  // und niemand sonst. `X-Forwarded-Host` darf jeder frei mitschicken, und wer es tat, schrieb sich
+  // damit selbst in diese Liste – die Prüfung darunter fragte danach den Angreifer, ob er
+  // vertrauenswürdig sei. (Express' `req.hostname` liest dieselbe Kopfzeile, sobald `trust proxy`
+  // gesetzt ist, und taugt hier deshalb genauso wenig.)
+  const host = String(req?.headers?.host || '').split(',')[0].trim();
+  if (host) {
+    // Beide Schemata: Hinter nginx oder Cloudflare endet TLS dort, hier kommt die Anfrage
+    // unverschlüsselt an – der Browser nennt trotzdem "https" als Herkunft.
+    origins.add(`https://${host}`);
+    origins.add(`http://${host}`);
+  }
   return origins;
 }
 
@@ -90,18 +112,41 @@ function trustedOrigin(req) {
 // Zahlungsmeldung käme je durch.
 app.post('/api/tebex/webhook', express.raw({ type: '*/*', limit: '1mb' }), tebexWebhook);
 
-// Browser dürfen schreibende API-Anfragen nur aus derselben Website schicken. Dienst-zu-Dienst-
-// Aufrufe (Discord-Bot, Tebex, Standorte) tragen keinen Browser-Origin und haben eigene
-// Unterschriften bzw. Token.
+/**
+ * Schreibende API-Aufrufe nur aus dieser Website.
+ *
+ * Diese Bereiche gehören nicht dazu: Der Discord-Bot, die Standorte und Tebex sprechen Dienst zu
+ * Dienst, tragen keinen Browser-Origin und weisen sich mit eigenem Token bzw. Unterschrift aus.
+ */
+const SERVICE_API = /^\/(bot|node|tebex)(\/|$)/;
+
+/**
+ * Browser dürfen schreibende API-Anfragen nur aus derselben Website schicken.
+ *
+ * **Fehlt jeder Hinweis, ist das ein Nein.** Vorher galt: ohne `Origin` durchlassen. Das war die
+ * ganze Lücke – ein Formular auf einer fremden Seite mit
+ * `enctype="text/plain"` schickt keinen brauchbaren `Origin`-Ersatz, aber es schickt das Cookie
+ * mit, und der Server sah nichts, woran er es hätte erkennen können. Jeder Browser, der seit
+ * Jahren im Umlauf ist, hängt an eine schreibende Anfrage entweder `Origin` oder `Sec-Fetch-Site`;
+ * wer beides nicht schickt, ist kein Browser – und dann gehört er in einen der Dienst-Bereiche
+ * oben, nicht auf die Endpunkte mit Sitzungs-Cookie.
+ */
 app.use('/api', (req, _res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  if (req.headers['sec-fetch-site'] === 'cross-site') {
-    return next(new HttpError(403, 'Anfrage von einer fremden Website abgelehnt.', { en: 'Cross-site request rejected.' }));
-  }
-  if (req.headers.origin && !trustedOrigin(req)) {
-    return next(new HttpError(403, 'Anfrage von einer fremden Website abgelehnt.', { en: 'Cross-site request rejected.' }));
-  }
-  next();
+  if (SERVICE_API.test(req.path)) return next();
+  const reject = () =>
+    next(
+      new HttpError(403, 'Anfrage von einer fremden Website abgelehnt.', {
+        en: 'Cross-site request rejected.',
+      })
+    );
+
+  const site = String(req.headers['sec-fetch-site'] || '');
+  if (site === 'cross-site') return reject();
+  if (req.headers.origin) return trustedOrigin(req) ? next() : reject();
+  // Kein Origin: dann muss der Browser wenigstens sagen, dass die Anfrage von hier kommt.
+  if (site === 'same-origin' || site === 'same-site' || site === 'none') return next();
+  reject();
 });
 
 // Anmeldung und Wiederherstellung sind absichtlich teure Vorgänge. Ein kleines, lokales Fenster
@@ -150,12 +195,24 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-/** Winziger Cookie-Setzer, damit `res.cookie` ohne cookie-parser funktioniert. */
+/**
+ * Winziger Cookie-Setzer, damit `res.cookie` ohne cookie-parser funktioniert.
+ *
+ * `maxAge` wird auch bei **0** geschrieben. Vorher stand dort `if (options.maxAge)`, und damit fiel
+ * genau der Fall heraus, für den es `clearCookie` gibt: Ein Cookie mit leerem Wert und ohne
+ * `Max-Age` ist kein gelöschtes Cookie, sondern ein Sitzungs-Cookie, das bis zum Schließen des
+ * Browsers liegen bleibt. Beim Abmelden war die Sitzung serverseitig weg und im Browser stand
+ * weiter ein `afk_session=`, und das kurzlebige Merkmal der OAuth-Anmeldung wurde nie zurückgenommen.
+ */
 function cookieParser(req, res, next) {
   res.cookie = (name, value, options = {}) => {
     const parts = [`${name}=${encodeURIComponent(value)}`];
     parts.push(`Path=${options.path || '/'}`);
-    if (options.maxAge) parts.push(`Max-Age=${Math.round(options.maxAge / 1000)}`);
+    if (options.maxAge !== undefined && options.maxAge !== null) {
+      const seconds = Math.round(Number(options.maxAge) / 1000);
+      parts.push(`Max-Age=${Number.isFinite(seconds) ? Math.max(0, seconds) : 0}`);
+      if (seconds <= 0) parts.push('Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+    }
     if (options.httpOnly) parts.push('HttpOnly');
     if (options.secure) parts.push('Secure');
     parts.push(`SameSite=${options.sameSite === 'lax' ? 'Lax' : options.sameSite || 'Lax'}`);
@@ -263,7 +320,10 @@ function maintenanceGuard(req, res, next) {
       pages.render('maintenance', lang, {
         robotsTag: NOINDEX,
         title: `${pages.t('error.maintenance.title', lang)} – ${config.brand}`,
-        text: String(getSetting('maintenance_text') || ''),
+        // Maskiert: Der Wartungstext ist ein Feld für einen Satz ("wir sind in einer Stunde
+        // zurück") und wurde roh in die Seite gesetzt. Was dort steht, geht damit als HTML an
+        // jeden Besucher – auf einer Seite, die absichtlich niemand angemeldet sieht.
+        text: pages.escape(getSetting('maintenance_text') || ''),
       })
     );
 }
@@ -451,8 +511,16 @@ server.on('upgrade', (req, socket, head) => {
   // Geheimnis – der Bot ist kein Nutzer.
   if (req.url.startsWith('/api/bot/stream')) {
     const header = String(req.headers.authorization || '');
-    if (!checkSecret(header.startsWith('Bearer ') ? header.slice(7) : '')) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+    // Dieselbe Zählung wie bei den HTTP-Endpunkten des Bots: Ohne sie war der Aufbau einer
+    // Leitung ein Ratefeld ohne Grenze, während dieselbe Prüfung nebenan nach zwanzig Fehlversuchen
+    // zumachte.
+    const result = tryBotSecret(req.socket.remoteAddress || 'unknown', header.startsWith('Bearer ') ? header.slice(7) : '');
+    if (result !== 'ok') {
+      socket.write(
+        result === 'throttled'
+          ? 'HTTP/1.1 429 Too Many Requests\r\n\r\n'
+          : 'HTTP/1.1 401 Unauthorized\r\n\r\n'
+      );
       return socket.destroy();
     }
     return botSockets.handleUpgrade(req, socket, head, (ws) => {
@@ -596,18 +664,40 @@ for (const type of ['ticket.message', 'ticket.status', 'ticket.typing', 'ticket.
   });
 }
 
-// Tote Verbindungen alle 30 s aussortieren – Browser, Bot wie Standort.
-setInterval(() => {
-  agents.heartbeat();
-  for (const ws of [...wss.clients, ...botSockets.clients, ...nodeSockets.clients]) {
-    if (!ws.isAlive) {
-      ws.terminate();
-      continue;
+/**
+ * Ein Takt, der nicht den Dienst mitnimmt.
+ *
+ * Alles, was hier unten in `setInterval` läuft, läuft ohne Aufrufer. Ein Fehler darin ist in Node
+ * eine unbehandelte Ausnahme, und die beendet den Prozess – mit ihm jeden laufenden Bot. Eine
+ * kaputte Einstellung oder eine Datenbankzeile, die nicht passt, darf höchstens **einen**
+ * Durchlauf kosten; beim nächsten ist sie vielleicht schon behoben.
+ */
+const guarded = (name, task) => () => {
+  try {
+    const result = task();
+    if (result && typeof result.catch === 'function') {
+      result.catch((error) => console.error(`[takt ${name}]`, error));
     }
-    ws.isAlive = false;
-    ws.ping();
+  } catch (error) {
+    console.error(`[takt ${name}]`, error);
   }
-}, 30_000).unref();
+};
+
+// Tote Verbindungen alle 30 s aussortieren – Browser, Bot wie Standort.
+setInterval(
+  guarded('verbindungen', () => {
+    agents.heartbeat();
+    for (const ws of [...wss.clients, ...botSockets.clients, ...nodeSockets.clients]) {
+      if (!ws.isAlive) {
+        ws.terminate();
+        continue;
+      }
+      ws.isAlive = false;
+      ws.ping();
+    }
+  }),
+  30_000
+).unref();
 
 // ---------------------------------------------------------------- Laufzeiten
 
@@ -663,10 +753,14 @@ function billingTick() {
     }
   }
 
+  // `Number()` auf eine Einstellung, die auch Text sein kann, ergibt `NaN` – und `NaN` bindet
+  // SQLite nicht. Diese Zeile warf dann mitten im Stundentakt, und weil sie aus einem `setInterval`
+  // kommt, ging der ganze Prozess mit: keine Verlängerungen mehr, keine Warnungen, keine Bots.
   const low = Number(getSetting('low_balance'));
+  const lowBalance = Number.isFinite(low) ? low : 0;
   for (const row of db
     .prepare('SELECT id, credits FROM users WHERE credits > 0 AND credits <= ?')
-    .all(low)) {
+    .all(lowBalance)) {
     const monthly = billing.monthlyCost(row.id);
     if (monthly <= 0) continue;
     notify.lowBalance(row.id, row.credits);
@@ -723,8 +817,8 @@ function onceADay(key) {
   return true;
 }
 
-setInterval(billingTick, 3_600_000).unref();
-setInterval(enforceFreePlans, 60_000).unref();
+setInterval(guarded('abrechnung', billingTick), 3_600_000).unref();
+setInterval(guarded('gratis-plaetze', enforceFreePlans), 60_000).unref();
 /**
  * Und danach: hochfahren, was laufen soll und gerade nicht läuft.
  *
@@ -734,10 +828,13 @@ setInterval(enforceFreePlans, 60_000).unref();
  * nach dem Aufladen fortgesetzt wurde. Ein abgestürzter Client kommt so nicht wieder: der löscht
  * seinen Startwunsch selbst.
  */
-setInterval(() => {
-  const started = supervisor.restoreAll();
-  if (started) console.log(`${started} Bot(s) wieder gestartet.`);
-}, 60_000).unref();
+setInterval(
+  guarded('wiederanlauf', () => {
+    const started = supervisor.restoreAll();
+    if (started) console.log(`${started} Bot(s) wieder gestartet.`);
+  }),
+  60_000
+).unref();
 
 /**
  * Der eigene Zustand als Standort-Meldung.
@@ -756,11 +853,14 @@ localNodeTick();
 setInterval(localNodeTick, 15_000).unref();
 
 // Stündlich: abgelaufene Sitzungen weg, Client-Release nachsehen, liegengebliebene Anhänge weg.
-setInterval(() => {
-  auth.cleanupSessions();
-  attachments.sweepOrphans();
-  binaries.sync().then(() => agents.syncAll()).catch(() => {});
-}, 3_600_000).unref();
+setInterval(
+  guarded('aufraeumen', () => {
+    auth.cleanupSessions();
+    attachments.sweepOrphans();
+    binaries.sync().then(() => agents.syncAll()).catch(() => {});
+  }),
+  3_600_000
+).unref();
 
 // ---------------------------------------------------------------- Start
 
@@ -788,7 +888,13 @@ const started = async () => {
   });
 };
 
-started();
+// Ein Fehler beim Hochfahren gehört ins Protokoll und nicht in eine unbehandelte Zurückweisung:
+// Node beendet den Prozess dann kommentarlos, und im Journal steht nichts, woran sich ablesen
+// ließe, warum der Dienst nicht kam.
+started().catch((error) => {
+  console.error('[start] Der Dienst konnte nicht hochfahren:', error);
+  process.exitCode = 1;
+});
 
 // Beim Beenden alle Client-Prozesse ordentlich mitnehmen.
 let closing = false;
