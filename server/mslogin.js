@@ -20,7 +20,38 @@ const TIMEOUT_MS = 15 * 60 * 1000;
 /** Laufende Anmeldungen: id -> Zustand. */
 const pending = new Map();
 
+/**
+ * Wie viele Anmeldungen gleichzeitig laufen dürfen.
+ *
+ * Jede ist ein eigener Client-Prozess, der bis zu einer Viertelstunde auf einen Menschen wartet.
+ * Vorher gab es keine Grenze: Ein angemeldetes Konto konnte den Endpunkt in einer Schleife rufen
+ * und die Maschine mit wartenden Prozessen füllen, ohne je einen Code einzugeben und ohne einen
+ * Credit auszugeben. Zwei offene Anmeldungen sind mehr, als ein Mensch gleichzeitig abtippt.
+ */
+const MAX_PENDING_PER_USER = 2;
+const MAX_PENDING_TOTAL = 40;
+
+const openFor = (userId) => {
+  let count = 0;
+  for (const entry of pending.values()) {
+    if (entry.userId === userId && (entry.status === 'starting' || entry.status === 'code')) count += 1;
+  }
+  return count;
+};
+
 export function begin(user) {
+  if (openFor(user.id) >= MAX_PENDING_PER_USER) {
+    throw new HttpError(
+      429,
+      'Es läuft schon eine Anmeldung. Schließe sie ab oder brich sie ab.',
+      { en: 'A sign-in is already running. Finish it or cancel it.' }
+    );
+  }
+  if (pending.size >= MAX_PENDING_TOTAL) {
+    throw new HttpError(503, 'Gerade laufen zu viele Anmeldungen. Bitte kurz warten.', {
+      en: 'Too many sign-ins are running right now. Please wait a moment.',
+    });
+  }
   const { command } = binaries.anyCommand();
   const home = userDir(user.id);
   const id = token(12);

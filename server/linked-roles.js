@@ -238,10 +238,13 @@ const KEY_PATTERN = /^[a-z0-9_]{1,50}$/;
  * zusammenpasst, fliegt raus statt in einen halben Zustand zu geraten: ein Merkmal ohne gültige
  * Quelle würde bei Discord als Feld stehen, das nie einen Wert bekommt.
  */
+/** Nachschlagen ohne Prototypenkette: `constructor` ist kein eingerichtetes Merkmal. */
+const lookup = (table, key) => (Object.hasOwn(table, key) ? table[key] : undefined);
+
 function clean(entry) {
   const key = String(entry?.key || '').trim().toLowerCase();
-  const source = sourceByKey[String(entry?.source || '').trim()];
-  const type = typeByValue[Number(entry?.type)];
+  const source = lookup(sourceByKey, String(entry?.source || '').trim());
+  const type = lookup(typeByValue, String(Number(entry?.type)));
   if (!KEY_PATTERN.test(key) || !source || !type) return null;
   if (type.kind !== source.kind) return null;
   return {
@@ -306,11 +309,11 @@ export function validate(raw, { fail }) {
     if (seen.has(key)) {
       throw fail(`Den Schlüssel „${key}“ gibt es zweimal.`, { en: `The key "${key}" appears twice.` });
     }
-    const source = sourceByKey[String(entry?.source || '').trim()];
+    const source = lookup(sourceByKey, String(entry?.source || '').trim());
     if (!source) {
-      throw fail(`„${key}“ hat keine gültige Quelle.`, { en: `"${key}" has no valid source.` });
+      throw fail(`„${key}” hat keine gültige Quelle.`, { en: `”${key}” has no valid source.` });
     }
-    const type = typeByValue[Number(entry?.type)];
+    const type = lookup(typeByValue, String(Number(entry?.type)));
     if (!type) {
       throw fail(`„${key}“ hat keine gültige Vergleichsart.`, { en: `"${key}" has no valid comparison.` });
     }
@@ -336,12 +339,14 @@ export function valuesFor(userId) {
   if (!user) return null;
   const out = {};
   for (const field of fields()) {
+    const source = lookup(sourceByKey, field.source);
+    if (!source) continue;
     try {
-      out[field.key] = sourceByKey[field.source].value(user);
+      out[field.key] = source.value(user);
     } catch {
       // Eine Quelle, die gerade nicht rechnen kann (gelöschter Tarif, kaputte Zeile), darf nicht
       // die ganze Verknüpfung verhindern. Sie meldet dann den neutralen Wert.
-      out[field.key] = sourceByKey[field.source].kind === 'date' ? isoDay(Date.now()) : 0;
+      out[field.key] = source.kind === 'date' ? isoDay(Date.now()) : 0;
     }
   }
   return out;

@@ -5,7 +5,7 @@
 // nichts davon. Also kommt hier fertiges HTML heraus, das pages.js einsetzt.
 
 import { getSetting } from './db.js';
-import { formatEuro } from './util.js';
+import { formatEuro, safeUrl } from './util.js';
 import * as binaries from './binaries.js';
 import * as billing from './billing.js';
 import { features } from './features.js';
@@ -246,7 +246,12 @@ function fromPrice(lang) {
 
 /** Der Discord-Link. Ohne Eintrag in den Einstellungen kommt der ganze Abschnitt nicht vor. */
 function discordVars(lang) {
-  const invite = String(getSetting('discord_invite') || '').trim();
+  // Nur http(s). Der Einladungslink steht in den Einstellungen und landet unmaskiert im `href` der
+  // Kopfleiste **jeder** öffentlichen Seite. Maskieren allein reicht dafür nicht: `javascript:…`
+  // braucht kein Anführungszeichen, um aus einem Attribut ein Skript zu machen. Was nicht wie eine
+  // Adresse aussieht, gilt hier als "kein Einladungslink" – dann fällt der Abschnitt weg, statt
+  // einen Knopf zu zeigen, der etwas anderes tut, als er sagt.
+  const invite = safeUrl(getSetting('discord_invite')) || '';
   return {
     discordInvite: invite,
     discordBlock: invite

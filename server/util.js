@@ -28,6 +28,25 @@ export function verifyPassword(password, stored) {
   return crypto.timingSafeEqual(expected, actual);
 }
 
+/**
+ * Eine Adresse, die in ein `href` darf – oder `null`.
+ *
+ * Nur `http` und `https`. `javascript:` bleibt draußen: Eine Adresse aus den Einstellungen
+ * (Einladungslink, Ankündigungs-Link) landet auf jeder öffentlichen Seite und in jeder E-Mail, und
+ * Maskieren allein hilft dort nicht – `href="javascript:…"` ist ein gültiges Attribut mit heilen
+ * Anführungszeichen und führt trotzdem Code aus.
+ */
+export function safeUrl(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Vergleich ohne Zeitunterschied, auch bei verschiedenen Längen. */
 export function safeEqual(a, b) {
   const bufA = Buffer.from(String(a));
@@ -189,8 +208,18 @@ export function requireString(value, name, { min = 1, max = 200 } = {}) {
 }
 
 export function requireInt(value, name, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const number = Math.trunc(Number(value));
   const en = fieldEn(name);
+  // `Number()` ist großzügig, wo es nicht großzügig sein sollte: `Number(null)`, `Number('')`,
+  // `Number([])` und `Number(false)` sind alle **0**. Eine fehlende Angabe wurde damit stillschweigend
+  // zur Null – bei einer Menge, einem Betrag oder einer Nummer ist das keine harmlose Vorgabe,
+  // sondern eine andere Anfrage als die gestellte. Wer 0 meint, schreibt 0 hin.
+  if (value === null || value === undefined || typeof value === 'boolean' || typeof value === 'object') {
+    throw bad(`${name} muss eine Zahl sein.`, { en: `${en} has to be a number.` });
+  }
+  if (typeof value === 'string' && !value.trim()) {
+    throw bad(`${name} muss eine Zahl sein.`, { en: `${en} has to be a number.` });
+  }
+  const number = Math.trunc(Number(value));
   if (!Number.isFinite(number)) {
     throw bad(`${name} muss eine Zahl sein.`, { en: `${en} has to be a number.` });
   }

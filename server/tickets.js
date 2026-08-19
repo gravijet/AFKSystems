@@ -137,13 +137,19 @@ export function listFor(user) {
 export function listAll({ status = null, priority = null, search = '' } = {}) {
   const where = [];
   const values = [];
-  if (status && status !== 'all') {
+  // Beide Werte kommen aus der Adresszeile und können damit alles sein – auch eine Liste
+  // (`?status=a&status=b` gibt Express als Array heraus). Ein Array bindet SQLite nicht, und die
+  // ganze Ticketübersicht antwortete mit einem Serverfehler. Geprüft wird gegen die Liste der
+  // Zustände, die es wirklich gibt; alles andere heißt schlicht "kein Filter".
+  const wantedStatus = STATUSES.includes(status) ? status : null;
+  const wantedPriority = PRIORITIES.includes(priority) ? priority : null;
+  if (wantedStatus) {
     where.push('t.status = ?');
-    values.push(status);
+    values.push(wantedStatus);
   }
-  if (priority && priority !== 'all') {
+  if (wantedPriority) {
     where.push('t.priority = ?');
-    values.push(priority);
+    values.push(wantedPriority);
   }
   if (search) {
     where.push('(t.subject LIKE ? OR u.username LIKE ? OR u.email LIKE ? OR t.id = ?)');

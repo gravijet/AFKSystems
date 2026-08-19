@@ -128,11 +128,16 @@ async function waitForHealth(base, child) {
   throw new Error('Panel did not become healthy in time');
 }
 
-async function api(base, pathname, { token, method = 'GET', body, botSecret } = {}) {
+async function api(base, pathname, { token, method = 'GET', body, botSecret, origin = base } = {}) {
   const headers = { 'accept-language': 'en' };
   if (token) headers.cookie = `afk_session=${token}`;
   if (botSecret) headers.authorization = `Bearer ${botSecret}`;
   if (body !== undefined) headers['content-type'] = 'application/json';
+  // Das Panel ist die einzige Oberfläche dieser API, und ein Browser schickt bei jeder
+  // schreibenden Anfrage einen Origin mit. Der Test tut dasselbe – sonst prüfte er einen Client,
+  // den es nicht gibt. Dass ein Aufruf *ohne* diesen Nachweis abgelehnt wird, steht weiter unten
+  // als eigene Zusicherung.
+  if (origin) headers.origin = origin;
   const response = await fetch(`${base}${pathname}`, {
     method,
     headers,
@@ -529,6 +534,86 @@ test('a refunded top-up is never credited a second time', () => {
   assert.equal(billing.balance(user.id), 0);
 });
 
+test('a top-up that was never paid stays open after a dispute and can still be settled', () => {
+  const user = createUser();
+  const topup = billing.createTopup({
+    userId: user.id,
+    provider: 'tebex',
+    amountCent: 1000,
+    credits: 1000,
+  });
+  // Tebex meldet einen Streitfall, bevor "bezahlt" ankommt. Vorher wurde die Aufladung dabei auf
+  // "refunded" gesetzt – und `settleTopup` verweigerte sie danach für immer. Das Geld war da, die
+  // Credits kamen nie.
+  billing.refundTopup(topup.id);
+  assert.equal(billing.balance(user.id), 0);
+  billing.settleTopup(topup.id, '', { force: true });
+  assert.equal(billing.balance(user.id), 1000);
+});
+
+test('a voucher is worth one redemption per account, and its counter never goes negative', () => {
+  const voucher = billing.createVoucher({ credits: 500, uses: 2 });
+  const greedy = createUser();
+  const other = createUser();
+
+  assert.equal(billing.redeemVoucher(greedy.id, voucher.code).credits, 500);
+  // Derselbe Code, dasselbe Konto: `uses_left` zählt Einlösungen, nicht Personen – ohne diese
+  // Sperre war ein Gutschein für zwei Leute ein Knopf, den einer zweimal drückte.
+  assert.throws(() => billing.redeemVoucher(greedy.id, voucher.code), /schon eingelöst|already/i);
+  assert.equal(billing.balance(greedy.id), 500);
+
+  assert.equal(billing.redeemVoucher(other.id, voucher.code).credits, 500);
+  const third = createUser();
+  assert.throws(() => billing.redeemVoucher(third.id, voucher.code), /eingelöst|used up/i);
+  assert.ok(db.prepare('SELECT uses_left FROM vouchers WHERE code = ?').get(voucher.code).uses_left >= 0);
+});
+
+test('an add-on never refunds more credits than were charged for it', () => {
+  const user = createUser({ credits: 10_000 });
+  const premium = billing.planBySlug('premium');
+  const profile = createProfile(user, premium);
+  const addon = billing.addonByKey('slot');
+
+  // So legt die Verwaltung einen Zusatz von Hand auf einen Platz: ohne Abbuchung.
+  db.prepare(
+    `INSERT INTO profile_addons (profile_id, addon_id, qty, created_at) VALUES (?, ?, 1, ?)`
+  ).run(profile.id, addon.id, Date.now());
+
+  const before = billing.balance(user.id);
+  const result = billing.removeAddon(profile, addon, 1);
+  assert.equal(result.refund, 0, 'ein geschenkter Zusatz darf kein Guthaben erzeugen');
+  assert.equal(billing.balance(user.id), before);
+
+  // Und der gekaufte Fall bleibt fair: zurück kommt höchstens, was hingegangen ist.
+  const bought = billing.addAddon(profile, addon, 2);
+  const back = billing.removeAddon(profile, addon, 2);
+  assert.ok(back.refund <= bought.charged, `${back.refund} > ${bought.charged}`);
+});
+
+test('credits never fall below zero', () => {
+  const user = createUser({ credits: 100 });
+  assert.throws(() => billing.move(user.id, -101, 'plan', 'zu viel'), /Guthaben|credits/i);
+  assert.equal(billing.balance(user.id), 100, 'die abgelehnte Buchung darf nichts hinterlassen');
+  assert.equal(billing.move(user.id, -100, 'plan', 'genau passend'), 0);
+});
+
+test('the expiry warning counts booked add-ons, not just the plan price', () => {
+  const premium = billing.planBySlug('premium');
+  const addon = billing.addonByKey('slot');
+  // Guthaben reicht für den Tarif, nicht für Tarif plus Zusatz. Vorher verglich die Abfrage mit
+  // der Tarifspalte statt mit der Summe – und genau dieser Kunde wurde nie gewarnt.
+  const user = createUser({ credits: premium.price_credits + addon.price_credits - 1 });
+  const profile = createProfile(user, premium, { paidUntil: Date.now() + 2 * 86_400_000 });
+  db.prepare(
+    `INSERT INTO profile_addons (profile_id, addon_id, qty, paid_credits, created_at)
+     VALUES (?, ?, 1, 0, ?)`
+  ).run(profile.id, addon.id, Date.now());
+
+  const due = billing.expiringSoon(3).filter((row) => row.id === profile.id);
+  assert.equal(due.length, 1, 'der Platz fehlt in der Warnung');
+  assert.equal(due[0].price_credits, premium.price_credits + addon.price_credits);
+});
+
 test('mail templates never put customer text into the HTML unescaped', async () => {
   const mail = await import('../server/mail.js');
   const user = createUser();
@@ -917,6 +1002,37 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   });
   assert.equal(crossSite.status, 403);
 
+  // Ohne jeden Hinweis auf die Herkunft ist eine schreibende Anfrage ebenfalls nichts, worauf sich
+  // ein Sitzungs-Cookie ausgeben lässt. Vorher kam sie durch: Es wurde nur geprüft, ob ein
+  // vorhandener Origin passt – und ein Formular auf einer fremden Seite schickt keinen.
+  const noHint = await fetch(`${base}/api/auth/logout`, {
+    method: 'POST',
+    headers: { cookie: `afk_session=${USER_TOKEN}` },
+  });
+  assert.equal(noHint.status, 403);
+
+  // Ein gefälschtes `X-Forwarded-Host` schreibt sich nicht selbst in die Liste der erlaubten
+  // Herkünfte. Vorher wurde genau diese Kopfzeile geglaubt, und damit war die Prüfung darüber
+  // eine Frage danach, was der Angreifer behauptet.
+  const forgedHost = await fetch(`${base}/api/auth/logout`, {
+    method: 'POST',
+    headers: {
+      cookie: `afk_session=${USER_TOKEN}`,
+      origin: 'https://evil.example',
+      'x-forwarded-host': 'evil.example',
+      'x-forwarded-proto': 'https',
+    },
+  });
+  assert.equal(forgedHost.status, 403);
+
+  // Und der Gegenbeweis: mit echtem Origin geht dieselbe Anfrage durch. Die Sitzung dieses
+  // Kontos wird dabei bewusst nicht benutzt – sonst wäre sie danach weg.
+  const sameSite = await fetch(`${base}/api/auth/logout`, {
+    method: 'POST',
+    headers: { origin: base },
+  });
+  assert.equal(sameSite.status, 200);
+
   for (const page of ['login', 'register']) {
     const html = await (await fetch(`${base}/en/${page}`)).text();
     assert.equal((html.match(/class="oauth-icon"/g) || []).length, 2);
@@ -1204,6 +1320,7 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
         cookie: `afk_session=${token}`,
         'content-type': 'application/octet-stream',
         'x-file-name': encodeURIComponent(name),
+        origin: base,
       },
       body: bytes,
     });

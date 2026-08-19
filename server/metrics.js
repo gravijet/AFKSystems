@@ -134,9 +134,17 @@ function processStats(pid) {
 export function ownProcesses() {
   const own = processStats(process.pid);
   const bots = [];
+  const alive = new Set([`pid:${process.pid}`]);
   for (const entry of supervisor.pids()) {
+    alive.add(`pid:${entry.pid}`);
     const stats = processStats(entry.pid);
     if (stats) bots.push({ ...entry, ...stats });
+  }
+  // Die letzte Messung je Prozess bleibt sonst für immer stehen. Bots starten und enden dauernd,
+  // jeder mit einer neuen Prozessnummer – über Wochen sammeln sich hier Zehntausende Einträge für
+  // Prozesse, die es längst nicht mehr gibt.
+  for (const key of last.keys()) {
+    if (key.startsWith('pid:') && !alive.has(key)) last.delete(key);
   }
   return { panel: own, bots };
 }

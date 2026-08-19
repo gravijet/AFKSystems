@@ -749,6 +749,42 @@ const migrations = [
       put.run('discord_skip_categories', JSON.stringify(DEFAULT_SKIP_CATEGORIES));
     },
   },
+  {
+    // Zwei Löcher im Guthaben, beide an derselben Stelle: Es fehlte die Erinnerung daran, was
+    // wirklich bezahlt wurde.
+    //
+    //   * **Zusätze.** Beim Abbestellen wurde der *heutige* Listenpreis anteilig gutgeschrieben.
+    //     Ein Zusatz, den die Verwaltung von Hand auf einen Platz gelegt hat (ohne Abbuchung),
+    //     ließ sich damit gegen echte Credits eintauschen – Geld aus dem Nichts. `paid_credits`
+    //     hält fest, was für die gebuchte Menge tatsächlich abgebucht wurde; mehr kommt nie zurück.
+    //   * **Gutscheine.** `uses_left` zählt Einlösungen, nicht Personen. Ein Gutschein mit hundert
+    //     Einlösungen war deshalb kein Gutschein für hundert Leute, sondern ein Knopf, den ein
+    //     einziges Konto hundertmal drücken konnte. Wer wann eingelöst hat, steht ab hier hier.
+    name: '011-bezahltes-merken',
+    sql: `
+      ALTER TABLE profile_addons ADD COLUMN paid_credits INTEGER NOT NULL DEFAULT 0;
+
+      CREATE TABLE voucher_redemptions (
+        code       TEXT NOT NULL,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        credits    INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL,
+        PRIMARY KEY (code, user_id)
+      );
+      CREATE INDEX voucher_redemptions_user ON voucher_redemptions(user_id, created_at DESC);
+    `,
+    run() {
+      // Was schon gebucht ist, gilt als zum heutigen Listenpreis bezahlt: Das ist der Betrag, den
+      // die bisherige Rechnung zurückgegeben hätte, also ändert sich für niemanden etwas rückwirkend.
+      db.prepare(
+        `UPDATE profile_addons SET paid_credits =
+           COALESCE((SELECT a.price_credits * profile_addons.qty FROM addons a
+                      WHERE a.id = profile_addons.addon_id), 0)`
+      ).run();
+      // Bereits eingelöste Gutscheine lassen sich nicht mehr einer Person zuordnen – dafür gab es
+      // die Tabelle noch nicht. Die Sperre gilt ab jetzt, rückwirkend wird nichts behauptet.
+    },
+  },
 ];
 
 /**

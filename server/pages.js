@@ -35,7 +35,7 @@ function template(name) {
   return html;
 }
 
-const escape = (text) =>
+export const escape = (text) =>
   String(text ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -78,8 +78,12 @@ export function render(name, lang, vars = {}) {
     const key = `cur${slug[0].toUpperCase()}${slug.slice(1)}`;
     values[key] = values.path === `/${slug}` ? 'aria-current="page"' : '';
   }
+  // `Object.hasOwn`, nicht `in`: `in` läuft die Prototypenkette mit hoch, und damit war
+  // `{{constructor}}` in einer Vorlage kein unbekannter Platzhalter, sondern der Quelltext der
+  // Object-Funktion, mitten in der ausgelieferten Seite. Dasselbe galt für `{{toString}}`,
+  // `{{valueOf}}` und `{{__proto__}}`.
   return template(name).replace(/\{\{([a-z0-9_.-]+)\}\}/gi, (match, key) => {
-    if (key in values) return String(values[key] ?? '');
+    if (Object.hasOwn(values, key)) return String(values[key] ?? '');
     const text = t(key, lang);
     return text === key ? match : escape(text);
   });
@@ -124,3 +128,4 @@ export function setLangCookie(res, lang) {
 }
 
 export { LANGS, DEFAULT_LANG, t };
+export { escape as escapeHtml };
