@@ -218,6 +218,13 @@ export function create(body, by) {
   // Ein Standort mit eigener Maschine bekommt sein Token beim Anlegen. Es ist das Einzige, was
   // der andere Rechner braucht – und es steht danach nur noch im Admin-Bereich.
   const token = kind === 'agent' ? randomToken(32) : null;
+  // Genauso geprüft wie beim Ändern: Ohne diese Zeile lief eine unbekannte Proxy-Nummer in den
+  // Fremdschlüssel der Datenbank und kam als nackter SQLite-Fehler mit Status 500 zurück – für
+  // den Betreiber ununterscheidbar von "das Panel ist kaputt".
+  const proxyId = body.proxy_id ? requireInt(body.proxy_id, 'Proxy') : null;
+  if (proxyId && !db.prepare('SELECT 1 FROM proxies WHERE id = ?').get(proxyId)) {
+    throw notFound('Diesen Proxy gibt es nicht.', { en: 'No such proxy.' });
+  }
   const info = db
     .prepare(
       `INSERT INTO nodes (name, kind, region, proxy_id, max_bots, max_profiles, max_cpu_percent,
@@ -228,7 +235,7 @@ export function create(body, by) {
       name,
       kind,
       String(body.region || '').slice(0, 60),
-      body.proxy_id ? requireInt(body.proxy_id, 'Proxy') : null,
+      proxyId,
       requireInt(body.max_bots ?? 0, 'Bots', { max: 10_000 }),
       requireInt(body.max_profiles ?? 0, 'Server', { max: 10_000 }),
       requireInt(body.max_cpu_percent ?? 0, 'CPU-Grenze', { max: 100 }),

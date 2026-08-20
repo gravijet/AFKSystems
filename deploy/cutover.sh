@@ -84,11 +84,19 @@ rsync -a --delete -e "$SSH_CMD" \
 
 rsync -a -e "$SSH_CMD" "$ABZUG" "$ZIEL_USER@$ZIEL_HOST:$ZIEL/data/afksystems.db"
 # Der Sitzungsschlüssel muss mit, sonst ist jeder ausgeloggt. Alles Übrige sind Dateien, auf die
-# Datenbankzeilen zeigen: Anhänge, Kontodateien, Client-Binärdateien, Sicherungen.
-rsync -a -e "$SSH_CMD" \
-  "$QUELLE/data/secret.key" "$QUELLE/data/tickets" "$QUELLE/data/users" \
-  "$QUELLE/data/bin" "$QUELLE/data/backups" "$QUELLE/data/logs" \
-  "$ZIEL_USER@$ZIEL_HOST:$ZIEL/data/"
+# Datenbankzeilen zeigen: Anhänge, Kontodateien, Client-Binärdateien, Protokolle.
+#
+# **Nur, was es wirklich gibt.** rsync bricht mit Fehlerstatus ab, sobald eine Quelle fehlt – und
+# unter `set -e` nahm das den ganzen Umzug mit, nachdem das Panel hier schon gestoppt und
+# abgeschaltet war. `data/tickets` entsteht erst mit dem ersten Anhang, und `data/backups` legt
+# nirgends jemand an: dieser Umzug konnte also gar nicht durchlaufen.
+MIT=()
+for teil in secret.key tickets users bin logs backups; do
+  [ -e "$QUELLE/data/$teil" ] && MIT+=("$QUELLE/data/$teil")
+done
+if [ ${#MIT[@]} -gt 0 ]; then
+  rsync -a -e "$SSH_CMD" "${MIT[@]}" "$ZIEL_USER@$ZIEL_HOST:$ZIEL/data/"
+fi
 
 # Die .env geht nur mit, wenn drüben noch keine liegt – dort kann eine angepasste stehen.
 if ! FERN "test -s $ZIEL/.env"; then

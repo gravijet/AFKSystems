@@ -388,7 +388,10 @@ const migrations = [
       for (const [slug, [de, en]] of Object.entries(alt)) {
         const row = db.prepare('SELECT blurb_de, blurb_en FROM plans WHERE slug = ?').get(slug);
         if (!row) continue;
-        if (row.blurb_de !== de && row.blurb_en !== en) continue;
+        // **Beide** Fassungen müssen noch die alten sein. Mit `&&` genügte eine – wer nur den
+        // deutschen Satz umgeschrieben hatte, bekam ihn hier überschrieben, weil der englische
+        // noch im Original stand. Eine Migration darf keine Handarbeit des Betreibers löschen.
+        if (row.blurb_de !== de || row.blurb_en !== en) continue;
         const next = PLAN_TEXTS[slug];
         update.run(next.blurb_de, next.blurb_en, slug);
       }
@@ -785,6 +788,39 @@ const migrations = [
       // die Tabelle noch nicht. Die Sperre gilt ab jetzt, rückwirkend wird nichts behauptet.
     },
   },
+  {
+    // Dieselbe Lücke wie bei den Zusätzen, nur eine Ebene höher: **auch die Laufzeit eines
+    // Serverplatzes ließ sich in echtes Guthaben verwandeln, ohne dass je etwas bezahlt wurde.**
+    //
+    // Die Verwaltung darf einen Platz verlängern (`PATCH /admin/profiles/:id` mit `extend_days`)
+    // und ihm einen Tarif setzen – beides ausdrücklich **ohne Abbuchung**, das ist der Sinn eines
+    // Geschenks. `refundValue()` rechnete danach aber "Monatspreis × Restzeit" und schrieb das
+    // beim Löschen oder beim Tarifwechsel gut. Wer einen geschenkten Ultra-Platz sofort löschte,
+    // hatte einen Monatspreis in Credits auf dem Konto – und mit Credits lässt sich alles andere
+    // bezahlen.
+    //
+    // `profiles.paid_credits` merkt sich, was für die **laufende** Periode wirklich abgebucht
+    // wurde. Mehr als das kann nicht zurückkommen; genau die Regel, die `profile_addons` seit
+    // Migration 011 hat.
+    name: '012-bezahlte-laufzeit-merken',
+    sql: `ALTER TABLE profiles ADD COLUMN paid_credits INTEGER NOT NULL DEFAULT 0;
+
+      -- Welche Discord-Benachrichtigungen ein Kunde bekommen will (Komma-Liste, siehe
+      -- notify.js EVENTS). **Leer heißt alles**: Wer einen Webhook einträgt, will Bescheid
+      -- wissen, und eine Voreinstellung, die nichts schickt, sähe aus wie ein kaputter Webhook.
+      ALTER TABLE users ADD COLUMN discord_events TEXT NOT NULL DEFAULT '';`,
+    run() {
+      // Bestandsdaten: Ein Platz mit Laufzeit hat sie bisher immer über `setPlan`/`renewDue`
+      // bekommen, und dort wurde der volle Monatspreis abgebucht. Für alle bestehenden Plätze gilt
+      // deshalb genau der Betrag, den die alte Rechnung zurückgegeben hätte – rückwirkend ändert
+      // sich für niemanden etwas.
+      db.prepare(
+        `UPDATE profiles SET paid_credits =
+           COALESCE((SELECT pl.price_credits FROM plans pl WHERE pl.id = profiles.plan_id AND pl.free_slot = 0), 0)
+          WHERE paid_until IS NOT NULL`
+      ).run();
+    },
+  },
 ];
 
 /**
@@ -1173,10 +1209,19 @@ export function allSettings() {
 export const settingDefaults = defaults;
 
 export function audit(userId, action, detail, ip = null) {
+  // `detail` auf Wahrheit zu prüfen verschluckte genau die Werte, die eine Zahl sind: eine `0`
+  // (etwa `qty: 0` beim Abnehmen eines Zusatzes) und ein leerer Text fielen aus dem Protokoll
+  // heraus, als wäre gar kein Detail übergeben worden.
+  const text =
+    detail === null || detail === undefined
+      ? null
+      : typeof detail === 'string'
+        ? detail
+        : JSON.stringify(detail);
   db.prepare('INSERT INTO audit (user_id, action, detail, ip, created_at) VALUES (?, ?, ?, ?, ?)').run(
     userId ?? null,
     action,
-    detail ? (typeof detail === 'string' ? detail : JSON.stringify(detail)) : null,
+    text,
     ip,
     Date.now()
   );

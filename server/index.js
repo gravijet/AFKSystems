@@ -29,7 +29,7 @@ import { admin as adminRouter } from './routes/admin.js';
 import { router as botRouter, tryBotSecret } from './routes/bot.js';
 import { router as nodeRouter, nodeByToken } from './routes/node.js';
 import * as agents from './agents.js';
-import { HttpError } from './util.js';
+import { HttpError, langOf } from './util.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -271,10 +271,22 @@ app.use(
   })
 );
 // Browser fragen die Adresse von sich aus ab, egal was im HTML steht.
-app.get('/favicon.ico', (req, res) => res.redirect(301, `/assets/v/${assetVersion}/img/favicon-32.png`));
+//
+// **302, nicht 301.** Das Ziel trägt den Fingerabdruck der Dateien und ändert sich mit jedem
+// Deployment. Eine dauerhafte Weiterleitung hätte der Browser für immer behalten – und danach
+// jedes Mal die Adresse einer Fassung abgerufen, die es längst nicht mehr gibt.
+app.get('/favicon.ico', (req, res) => res.redirect(302, `/assets/v/${assetVersion}/img/favicon-32.png`));
 
 app.get('/robots.txt', (req, res) => {
-  res.type('text/plain').send(`User-agent: *\nAllow: /\nSitemap: ${config.publicUrl}/sitemap.xml\n`);
+  // Was hinter der Anmeldung liegt, gehört in keinen Index: das Dashboard ist für jeden Crawler
+  // eine leere Seite, und die API antwortet ihm mit 401. Beides zu sammeln kostet ihn Zeit und
+  // uns Anfragen, und in den Suchergebnissen soll es ohnehin nicht stehen.
+  res
+    .type('text/plain')
+    .send(
+      `User-agent: *\nAllow: /\nDisallow: /api/\nDisallow: /en/app\nDisallow: /de/app\n` +
+        `Disallow: /assets/\nSitemap: ${config.publicUrl}/sitemap.xml\n`
+    );
 });
 app.get('/sitemap.xml', (req, res) => {
   const paths_ = [
@@ -282,7 +294,9 @@ app.get('/sitemap.xml', (req, res) => {
     '/features',
     '/pricing',
     '/faq',
-    '/register',
+    // Eine geschlossene Registrierung gehört nicht in die Sitemap: Wer über die Suche darauf
+    // stößt, findet ein Formular, das ihm absagt.
+    ...(Number(getSetting('registration_open')) && config.registrationOpen ? ['/register'] : []),
     '/privacy',
     '/terms',
   ];
@@ -403,7 +417,22 @@ for (const [from, to] of Object.entries({
 })) {
   app.get(from, (req, res) => res.redirect(301, `/${pages.langFor(req)}/${to}`));
 }
-app.get(/^\/app(\/.*)?$/, (req, res) => res.redirect(302, `/${pages.langFor(req)}/app`));
+// Der Rest der Adresse bleibt erhalten: `/app/servers/7` landete vorher stumpf auf `/de/app` und
+// nahm damit genau die Stelle mit, zu der jemand wollte.
+app.get(/^\/app(\/.*)?$/, (req, res) =>
+  res.redirect(302, `/${pages.langFor(req)}/app${req.params[0] || ''}`)
+);
+
+// Das Dashboard ist eine Seite mit eigenem Router – jede Unteradresse liefert dieselbe Datei.
+//
+// Diese Regel steht **vor** der allgemeinen Seitenregel darunter: Sonst fing `/:lang/:page` die
+// nackte Adresse `/de/app` ab, und der Inhaltsschutz galt nur für Unteradressen. Eine Prüfung, die
+// von der Reihenfolge zweier Routen abhängt, ist keine.
+app.get(/^\/(en|de)\/app(\/.*)?$/, protect.panelGuard, maintenanceGuard, (req, res) => {
+  const lang = req.path.slice(1, 3);
+  pages.setLangCookie(res, lang);
+  res.type('html').send(renderApp(lang));
+});
 
 app.get('/:lang(en|de)', maintenanceGuard, (req, res) => {
   pages.setLangCookie(res, req.params.lang);
@@ -412,27 +441,18 @@ app.get('/:lang(en|de)', maintenanceGuard, (req, res) => {
 
 app.get('/:lang(en|de)/:page', maintenanceGuard, (req, res, next) => {
   const { lang, page } = req.params;
+  // Auch bei einer unbekannten Seite: Wer über einen deutschen Link hereinkommt, soll die
+  // Fehlerseite auf Deutsch sehen und danach auf Deutsch weitersurfen.
   pages.setLangCookie(res, lang);
-  if (page === 'app') {
-    if (protect.enabled() && /(httrack|wget|curl|scrapy)/i.test(String(req.headers['user-agent'] || ''))) {
-      return res.status(403).type('text/plain').send('Nicht erlaubt.');
-    }
-    return res.type('html').send(renderApp(lang));
-  }
   if (!PAGES[page]) return next();
   res.type('html').send(renderPage(page, lang));
 });
 
-// Das Dashboard ist eine Seite mit eigenem Router – jede Unteradresse liefert dieselbe Datei.
-app.get(/^\/(en|de)\/app(\/.*)?$/, protect.panelGuard, maintenanceGuard, (req, res) => {
-  const lang = req.path.slice(1, 3);
-  pages.setLangCookie(res, lang);
-  res.type('html').send(renderApp(lang));
-});
-
 app.use((req, res) => {
   if (req.path.startsWith('/api/')) {
-    const lang = pages.langFor(req);
+    // Wie unten in der Fehlerbehandlung: die Sprache der Anfrage, nicht die der ausgelieferten
+    // Seite.
+    const lang = langOf(req);
     return res.status(404).json({ error: lang === 'en' ? 'Unknown endpoint.' : 'Unbekannter Endpunkt.' });
   }
   const lang = pages.langFor(req);
@@ -459,8 +479,14 @@ app.use((error, req, res, _next) => {
       .type('html')
       .send(pages.render('404', lang, { robotsTag: NOINDEX, title: `${config.brand}` }));
   }
-  // Fehlermeldungen kommen in der Sprache der Anfrage zurück – das Frontend zeigt sie roh an.
-  const lang = pages.langFor(req);
+  // Fehlermeldungen kommen in der Sprache der **Anfrage** zurück – das Frontend zeigt sie roh an.
+  //
+  // Deshalb `langOf` und nicht `langFor`: `langFor` beantwortet die Frage "welche Seite liefere
+  // ich aus" und sieht zuerst im Sprach-Cookie nach. Für eine API-Antwort ist das die falsche
+  // Quelle – das Panel schickt in jedem Aufruf die Sprache mit, in der es gerade angezeigt wird
+  // (`Accept-Language`), und genau die soll gelten. Vorher kam in ein englisch angezeigtes Panel
+  // die Liste auf Englisch und die Fehlermeldung daneben auf Deutsch, weil am Konto Deutsch stand.
+  const lang = langOf(req);
   const text =
     error instanceof HttpError
       ? error.text(lang)
@@ -810,10 +836,19 @@ function enforceFreePlans() {
 
 /** Sperrzeit für Nachrichten, die aus dem Stundentakt kommen. */
 const lastMailed = new Map();
+const DAY_MS = 20 * 60 * 60 * 1000;
 function onceADay(key) {
   const now = Date.now();
-  if (now - (lastMailed.get(key) || 0) < 20 * 60 * 60 * 1000) return false;
+  if (now - (lastMailed.get(key) || 0) < DAY_MS) return false;
   lastMailed.set(key, now);
+  // Je Serverplatz und je Konto ein Schlüssel, und der Dienst startet monatelang nicht neu:
+  // gelöschte Plätze und Konten stünden hier für immer. Aufgeräumt wird, wenn es sich lohnt –
+  // ein Eintrag, der älter ist als seine Sperrzeit, sagt ohnehin nichts mehr.
+  if (lastMailed.size > 5_000) {
+    for (const [entry, at] of lastMailed) {
+      if (now - at > DAY_MS) lastMailed.delete(entry);
+    }
+  }
   return true;
 }
 
@@ -850,7 +885,9 @@ function localNodeTick() {
     .catch(() => {});
 }
 localNodeTick();
-setInterval(localNodeTick, 15_000).unref();
+// Auch dieser Takt läuft ohne Aufrufer – `guarded` ist der Unterschied zwischen "eine Messung
+// fällt aus" und "der Prozess ist weg" (siehe oben).
+setInterval(guarded('standort-eigen', localNodeTick), 15_000).unref();
 
 // Stündlich: abgelaufene Sitzungen weg, Client-Release nachsehen, liegengebliebene Anhänge weg.
 setInterval(

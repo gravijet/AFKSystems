@@ -37,11 +37,11 @@ export async function render(root) {
 
         ${
           suspended
-            ? `<p class="small" style="margin-top:.75rem;color:var(--warn)">${escapeHtml(
+            ? `<p class="small" style="margin-top:.75rem;color:var(--warn-text)">${escapeHtml(
                 account.suspend_reason || tr('acc.suspendedHint')
               )}</p>`
             : broken
-            ? `<p class="small" style="margin-top:.75rem;color:var(--bad)">${escapeHtml(account.last_error || '')}</p>`
+            ? `<p class="small" style="margin-top:.75rem;color:var(--bad-text)">${escapeHtml(account.last_error || '')}</p>`
             : ''
         }
 
@@ -171,7 +171,7 @@ async function startLogin() {
   try {
     session = await api('/accounts/login', { method: 'POST' });
   } catch (error) {
-    $('#login-body', dialog).innerHTML = `<p style="color:var(--bad)">${escapeHtml(error.message)}</p>`;
+    $('#login-body', dialog).innerHTML = `<p style="color:var(--bad-text)">${escapeHtml(error.message)}</p>`;
     return;
   }
 
@@ -194,7 +194,7 @@ async function startLogin() {
     if (data.status === 'done') {
       done = true;
       body.innerHTML = `<div class="stack center" style="gap:1rem;padding:1rem 0">
-        <div style="color:var(--ok)">${icon('check')}</div>
+        <div style="color:var(--ok-text)">${icon('check')}</div>
         <h3>${escapeHtml(tr('acc.ms.done', { name: data.account.name }))}</h3></div>`;
       $('#login-close', dialog).textContent = tr('common.close');
       $('#login-close', dialog).classList.add('btn-primary');

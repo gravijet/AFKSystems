@@ -22,9 +22,12 @@
 // wird bald stehen", `info` heißt "nimm es zur Kenntnis". Das Panel sortiert danach.
 
 import { db, getSetting } from './db.js';
+import { config } from './config.js';
 import * as billing from './billing.js';
 import * as mail from './mail.js';
-import { formatEuro } from './util.js';
+import * as binaries from './binaries.js';
+import * as nodes from './nodes.js';
+import { formatEuro, safeUrl } from './util.js';
 
 const RANK = { bad: 0, warn: 1, info: 2 };
 
@@ -74,7 +77,7 @@ export function todosFor(user, lang = 'en') {
       add({
         key: `profile-locked-${profile.id}`,
         kind: 'bad',
-        title: en ? `"${name}" is locked` : `„${name}" ist gesperrt`,
+        title: en ? `"${name}" is locked` : `„${name}“ ist gesperrt`,
         text: profile.lock_reason
           ? profile.lock_reason
           : en
@@ -91,7 +94,7 @@ export function todosFor(user, lang = 'en') {
       add({
         key: `profile-suspended-${profile.id}`,
         kind: 'bad',
-        title: en ? `"${name}" is suspended` : `„${name}" ist stillgelegt`,
+        title: en ? `"${name}" is suspended` : `„${name}“ ist stillgelegt`,
         text: missing
           ? en
             ? `The bots are stopped. Resuming costs ${number(profile.price_credits, lang)} credits – ${number(missing, lang)} short.`
@@ -116,21 +119,22 @@ export function todosFor(user, lang = 'en') {
           title: en ? 'Link your Discord account' : 'Discord-Konto verknüpfen',
           text: en
             ? `The free server slot ("${name}") only runs while a linked Discord account is a member of our server.`
-            : `Der Gratis-Serverplatz („${name}") läuft nur, solange ein verknüpftes Discord-Konto Mitglied auf unserem Server ist.`,
+            : `Der Gratis-Serverplatz („${name}“) läuft nur, solange ein verknüpftes Discord-Konto Mitglied auf unserem Server ist.`,
           href: '#/settings',
           label: en ? 'Link now' : 'Jetzt verknüpfen',
         });
       } else if (access.reason === 'discord-join') {
         // Beitreten geht nur dort, wo der Server ist – deshalb der Einladungslink, wenn einer
         // hinterlegt ist. Ohne ihn bleibt der Weg über die Einstellungen.
-        const invite = String(getSetting('discord_invite') || '').trim();
+        // Geprüft: Der Wert kommt aus den Einstellungen und wird gleich zum `href` eines Knopfes.
+        const invite = safeUrl(getSetting('discord_invite')) || '';
         add({
           key: 'free-discord-join',
           kind: 'bad',
           title: en ? 'Join the AFKSystems Discord' : 'Dem AFKSystems-Discord beitreten',
           text: en
             ? `Your Discord account is linked but not a member. Without it the free slot ("${name}") stays off.`
-            : `Dein Discord-Konto ist verknüpft, aber kein Mitglied. Ohne das bleibt der Gratis-Platz („${name}") aus.`,
+            : `Dein Discord-Konto ist verknüpft, aber kein Mitglied. Ohne das bleibt der Gratis-Platz („${name}“) aus.`,
           href: invite || '#/settings',
           external: Boolean(invite),
           label: invite ? (en ? 'Join now' : 'Jetzt beitreten') : en ? 'How it works' : 'So geht es',
@@ -148,7 +152,7 @@ export function todosFor(user, lang = 'en') {
       add({
         key: `profile-renew-off-${profile.id}`,
         kind: daysLeft <= warnDays ? 'warn' : 'info',
-        title: en ? `"${name}" will not renew` : `„${name}" wird nicht verlängert`,
+        title: en ? `"${name}" will not renew` : `„${name}“ wird nicht verlängert`,
         text: en
           ? `Renewal is switched off. The slot ends on ${day(profile.paid_until, lang)} and the bots stop.`
           : `Die Verlängerung ist aus. Der Platz endet am ${day(profile.paid_until, lang)}, danach gehen die Bots aus.`,
@@ -164,7 +168,7 @@ export function todosFor(user, lang = 'en') {
         kind: 'warn',
         title: en
           ? `"${name}" renews in ${daysLeft} day(s)`
-          : `„${name}" wird in ${daysLeft} Tag(en) verlängert`,
+          : `„${name}“ wird in ${daysLeft} Tag(en) verlängert`,
         text: en
           ? `${number(profile.price_credits, lang)} credits are due and ${number(profile.price_credits - user.credits, lang)} are missing. Without them the slot is suspended.`
           : `Fällig sind ${number(profile.price_credits, lang)} Credits, es fehlen ${number(profile.price_credits - user.credits, lang)}. Ohne sie wird der Platz stillgelegt.`,
@@ -176,11 +180,13 @@ export function todosFor(user, lang = 'en') {
 
   // Ein Serverplatz ohne Minecraft-Konto ist ein Platz, auf dem nie etwas passieren wird.
   for (const profile of profiles) {
-    if (profile.members || profile.locked) continue;
+    // Auch stillgelegte Plätze fallen heraus: Dort steht oben schon "die Bots sind aus", und
+    // "ordne ein Konto zu, dann kann der Bot starten" wäre daneben schlicht falsch – er kann nicht.
+    if (profile.members || profile.locked || profile.suspended) continue;
     add({
       key: `profile-empty-${profile.id}`,
       kind: 'info',
-      title: en ? `"${profile.name}" has no account yet` : `„${profile.name}" hat noch kein Konto`,
+      title: en ? `"${profile.name}" has no account yet` : `„${profile.name}“ hat noch kein Konto`,
       text: en
         ? 'Add a Minecraft account to the slot, then the bot can start.'
         : 'Ordne dem Platz ein Minecraft-Konto zu, dann kann der Bot starten.',
@@ -240,7 +246,7 @@ export function todosFor(user, lang = 'en') {
         : `Zahlung über ${formatEuro(topup.amount_cent, 'de')} steht noch aus`,
       text: en
         ? `Use "${topup.reference}" as the reference, otherwise nobody can match it. The credits are added once it arrives.`
-        : `Nimm „${topup.reference}" als Verwendungszweck, sonst lässt sie sich nicht zuordnen. Gutgeschrieben wird, sobald sie da ist.`,
+        : `Nimm „${topup.reference}“ als Verwendungszweck, sonst lässt sie sich nicht zuordnen. Gutgeschrieben wird, sobald sie da ist.`,
       href: '#/credits',
       label: en ? 'Payment details' : 'Zahlungsdaten',
     });
@@ -262,7 +268,7 @@ export function todosFor(user, lang = 'en') {
     add({
       key: `ticket-${ticket.id}`,
       kind: 'warn',
-      title: en ? `Support answered: "${ticket.subject}"` : `Antwort im Support: „${ticket.subject}"`,
+      title: en ? `Support answered: "${ticket.subject}"` : `Antwort im Support: „${ticket.subject}“`,
       text: en ? 'Read it and reply if anything is still open.' : 'Lies sie und antworte, wenn noch etwas offen ist.',
       href: `#/tickets/${ticket.id}`,
       label: en ? 'Open ticket' : 'Ticket öffnen',
@@ -280,7 +286,7 @@ export function todosFor(user, lang = 'en') {
       add({
         key: `account-suspended-${account.id}`,
         kind: 'bad',
-        title: en ? `Account "${account.name}" is suspended` : `Konto „${account.name}" ist stillgelegt`,
+        title: en ? `Account "${account.name}" is suspended` : `Konto „${account.name}“ ist stillgelegt`,
         text:
           account.suspend_reason ||
           (en ? 'It cannot start until support clears it.' : 'Es startet nicht, bis der Support es freigibt.'),
@@ -295,7 +301,7 @@ export function todosFor(user, lang = 'en') {
     add({
       key: `account-broken-${account.id}`,
       kind: 'warn',
-      title: en ? `Reconnect "${account.name}"` : `„${account.name}" neu verbinden`,
+      title: en ? `Reconnect "${account.name}"` : `„${account.name}“ neu verbinden`,
       text: en
         ? 'The stored Microsoft sign-in no longer works, so this account cannot start.'
         : 'Die gespeicherte Microsoft-Anmeldung geht nicht mehr – so startet dieses Konto nicht.',
@@ -320,6 +326,239 @@ export function todosFor(user, lang = 'en') {
       // dorthin führt dieser Eintrag deshalb direkt.
       href: `/${en ? 'en' : 'de'}/verify`,
       label: en ? 'Send again' : 'Erneut schicken',
+    });
+  }
+
+  return out.sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+}
+
+/**
+ * Was das **Team** gerade zu tun hat.
+ *
+ * Dieselben drei Regeln wie oben, nur für die andere Seite des Schreibtisches: Es muss etwas zu tun
+ * sein, es muss klar sein was, und es muss den Betrieb betreffen. „Alles läuft“ steht deshalb auch
+ * hier nirgends – was nicht dasteht, ist in Ordnung.
+ *
+ * Der Unterschied zur Kundenliste: Diese hier zählt Warteschlangen (offene Tickets, unbestätigte
+ * Zahlungen) und Zustände der Anlage (ein Standort ohne Verbindung, ein fehlender Client, eine
+ * Post, die nicht rausgeht). Sie hängt an keinem einzelnen Konto und ist für jeden Administrator
+ * dieselbe.
+ */
+export function staffTodos(lang = 'en') {
+  const en = lang === 'en';
+  const out = [];
+  const add = (entry) => out.push(entry);
+  const now = Date.now();
+
+  // ------------------------------------------------------------ Support
+  const waiting = db
+    .prepare("SELECT COUNT(*) AS n FROM tickets WHERE unread_staff = 1 AND status != 'closed'")
+    .get().n;
+  if (waiting) {
+    const urgent = db
+      .prepare(
+        "SELECT COUNT(*) AS n FROM tickets WHERE unread_staff = 1 AND status != 'closed' AND priority IN ('high','urgent')"
+      )
+      .get().n;
+    add({
+      key: 'staff-tickets',
+      kind: urgent ? 'bad' : 'warn',
+      title: en
+        ? `${waiting} ticket(s) waiting for an answer`
+        : `${waiting} Ticket(s) warten auf eine Antwort`,
+      text: urgent
+        ? en
+          ? `${urgent} of them are marked high or urgent.`
+          : `${urgent} davon stehen auf hoch oder dringend.`
+        : en
+          ? 'Nobody from the team has replied to them yet.'
+          : 'Aus dem Team hat darauf noch niemand geantwortet.',
+      href: '#/admin/tickets',
+      label: en ? 'Open tickets' : 'Tickets öffnen',
+    });
+  }
+
+  // Ein Ticket, das seit Tagen offensteht, ist etwas anderes als eines von heute Morgen.
+  const stale = db
+    .prepare(
+      "SELECT COUNT(*) AS n FROM tickets WHERE status != 'closed' AND unread_staff = 1 AND updated_at < ?"
+    )
+    .get(now - 3 * 86_400_000).n;
+  if (stale) {
+    add({
+      key: 'staff-tickets-stale',
+      kind: 'bad',
+      title: en ? `${stale} ticket(s) older than three days` : `${stale} Ticket(s) älter als drei Tage`,
+      text: en
+        ? 'They are still waiting for a first reply.'
+        : 'Sie warten immer noch auf die erste Antwort.',
+      href: '#/admin/tickets?status=open',
+      label: en ? 'Look at them' : 'Ansehen',
+    });
+  }
+
+  // ------------------------------------------------------------ Geld
+  //
+  // Eine Überweisung, die eingegangen ist, sieht das Panel nicht – sie muss ein Mensch bestätigen.
+  // Bis dahin wartet der Kunde auf Guthaben, das er längst bezahlt hat.
+  const open = db
+    .prepare(
+      "SELECT COUNT(*) AS n, COALESCE(SUM(amount_cent), 0) AS cent FROM topups WHERE status = 'open' AND provider IN ('transfer','paypal')"
+    )
+    .get();
+  if (open.n) {
+    add({
+      key: 'staff-topups',
+      kind: 'warn',
+      title: en
+        ? `${open.n} payment(s) waiting to be confirmed`
+        : `${open.n} Zahlung(en) warten auf die Bestätigung`,
+      text: en
+        ? `${formatEuro(open.cent, 'en')} all told. Until somebody confirms them, the customers have no credits.`
+        : `${formatEuro(open.cent, 'de')} insgesamt. Bis das jemand bestätigt, haben die Kunden kein Guthaben.`,
+      href: '#/admin/topups',
+      label: en ? 'Confirm' : 'Bestätigen',
+    });
+  }
+
+  const disputed = db
+    .prepare("SELECT COUNT(*) AS n FROM topups WHERE status = 'refunded' AND paid_at > ?")
+    .get(now - 30 * 86_400_000).n;
+  if (disputed) {
+    add({
+      key: 'staff-refunds',
+      kind: 'info',
+      title: en ? `${disputed} refund(s) in the last 30 days` : `${disputed} Rückerstattung(en) in 30 Tagen`,
+      text: en
+        ? 'Worth a look if that is more than usual.'
+        : 'Einen Blick wert, wenn das mehr ist als sonst.',
+      href: '#/admin/topups',
+      label: en ? 'Top-ups' : 'Aufladungen',
+    });
+  }
+
+  // ------------------------------------------------------------ Kunden
+  const blocked = db.prepare('SELECT COUNT(*) AS n FROM users WHERE blocked = 1').get().n;
+  if (blocked) {
+    add({
+      key: 'staff-blocked',
+      kind: 'info',
+      title: en ? `${blocked} account(s) are blocked` : `${blocked} Konto/Konten sind gesperrt`,
+      text: en
+        ? 'A blocked account cannot log in. Check whether the reason still holds.'
+        : 'Ein gesperrtes Konto kommt nicht mehr herein. Prüfen, ob der Grund noch gilt.',
+      href: '#/admin/users?filter=blocked',
+      label: en ? 'Accounts' : 'Konten',
+    });
+  }
+
+  const lockedSlots = db.prepare('SELECT COUNT(*) AS n FROM profiles WHERE locked = 1').get().n;
+  if (lockedSlots) {
+    add({
+      key: 'staff-locked',
+      kind: 'warn',
+      title: en ? `${lockedSlots} server slot(s) are locked` : `${lockedSlots} Serverplatz/-plätze sind gesperrt`,
+      text: en
+        ? 'Their bots are off and the customer cannot change anything.'
+        : 'Ihre Bots sind aus, und der Kunde kann nichts mehr ändern.',
+      href: '#/admin/servers',
+      label: en ? 'Server slots' : 'Serverplätze',
+    });
+  }
+
+  // ------------------------------------------------------------ Anlage
+  if (binaries.state.error) {
+    add({
+      key: 'staff-client',
+      kind: 'bad',
+      title: en ? 'The client files have a problem' : 'Mit den Client-Dateien stimmt etwas nicht',
+      text: binaries.state.error,
+      href: '#/admin/client',
+      label: en ? 'Sync the client' : 'Client abgleichen',
+    });
+  }
+
+  for (const node of nodes.list({ includeInactive: false })) {
+    if (node.kind !== 'agent' || nodes.reachable(node)) continue;
+    add({
+      key: `staff-node-${node.id}`,
+      kind: 'bad',
+      title: en ? `Location "${node.name}" is not answering` : `Standort „${node.name}“ meldet sich nicht`,
+      text: en
+        ? 'Bots that belong there are not running. They come back on their own once it does.'
+        : 'Die Bots, die dorthin gehören, laufen nicht. Sie kommen von selbst zurück, sobald er wieder da ist.',
+      href: '#/admin/nodes',
+      label: en ? 'Locations' : 'Standorte',
+    });
+  }
+
+  if (!mail.configured()) {
+    add({
+      key: 'staff-mail',
+      kind: 'warn',
+      title: en ? 'No mail server set up' : 'Es ist kein Mailserver eingerichtet',
+      text: en
+        ? 'Without it there is no password reset and no confirmation link.'
+        : 'Ohne ihn gibt es kein Zurücksetzen des Passworts und keinen Bestätigungslink.',
+      href: '#/admin/settings',
+      label: en ? 'Settings' : 'Einstellungen',
+    });
+  } else {
+    const failed = db
+      .prepare("SELECT COUNT(*) AS n FROM mails WHERE status = 'failed' AND created_at > ?")
+      .get(now - 86_400_000).n;
+    if (failed) {
+      add({
+        key: 'staff-mail-failed',
+        kind: 'warn',
+        title: en ? `${failed} email(s) did not go out` : `${failed} E-Mail(s) gingen nicht raus`,
+        text: en
+          ? 'In the last 24 hours. The exact reason is with the message.'
+          : 'In den letzten 24 Stunden. Der genaue Grund steht an der Nachricht.',
+        href: '#/admin/mails',
+        label: en ? 'Mail log' : 'Postausgang',
+      });
+    }
+  }
+
+  if (Number(getSetting('maintenance'))) {
+    add({
+      key: 'staff-maintenance',
+      kind: 'warn',
+      title: en ? 'Maintenance mode is on' : 'Der Wartungsmodus ist an',
+      text: en
+        ? 'Everyone but administrators sees a notice instead of the site.'
+        : 'Alle außer Administratoren sehen einen Hinweis statt der Website.',
+      href: '#/admin/settings',
+      label: en ? 'Switch it off' : 'Ausschalten',
+    });
+  }
+
+  // Der Gratis-Tarif hängt an einer Discord-Server-ID. Fehlt sie, startet kein Gratis-Platz mehr –
+  // und der Grund steht an keiner Stelle, an der jemand von selbst nachsieht.
+  if (!billing.freeGuildId() && db.prepare('SELECT 1 FROM plans WHERE free_slot = 1 AND active = 1').get()) {
+    add({
+      key: 'staff-free-guild',
+      kind: 'bad',
+      title: en ? 'The free plan has no Discord server' : 'Dem Gratis-Tarif fehlt der Discord-Server',
+      text: en
+        ? 'Without a guild ID no free server slot can start – membership cannot be checked.'
+        : 'Ohne Server-ID startet kein Gratis-Serverplatz – die Mitgliedschaft lässt sich nicht prüfen.',
+      href: '#/admin/settings',
+      label: en ? 'Settings' : 'Einstellungen',
+    });
+  }
+
+  if (!safeUrl(getSetting('discord_invite'))) {
+    add({
+      key: 'staff-invite',
+      kind: 'info',
+      title: en ? 'No Discord invite link stored' : 'Es ist kein Discord-Einladungslink hinterlegt',
+      text: en
+        ? `Customers who need to join ${config.brand}'s Discord for the free slot have nowhere to click.`
+        : `Kunden, die für den Gratis-Platz in den ${config.brand}-Discord müssen, haben nichts zum Anklicken.`,
+      href: '#/admin/settings',
+      label: en ? 'Settings' : 'Einstellungen',
     });
   }
 

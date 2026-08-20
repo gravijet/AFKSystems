@@ -12,6 +12,7 @@
 import { db, getSetting, audit } from './db.js';
 import { voucherCode, bad, notFound } from './util.js';
 import * as mail from './mail.js';
+import * as notify from './notify.js';
 
 /** Ein Monat sind hier immer 30 Tage. Keine Kalenderrechnerei, kein Februar-Sonderfall. */
 export const MONTH_MS = 30 * 86_400_000;
@@ -33,7 +34,7 @@ const insertLedger = db.prepare(
  * an keiner einzigen durchgesetzt: Jeder Aufrufer prüfte selbst, ob das Guthaben reicht, und wer es
  * vergaß (oder zwischen Prüfung und Abbuchung etwas anderes abbuchte), schrieb einen negativen
  * Stand in die Datenbank. Ein negativer Stand ist keine Schuld, sondern ein kaputter Kontoauszug:
- * jede Rechnung, die auf „Guthaben ≥ Preis" prüft, rechnet danach mit Vorzeichen, und der Kunde
+ * jede Rechnung, die auf „Guthaben ≥ Preis“ prüft, rechnet danach mit Vorzeichen, und der Kunde
  * lädt auf und sieht nichts davon. Deshalb ist es ab hier ein Fehler und keine stille Zahl.
  *
  * Wer bewusst nur nimmt, was da ist (Rückerstattung, Rücklastschrift), deckelt vorher selbst und
@@ -292,13 +293,22 @@ function markAddonsPaidForPeriod(profileId) {
 /**
  * Guthaben-Rest eines Platzes, wenn er jetzt gewechselt oder gelöscht wird (abgerundet).
  *
- * Die Restzeit wird auf **einen Monat** gedeckelt, genau wie in `proratedPrice`. Ohne diesen
- * Deckel war der Restwert die Rechnung „Monatspreis × Restzeit ÷ 30 Tage", und die stimmt nur,
- * solange die Restzeit nie über 30 Tage hinausgeht. Sie geht aber hinaus: Ein Administrator kann
- * eine Laufzeit um bis zu zehn Jahre verlängern (`admin.patch /profiles/:id`), und wer danach den
- * Platz löschte, bekam den zwölffachen Monatspreis gutgeschrieben – Credits aus dem Nichts, für
- * Zeit, die nie jemand bezahlt hat. Bezahlt wird je 30 Tage; mehr als 30 Tage kann deshalb auch
- * nicht zurückkommen.
+ * Zwei Deckel, und beide sind nötig:
+ *
+ *   1. **Die Restzeit gilt höchstens einen Monat**, genau wie in `proratedPrice`. Ohne diesen
+ *      Deckel war der Restwert „Monatspreis × Restzeit ÷ 30 Tage“, und das stimmt nur, solange die
+ *      Restzeit nie über 30 Tage hinausgeht. Sie geht aber hinaus: Ein Administrator kann eine
+ *      Laufzeit um bis zu zehn Jahre verlängern, und wer danach den Platz löschte, bekam den
+ *      zwölffachen Monatspreis gutgeschrieben.
+ *   2. **Nie mehr, als für diese Periode wirklich abgebucht wurde.** Dasselbe Verlängern ist
+ *      ausdrücklich *ohne* Abbuchung gedacht – ein Geschenk der Verwaltung, kein Kauf. Mit dem
+ *      ersten Deckel allein blieb daraus trotzdem echtes Guthaben: geschenkten Ultra-Platz
+ *      anlegen lassen, sofort löschen, einen Monatspreis in Credits auf dem Konto. Credits sind
+ *      Zahlungsmittel für alles Weitere, also war das Geld aus dem Nichts. `profiles.paid_credits`
+ *      und `profile_addons.paid_credits` sagen, was hingegangen ist; mehr kommt nicht zurück.
+ *
+ * Getrennt gerechnet für Tarif und Zusätze, weil beide ihre eigene Erinnerung haben: Ein Zusatz,
+ * der mitten in der Periode dazukam, hat auch nur den Rest der Periode gekostet.
  */
 export function refundValue(profile) {
   const plan = planOf(profile);
@@ -306,7 +316,19 @@ export function refundValue(profile) {
   if (plan.free_slot || !Number.isFinite(until) || !until) return 0;
   const left = Math.min(until - Date.now(), MONTH_MS);
   if (left <= 0) return 0;
-  return Math.max(0, Math.floor((monthlyPrice(profile) * left) / MONTH_MS));
+  /** Anteil an der Restzeit – abgerundet, denn zurück gibt es höchstens das Bezahlte. */
+  const share = (amount) => Math.max(0, Math.floor((Math.max(0, amount) * left) / MONTH_MS));
+
+  // Der Listenpreis von heute ist die zweite Obergrenze: Wurde der Tarif nach dem Kauf billiger,
+  // kommt der neue Preis zurück und nicht der alte.
+  const paidForPlan = Math.max(0, Number(profile.paid_credits) || 0);
+  let refund = Math.min(share(plan.price_credits), share(paidForPlan));
+
+  for (const entry of addonsOf(profile.id)) {
+    const paid = Math.max(0, Number(entry.paid_credits) || 0);
+    refund += Math.min(share(entry.price_credits * entry.qty), paid);
+  }
+  return refund;
 }
 
 /**
@@ -332,7 +354,7 @@ export const setPlan = db.transaction((profile, plan, { by = null } = {}) => {
     // Zusätze gibt es auf dem Gratis-Platz nicht – der Rest ist im Restguthaben schon drin.
     db.prepare('DELETE FROM profile_addons WHERE profile_id = ?').run(profile.id);
     db.prepare(
-      'UPDATE profiles SET plan_id = ?, paid_until = NULL, suspended = 0, chat_limit = ? WHERE id = ?'
+      'UPDATE profiles SET plan_id = ?, paid_until = NULL, suspended = 0, chat_limit = ?, paid_credits = 0 WHERE id = ?'
     ).run(plan.id, Math.min(profile.chat_limit || plan.chat_limit, plan.chat_limit), profile.id);
     audit(by ?? profile.user_id, 'plan-set', { profile: profile.id, plan: plan.slug });
     return db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id);
@@ -372,12 +394,15 @@ export const setPlan = db.transaction((profile, plan, { by = null } = {}) => {
   const chatLimit = current.free_slot
     ? plan.chat_limit
     : Math.min(profile.chat_limit || plan.chat_limit, plan.chat_limit);
+  // `paid_credits` ist der Tarifanteil dieser Abbuchung – die Zusätze führen ihren eigenen Betrag
+  // (siehe `markAddonsPaidForPeriod` gleich darunter). Beides zusammen ergibt genau `price`.
   db.prepare(
-    'UPDATE profiles SET plan_id = ?, paid_until = ?, suspended = 0, renew = 1, chat_limit = ? WHERE id = ?'
+    'UPDATE profiles SET plan_id = ?, paid_until = ?, suspended = 0, renew = 1, chat_limit = ?, paid_credits = ? WHERE id = ?'
   ).run(
     plan.id,
     Date.now() + MONTH_MS,
     chatLimit,
+    plan.price_credits,
     profile.id
   );
   // Der Preis oben enthielt die Zusätze zum vollen Monatspreis – dann steht das auch an ihnen.
@@ -407,37 +432,63 @@ export function renewDue(now = Date.now()) {
   const renewed = [];
   const suspended = [];
   for (const profile of due) {
-    const user = readUser.get(profile.user_id);
-    if (!user) continue;
-    // Der Preis kommt aus Tarif **und** Zusätzen – sonst liefe ein dazugekaufter Bot-Platz nach
-    // dem ersten Monat gratis weiter.
-    const price = monthlyPrice(profile);
-    if (profile.renew && user.credits >= price) {
-      move(
-        profile.user_id,
-        -price,
-        'plan',
-        `${profile.name_de} · ${profile.name} · Verlängerung`,
-        String(profile.id)
-      );
-      // Ab jetzt weiterrechnen, nicht ab dem alten Ende – sonst schrumpft die Laufzeit bei
-      // jedem Ausfall des Dienstes um die Zeit, die er stand.
-      db.prepare('UPDATE profiles SET paid_until = ? WHERE id = ?').run(now + MONTH_MS, profile.id);
-      // `price` kam aus `monthlyPrice` und enthielt die Zusätze zum vollen Preis.
-      markAddonsPaidForPeriod(profile.id);
-      renewed.push({ userId: profile.user_id, profileId: profile.id, name: profile.name, price });
-    } else {
-      db.prepare('UPDATE profiles SET suspended = 1 WHERE id = ?').run(profile.id);
-      suspended.push({
-        userId: profile.user_id,
-        profileId: profile.id,
-        name: profile.name,
-        reason: profile.renew ? 'no-credits' : 'cancelled',
-      });
+    // Ein Platz je Durchgang, und ein kaputter nimmt die anderen nicht mit. `move()` wirft, wenn
+    // etwas nicht stimmt (fehlender Nutzer, unmöglicher Preis) – ohne diese Klammer blieb der
+    // ganze Rest der fälligen Plätze bis zur nächsten Stunde liegen, und die Kunden dahinter
+    // wussten nicht, warum ihre Bots standen.
+    try {
+      const result = renewOne(profile, now);
+      if (result?.renewed) renewed.push(result.renewed);
+      if (result?.suspended) suspended.push(result.suspended);
+    } catch (error) {
+      console.error(`[abrechnung] Serverplatz #${profile.id} ließ sich nicht abrechnen:`, error.message);
     }
   }
   return { renewed, suspended };
 }
+
+/**
+ * Genau ein fälliger Serverplatz – verlängern oder stilllegen.
+ *
+ * Als eigene Transaktion, damit Abbuchung und neues Ablaufdatum zusammen gelten oder gar nicht.
+ * Gemeldet wird über den Rückgabewert und nicht über eine mitgereichte Liste: Wird die Transaktion
+ * zurückgerollt, soll auch nichts gemeldet worden sein.
+ */
+const renewOne = db.transaction((profile, now) => {
+  const user = readUser.get(profile.user_id);
+  if (!user) return null;
+  // Der Preis kommt aus Tarif **und** Zusätzen – sonst liefe ein dazugekaufter Bot-Platz nach
+  // dem ersten Monat gratis weiter.
+  const price = monthlyPrice(profile);
+  if (profile.renew && user.credits >= price) {
+    move(
+      profile.user_id,
+      -price,
+      'plan',
+      `${profile.name_de} · ${profile.name} · Verlängerung`,
+      String(profile.id)
+    );
+    // Ab jetzt weiterrechnen, nicht ab dem alten Ende – sonst schrumpft die Laufzeit bei
+    // jedem Ausfall des Dienstes um die Zeit, die er stand.
+    db.prepare('UPDATE profiles SET paid_until = ?, paid_credits = ? WHERE id = ?').run(
+      now + MONTH_MS,
+      profile.price_credits,
+      profile.id
+    );
+    // `price` kam aus `monthlyPrice` und enthielt die Zusätze zum vollen Preis.
+    markAddonsPaidForPeriod(profile.id);
+    return { renewed: { userId: profile.user_id, profileId: profile.id, name: profile.name, price } };
+  }
+  db.prepare('UPDATE profiles SET suspended = 1 WHERE id = ?').run(profile.id);
+  return {
+    suspended: {
+      userId: profile.user_id,
+      profileId: profile.id,
+      name: profile.name,
+      reason: profile.renew ? 'no-credits' : 'cancelled',
+    },
+  };
+});
 
 /**
  * Wer läuft demnächst ab und hat zu wenig Guthaben? Grundlage für die Warnungen.
@@ -696,14 +747,14 @@ const settle = db.transaction((topupId, note = '', force = false) => {
   const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
   if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
   // Schon gebucht **oder schon zurückgenommen**: In beiden Fällen darf hier nichts mehr entstehen.
-  // Ohne den zweiten Fall schrieb ein Klick auf „als bezahlt buchen" eine zurückerstattete
+  // Ohne den zweiten Fall schrieb ein Klick auf „als bezahlt buchen“ eine zurückerstattete
   // Aufladung ein zweites Mal gut – das Geld war weg und die Credits waren wieder da.
   //
   // **Abgebrochen zählt genauso.** Eine Aufladung, die der Kunde selbst zurückgezogen hat
   // (`DELETE /billing/topup/:id`), ist erledigt. Sie danach noch zu buchen hieße: Guthaben für
   // einen Vorgang, den beide Seiten für beendet hielten – und weil das Abbrechen dem Kunden offen
   // steht, war das ein Weg, den er selbst öffnen konnte. Kommt das Geld dennoch später an (eine
-  // Überweisung, die schon unterwegs war), bucht die Verwaltung sie mit „trotzdem buchen" – dann
+  // Überweisung, die schon unterwegs war), bucht die Verwaltung sie mit „trotzdem buchen“ – dann
   // steht eine Entscheidung eines Menschen dahinter und nicht ein Klick des Kunden.
   if (topup.status === 'paid' || topup.status === 'refunded') return { topup, already: true };
   if (topup.status === 'cancelled' && !force) return { topup, already: true };
@@ -736,6 +787,10 @@ export function settleTopup(topupId, note = '', { force = false } = {}) {
         amount_cent: topup.amount_cent,
         balance,
       });
+      // Und über Discord, wenn ein Webhook hinterlegt ist. Zwischen dem Bezahlen bei Tebex und der
+      // Gutschrift liegen Sekunden bis Minuten – wer in dieser Zeit nicht im Panel sitzt, erfährt
+      // sonst gar nicht, dass sein Geld angekommen ist.
+      notify.topupPaid(user.id, topup.credits, balance);
     }
   }
   return topup;
@@ -790,6 +845,61 @@ export const refundTopup = db.transaction((topupId, note = '') => {
 
 export function history(userId, limit = 60) {
   return db.prepare('SELECT * FROM ledger WHERE user_id = ? ORDER BY id DESC LIMIT ?').all(userId, limit);
+}
+
+/**
+ * Der Guthabenstand je Tag – für die Kurve im Guthaben-Bereich.
+ *
+ * Gerechnet wird **nicht** aus den Bewegungen, sondern gelesen: `ledger.balance` hält an jeder
+ * Zeile den Stand danach fest. Der Stand eines Tages ist damit der der letzten Bewegung dieses
+ * Tages, und Tage ohne Bewegung erben den Stand des Vortages. Aus den Beträgen zu summieren
+ * hieße dagegen, dieselbe Rechnung ein zweites Mal zu schreiben – und zwei Rechnungen für
+ * dieselbe Zahl gehen irgendwann auseinander.
+ *
+ * Vor der ersten Bewegung im Zeitraum steht der Stand, den das Konto damals hatte: der Stand
+ * *vor* der ersten Bewegung danach (`balance - delta`), sonst der heutige.
+ */
+export function balanceByDay(userId, days = 30) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (days - 1));
+  const from = start.getTime();
+
+  const key = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  const rows = db
+    .prepare('SELECT created_at, balance, delta FROM ledger WHERE user_id = ? AND created_at >= ? ORDER BY id')
+    .all(userId, from);
+
+  const lastOfDay = new Map();
+  for (const row of rows) lastOfDay.set(key(new Date(row.created_at)), row.balance);
+
+  // Womit die Kurve beginnt: der Stand vor der ersten Bewegung im Zeitraum.
+  let running = rows.length ? rows[0].balance - rows[0].delta : balance(userId);
+  const out = [];
+  for (let i = 0; i < days; i++) {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    const name = key(date);
+    if (lastOfDay.has(name)) running = lastOfDay.get(name);
+    out.push({ day: name, credits: running });
+  }
+  return out;
+}
+
+/**
+ * Wofür das Guthaben draufgeht – je Art, über die letzten Monate.
+ *
+ * Nur Abbuchungen: Aufladungen und Gutschriften stehen im Kontoauszug und gehören nicht in eine
+ * Frage, die "wohin ist es gegangen" heißt.
+ */
+export function spendByKind(userId, months = 6) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(1);
+  start.setMonth(start.getMonth() - (months - 1));
+  const rows = db
+    .prepare('SELECT kind, SUM(-delta) AS credits FROM ledger WHERE user_id = ? AND delta < 0 AND created_at >= ? GROUP BY kind')
+    .all(userId, start.getTime());
+  return rows.map((row) => ({ kind: row.kind, credits: row.credits })).sort((a, b) => b.credits - a.credits);
 }
 
 /** Ausgaben je Monat für die kleine Kurve im Guthaben-Bereich. */

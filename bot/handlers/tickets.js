@@ -57,6 +57,24 @@ export class Tickets {
     this.mine = new Set();
   }
 
+  /**
+   * Eine eigene Nachricht merken – aber nicht für immer.
+   *
+   * Die Menge wuchs mit jeder gespiegelten Zeile und wurde nie kleiner. Ein Bot läuft Monate; bei
+   * ein paar tausend Tickets sind das Hunderttausende IDs, die nur noch Speicher belegen. Zu
+   * beantworten ist ohnehin bloß die Frage „habe *ich* das eben geschrieben“, und die stellt sich
+   * innerhalb von Sekunden.
+   */
+  remember(messageId) {
+    this.mine.add(messageId);
+    if (this.mine.size <= 2000) return;
+    // Sets behalten die Einfügereihenfolge: Die ältesten fliegen zuerst.
+    for (const id of this.mine) {
+      this.mine.delete(id);
+      if (this.mine.size <= 1000) break;
+    }
+  }
+
   get config() {
     return this.bot.config;
   }
@@ -269,7 +287,7 @@ export class Tickets {
       embeds: [embed],
       components: [buttons],
     });
-    this.mine.add(message.id);
+    this.remember(message.id);
     await message.pin().catch(() => {});
 
     // Die erste Nachricht des Kunden steht schon im Panel – hier gehört sie auch hin.
@@ -318,7 +336,7 @@ export class Tickets {
       console.warn('[tickets] could not relay message:', error.message);
       return null;
     });
-    if (message) this.mine.add(message.id);
+    if (message) this.remember(message.id);
   }
 
   /** Die Anhänge einer Panel-Nachricht holen. Zu große bleiben als Hinweis übrig. */
@@ -458,19 +476,40 @@ export class Tickets {
     });
     // Geschlossene Tickets landen eine Woche sichtbar im Discord-Archiv. Bei einer neuen Antwort
     // wird der Kanal zurück in die aktive Kategorie verschoben.
-    if (closed) {
-      await channel.setName(`closed-${event.ticket_id}`).catch(() => {});
-      await channel.setParent(ARCHIVE_CATEGORY_ID).catch((error) =>
-        console.warn(`[tickets] could not archive #${event.ticket_id}: ${error.message}`)
-      );
-    } else {
-      await this.reopenChannel(channel, event.ticket_id);
+    if (closed) await this.archiveChannel(channel, event.ticket_id);
+    else await this.reopenChannel(channel, event.ticket_id);
+  }
+
+  /**
+   * Einen Kanal zurück in den Betrieb holen: Name und Kategorie.
+   *
+   * **Nur, wenn sich wirklich etwas ändert.** Discord begrenzt das Umbenennen eines Kanals auf
+   * zwei Vorgänge in zehn Minuten – und `onPanelMessage` ruft das hier bei *jeder* Antwort auf.
+   * Ein lebhaftes Ticket hat die Grenze damit nach der dritten Nachricht erreicht, und weil
+   * discord.js daraufhin wartet statt abzubrechen, stand danach die ganze Warteschlange des Bots:
+   * keine gespiegelten Nachrichten mehr, keine Rollen, nichts – für alle Tickets gleichzeitig.
+   */
+  async reopenChannel(channel, ticketId) {
+    const name = `ticket-${ticketId}`;
+    if (channel.name !== name) await channel.setName(name).catch(() => {});
+    const parent = this.config.ticket_category;
+    if (parent && String(channel.parentId || '') !== String(parent)) {
+      await channel.setParent(parent).catch(() => {});
     }
   }
 
-  async reopenChannel(channel, ticketId) {
-    await channel.setName(`ticket-${ticketId}`).catch(() => {});
-    if (this.config.ticket_category) await channel.setParent(this.config.ticket_category).catch(() => {});
+  /** Ins Archiv verschieben – ebenfalls nur, wenn der Kanal nicht schon dort steht. */
+  async archiveChannel(channel, ticketId) {
+    const name = `closed-${ticketId}`;
+    if (channel.name !== name) await channel.setName(name).catch(() => {});
+    if (String(channel.parentId || '') === ARCHIVE_CATEGORY_ID) return;
+    // Die Kategorie gehört zur einen AFKSystems-Guild. Auf einer anderen Installation gibt es sie
+    // nicht – dann bleibt der Kanal, wo er ist, statt bei jedem geschlossenen Ticket eine
+    // Warnung über eine fremde ID ins Protokoll zu schreiben.
+    if (!channel.guild?.channels?.cache?.has(ARCHIVE_CATEGORY_ID)) return;
+    await channel.setParent(ARCHIVE_CATEGORY_ID).catch((error) =>
+      console.warn(`[tickets] could not archive #${ticketId}: ${error.message}`)
+    );
   }
 
   /**
@@ -483,16 +522,8 @@ export class Tickets {
       if (!ticket.channel_id) continue;
       const channel = await this.bot.client.channels.fetch(ticket.channel_id).catch(() => null);
       if (!channel?.isTextBased()) continue;
-      if (ticket.status === 'closed') {
-        if (channel.name !== `closed-${ticket.id}`) await channel.setName(`closed-${ticket.id}`).catch(() => {});
-        if (channel.parentId !== ARCHIVE_CATEGORY_ID) {
-          await channel.setParent(ARCHIVE_CATEGORY_ID).catch((error) =>
-            console.warn(`[tickets] could not archive #${ticket.id}: ${error.message}`)
-          );
-        }
-      } else if (channel.name !== `ticket-${ticket.id}` || channel.parentId !== this.config.ticket_category) {
-        await this.reopenChannel(channel, ticket.id);
-      }
+      if (ticket.status === 'closed') await this.archiveChannel(channel, ticket.id);
+      else await this.reopenChannel(channel, ticket.id);
     }
   }
 

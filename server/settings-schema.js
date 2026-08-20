@@ -544,6 +544,23 @@ export const SETTINGS = [
     de: { label: 'Discord Moderator (Linked Role)', help: 'Discord vergibt diese Linked Role, wenn Moderator im Benutzerprofil gesetzt ist.' },
     en: { label: 'Discord Moderator (Linked Role)', help: 'Discord grants this linked role when the moderator flag is set in the user profile.' },
   },
+  {
+    // Diese Einstellung gab es schon (Migration 010 legt sie an, der Bot liest sie, die Doku
+    // verweist auf sie) – nur stand sie in keiner Beschreibung, und damit war sie im Admin-Bereich
+    // unsichtbar und unveränderbar. Eine Einstellung, die man nur mit einem SQL-Werkzeug ändern
+    // kann, ist keine.
+    key: 'discord_skip_categories',
+    group: 'discordroles',
+    type: 'text',
+    de: {
+      label: 'Kategorien ohne Rechteabgleich',
+      help: 'Kommagetrennte Kategorie-IDs. Dort fasst der Bot keine Kanalrechte an – weder setzt er eines noch nimmt er eines weg. Gedacht für Bereiche, deren Zugang jemand von Hand geregelt hat.',
+    },
+    en: {
+      label: 'Categories the bot leaves alone',
+      help: 'Comma-separated category IDs. The bot touches no channel permission in them – it neither grants nor removes one. For areas whose access somebody set by hand.',
+    },
+  },
 
   // ---------------------------------------------------------------- Linked Roles
   // Eine Liste aus Objekten wie die Aufladepakete – und wie diese mit eigenem Editor, weil ein

@@ -5,7 +5,7 @@
 // angeboten – ein Knopf, der nichts tut, ist schlimmer als kein Knopf.
 
 import {
-  api, icon, escapeHtml, since, clock, credits, euro, date, stateBadge, mcText, tr, $, $$,
+  api, icon, escapeHtml, since, clock, credits, euro, date, stateBadge, mcText, safeLink, tr, $, $$,
   ok, fail, toast, confirmDialog, formDialog, debounce,
 } from '../ui.js';
 import { mergeLines, stripFormatting } from '../chatlog.js';
@@ -56,7 +56,7 @@ function card(profile) {
       ${
         unavailable
           ? `<span class="pill missing">${escapeHtml(tr('srv.unavailable'))}</span>`
-          : `<span class="small" style="color:var(--primary)">${escapeHtml(tr('common.open'))} ${icon('arrow')}</span>`
+          : `<span class="small" style="color:var(--primary-text)">${escapeHtml(tr('common.open'))} ${icon('arrow')}</span>`
       }
     </div>
   </a>`;
@@ -100,6 +100,13 @@ export async function newProfile() {
     }
   );
   if (!data) return;
+
+  // Wer den Gratis-Tarif nimmt und nicht im Discord ist, legt sich sonst einen Serverplatz an,
+  // der vom ersten Augenblick an stillsteht – und sucht den Fehler dann beim Bot. Deshalb steht
+  // die Bedingung **vorher** da, mit dem Einladungslink daneben und der Wahl, es trotzdem zu tun.
+  const chosen = plans.find((plan) => String(plan.id) === String(data.plan_id));
+  if (chosen?.free_slot && !(await confirmDiscord())) return;
+
   try {
     const result = await api('/profiles', {
       method: 'POST',
@@ -112,6 +119,70 @@ export async function newProfile() {
   } catch (error) {
     fail(error);
   }
+}
+
+/**
+ * Der Kasten im Serverplatz: warum er stillsteht und was dagegen hilft.
+ *
+ * Drei Fälle, drei Sätze. „Nicht verknüpft“ führt in die Einstellungen, „nicht beigetreten“ auf
+ * den Discord, und „ließ sich gerade nicht bestätigen“ führt nirgendwohin – das ist unsere Lücke,
+ * und einen Knopf dafür gibt es nicht.
+ */
+function joinBox(profile) {
+  if (!profile.plan.free_slot || profile.free_access?.ok !== false) return '';
+  const reason = profile.free_access.reason;
+  const invite = state.meta?.discord_invite || '';
+  if (reason === 'discord-check' || reason === 'not-configured') {
+    return `<div class="note warn" style="margin-bottom:1.25rem">${icon('clock')}
+      <div>${escapeHtml(tr('join.checking'))}</div></div>`;
+  }
+  const linkOnly = reason === 'discord-link';
+  const action =
+    linkOnly || !invite
+      ? `<a class="btn btn-discord" href="#/settings">${escapeHtml(tr('join.linkAction'))}</a>`
+      : `<a class="btn btn-discord" href="${escapeHtml(safeLink(invite))}" target="_blank" rel="noopener">
+          ${icon('discord')} ${escapeHtml(tr('discord.join'))}</a>`;
+  return `<div class="joinbox" style="margin-bottom:1.25rem">
+    ${icon('discord')}
+    <div class="grow">
+      <h4>${escapeHtml(tr(linkOnly ? 'join.linkTitle' : 'join.joinTitle'))}</h4>
+      <p>${escapeHtml(tr('join.boxFree', { brand: state.meta?.brand || 'AFKSystems' }))}</p>
+      ${action}
+    </div>
+  </div>`;
+}
+
+/**
+ * Der Zwischenschritt für den Gratis-Tarif: Bist du schon im Discord?
+ *
+ * Gibt `true` zurück, wenn es weitergehen darf – entweder weil die Mitgliedschaft steht oder weil
+ * der Kunde ausdrücklich sagt "trotzdem anlegen". Die Wahl bleibt seine: Der Platz ist ja nicht
+ * kaputt, er wartet nur, und ein Panel, das ihn deswegen gar nicht erst anlegt, wäre bevormundend.
+ */
+async function confirmDiscord() {
+  const access = state.me?.free_access;
+  if (!access || access.ok) return true;
+  // "Konnte gerade nicht bestätigt werden" ist unsere Lücke, nicht seine – da hält niemanden auf.
+  if (access.reason !== 'discord-link' && access.reason !== 'discord-join') return true;
+
+  const invite = state.meta?.discord_invite || '';
+  const linkOnly = access.reason === 'discord-link';
+  return confirmDialog(
+    `${tr('join.dialogText')}\n\n${
+      linkOnly ? tr('join.linkText') : ''
+    }`.trim(),
+    {
+      title: tr('join.dialogTitle'),
+      danger: false,
+      confirm: tr('join.anyway'),
+      // Der eigentliche Weg steht als Link im Dialog – ein Knopf, der einen neuen Tab aufmacht,
+      // schließt sonst den Dialog und damit den halb ausgefüllten Serverplatz gleich mit.
+      extra:
+        linkOnly || !invite
+          ? { href: '#/settings', label: tr('join.linkAction') }
+          : { href: invite, label: tr('discord.join'), external: true },
+    }
+  );
 }
 
 // ---------------------------------------------------------------- Ein Serverplatz
@@ -152,20 +223,16 @@ async function renderProfile(root, route) {
       profile.suspended
         ? `<div class="note warn" style="margin-bottom:1.25rem">${icon('alert')}
             <div>${escapeHtml(tr('srv.suspended'))}
-            <a href="#/servers/${profile.id}/plan" style="color:var(--primary)">${escapeHtml(
+            <a href="#/servers/${profile.id}/plan" style="color:var(--primary-text)">${escapeHtml(
               tr('srv.resume')
             )}</a></div></div>`
         : ''
     }
-    ${
-      profile.plan.free_slot && profile.free_access?.ok === false
-        ? `<div class="note warn" style="margin-bottom:1.25rem">${icon('discord')}
-            <div><strong>${escapeHtml(tr('srv.freeDiscordTitle'))}</strong><br>
-              ${escapeHtml(tr(`srv.freeDiscord.${profile.free_access.reason}`))}
-              <a href="#/settings">${escapeHtml(tr('srv.freeDiscordAction'))}</a>
-            </div></div>`
-        : ''
-    }
+    <!-- Der Gratis-Platz und Discord. Als eigener Kasten in Discord-Farbe und mit dem
+         Einladungslink als Knopf: Vorher stand hier ein gelber Warnstreifen mit einem Link in die
+         Einstellungen – wer beitreten musste, fand dort trotzdem keinen Server, sondern nur die
+         Verknüpfung. Der Weg dorthin gehört an die Stelle, an der das Problem steht. -->
+    ${joinBox(profile)}
     <nav class="tabs">${tabs
       .map(
         (tab) =>
@@ -377,7 +444,19 @@ async function tabConnect(root, profile) {
   const box = $('#chat');
   const autoscroll = $('#autoscroll');
   const receiverKey = `afk-chat-recv-${profile.id}`;
-  let receivers = JSON.parse(localStorage.getItem(receiverKey) || '[]');
+  // Der lokale Speicher darf fehlen (privater Modus) und darf Unsinn enthalten (eine ältere
+  // Fassung, ein halb geschriebener Wert). Beides warf hier ungefangen – und mit der Ausnahme war
+  // der ganze Reiter weg: kein Chat, keine Bots, keine Knöpfe.
+  let receivers = [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(receiverKey) || '[]');
+    if (Array.isArray(stored)) receivers = stored.map(Number).filter(Number.isInteger);
+  } catch {
+    receivers = [];
+  }
+  // Und nur, was es auf diesem Platz wirklich gibt: ein abgezogenes Konto stand sonst für immer
+  // in der Auswahl und filterte den Chat gegen eine Nummer, die niemandem mehr gehört.
+  receivers = receivers.filter((id) => members.some((member) => member.account_id === id));
   if (!receivers.length) receivers = members.map((member) => member.account_id);
 
   const nameOf = (id) => members.find((member) => member.account_id === id)?.name || '?';
@@ -452,7 +531,11 @@ async function tabConnect(root, profile) {
   $$('[data-recv]').forEach((node) =>
     node.addEventListener('change', () => {
       receivers = $$('[data-recv]:checked').map((entry) => Number(entry.dataset.recv));
-      localStorage.setItem(receiverKey, JSON.stringify(receivers));
+      try {
+        localStorage.setItem(receiverKey, JSON.stringify(receivers));
+      } catch {
+        /* privater Modus: die Wahl gilt für diese Sitzung, gemerkt wird sie nicht */
+      }
       paintChat();
     })
   );
@@ -667,161 +750,242 @@ async function editSpam(profile, members, entry) {
 }
 
 // ---------------------------------------------------------------- Bewegung
+//
+// Sechs Kästen mit vierundzwanzig Knöpfen standen hier, und man musste raten, welcher was tut.
+// Vier davon hießen "Status" und schickten eine Abfrage, deren Antwort in einem anderen Reiter
+// landete – gedrückt hat sie deshalb niemand zweimal.
+//
+// Jetzt sind es drei Abschnitte, und sie stehen in der Reihenfolge, in der man sie braucht:
+//
+//   1. **Gehen** – hin und her, ein paar Blöcke. Das ist es, wofür neunzig Prozent hierherkommen.
+//      Daneben steht die Position, damit man sieht, ob etwas passiert ist.
+//   2. **Blickrichtung** – wohin der Bot schaut. Vier Himmelsrichtungen und die Neigung; wer es
+//      genau braucht, tippt Gierwinkel und Neigung ein.
+//   3. **Heimatposition** – der Platz, zu dem der Bot nach jedem Beitritt zurückläuft, samt der
+//      Strecke dorthin. Beides gehört zusammen und stand vorher in zwei Kästen.
+//
+// Was der Tarif nicht hergibt, steht gar nicht erst da (Haltung und Anti-AFK brauchen Premium).
+// Und jede Abfrage antwortet **hier**, nicht im Chatverlauf.
 
 async function tabMovement(root, profile) {
   const members = profile.accounts;
   if (!members.length) return noAccounts(root, profile);
 
+  /** Ein Knopf des Steuerkreuzes: Pfeil groß, Wort klein darunter. */
+  const pad = (dir, arrow, label) =>
+    `<button class="btn padkey" data-go="${dir}" title="${escapeHtml(label)}">
+      <span class="padkey-arrow">${arrow}</span>
+      <span class="padkey-label">${escapeHtml(label)}</span>
+    </button>`;
+
   root.innerHTML = `
     ${accountPicker(members)}
 
-    <div class="grid two">
+    <!-- free-height: Die beiden Kästen sind verschieden hoch, und das ist in Ordnung. Ohne diese
+         Klasse zog das Raster den kürzeren auf die Höhe des längeren, und unter der Blickrichtung
+         stand ein Loch von zweihundert Pixeln. -->
+    <div class="grid two free-height">
       <section class="panel">
-        <header><h3>${escapeHtml(tr('srv.walk'))}</h3></header>
+        <header><h3>${escapeHtml(tr('srv.walk'))}</h3>
+          <span class="small muted">${escapeHtml(tr('srv.walkHint'))}</span></header>
         <div class="body stack">
           <div class="padgrid">
             <span></span>
-            <button class="btn" data-go="vor">↑</button>
+            ${pad('vor', '↑', tr('srv.dir.forward'))}
             <span></span>
-            <button class="btn" data-go="links">←</button>
-            <button class="btn btn-danger" data-verb="stop">■</button>
-            <button class="btn" data-go="rechts">→</button>
+            ${pad('links', '←', tr('srv.dir.left'))}
+            <button class="btn btn-danger padkey" data-verb="stop" title="${escapeHtml(tr('srv.stopWalk'))}">
+              <span class="padkey-arrow">■</span>
+              <span class="padkey-label">${escapeHtml(tr('srv.stopWalk'))}</span>
+            </button>
+            ${pad('rechts', '→', tr('srv.dir.right'))}
             <span></span>
-            <button class="btn" data-go="zurück">↓</button>
+            ${pad('zurück', '↓', tr('srv.dir.back'))}
             <span></span>
           </div>
-          <div class="field" style="max-width:12rem">
-            <label for="blocks">${escapeHtml(tr('srv.blocks'))}</label>
-            <input id="blocks" type="number" min="1" max="64" value="3">
-          </div>
-          <div class="row wrap">
+
+          <div class="row wrap" style="align-items:flex-end">
+            <div class="field" style="max-width:9rem">
+              <label for="blocks">${escapeHtml(tr('srv.blocks'))}</label>
+              <input id="blocks" type="number" min="1" max="64" value="3">
+            </div>
             <button class="btn btn-sm" data-verb="jump">${escapeHtml(tr('srv.jump'))}</button>
-            <button class="btn btn-sm" data-verb="pos">${escapeHtml(tr('srv.pos'))}</button>
+            <button class="btn btn-sm" data-verb="pos">${icon('pin')} ${escapeHtml(tr('srv.pos'))}</button>
           </div>
+
           <div id="position-results" class="stack"></div>
         </div>
       </section>
 
       <section class="panel">
-        <header><h3>${escapeHtml(tr('srv.look'))}</h3></header>
+        <header><h3>${escapeHtml(tr('srv.look'))}</h3>
+          <span class="small muted">${escapeHtml(tr('srv.lookHint'))}</span></header>
         <div class="body stack">
           <div class="row wrap">
-            <button class="btn btn-sm" data-look="nord">N</button>
-            <button class="btn btn-sm" data-look="ost">E</button>
-            <button class="btn btn-sm" data-look="sued">S</button>
-            <button class="btn btn-sm" data-look="west">W</button>
-            <button class="btn btn-sm" data-look="hoch">↑</button>
-            <button class="btn btn-sm" data-look="runter">↓</button>
-            <button class="btn btn-sm" data-look="gerade">—</button>
-            <button class="btn btn-sm" data-look="um">↺</button>
+            <button class="btn btn-sm" data-look="nord">${escapeHtml(tr('srv.compass.n'))}</button>
+            <button class="btn btn-sm" data-look="ost">${escapeHtml(tr('srv.compass.e'))}</button>
+            <button class="btn btn-sm" data-look="sued">${escapeHtml(tr('srv.compass.s'))}</button>
+            <button class="btn btn-sm" data-look="west">${escapeHtml(tr('srv.compass.w'))}</button>
+            <button class="btn btn-sm" data-look="um">↺ ${escapeHtml(tr('srv.turnAround'))}</button>
           </div>
-          <div class="row">
-            <div class="field"><label for="yaw">Yaw</label>
-              <input id="yaw" type="number" min="-180" max="180" value="0"></div>
-            <div class="field"><label for="pitch">Pitch</label>
-              <input id="pitch" type="number" min="-90" max="90" value="0"></div>
-            <button class="btn" id="look-exact" style="align-self:flex-end">${escapeHtml(tr('common.save'))}</button>
+          <div class="row wrap">
+            <button class="btn btn-sm" data-look="hoch">↑ ${escapeHtml(tr('srv.lookUp'))}</button>
+            <button class="btn btn-sm" data-look="gerade">— ${escapeHtml(tr('srv.lookLevel'))}</button>
+            <button class="btn btn-sm" data-look="runter">↓ ${escapeHtml(tr('srv.lookDown'))}</button>
           </div>
-          <p class="small muted">${escapeHtml(tr('srv.lookHint'))}</p>
+          <details class="fold">
+            <summary>${escapeHtml(tr('srv.lookExact'))}</summary>
+            <div class="row" style="margin-top:.6rem;align-items:flex-end">
+              <div class="field"><label for="yaw">${escapeHtml(tr('srv.yaw'))}</label>
+                <input id="yaw" type="number" min="-180" max="180" value="0"></div>
+              <div class="field"><label for="pitch">${escapeHtml(tr('srv.pitch'))}</label>
+                <input id="pitch" type="number" min="-90" max="90" value="0"></div>
+              <button class="btn" id="look-exact">${escapeHtml(tr('srv.turnTo'))}</button>
+            </div>
+          </details>
         </div>
       </section>
+    </div>
 
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('srv.home'))}</h3></header>
-        <div class="body stack">
-          <p class="small muted">${escapeHtml(tr('srv.homeHint'))}</p>
-          <div class="row wrap">
-            <button class="btn btn-sm" data-home="set">${escapeHtml(tr('srv.homeSet'))}</button>
-            <button class="btn btn-sm" data-home="go">${escapeHtml(tr('srv.homeGo'))}</button>
-            <button class="btn btn-sm" data-home="">${escapeHtml(tr('common.status'))}</button>
-            <button class="btn btn-sm btn-danger" data-home="clear">${escapeHtml(tr('common.delete'))}</button>
-          </div>
-          <div class="row spread">
+    <!-- Heimatposition und Route sind eine Sache: ein Ort, zu dem der Bot zurückläuft, und der
+         Weg dorthin. Vorher standen sie in zwei Kästen nebeneinander, und aus keinem der beiden
+         ging hervor, dass der eine ohne den anderen nichts tut. -->
+    <section class="panel" style="margin-top:1.5rem">
+      <header><h3>${escapeHtml(tr('srv.home'))}</h3>
+        <button class="btn btn-sm" data-home="">${icon('eye')} ${escapeHtml(tr('srv.show'))}</button>
+      </header>
+      <div class="body stack">
+        <p class="small muted" style="margin:0">${escapeHtml(tr('srv.homeHint'))}</p>
+        <div class="row wrap">
+          <button class="btn btn-sm btn-primary" data-home="set">${icon('pin')} ${escapeHtml(
+            tr('srv.homeSet')
+          )}</button>
+          <button class="btn btn-sm" data-home="go">${escapeHtml(tr('srv.homeGo'))}</button>
+          <button class="btn btn-sm btn-danger" data-home="clear">${escapeHtml(tr('srv.homeClear'))}</button>
+        </div>
+        <div class="row spread">
+          <span>
             <span class="strong">${escapeHtml(tr('srv.homeAuto'))}</span>
-            <span class="switch" role="switch" tabindex="0" aria-checked="false"
-              aria-label="${escapeHtml(tr('srv.homeAuto'))}" data-runtime="home"></span>
-          </div>
+            <span class="small muted" style="display:block">${escapeHtml(tr('srv.homeAutoHint'))}</span>
+          </span>
+          <span class="switch" role="switch" tabindex="0" aria-checked="false"
+            aria-label="${escapeHtml(tr('srv.homeAuto'))}" data-runtime="home"></span>
         </div>
-      </section>
 
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('srv.route'))}</h3></header>
-        <div class="body stack">
-          <p class="small muted">${escapeHtml(tr('srv.routeHint'))}</p>
-          <div class="row wrap">
-            <button class="btn btn-sm" data-route="rec">${escapeHtml(tr('srv.recStart'))}</button>
-            <button class="btn btn-sm" data-route="stop">${escapeHtml(tr('srv.recStop'))}</button>
-            <button class="btn btn-sm" data-route="">${escapeHtml(tr('common.status'))}</button>
-          </div>
+        <hr class="rule">
+
+        <p class="small muted" style="margin:0">${escapeHtml(tr('srv.routeHint'))}</p>
+        <div class="row wrap">
+          <button class="btn btn-sm" data-route="rec">${escapeHtml(tr('srv.recStart'))}</button>
+          <button class="btn btn-sm" data-route="stop">${escapeHtml(tr('srv.recStop'))}</button>
+          <button class="btn btn-sm btn-danger" data-route="clear">${escapeHtml(tr('srv.routeClear'))}</button>
+          <button class="btn btn-sm" data-route="">${icon('eye')} ${escapeHtml(tr('srv.show'))}</button>
         </div>
-      </section>
 
-      ${
-        profile.caps.sneak
-          ? `<section class="panel">
-              <header><h3>${escapeHtml(tr('srv.body'))}</h3></header>
-              <div class="body stack">
-                <div class="row spread">
-                  <span class="strong">${escapeHtml(tr('srv.sneak'))}</span>
-                  <span class="switch" role="switch" tabindex="0" aria-checked="${Boolean(profile.sneak)}"
-                    aria-label="${escapeHtml(tr('srv.sneak'))}" data-runtime="sneak"></span>
-                </div>
-                <div class="row spread">
-                  <span class="strong">${escapeHtml(tr('srv.sprint'))}</span>
-                  <span class="switch" role="switch" tabindex="0" aria-checked="false"
-                    aria-label="${escapeHtml(tr('srv.sprint'))}" data-runtime="sprint"></span>
-                </div>
-                <div class="row wrap">
-                  <button class="btn btn-sm" data-cmd="swing|">${escapeHtml(tr('srv.swing'))}</button>
-                  <button class="btn btn-sm" data-cmd="use|">${escapeHtml(tr('srv.use'))}</button>
-                </div>
-                <div class="row">
-                  <div class="field" style="max-width:8rem"><label for="slot">${escapeHtml(tr('srv.slot'))}</label>
-                    <input id="slot" type="number" min="1" max="9" value="1"></div>
-                  <button class="btn" id="hand" style="align-self:flex-end">${escapeHtml(tr('srv.hand'))}</button>
-                </div>
-              </div>
-            </section>`
-          : ''
-      }
+        <div id="movement-answer"></div>
+      </div>
+    </section>
 
-      ${
-        profile.caps.antiafk
-          ? `<section class="panel">
-              <header><h3>${escapeHtml(tr('srv.antiafk'))}</h3></header>
-              <div class="body stack">
-                <p class="small muted">${escapeHtml(tr('srv.antiafkHint'))}</p>
-                <div class="row spread">
-                  <div class="field" style="max-width:11rem">
-                    <label for="runtime-antiafk">${escapeHtml(tr('srv.intervalSec'))}</label>
-                    <input id="runtime-antiafk" type="number" min="15" max="3600"
-                      value="${Math.max(15, profile.antiafk_sec || 60)}">
-                  </div>
-                  <span class="switch" role="switch" tabindex="0" aria-checked="${profile.antiafk_sec > 0}"
-                    aria-label="${escapeHtml(tr('srv.antiafk'))}" data-runtime="antiafk"></span>
-                </div>
-              </div>
-            </section>`
-          : ''
-      }
-    </div>`;
+    ${
+      profile.caps.sneak || profile.caps.antiafk
+        ? `<div class="grid two free-height" style="margin-top:1.5rem">
+            ${
+              profile.caps.sneak
+                ? `<section class="panel">
+                    <header><h3>${escapeHtml(tr('srv.body'))}</h3></header>
+                    <div class="body stack">
+                      <div class="row spread">
+                        <span class="strong">${escapeHtml(tr('srv.sneak'))}</span>
+                        <span class="switch" role="switch" tabindex="0" aria-checked="${Boolean(profile.sneak)}"
+                          aria-label="${escapeHtml(tr('srv.sneak'))}" data-runtime="sneak"></span>
+                      </div>
+                      <div class="row spread">
+                        <span class="strong">${escapeHtml(tr('srv.sprint'))}</span>
+                        <span class="switch" role="switch" tabindex="0" aria-checked="false"
+                          aria-label="${escapeHtml(tr('srv.sprint'))}" data-runtime="sprint"></span>
+                      </div>
+                      <div class="row wrap" style="align-items:flex-end">
+                        <button class="btn btn-sm" data-cmd="swing|">${escapeHtml(tr('srv.swing'))}</button>
+                        <button class="btn btn-sm" data-cmd="use|">${escapeHtml(tr('srv.use'))}</button>
+                        <div class="field" style="max-width:7rem"><label for="slot">${escapeHtml(
+                          tr('srv.slot')
+                        )}</label>
+                          <input id="slot" type="number" min="1" max="9" value="1"></div>
+                        <button class="btn btn-sm" id="hand">${escapeHtml(tr('srv.hand'))}</button>
+                      </div>
+                    </div>
+                  </section>`
+                : ''
+            }
+            ${
+              profile.caps.antiafk
+                ? `<section class="panel">
+                    <header><h3>${escapeHtml(tr('srv.antiafk'))}</h3></header>
+                    <div class="body stack">
+                      <p class="small muted" style="margin:0">${escapeHtml(tr('srv.antiafkHint'))}</p>
+                      <div class="row spread" style="align-items:flex-end">
+                        <div class="field" style="max-width:11rem">
+                          <label for="runtime-antiafk">${escapeHtml(tr('srv.intervalSec'))}</label>
+                          <input id="runtime-antiafk" type="number" min="15" max="3600"
+                            value="${Math.max(15, profile.antiafk_sec || 60)}">
+                        </div>
+                        <span class="switch" role="switch" tabindex="0" aria-checked="${profile.antiafk_sec > 0}"
+                          aria-label="${escapeHtml(tr('srv.antiafk'))}" data-runtime="antiafk"></span>
+                      </div>
+                    </div>
+                  </section>`
+                : ''
+            }
+          </div>`
+        : ''
+    }`;
 
   const run = commandRunner(profile);
 
+  /** Die Position, wie der Bot sie zuletzt gemeldet hat – je ausgewähltem Konto eine Karte. */
   const paintPositions = () => {
     const cards = members
-      .map((member) => ({ member, view: state.bots.get(`${profile.id}:${member.account_id}`)?.views?.position }))
+      .map(({ account_id: id, name }) => ({
+        name,
+        view: state.bots.get(`${profile.id}:${id}`)?.views?.position,
+      }))
       .filter(({ view }) => view)
-      .map(({ member, view }) =>
+      .map(({ name, view }) =>
         view.empty
-          ? `<div class="small muted">${escapeHtml(member.name)}: ${escapeHtml(view.text || tr('srv.positionMissing'))}</div>`
-          : `<div class="note"><div><strong>${escapeHtml(member.name)}</strong><br>
+          ? `<div class="small muted">${escapeHtml(name)}: ${escapeHtml(view.text || tr('srv.positionMissing'))}</div>`
+          : `<div class="note"><div><strong>${escapeHtml(name)}</strong><br>
               <span class="mono">X ${view.x.toFixed(2)} · Y ${view.y.toFixed(2)} · Z ${view.z.toFixed(2)}</span><br>
-              <span class="small muted">${escapeHtml(tr('srv.positionLook', { yaw: view.yaw.toFixed(1), pitch: view.pitch.toFixed(1) }))}</span>
+              <span class="small muted">${escapeHtml(
+                tr('srv.positionLook', { yaw: view.yaw.toFixed(1), pitch: view.pitch.toFixed(1) })
+              )}</span>
             </div></div>`
       );
     const target = $('#position-results');
     if (target) target.innerHTML = cards.join('');
+  };
+
+  /**
+   * Die Antwort auf "Zeigen" – die Übersicht, die der Client selbst schreibt.
+   *
+   * Sie wird **nicht** zerlegt: Der Client schreibt sie für Menschen, und hier liest sie ein
+   * Mensch. Vorher fiel sie als Statusmeldung in den Chatverlauf, also in einen anderen Reiter –
+   * für jeden, der hier auf den Knopf drückte, sah es aus, als täte er nichts.
+   */
+  const paintAnswer = () => {
+    const blocks = members
+      .map(({ account_id: id, name }) => ({
+        name,
+        view: state.bots.get(`${profile.id}:${id}`)?.views?.movement,
+      }))
+      .filter(({ view }) => view && !view.empty)
+      .map(
+        ({ name, view }) => `<div class="answer">
+          <span class="small muted">${escapeHtml(name)}</span>
+          <pre>${escapeHtml(view.lines.join('\n'))}</pre>
+        </div>`
+      );
+    const target = $('#movement-answer');
+    if (target) target.innerHTML = blocks.join('');
   };
 
   $$('[data-go]').forEach((button) =>
@@ -829,7 +993,7 @@ async function tabMovement(root, profile) {
   );
   $$('[data-verb]').forEach((button) => button.addEventListener('click', () => run(button.dataset.verb)));
   $$('[data-look]').forEach((button) => button.addEventListener('click', () => run('look', button.dataset.look)));
-  $('#look-exact').addEventListener('click', () => run('look', `${$('#yaw').value} ${$('#pitch').value}`));
+  $('#look-exact')?.addEventListener('click', () => run('look', `${$('#yaw').value} ${$('#pitch').value}`));
   $$('[data-home]').forEach((button) => button.addEventListener('click', () => run('home', button.dataset.home)));
   $$('[data-route]').forEach((button) => button.addEventListener('click', () => run('route', button.dataset.route)));
   $$('[data-cmd]').forEach((button) =>
@@ -839,14 +1003,23 @@ async function tabMovement(root, profile) {
     })
   );
   bindSwitches('[data-runtime]', async (verb, enabled) => {
-    const arg = verb === 'antiafk' && enabled ? String(Math.max(15, Number($('#runtime-antiafk')?.value) || 60)) : enabled ? 'on' : 'off';
+    const arg =
+      verb === 'antiafk' && enabled
+        ? String(Math.max(15, Number($('#runtime-antiafk')?.value) || 60))
+        : enabled
+          ? 'on'
+          : 'off';
     const success = await run(verb, arg);
     if (!success) throw new Error(tr('srv.commandFailed'));
   });
   $('#hand')?.addEventListener('click', () => run('hand', $('#slot').value));
+
   paintPositions();
+  paintAnswer();
   state.onLive = (event) => {
-    if (event.type === 'view' && event.kind === 'position' && event.key.startsWith(`${profile.id}:`)) paintPositions();
+    if (event.type !== 'view' || !String(event.key || '').startsWith(`${profile.id}:`)) return;
+    if (event.kind === 'position') paintPositions();
+    if (event.kind === 'movement') paintAnswer();
   };
 }
 
@@ -886,12 +1059,21 @@ async function tabBoard(root, profile) {
   };
 
   // Beim Öffnen einmal von selbst abrufen – wer den Reiter anklickt, will die Tafel sehen.
+  //
+  // Aber nur, wenn überhaupt ein Bot im Spiel ist: Sonst antwortete der Server mit "der Bot läuft
+  // gerade nicht", und das Erste, was jemand beim Öffnen des Reiters sah, war eine rote
+  // Fehlermeldung für etwas, das er gar nicht angestoßen hat.
   paint();
-  run('board');
+  if (anyOnline(profile, members)) run('board');
 
   state.onLive = (event) => {
     if (event.type === 'view' && event.key.startsWith(`${profile.id}:`)) paint();
   };
+}
+
+/** Ist auf diesem Platz gerade wenigstens ein Bot im Spiel? */
+function anyOnline(profile, members) {
+  return members.some((member) => state.bots.get(`${profile.id}:${member.account_id}`)?.online);
 }
 
 /** Eine Anzeigetafel, wie Minecraft sie zeichnet: Titel oben, Zeile links, Punktzahl rechts. */
@@ -954,27 +1136,42 @@ async function tabPov(root, profile) {
   const run = commandRunner(profile);
   const canvases = new Map();
 
-  $('#pov-live').addEventListener('click', () => run('pov', 'live'));
+  $('#pov-live').addEventListener('click', () => start());
   $('#pov-frame').addEventListener('click', () => run('pov', 'frame'));
-  $('#pov-stop').addEventListener('click', () => run('pov', 'stop'));
+  $('#pov-stop').addEventListener('click', () => {
+    run('pov', 'stop');
+    for (const member of members) {
+      canvases.get(member.account_id)?.classList.remove('has-frame');
+      hint(member.account_id, 'stopped');
+    }
+  });
 
   // Wer den Reiter verlässt, will nicht, dass der Client weiterrechnet. Ein laufendes Bild kostet
   // auf der Maschine deutlich mehr als ein stiller Bot. `keepalive` ist der Unterschied zwischen
   // "beim Reiterwechsel" und "auch beim Schließen des Tabs": eine gewöhnliche Anfrage bricht der
   // Browser dabei ab. Ein hart geschlossenes Fenster fängt zusätzlich der Server ab, sobald die
   // letzte Verbindung dieses Kontos weg ist.
+  //
+  // Beide Anmeldungen werden **gemeinsam** wieder abgemeldet. Mit `{ once: true }` allein blieb
+  // die zweite hängen: Wer den Reiter über die Adresse verließ, hatte `hashchange` verbraucht und
+  // `pagehide` für immer stehen – und beim Schließen des Fensters ging noch Jahre später ein
+  // "Ansicht stoppen" für einen Serverplatz hinaus, den niemand mehr offen hatte.
+  let left = false;
   const stopOnLeave = () => {
+    if (left) return;
+    left = true;
+    window.removeEventListener('hashchange', stopOnLeave);
+    window.removeEventListener('pagehide', stopOnLeave);
     api(`/profiles/${profile.id}/command`, {
       method: 'POST',
       keepalive: true,
       body: { verb: 'pov', arg: 'stop', accounts: members.map((member) => member.account_id) },
     }).catch(() => {});
   };
-  window.addEventListener('hashchange', stopOnLeave, { once: true });
-  window.addEventListener('pagehide', stopOnLeave, { once: true });
+  window.addEventListener('hashchange', stopOnLeave);
+  window.addEventListener('pagehide', stopOnLeave);
 
   function shell(member) {
-    const bot = state.bots.get(`${profile.id}:${member.account_id}`);
     return `<article class="pov" data-account="${member.account_id}">
       <header>
         <span class="truncate">${escapeHtml(member.name)}</span>
@@ -982,13 +1179,50 @@ async function tabPov(root, profile) {
       </header>
       <div class="pov-stage">
         <canvas class="pov-canvas" width="640" height="320"></canvas>
-        <p class="pov-hint">${escapeHtml(bot?.online ? tr('pov.waiting') : tr('pov.offline'))}</p>
+        <p class="pov-hint"></p>
       </div>
     </article>`;
   }
 
   $('#pov-views').innerHTML = members.map(shell).join('');
   for (const node of $$('.pov')) canvases.set(Number(node.dataset.account), node);
+
+  /**
+   * Der Satz unter der Fläche, solange dort noch kein Bild steht.
+   *
+   * Vier verschiedene Lagen, vier verschiedene Sätze. Vorher stand über allen dasselbe „Warte auf
+   * das erste Bild“ – auch dann, wenn gar niemand ein Bild bestellt hatte. Wer die Ansicht nie
+   * gestartet hatte (und bei `ultra-afk-linux` startet sie nicht von selbst), wartete damit auf
+   * etwas, das nie kommen konnte, und der Reiter sah aus wie ein Fehler.
+   */
+  function hint(accountId, force = null) {
+    const card = canvases.get(accountId);
+    if (!card) return;
+    const bot = state.bots.get(`${profile.id}:${accountId}`);
+    // Steht ein Bild auf der Fläche, ist jeder Satz darüber zu viel. Das entscheidet die Fläche
+    // selbst und nicht der Zustand: Ein Bild kommt über den Live-Kanal, ein Zustandswechsel ist
+    // dafür nicht nötig und käme auch nicht.
+    const painted = card.classList.contains('has-frame');
+    const key = force
+      ? { stopped: 'pov.stopped' }[force]
+      : !bot?.online
+        ? 'pov.offline'
+        : painted
+          ? null
+          : bot.pov?.on
+            ? 'pov.waiting'
+            : 'pov.idle';
+    const node = card.querySelector('.pov-hint');
+    if (node) node.textContent = key ? tr(key) : '';
+  }
+
+  /** Die Ansicht auf allen ausgewählten Konten anfordern. */
+  async function start() {
+    for (const member of members) hint(member.account_id);
+    const ok = await run('pov', 'live');
+    if (ok) for (const member of members) hint(member.account_id);
+    return ok;
+  }
 
   /** Ein Bild zeichnen: erst in seiner eigenen Auflösung, dann ohne Glättung hochskaliert. */
   function paint(accountId, view) {
@@ -1044,18 +1278,34 @@ async function tabPov(root, profile) {
   for (const member of members) {
     const bot = state.bots.get(`${profile.id}:${member.account_id}`);
     if (bot?.views?.pov) paint(member.account_id, bot.views.pov);
+    hint(member.account_id);
   }
 
+  // **Beim Öffnen von selbst starten.** Genau wie die Anzeigetafel einen Reiter weiter: Wer diesen
+  // Reiter anklickt, will sehen, was der Bot sieht – und nicht erst einen zweiten Knopf suchen.
+  //
+  // Das war der Grund, warum die Live-Ansicht nie zu sehen war. `ultra-afk-linux` (die Bauform für
+  // jeden Premium-Tarif mit gebuchter Live-Ansicht) zeichnet erst auf `:pov live`, und das schickte
+  // das Panel nur, wenn jemand den Knopf fand. Bis dahin stand dort „Warte auf das erste Bild“ –
+  // ein Satz über etwas, das gar nicht unterwegs war.
+  //
+  // Beendet wird beim Verlassen des Reiters (siehe `stopOnLeave`), damit kein Client für einen
+  // geschlossenen Browser weiterrechnet.
+  if (anyOnline(profile, members)) start();
+
   state.onLive = (event) => {
-    if (event.type !== 'view' || event.kind !== 'pov') return;
-    const [profileId, accountId] = event.key.split(':').map(Number);
+    const [profileId, accountId] = String(event.key || '').split(':').map(Number);
     if (profileId !== profile.id) return;
+    // Ein Zustandswechsel sagt, ob der Bot noch im Spiel ist und ob die Ansicht schon läuft.
+    if (event.type === 'state') return hint(accountId);
+    if (event.type !== 'view' || event.kind !== 'pov') return;
     if (event.view?.empty) {
-      const card = canvases.get(accountId);
-      card?.classList.remove('has-frame');
+      canvases.get(accountId)?.classList.remove('has-frame');
+      hint(accountId);
       return;
     }
     paint(accountId, event.view);
+    hint(accountId);
   };
 }
 
@@ -1190,7 +1440,9 @@ async function tabMenu(root, profile) {
   }
 
   paint();
-  run('menu');
+  // Wie bei der Anzeigetafel: ohne laufenden Bot gibt es nichts abzufragen, und die Absage
+  // darauf wäre eine Fehlermeldung ohne Anlass.
+  if (anyOnline(profile, members)) run('menu');
 
   state.onLive = (event) => {
     if ((event.type === 'view' || event.type === 'state') && event.key.startsWith(`${profile.id}:`)) paint();
@@ -1259,7 +1511,7 @@ async function tabAddons(root, profile) {
           )} ${escapeHtml(tr('ad.perMonth'))}</div>
           ${
             !addon.included && !soon && data.allowed && data.days_left !== null
-              ? `<div class="small" style="color:var(--ok)">${escapeHtml(
+              ? `<div class="small" style="color:var(--ok-text)">${escapeHtml(
                   tr('ad.nowOnly', { credits: credits(addon.prorated) })
                 )} — ${escapeHtml(tr('ad.restOfMonth', { n: data.days_left }))}</div>`
               : ''
@@ -1726,7 +1978,9 @@ function planLines(plan) {
   const lines = [
     `${plan.max_accounts} ${tr(plan.max_accounts === 1 ? 'pricing.bot' : 'pricing.bots')}`,
     tr(plan.premium ? 'pricing.premiumClient' : 'pricing.slimClient'),
-    `${plan.chat_limit} ${tr('pricing.chatHistory')}`,
+    // Mit Tausendertrennzeichen wie überall sonst: "50000 Zeilen Chatverlauf" stand hier als
+    // nackte Zahl, auf der Preisseite daneben aber als "50.000".
+    `${credits(plan.chat_limit)} ${tr('pricing.chatHistory')}`,
   ];
   if (plan.board) lines.push(tr('pricing.board'));
   if (plan.menus) lines.push(tr('pricing.menus'));

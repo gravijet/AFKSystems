@@ -311,7 +311,7 @@ export function validate(raw, { fail }) {
     }
     const source = lookup(sourceByKey, String(entry?.source || '').trim());
     if (!source) {
-      throw fail(`„${key}” hat keine gültige Quelle.`, { en: `”${key}” has no valid source.` });
+      throw fail(`„${key}“ hat keine gültige Quelle.`, { en: `"${key}" has no valid source.` });
     }
     const type = lookup(typeByValue, String(Number(entry?.type)));
     if (!type) {

@@ -83,6 +83,8 @@ class Bot {
     this.tickets = new Tickets(this);
     this.roles = new Roles(this);
     this.channelAccess = new ChannelAccess(this);
+    /** Ob die Ereignisbehandler schon hängen – siehe `start()`. */
+    this.wired = false;
   }
 
   async guild() {
@@ -119,9 +121,23 @@ class Bot {
         } else if (!this.config.guild_id) {
           fehlt = 'No guild ID in the panel (Settings → Discord → Guild ID).';
         } else {
-          this.wire();
-          await this.client.login(token);
-          return;
+          // **Nur einmal verdrahten.** Schlägt die Anmeldung bei Discord fehl (ein Token, der
+          // gerade zurückgezogen wurde), läuft diese Schleife noch einmal – und hängte vorher
+          // einen zweiten vollständigen Satz Ereignisbehandler an denselben Client. Nach fünf
+          // Versuchen wurde jede Discord-Nachricht fünfmal verarbeitet und jedes Ticket fünfmal
+          // gespiegelt.
+          if (!this.wired) {
+            this.wire();
+            this.wired = true;
+          }
+          try {
+            await this.client.login(token);
+            return;
+          } catch (error) {
+            // Und die Absage beim Namen nennen: Ein falscher Token ist kein Panel, das fehlt.
+            // Genau diese Verwechslung hat beim Einrichten die längste Suche gekostet.
+            fehlt = `Discord rejected the login: ${error.message}`;
+          }
         }
       } catch (error) {
         fehlt = `The panel is unavailable: ${error.message}`;
@@ -151,17 +167,23 @@ class Bot {
     // Rollen werden nur im Hauptserver verwaltet. Die Free-Mitgliedschaft kann dagegen an einen
     // separat konfigurierten Pflichtserver gebunden sein.
     this.client.on(Events.GuildMemberUpdate, (before, after) => {
-      if (
-        String(after.guild.id) === String(this.config.guild_id) &&
-        before.roles.cache.size !== after.roles.cache.size
-      ) {
-        this.roles.sync(after).catch(() => {});
-      }
+      if (String(after.guild.id) !== String(this.config.guild_id)) return;
+      // **Welche** Rollen, nicht **wie viele**. Ein Tausch – eine weg, eine dazu – lässt die
+      // Anzahl gleich, und genau dabei wurde nicht abgeglichen: Wer eine verwaltete Rolle von
+      // Hand gegen eine andere tauschte, behielt sie bis zum nächsten Stundenabgleich.
+      const changed =
+        before.roles.cache.size !== after.roles.cache.size ||
+        [...after.roles.cache.keys()].some((id) => !before.roles.cache.has(id));
+      if (changed) this.roles.sync(after).catch(() => {});
     });
     this.client.on(Events.GuildMemberAdd, (member) => {
       this.roles.membership(member.id, true, member.guild.id).catch(() => {});
       if (String(member.guild.id) === String(this.config.guild_id)) {
-        if (!member.user.bot) {
+        // Nur, wenn es die Rolle auf **diesem** Server wirklich gibt. Die ID gehört zur einen
+        // AFKSystems-Guild; auf jeder anderen Installation (der ganze Bot ist dafür gebaut, sich
+        // woanders hinstellen zu lassen) fehlt sie – und dann stand bei jedem einzelnen Beitritt
+        // eine Warnung im Protokoll über etwas, das dort gar nicht gemeint ist.
+        if (!member.user.bot && member.guild.roles.cache.has(JOIN_ROLE_ID)) {
           member.roles
             .add(JOIN_ROLE_ID, 'AFKSystems: default role on server join')
             .catch((error) => console.warn(`[roles] could not add join role for ${member.user.tag}: ${error.message}`));

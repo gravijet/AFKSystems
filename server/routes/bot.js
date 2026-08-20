@@ -18,7 +18,7 @@ import * as billing from '../billing.js';
 import { roleMetadataFields } from '../oauth.js';
 import { bridge } from '../bridge.js';
 import { supervisor } from '../supervisor.js';
-import { wrap, requireInt, requireString, bad, notFound, HttpError, safeEqual } from '../util.js';
+import { wrap, requireInt, requireString, bad, notFound, HttpError, safeEqual, safeUrl } from '../util.js';
 
 export const router = express.Router();
 
@@ -121,7 +121,8 @@ router.get(
       ticket_channel: String(getSetting('discord_ticket_channel') || ''),
       ticket_category: String(getSetting('discord_ticket_category') || ''),
       staff_webhook: Boolean(String(getSetting('discord_staff_webhook') || '').trim()),
-      invite: String(getSetting('discord_invite') || ''),
+      // Auch hier geprüft: Der Bot setzt sie als Link in eine Discord-Nachricht.
+      invite: safeUrl(getSetting('discord_invite')) || '',
       roles: roles.managed(),
       managed_roles: roles.managedIds(),
       role_metadata: roleMetadataFields(),
@@ -402,7 +403,7 @@ router.post(
     tickets.notifyParticipants(
       updated,
       'ticket_reply',
-      { preview: String(body.body || '').slice(0, 160) },
+      { preview: String(body.body || '').slice(0, 160), author: user.username },
       user.id
     );
     res.json({ ok: true, ticket: ticketView(updated), files: fileIds.length, failed });
@@ -470,7 +471,10 @@ router.get(
 router.post(
   '/heartbeat',
   wrap((req, res) => {
-    lastHeartbeat = { at: Date.now(), ...(req.body || {}) };
+    // Der Zeitstempel steht **hinten**: Vorher konnte der Bot mit einem eigenen `at` im Rumpf die
+    // eigene Uhr überschreiben, und im Admin-Bereich stand ein Lebenszeichen aus der Zukunft oder
+    // aus dem letzten Jahr. Wann wir etwas gehört haben, wissen wir selbst am besten.
+    lastHeartbeat = { ...(req.body || {}), at: Date.now() };
     res.json({ ok: true, seq: bridge.sequence });
   })
 );

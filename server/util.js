@@ -231,9 +231,15 @@ export function requireInt(value, name, { min = 0, max = Number.MAX_SAFE_INTEGER
   return number;
 }
 
-/** Credits sind ganze Zahlen (1 Credit = 1 Cent) – nur die Tausender bekommen einen Punkt. */
-export function formatCredits(credits) {
-  return Number(credits || 0).toLocaleString('de-DE');
+/**
+ * Credits sind ganze Zahlen (1 Credit = 1 Cent) – nur die Tausender bekommen ein Trennzeichen.
+ *
+ * Und zwar das der Sprache: fest auf `de-DE` stand hier ein Punkt, auch in der englischen Fassung.
+ * "1.234 credits" liest ein englischsprachiger Kunde als eins Komma zwei drei vier – also eine
+ * Zahl, die tausendmal kleiner ist als die gemeinte.
+ */
+export function formatCredits(credits, lang = 'de') {
+  return Number(credits || 0).toLocaleString(lang === 'en' ? 'en-GB' : 'de-DE');
 }
 
 /** Credits als Euro-Betrag – nur zur Anzeige. */

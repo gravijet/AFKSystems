@@ -185,6 +185,16 @@ const capsOf = (profile) => {
   return build ? billing.gateCaps(binaries.caps(build), features) : {};
 };
 
+/**
+ * Der Text eines Fehlers in der Sprache der Anfrage.
+ *
+ * Die Endpunkte hier sammeln Teilergebnisse ein ("Konto A ging, Konto B nicht") und geben den
+ * Fehler je Konto mit. `error.message` ist bei einem `HttpError` immer die **deutsche** Fassung –
+ * ein englischsprachiger Kunde bekam damit die halbe Antwort auf Deutsch, obwohl die englische
+ * daneben lag.
+ */
+const errorText = (error, lang) => (error instanceof HttpError ? error.text(lang) : error.message);
+
 /** Ein suspendierter Serverplatz lässt sich nicht mehr ändern – nur noch ansehen. */
 function notLocked(profile) {
   if (profile.locked) {
@@ -262,6 +272,19 @@ router.post(
       );
     }
 
+    // Die gewünschten Konten **vor** dem Anlegen prüfen: Beides – eine fremde Kontonummer und die
+    // Grenze des Tarifs – muss abgelehnt werden, bevor der Platz existiert und bezahlt ist. Die
+    // Grenze stand bisher nur in `POST /:id/accounts`; beim Anlegen ließ sich jede Zahl von Konten
+    // mitgeben, und der Gratis-Platz kam mit fünfundzwanzig Konten zur Welt, obwohl sein Tarif
+    // eines erlaubt. Auffallen konnte das erst beim Starten, mit einer Absage, die niemand mit dem
+    // Anlegen in Verbindung brachte.
+    const members = [...new Set(accountIds(body.accounts).map((raw) => ownedAccount(req, raw).id))];
+    if (members.length > plan.max_accounts) {
+      throw new HttpError(402, `Der Tarif erlaubt ${plan.max_accounts} Konto/Konten auf diesem Server.`, {
+        en: `This plan allows ${plan.max_accounts} account(s) on this server.`,
+      });
+    }
+
     // Wo der Platz hin soll. Ohne Wunsch nimmt `pick` den ersten freien, den dieses Konto darf.
     const node = nodes.pick(req.user, body.node_id);
 
@@ -302,11 +325,10 @@ router.post(
       }
     }
 
-    for (const accountId of Array.isArray(body.accounts) ? body.accounts : []) {
-      const account = ownedAccount(req, accountId);
+    for (const accountId of members) {
       db.prepare(
         'INSERT OR IGNORE INTO profile_accounts (profile_id, account_id, ordinal) VALUES (?, ?, 0)'
-      ).run(profile.id, account.id);
+      ).run(profile.id, accountId);
     }
     roles.changed(req.user.id);
     audit(req.user.id, 'profile-create', { name, host, port, plan: plan.slug });
@@ -701,6 +723,7 @@ router.post(
     const profile = notLocked(ownedProfile(req));
     const plan = billing.featuresOf(profile);
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    const lang = langOf(req);
     const results = [];
     for (const accountId of targets(req, profile)) {
       const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(accountId);
@@ -714,12 +737,12 @@ router.post(
         results.push({
           account_id: accountId,
           ok: false,
-          error: error.message,
+          error: errorText(error, lang),
           status: error instanceof HttpError ? error.status : 500,
         });
       }
     }
-    res.json({ results, profile: profileView(profile, langOf(req)) });
+    res.json({ results, profile: profileView(profile, lang) });
   })
 );
 
@@ -821,6 +844,7 @@ router.post(
       });
       local = { verb, arg: localArg(verb, rest.join(' ')), need };
     }
+    const lang = langOf(req);
     const results = [];
     for (const accountId of targets(req, profile)) {
       const bot = supervisor.get(profile.id, accountId);
@@ -830,7 +854,7 @@ router.post(
         else bot.send(text);
         results.push({ account_id: accountId, ok: true });
       } catch (error) {
-        results.push({ account_id: accountId, ok: false, error: error.message });
+        results.push({ account_id: accountId, ok: false, error: errorText(error, lang) });
       }
     }
     res.json({ results });
@@ -892,11 +916,15 @@ function localArg(verb, raw) {
 
 const runLocal = wrap((req, res) => {
   const profile = notLocked(ownedProfile(req));
+  const lang = langOf(req);
   const verb = String(req.body?.verb || '').toLowerCase();
   const need = LOCAL_VERBS[verb];
   if (!need) throw bad(`Unbekannter Befehl "${verb}".`, { en: `Unknown command "${verb}".` });
   const arg = localArg(verb, req.body?.arg);
   const results = [];
+  // Der erste Fehler im Wortlaut **beider** Sprachen – die Sammelabsage unten braucht ihn, und
+  // vorher stand dort zweimal derselbe deutsche Satz, auch im englischen `en`-Feld.
+  let first = null;
   for (const accountId of targets(req, profile)) {
     const bot = supervisor.get(profile.id, accountId);
     try {
@@ -904,12 +932,13 @@ const runLocal = wrap((req, res) => {
       bot.local(verb, arg, need);
       results.push({ account_id: accountId, ok: true });
     } catch (error) {
-      results.push({ account_id: accountId, ok: false, error: error.message });
+      if (!first) first = error;
+      results.push({ account_id: accountId, ok: false, error: errorText(error, lang) });
     }
   }
   if (results.every((entry) => !entry.ok)) {
-    throw new HttpError(409, results[0]?.error || 'Kein Bot konnte den Befehl annehmen.', {
-      en: results[0]?.error || 'No bot could take the command.',
+    throw new HttpError(409, first?.message || 'Kein Bot konnte den Befehl annehmen.', {
+      en: (first instanceof HttpError && first.en) || 'No bot could take the command.',
     });
   }
   res.json({ results });

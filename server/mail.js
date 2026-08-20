@@ -78,7 +78,11 @@ export const categoriesFor = (lang = 'de') =>
   CATEGORIES.map((entry) => ({
     key: entry.key,
     locked: entry.locked,
-    enabled: Boolean(Number(getSetting(entry.setting ?? 'mail_security') ?? 1)),
+    // Eine Kategorie ohne eigenen Schalter (das Konto: Adresse bestätigen, Passwort zurücksetzen)
+    // ist immer an. Vorher stand dort ersatzweise `mail_security` – wer den Sicherheitsversand
+    // abschaltete, sah im Panel auch "Konto" als abgeschaltet, obwohl diese Nachrichten weiter
+    // gehen und gehen müssen.
+    enabled: entry.setting ? Boolean(Number(getSetting(entry.setting) ?? 1)) : true,
     ...entry[lang === 'en' ? 'en' : 'de'],
   }));
 
@@ -677,7 +681,12 @@ export function render(user, kind, vars = {}) {
     `\n${FOOT[lang](HOST)}`,
   ].join('\n');
 
-  return { subject: shape.subject(values), text, html };
+  // Der Betreff geht als Kopfzeile hinaus, und in ihm steckt Kundentext (ein Ticketbetreff, der
+  // Name eines Serverplatzes). Zeilenumbrüche haben dort nichts verloren: eine Kopfzeile endet an
+  // genau der Stelle, und was danach steht, wäre eine weitere – geschrieben von dem, der den
+  // Betreff getippt hat.
+  const subject = String(shape.subject(values)).replace(/[\r\n]+/g, ' ').trim().slice(0, 300);
+  return { subject, text, html };
 }
 
 /**
@@ -690,8 +699,17 @@ export async function sendTo(user, kind, vars = {}, { force = false } = {}) {
   if (!configured()) return { ok: false, error: 'SMTP ist nicht eingerichtet.' };
   const category = vars.category || template.category;
   if (!force && !wants(user, category)) return { ok: false, error: 'abbestellt', skipped: true };
-  const { subject, text, html } = render(user, kind, vars);
-  return send({ to: user.email, subject, text, html, kind, userId: user.id });
+  // **Wirft nie.** Fast jeder Aufruf steht mitten in etwas anderem – einer Verlängerung im
+  // Stundentakt, einem Passwortwechsel, einer Ticketantwort – und wartet das Ergebnis nicht ab.
+  // Eine geworfene Ausnahme wäre dort eine unbehandelte Zurückweisung, und die beendet in Node den
+  // ganzen Prozess: eine Vorlage mit einem fehlenden Feld hätte jeden laufenden Bot mitgenommen.
+  try {
+    const { subject, text, html } = render(user, kind, vars);
+    return await send({ to: user.email, subject, text, html, kind, userId: user.id });
+  } catch (error) {
+    console.error(`[mail] Vorlage "${kind}" ließ sich nicht bauen:`, error);
+    return { ok: false, error: error.message };
+  }
 }
 
 /** Die letzten Nachrichten an ein Konto – der Kunde sieht sie in seinen Einstellungen. */

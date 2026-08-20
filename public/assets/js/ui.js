@@ -112,6 +112,7 @@ const PATHS = {
   lock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   unlock: '<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/>',
   mail: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  bell: '<path d="M10.268 21a2 2 0 0 0 3.464 0"/><path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326"/>',
   send: '<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>',
   eye: '<path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.8 10.8 0 0 1-1.899 2.982"/><path d="M14.084 14.158a3 3 0 0 1-4.242-4.242"/><path d="M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143"/><path d="m2 2 20 20"/>',
@@ -130,9 +131,33 @@ export function icon(name, klass = 'icon') {
 
 // ---------------------------------------------------------------- Aussehen
 
+/**
+ * Der lokale Speicher darf fehlen.
+ *
+ * Im privaten Modus mancher Browser wirft schon der Zugriff. Diese Datei läuft ganz unten
+ * `applyTheme()` auf Modulebene – eine geworfene Ausnahme dort riss das ganze Modul mit, und
+ * damit **jede** Seite, die es lädt: Startseite wie Dashboard blieben leer.
+ */
+const store = {
+  get(key) {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* dann merkt sich dieses Gerät die Wahl eben nicht */
+    }
+  },
+};
+
 export function applyTheme(value) {
-  const theme = value || localStorage.getItem('afk-theme') || 'system';
-  localStorage.setItem('afk-theme', theme);
+  const theme = value || store.get('afk-theme') || 'system';
+  store.set('afk-theme', theme);
   if (theme === 'system') document.documentElement.removeAttribute('data-theme');
   else document.documentElement.setAttribute('data-theme', theme);
   for (const button of document.querySelectorAll('.themes button')) {
@@ -200,6 +225,10 @@ export function toast(message, kind = '') {
   node.className = `toast ${kind}`;
   node.innerHTML = `${icon(kind === 'bad' ? 'alert' : kind === 'ok' ? 'check' : 'info')}<div>${escapeHtml(message)}</div>`;
   toastBox.append(node);
+  // Höchstens fünf auf einmal. Wer zwanzig Bots gleichzeitig startet und zwanzig Absagen bekommt,
+  // hatte sonst eine Wand aus Meldungen über dem halben Bildschirm – und darunter die Knöpfe,
+  // mit denen er darauf reagieren wollte.
+  while (toastBox.children.length > 5) toastBox.firstElementChild.remove();
   setTimeout(() => node.remove(), kind === 'bad' ? 7000 : 4000);
 }
 
@@ -234,6 +263,42 @@ export function safeLink(raw) {
   } catch {
     return '#';
   }
+}
+
+/**
+ * Was gerade zu tun ist – als Kasten.
+ *
+ * Steht hier und nicht in einer Ansicht, weil es **zwei** Listen dieser Art gibt: die des Kunden
+ * (Übersicht) und die des Teams (Administration). Der Inhalt kommt in beiden Fällen vollständig
+ * vom Server (server/todos.js); hier steht nur, wie er aussieht, und das soll in beiden gleich sein.
+ *
+ * Ist nichts offen, kommt gar nichts. Ein leerer Kasten mit "alles erledigt" wäre eine Zeile, die
+ * jeden Tag dasteht und nie etwas sagt – dann sieht man auch nicht mehr hin, wenn einmal etwas
+ * darin steht. Die Zahl in der Seitenleiste erfüllt denselben Zweck ohne Fläche.
+ */
+export function todoList(list, { title = tr('todo.title') } = {}) {
+  if (!list?.length) return '';
+  const item = (entry) => `<li class="todo-item ${entry.kind === 'info' ? '' : entry.kind}">
+    <span class="todo-mark">${icon(
+      entry.kind === 'bad' ? 'alert' : entry.kind === 'warn' ? 'clock' : 'info'
+    )}</span>
+    <div class="todo-text">
+      <strong>${escapeHtml(entry.title)}</strong>
+      <p class="small muted">${escapeHtml(entry.text)}</p>
+    </div>
+    <a class="btn btn-sm ${entry.kind === 'bad' ? 'btn-primary' : ''}"
+      href="${escapeHtml(safeLink(entry.href))}"${
+        entry.external ? ' target="_blank" rel="noopener"' : ''
+      }>${escapeHtml(entry.label)}</a>
+  </li>`;
+
+  return `<section class="panel todo" style="margin-bottom:1.5rem">
+    <header>
+      <h3>${escapeHtml(title)}</h3>
+      <span class="small muted">${escapeHtml(tr('todo.count', { n: list.length }))}</span>
+    </header>
+    <ul class="todo-list">${list.map(item).join('')}</ul>
+  </section>`;
 }
 
 export const $ = (selector, root = document) => root.querySelector(selector);
@@ -355,26 +420,66 @@ export function panel(title, bodyHtml, actionsHtml = '') {
   </section>`;
 }
 
-/** Bestätigungsdialog, der ein Versprechen zurückgibt. */
-export function confirmDialog(question, { confirm = tr('common.yes'), danger = true } = {}) {
+/**
+ * Bestätigungsdialog, der ein Versprechen zurückgibt.
+ *
+ * **Aufgelöst wird beim Schließen, nicht beim Klick.** Ein `<dialog>` lässt sich auch mit der
+ * Escape-Taste schließen, und dabei fällt kein Klick an: Das Versprechen wurde dann nie
+ * aufgelöst. Jeder Aufrufer wartet mit `await` darauf – der Ablauf blieb also mitten im Schritt
+ * stehen, und mit ihm ein Knopf, der auf seine Antwort wartete. Dass dabei meistens genau das
+ * herauskam, was ein "Abbrechen" bewirkt hätte, war Zufall und kein Entwurf.
+ */
+/**
+ * Ja/Nein.
+ *
+ * `extra` hängt zusätzlich einen **Link** in den Fuß – für den Fall, dass die eigentliche Antwort
+ * gar nicht "ja" oder "nein" ist, sondern "erst dort hin". Der Discord-Beitritt ist genau so ein
+ * Fall: "Trotzdem anlegen" ist eine gültige Wahl, aber die richtige ist, vorher beizutreten.
+ */
+export function confirmDialog(
+  question,
+  { confirm = tr('common.yes'), danger = true, title = tr('common.confirm'), extra = null } = {}
+) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
     dialog.innerHTML = `
-      <header><h3>${escapeHtml(tr('common.confirm'))}</h3></header>
-      <div class="body"><p>${escapeHtml(question)}</p></div>
+      <header><h3>${escapeHtml(title)}</h3></header>
+      <div class="body"><p style="white-space:pre-line">${escapeHtml(question)}</p></div>
       <footer>
+        ${
+          extra
+            ? `<a class="btn btn-primary" href="${escapeHtml(safeLink(extra.href))}"${
+                extra.external ? ' target="_blank" rel="noopener"' : ''
+              }>${escapeHtml(extra.label)}</a>`
+            : ''
+        }
         <button class="btn" value="no">${escapeHtml(tr('common.cancel'))}</button>
         <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" value="yes">${escapeHtml(confirm)}</button>
       </footer>`;
     document.body.append(dialog);
+    // Das Ergebnis bleibt hier in der Umgebung stehen – wie im Formular-Dialog darunter.
+    let answer = false;
     dialog.addEventListener('click', (event) => {
+      // Ein Link im Fuß, der im Panel bleibt, muss den Dialog schließen: Sonst stünde er weiterhin
+      // über der Seite, zu der er gerade geführt hat. Ein Link in einen neuen Tab lässt ihn stehen.
+      const link = event.target.closest('a[href]');
+      if (link) {
+        if (link.target !== '_blank') dialog.close();
+        return;
+      }
       const button = event.target.closest('button');
       if (!button) return;
+      answer = button.value === 'yes';
       dialog.close();
-      resolve(button.value === 'yes');
     });
-    dialog.addEventListener('close', () => dialog.remove());
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      resolve(answer);
+    });
     dialog.showModal();
+    // Der harmlose Knopf bekommt die Aufmerksamkeit: Wer mit der Tastatur bedient und sofort
+    // Enter drückt, soll nichts löschen, was er nicht gelesen hat.
+    dialog.querySelector('button[value="no"]')?.focus();
   });
 }
 

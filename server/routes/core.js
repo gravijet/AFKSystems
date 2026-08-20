@@ -18,9 +18,9 @@ import { actionsFor, eventsFor } from '../macros.js';
 import { supervisor } from '../supervisor.js';
 import * as billing from '../billing.js';
 import * as tebex from '../tebex.js';
-import { setLangCookie } from '../pages.js';
+import { setLangCookie, t } from '../pages.js';
 import { bridge } from '../bridge.js';
-import { wrap, requireInt, bad, notFound, forbidden, token, HttpError, langOf } from '../util.js';
+import { wrap, requireInt, bad, notFound, forbidden, token, HttpError, langOf, safeUrl } from '../util.js';
 
 export const router = express.Router();
 
@@ -40,10 +40,14 @@ router.get(
       email_verify: mail.verifyRequired(),
       mail_ready: mail.configured(),
       oauth: oauth.state(),
-      discord_invite: String(getSetting('discord_invite') || ''),
+      // Geprüft, nicht roh: Der Einladungslink kommt aus den Einstellungen und landet im Panel
+      // unmaskiert in einem `href` (Seitenleiste, Support, Einstellungen). `javascript:…` braucht
+      // dafür kein Anführungszeichen – genau wie auf den öffentlichen Seiten (landing.js) gilt
+      // deshalb: was nicht wie eine Adresse aussieht, ist kein Einladungslink.
+      discord_invite: safeUrl(getSetting('discord_invite')) || '',
       free_plan: {
         guild_id: billing.freeGuildId(),
-        invite: String(getSetting('discord_invite') || ''),
+        invite: safeUrl(getSetting('discord_invite')) || '',
       },
       maintenance: Boolean(Number(getSetting('maintenance'))),
       maintenance_text: String(getSetting('maintenance_text') || ''),
@@ -368,6 +372,60 @@ router.get(
   })
 );
 
+/**
+ * Zahlen über die Zeit – für die Diagramme in der Übersicht und im Guthaben-Bereich.
+ *
+ * Eigener Endpunkt und nicht Teil von `/me`: `/me` wird bei jedem Zustandswechsel eines Bots neu
+ * geholt, und dabei jedes Mal den Kontoauszug eines Monats durchzurechnen wäre Arbeit für eine
+ * Zahl, die sich in dieser Sekunde nicht geändert hat. Die Übersicht holt das hier einmal beim
+ * Zeichnen.
+ */
+router.get(
+  '/me/insights',
+  auth.requireUser,
+  wrap((req, res) => {
+    const userId = req.user.id;
+    const running = supervisor.list(userId);
+    const byProfile = new Map();
+    for (const bot of running) {
+      const entry = byProfile.get(bot.profile_id) || { online: 0, running: 0 };
+      if (bot.online) entry.online += 1;
+      if (bot.state && bot.state !== 'offline') entry.running += 1;
+      byProfile.set(bot.profile_id, entry);
+    }
+
+    const profiles = db
+      .prepare(
+        `SELECT p.id, p.name, pl.free_slot,
+                pl.price_credits + COALESCE((SELECT SUM(a.price_credits * pa.qty)
+                    FROM profile_addons pa JOIN addons a ON a.id = pa.addon_id
+                   WHERE pa.profile_id = p.id), 0) AS price_credits,
+                COALESCE((SELECT SUM(b.uptime_sec) FROM bots b WHERE b.profile_id = p.id), 0) AS uptime_sec,
+                COALESCE((SELECT SUM(b.connections) FROM bots b WHERE b.profile_id = p.id), 0) AS connections
+           FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+          WHERE p.user_id = ? ORDER BY p.ordinal, p.id`
+      )
+      .all(userId);
+
+    res.json({
+      balance: req.user.credits,
+      monthly_cost: billing.monthlyCost(userId),
+      balance_days: billing.balanceByDay(userId, 30),
+      spend: billing.spendByMonth(userId, 6),
+      spend_kinds: billing.spendByKind(userId, 6),
+      slots: profiles.map((row) => ({
+        id: row.id,
+        name: row.name,
+        free_slot: Boolean(row.free_slot),
+        credits: row.free_slot ? 0 : row.price_credits,
+        uptime_sec: row.uptime_sec,
+        connections: row.connections,
+        online: byProfile.get(row.id)?.online || 0,
+      })),
+    });
+  })
+);
+
 router.patch(
   '/me',
   auth.requireUser,
@@ -399,6 +457,19 @@ router.patch(
       }
       fields.push('discord_webhook = ?');
       values.push(hook || null);
+    }
+    if (body.discord_events !== undefined) {
+      // Nur bekannte Arten, jede höchstens einmal. Leer heißt "alles" – und weil das die
+      // Voreinstellung ist, kommt eine vollständige Liste ebenfalls als leer in die Datenbank:
+      // Sonst hinge dort eine Aufzählung, die bei einer neuen Ereignisart stillschweigend zur
+      // Abbestellung würde.
+      const wanted = String(body.discord_events || '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => notify.EVENTS.includes(entry));
+      const unique = [...new Set(wanted)];
+      fields.push('discord_events = ?');
+      values.push(unique.length === notify.EVENTS.length ? '' : unique.join(','));
     }
     if (body.language !== undefined) {
       const lang = body.language === 'de' ? 'de' : 'en';
@@ -650,14 +721,9 @@ router.get(
       proxies: rows,
       allowed: paying,
       supported: Boolean(binaries.anyCaps().proxy),
-      // Der Hinweis stand nur auf Deutsch da, egal in welcher Sprache das Panel lief.
-      hint: paying
-        ? lang === 'de'
-          ? 'Proxys werden von Hand zugeteilt – mach dafür ein Ticket auf und schreib dazu, für welchen Serverplatz.'
-          : 'Proxies are assigned by hand. Open a ticket and say which server slot it is for.'
-        : lang === 'de'
-          ? 'Proxys gibt es ab einem bezahlten Serverplatz.'
-          : 'Proxies come with a paid server slot.',
+      // Der Wortlaut steht wie jeder andere sichtbare Text in i18n.js und nicht hier: sonst gibt
+      // es zwei Orte für dieselbe Sache, und einer davon wird beim nächsten Mal vergessen.
+      hint: t(paying ? 'px.hintPaying' : 'px.hintFree', lang),
     });
   })
 );
@@ -854,7 +920,7 @@ router.post(
     tickets.notifyParticipants(
       updated,
       'ticket_reply',
-      { preview: String(req.body?.body || '').slice(0, 160) },
+      { preview: String(req.body?.body || '').slice(0, 160), author: req.user.username },
       req.user.id
     );
     res.json({

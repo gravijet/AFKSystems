@@ -48,6 +48,22 @@
   --warn: #fcbb00;
   --bad: #e40014;
   --info: #206cfe;
+
+  /*
+   * Dieselben Farben, aber als **Text** lesbar.
+   *
+   * Die Farben oben sind Flächen: ein Knopf, ein Punkt, ein Balken. Als Schrift auf dem
+   * Untergrund reichte keine von ihnen an die 4,5:1, die eine normale Textgröße braucht –
+   * Gelb auf Weiß kam auf 1,7:1, und ausgerechnet Fehlermeldungen (rot auf dunkel) auf 3,5:1.
+   * Wer eine Absage nicht lesen kann, hat die Absage nicht bekommen.
+   *
+   * Deshalb je Farbe eine zweite, dunklere bzw. hellere Fassung – nur für Schrift, und je
+   * Farbschema eine eigene. Die Flächenfarben bleiben unangetastet: an ihnen hängt das Aussehen.
+   */
+  --primary-text: #1a5fe0;
+  --ok-text: #007a53;
+  --warn-text: #8a6300;
+  --bad-text: #c4000e;
   /* Die zweite Farbe der öffentlichen Seiten: Etiketten, hervorgehobene Wörter, Zahlen.
      Im Panel kommt sie nicht vor – dort führt Blau. */
   --accent: #6338f0;
@@ -77,6 +93,11 @@
     --line-soft: rgba(255, 255, 255, 0.06);
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.7);
     --accent: #a48bff;
+    /* Auf Dunkel müssen die Textfarben heller sein, nicht dunkler – siehe oben. */
+    --primary-text: #6ea8ff;
+    --ok-text: #00bb7f;
+    --warn-text: #fcbb00;
+    --bad-text: #ff6b6b;
     color-scheme: dark;
   }
 }
@@ -91,6 +112,10 @@
   --line-soft: rgba(255, 255, 255, 0.06);
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px -12px rgba(0, 0, 0, 0.7);
   --accent: #a48bff;
+  --primary-text: #6ea8ff;
+  --ok-text: #00bb7f;
+  --warn-text: #fcbb00;
+  --bad-text: #ff6b6b;
   color-scheme: dark;
 }
 
@@ -324,7 +349,7 @@ textarea {
 .btn-danger {
   background: transparent;
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--bad) 45%, transparent);
-  color: var(--bad);
+  color: var(--bad-text);
 }
 .btn-danger:hover:not(:disabled) {
   background: color-mix(in oklab, var(--bad) 10%, transparent);
@@ -483,23 +508,23 @@ textarea {
   white-space: nowrap;
 }
 .state.online {
-  color: var(--ok);
+  color: var(--ok-text);
 }
 .state.connecting,
 .state.starting,
 .state.reconnecting,
 .state.stopping {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 .state.offline,
 .state.disconnected {
   color: var(--text-2);
 }
 .state.error {
-  color: var(--bad);
+  color: var(--bad-text);
 }
 .state.auth {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 
 /* Etiketten sind Rechtecke mit weichen Ecken, keine Kapseln: bei einem längeren Text wie
@@ -521,12 +546,23 @@ textarea {
 .pill.primary {
   background: color-mix(in oklab, var(--primary) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 35%, transparent);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 .pill.missing {
   background: color-mix(in oklab, var(--warn) 12%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 35%, transparent);
   color: color-mix(in oklab, var(--warn) 80%, var(--text));
+}
+/* "Neu" an einem Ticket. Es soll auffallen, ohne zu schreien: dieselbe Form wie jede andere
+   Kennzeichnung, nur in der Signalfarbe und gefüllt statt umrandet. */
+.pill.unread {
+  background: var(--primary);
+  box-shadow: none;
+  color: #fff;
+}
+.pill.unread .icon {
+  width: 0.85em;
+  height: 0.85em;
 }
 
 /* ---------------------------------------------------------------- Formulare */
@@ -721,9 +757,11 @@ select {
 .console .line.system .msg {
   color: #7dd3a8;
 }
-.console .line.sent .msg {
-  color: #ffd57e;
-}
+/*
+ * Was der Bot selbst geschrieben hat, steht in einem wärmeren Ton als der Rest des Chats.
+ * Die Farbe stand hier zweimal (weiter unten noch einmal mit einem anderen Wert); gegolten hat
+ * immer die letzte, und diese hier war seit dem Tag ihrer Änderung wirkungslos.
+ */
 /* Der Text für die leere Fläche kommt aus data-empty – fest im CSS stünde er nur auf Deutsch. */
 .console:empty::after {
   content: attr(data-empty);
@@ -766,7 +804,7 @@ select {
 .themes button[aria-pressed='true'] {
   background: var(--background);
   box-shadow: var(--shadow);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 .themes .icon {
   width: 0.8rem;
@@ -847,7 +885,7 @@ body.site {
 }
 .site-links a[aria-current] {
   background: color-mix(in srgb, var(--primary) 10%, transparent);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 
 .site-actions {
@@ -924,6 +962,17 @@ body.site {
   .site-menu.open {
     display: grid;
     animation: menu-in 0.16s ease-out;
+  }
+  /*
+   * Solange das Menü offen ist, scrollt die Seite darunter nicht mit.
+   *
+   * `landing.js` setzt dieses Kennzeichen seit jeher am <body>, im Stylesheet stand dazu aber
+   * nichts – auf dem Handy scrollte deshalb die Startseite unter dem offenen Menü weg, und wer
+   * danach zuklappte, stand irgendwo mitten in der Seite. Im Dashboard gibt es dieselbe Regel
+   * längst (siehe body.side-open).
+   */
+  body.site-menu-open {
+    overflow: hidden;
   }
   .site-links {
     display: grid;
@@ -1642,7 +1691,7 @@ body.site {
 .form-error {
   margin: 0;
   font-size: 0.8125rem;
-  color: var(--bad);
+  color: var(--bad-text);
 }
 .or {
   position: relative;
@@ -1962,7 +2011,7 @@ body.site {
 }
 .side-item.active {
   background: color-mix(in oklab, var(--primary) 13%, transparent);
-  color: var(--primary);
+  color: var(--primary-text);
   font-weight: 650;
 }
 .side-item.active::before {
@@ -2087,7 +2136,7 @@ body.site {
 }
 
 .side-add {
-  color: var(--primary);
+  color: var(--primary-text);
   font-weight: 600;
 }
 .side-empty {
@@ -2127,7 +2176,7 @@ body.site {
 }
 .side-sub-item.active {
   background: color-mix(in oklab, var(--primary) 10%, transparent);
-  color: var(--primary);
+  color: var(--primary-text);
   font-weight: 650;
 }
 .side-sub-item.is-new-group {
@@ -2228,7 +2277,7 @@ body.site {
   height: 1.65rem;
   border-radius: 999px;
   background: color-mix(in oklab, var(--primary) 18%, transparent);
-  color: var(--primary);
+  color: var(--primary-text);
   font-size: 0.72rem;
   font-weight: 700;
 }
@@ -2435,14 +2484,14 @@ body.site {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 32%, transparent);
 }
 .note.warn .icon {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 .note.bad {
   background: color-mix(in oklab, var(--bad) 10%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--bad) 30%, transparent);
 }
 .note.bad .icon {
-  color: var(--bad);
+  color: var(--bad-text);
 }
 
 /* ---------------------------------------------------------------- Zu erledigen
@@ -2479,10 +2528,10 @@ body.site {
   color: var(--info);
 }
 .todo-item.warn .todo-mark .icon {
-  color: var(--warn);
+  color: var(--warn-text);
 }
 .todo-item.bad .todo-mark .icon {
-  color: var(--bad);
+  color: var(--bad-text);
 }
 .todo-text {
   min-width: 0;
@@ -2590,10 +2639,56 @@ dialog footer {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 0.4rem;
-  width: min(15rem, 100%);
+  width: min(17rem, 100%);
 }
 .padgrid button {
   aspect-ratio: 1;
+}
+/* Pfeil groß, Wort klein darunter. Nur der Pfeil war zu wenig: "↑" heißt in einem Spiel vor allem
+   "Norden", gemeint ist aber "in Blickrichtung" – und das steht jetzt dabei. */
+.padkey {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.1rem;
+  padding: 0.35rem;
+  line-height: 1.1;
+}
+.padkey-arrow {
+  font-size: 1.15rem;
+}
+.padkey-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+/* Ein aufklappbarer Feinschliff-Bereich – der genaue Winkel steht dort, wo er stört, wenn er
+   offen steht, und fehlt, wenn man ihn braucht. */
+.fold > summary {
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+/* Die Antwort des Clients auf "Zeigen" – so, wie er sie geschrieben hat. */
+.answer {
+  margin-top: 0.6rem;
+}
+.answer pre {
+  margin: 0.25rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -3182,7 +3277,7 @@ hr.rule {
   height: 2.25rem;
   border-radius: var(--r-lg);
   background: color-mix(in srgb, var(--primary) 12%, transparent);
-  color: var(--primary);
+  color: var(--primary-text);
 }
 .setting-head h2 {
   font-size: 1rem;
@@ -3264,7 +3359,7 @@ hr.rule {
   color: var(--text-2);
 }
 .link-row.is-linked .link-icon {
-  color: var(--ok);
+  color: var(--ok-text);
 }
 
 .mail-list li {
@@ -3447,7 +3542,7 @@ hr.rule {
 }
 .pack-plus {
   min-height: 1rem;
-  color: var(--ok);
+  color: var(--ok-text);
   font-size: 0.75rem;
   font-weight: 700;
 }
@@ -3493,7 +3588,7 @@ hr.rule {
   text-align: right;
 }
 .ledger-delta.up {
-  color: var(--ok);
+  color: var(--ok-text);
 }
 .ledger-balance {
   display: none;
@@ -3552,8 +3647,19 @@ hr.rule {
 .ticket-row:hover {
   background: var(--surface);
 }
+/* Ein ungelesenes Ticket trägt sein Kennzeichen selbst: getönte Zeile, kräftiger Betreff und ein
+   Streifen am linken Rand. Wer mehrere offen hat, sieht damit ohne Lesen, um welches es geht. */
 .ticket-row.is-unread {
-  background: color-mix(in srgb, var(--primary) 6%, transparent);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+/* Die Trennlinie oben gehört auch der ungelesenen Zeile – beide Schatten stehen deshalb zusammen
+   in einer Regel. Getrennt gewann die spätere, und über jedem ungelesenen Ticket fehlte die Linie. */
+.ticket-row + .ticket-row.is-unread {
+  box-shadow: inset 3px 0 0 var(--primary), inset 0 1px 0 var(--line-soft);
+}
+.ticket-row.is-unread .strong {
+  color: var(--text);
 }
 .ticket-dot {
   flex: none;
@@ -3733,7 +3839,7 @@ hr.rule {
 }
 .attach-chip button:hover {
   background: color-mix(in oklab, var(--bad) 15%, transparent);
-  color: var(--bad);
+  color: var(--bad-text);
 }
 
 .chat-system {
@@ -4002,7 +4108,7 @@ hr.rule {
   flex: none;
   width: 1.35rem;
   height: 1.35rem;
-  color: var(--warn);
+  color: var(--warn-text);
 }
 .rules-note strong {
   display: block;
@@ -4284,7 +4390,7 @@ hr.rule {
   }
   .mobile-nav a[aria-current='page'] {
     background: color-mix(in srgb, var(--primary) 11%, transparent);
-    color: var(--primary);
+    color: var(--primary-text);
   }
   .mobile-nav-icon {
     position: relative;
@@ -4611,4 +4717,261 @@ hr.rule {
   line-height: 1.6;
   text-align: center;
   white-space: pre-line;
+}
+
+/* ---------------------------------------------------------------- Diagramme
+ *
+ * Vier Reihenfarben in fester Reihenfolge (siehe assets/js/charts.js). Sie sind gegen
+ * Rot-Grün- und Blau-Gelb-Schwäche geprüft; die dunklen Stufen sind dieselben Farbtöne, für den
+ * dunklen Grund neu gestuft, und nicht die hellen mit weniger Deckkraft.
+ *
+ * Die Zustandsfarben (--ok, --warn, --bad) stehen bewusst nicht darunter: Sie bedeuten einen
+ * Zustand, und ein Balken in Warngelb, der nichts zu warnen hat, nimmt ihnen genau das.
+ */
+:root {
+  --chart-1: #206cfe;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-grid: var(--line-soft);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --chart-1: #4a90ff;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+  }
+}
+:root[data-theme='dark'] {
+  --chart-1: #4a90ff;
+  --chart-2: #d95926;
+  --chart-3: #199e70;
+  --chart-4: #c98500;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: 10rem;
+  overflow: visible;
+}
+.c-grid {
+  stroke: var(--chart-grid);
+  stroke-width: 1;
+}
+.c-axis {
+  fill: var(--text-2);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+.c-line {
+  fill: none;
+  stroke: var(--c);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.c-area {
+  fill: var(--c);
+  opacity: 0.12;
+  stroke: none;
+}
+.c-dot {
+  fill: var(--c);
+  stroke: var(--surface-2);
+  stroke-width: 2;
+}
+.c-bar {
+  fill: var(--c);
+}
+
+.chart-card .body {
+  padding: 1rem 1.1rem 1.1rem;
+}
+.chart-value {
+  font-size: 1.65rem;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.5rem;
+}
+
+/* Waagerechte Balken: Name links, Balken in der Mitte, Zahl rechts. Der Name steht als Text da
+   und nicht als Farbe – zwei der hellen Reihenfarben erreichen auf Weiß keine 3:1. */
+.hbars {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.hbars li {
+  display: grid;
+  grid-template-columns: minmax(4rem, 9rem) 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+}
+.hbar-label {
+  font-size: 0.8rem;
+  color: var(--text-2);
+}
+.hbar-track {
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  overflow: hidden;
+}
+.hbar-fill {
+  display: block;
+  height: 100%;
+  min-width: 2px;
+  border-radius: 999px;
+  background: var(--c);
+}
+.hbar-value {
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+
+/* Ein Ganzes aus Teilen. Zwischen zwei Abschnitten steht der Grund durch, nicht eine Linie. */
+.stack-bar {
+  display: flex;
+  gap: 2px;
+  height: 0.75rem;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.stack-part {
+  display: block;
+  background: var(--c);
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.9rem;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.swatch {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 3px;
+  background: var(--c);
+  flex: none;
+}
+
+/* Eine Zwischenüberschrift zwischen zwei Gruppen von Kacheln. Sie trennt "wie steht es gerade"
+   von "wie hat es sich entwickelt" – ohne sie stünden zwölf Kacheln als eine Wand da. */
+.section-title {
+  margin: 2rem 0 1rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+/* ---------------------------------------------------------------- Discord beitreten
+ *
+ * Der Streifen über allem, solange der Gratis-Platz auf eine Discord-Mitgliedschaft wartet.
+ * In Discord-Blurple statt in Warngelb: Es ist keine Störung, sondern die Bedingung des Tarifs –
+ * und ein gelber Warnstreifen für etwas, das man selbst in zehn Sekunden erledigt, macht aus einer
+ * Bitte eine Panne.
+ */
+.joinbar {
+  position: sticky;
+  top: 0;
+  z-index: 71;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.55rem 1rem;
+  background: #5865f2;
+  color: #fff;
+}
+.joinbar-icon {
+  display: inline-flex;
+  flex: none;
+}
+.joinbar-icon .icon {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+.joinbar-text {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem 0.6rem;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+.joinbar-text .small {
+  opacity: 0.85;
+}
+.joinbar .btn {
+  flex: none;
+  background: #fff;
+  color: #2b3168;
+  box-shadow: none;
+  font-weight: 700;
+}
+.joinbar .btn:hover {
+  background: #eef0ff;
+  color: #2b3168;
+}
+
+/* Derselbe Hinweis als Kasten – im Serverplatz und beim Anlegen, wo er den Grund erklärt, statt
+   nur zu melden, dass etwas nicht geht. */
+.joinbox {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, #5865f2 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #5865f2 40%, transparent);
+}
+.joinbox .icon {
+  color: #5865f2;
+  flex: none;
+}
+.joinbox h4 {
+  margin: 0 0 0.25rem;
+  font-size: 0.95rem;
+}
+.joinbox p {
+  margin: 0 0 0.7rem;
+  color: var(--text-2);
+  font-size: 0.85rem;
+}
+.joinbox .btn-discord {
+  background: #5865f2;
+  color: #fff;
+  box-shadow: none;
+}
+.joinbox .btn-discord:hover {
+  background: #4752c4;
+  color: #fff;
+}
+
+/* Der Discord-Punkt in der Seitenleiste, solange der Gratis-Platz auf den Beitritt wartet.
+   Kein Blinken: Etwas, das sich bewegt, liest niemand – es steht nur kräftiger da. */
+.side-discord.is-needed {
+  background: #5865f2;
+  color: #fff;
+  font-weight: 700;
+}
+.side-discord.is-needed:hover {
+  background: #4752c4;
+  color: #fff;
 }

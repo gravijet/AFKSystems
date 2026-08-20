@@ -42,6 +42,24 @@ const sameOrError = (a, b) => {
   if (a !== b) throw new Error(tr('auth.register.mismatch'));
 };
 
+/**
+ * Wohin es nach dem Anmelden weitergeht.
+ *
+ * `?next=` steht in der Adresse und darf deshalb alles sein. Das Dashboard schreibt dort nur
+ * eigene Pfade hinein – aber ein Link von außen kann dasselbe Feld setzen, und eine
+ * Anmeldemaske, die danach auf eine fremde Seite springt, ist genau die Vorlage für eine
+ * nachgebaute Anmeldemaske: gleiche Adresse, gleiches Zertifikat, echter Login, fremde Landung.
+ *
+ * Erlaubt ist deshalb nur ein Pfad auf **dieser** Seite: mit einem Schrägstrich beginnend, aber
+ * nicht mit zweien (`//fremd.example` ist für den Browser eine vollständige Adresse) und ohne
+ * Gegenschrägstrich, den manche Browser wie einen Schrägstrich behandeln.
+ */
+function nextUrl(fallback) {
+  const wanted = query.get('next') || '';
+  if (!/^\/[^/\\]/.test(wanted)) return fallback;
+  return wanted;
+}
+
 // ---------------------------------------------------------------- Anmelden
 
 /**
@@ -74,7 +92,7 @@ if (page === 'login') {
       body: { login: $('#login').value, password: $('#password').value },
     });
     if (result.verify_pending) return location.assign(url('/verify'));
-    location.assign(query.get('next') || url('/app'));
+    location.assign(nextUrl(url('/app')));
   });
 }
 
@@ -111,11 +129,19 @@ if (page === 'register') {
   });
 
   $('#resend')?.addEventListener('click', async (event) => {
-    event.target.disabled = true;
+    const button = event.target;
+    const label = button.textContent;
+    button.disabled = true;
+    button.textContent = tr('auth.working');
     try {
       await api('/auth/verify/resend', { method: 'POST' });
+      // Ohne Rückmeldung sah ein zweiter Klick aus wie ein toter Knopf: Der Aufruf war
+      // erfolgreich, sichtbar änderte sich nichts, und der Knopf blieb für immer gesperrt.
+      button.textContent = tr('auth.register.checkMail.title');
     } catch (problem) {
       showError(problem.message);
+      button.textContent = label;
+      button.disabled = false;
     }
   });
 }

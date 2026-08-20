@@ -14,7 +14,47 @@ const lastSent = new Map();
 const QUIET_MS = 10 * 60 * 1000;
 const DAILY_MS = 20 * 60 * 60 * 1000;
 
-const readUser = db.prepare('SELECT discord_webhook, username, language FROM users WHERE id = ?');
+/**
+ * Wie lange dieselbe Meldung zurückgehalten wird – je nach Art.
+ *
+ * Eine Sperrzeit hat genau einen Zweck: zu verhindern, dass ein Zustand, der alle paar Sekunden
+ * neu auffällt, alle paar Sekunden gemeldet wird. Ein Bot, der abbricht und neu startet, ist so
+ * ein Fall; **eine Antwort im Ticket ist es nicht.** Sie passiert einmal, sie ist gemeint, und
+ * wer sie zehn Minuten später bekommt, hat sie zu spät bekommen.
+ *
+ * Vorher galt für alles dieselbe Viertelstunde, und Tickets kamen überhaupt nicht an – der
+ * Webhook des Kunden wurde für Support gar nicht benutzt, nur für Bots und Guthaben. Deshalb hier
+ * eine Tabelle statt einer Zahl: Was ein Ereignis ist, kommt sofort; was ein Zustand ist, wartet.
+ */
+export const QUIET = {
+  /** Ereignisse: passieren einmal und sind dann durch. */
+  event: 0,
+  /** Zustände, die sich schnell wiederholen können (Bot weg, Konto kaputt). */
+  state: QUIET_MS,
+  /** Wiederkehrende Warnungen, die sonst stündlich kämen. */
+  daily: DAILY_MS,
+};
+
+const readUser = db.prepare(
+  'SELECT discord_webhook, discord_events, username, language FROM users WHERE id = ?'
+);
+
+/**
+ * Welche Ereignisse ein Kunde über seinen Webhook bekommen will.
+ *
+ * Gespeichert als Komma-Liste in `users.discord_events`. Leer heißt **alles** – wer einen Webhook
+ * einträgt, will Bescheid wissen, und eine Voreinstellung, die nichts schickt, sähe aus wie ein
+ * kaputter Webhook. Wer weniger will, hakt es in den Einstellungen ab.
+ */
+export const EVENTS = ['ticket', 'billing', 'bot', 'account', 'plan'];
+
+/** Gehört diese Art Meldung zu dem, was dieser Kunde bestellt hat? */
+function wants(user, event) {
+  if (!event) return true;
+  const raw = String(user?.discord_events ?? '').trim();
+  if (!raw) return true;
+  return raw.split(',').map((entry) => entry.trim()).includes(event);
+}
 
 /**
  * Wie jede Nachricht von uns in Discord aussieht: derselbe Name, dasselbe Bild, derselbe Fuß.
@@ -66,14 +106,30 @@ export const staff = (embed) => post(String(getSetting('discord_staff_webhook') 
 const pick = (value, lang) =>
   value && typeof value === 'object' ? value[lang] ?? value.de ?? '' : String(value ?? '');
 
-export async function notify(userId, title, text, { key = null, color = COLORS.info, quiet = QUIET_MS } = {}) {
+/**
+ * Eine Meldung an den Webhook eines Kunden.
+ *
+ * `event` sagt, wozu sie gehört (siehe `EVENTS`) – wer diese Art abbestellt hat, bekommt sie
+ * nicht. `quiet` ist die Sperrzeit für **dieselbe** Meldung; für ein einmaliges Ereignis steht
+ * dort 0, sonst wäre die zweite Antwort im selben Ticket verschluckt.
+ *
+ * `url` hängt einen Knopf an die Nachricht. Eine Benachrichtigung, die sagt "es ist etwas
+ * passiert", aber nicht, wo, ist eine halbe Nachricht.
+ */
+export async function notify(
+  userId,
+  title,
+  text,
+  { key = null, color = COLORS.info, quiet = QUIET_MS, event = null, url = null } = {}
+) {
   const user = readUser.get(userId);
   if (!user?.discord_webhook) return false;
+  if (!wants(user, event)) return false;
   const lang = 'en';
 
   const mapKey = `${userId}:${key ?? pick(title, 'de')}`;
   const now = Date.now();
-  if (now - (lastSent.get(mapKey) || 0) < quiet) return false;
+  if (quiet > 0 && now - (lastSent.get(mapKey) || 0) < quiet) return false;
   lastSent.set(mapKey, now);
   // Aufräumen, sonst wächst diese Tabelle für immer: Der Schlüssel enthält den Serverplatznamen
   // (und bei der Testnachricht sogar einen Zeitstempel), also entsteht bei jedem umbenannten Platz
@@ -86,19 +142,125 @@ export async function notify(userId, title, text, { key = null, color = COLORS.i
   }
 
   return post(user.discord_webhook, {
-    embeds: [{ title: pick(title, lang), description: pick(text, lang), color }],
+    embeds: [{ title: pick(title, lang), description: pick(text, lang), color, url: url || undefined }],
   });
 }
+
+// ---------------------------------------------------------------- Support
+//
+// Der Webhook des Kunden meldete bisher genau vier Dinge, und alle vier hatten mit Geld oder mit
+// einem abgestürzten Bot zu tun. Das Wichtigste fehlte: **die Antwort auf sein Ticket.** Wer eine
+// Frage gestellt hat, wartet darauf – und erfuhr davon nur, wenn er von sich aus ins Panel sah
+// oder eine E-Mail bekam.
+//
+// Sperrzeit 0: Jede Antwort ist eine eigene Nachricht. Zwei Antworten hintereinander sind zwei
+// Ereignisse und nicht dasselbe Ereignis zweimal.
+
+const ticketUrl = (id) => `${config.publicUrl}/en/app#/tickets/${id}`;
+
+export const ticketReply = (userId, ticket, author, preview) =>
+  notify(
+    userId,
+    { de: `Antwort im Ticket #${ticket.id}`, en: `Reply on ticket #${ticket.id}` },
+    {
+      de: `**${ticket.subject}**\n${author} hat geantwortet:\n>>> ${String(preview).slice(0, 400)}`,
+      en: `**${ticket.subject}**\n${author} replied:\n>>> ${String(preview).slice(0, 400)}`,
+    },
+    {
+      key: `ticket-reply-${ticket.id}-${Date.now()}`,
+      color: COLORS.info,
+      quiet: QUIET.event,
+      event: 'ticket',
+      url: ticketUrl(ticket.id),
+    }
+  );
+
+export const ticketOpened = (userId, ticket) =>
+  notify(
+    userId,
+    { de: `Ticket #${ticket.id} angelegt`, en: `Ticket #${ticket.id} opened` },
+    { de: `**${ticket.subject}**\nWir melden uns.`, en: `**${ticket.subject}**\nWe will get back to you.` },
+    {
+      key: `ticket-open-${ticket.id}`,
+      color: COLORS.ok,
+      quiet: QUIET.event,
+      event: 'ticket',
+      url: ticketUrl(ticket.id),
+    }
+  );
+
+export const ticketClosed = (userId, ticket) =>
+  notify(
+    userId,
+    { de: `Ticket #${ticket.id} geschlossen`, en: `Ticket #${ticket.id} closed` },
+    {
+      de: `**${ticket.subject}**\nEine neue Antwort macht es wieder auf.`,
+      en: `**${ticket.subject}**\nA new reply opens it again.`,
+    },
+    {
+      key: `ticket-closed-${ticket.id}`,
+      color: COLORS.info,
+      quiet: QUIET.event,
+      event: 'ticket',
+      url: ticketUrl(ticket.id),
+    }
+  );
+
+// ---------------------------------------------------------------- Geld
+
+export const topupPaid = (userId, credits, balance) =>
+  notify(
+    userId,
+    { de: 'Guthaben gutgeschrieben', en: 'Credits added' },
+    {
+      de: `${formatCredits(credits, 'de')} Credits sind da. Neuer Stand: ${formatCredits(balance, 'de')} (${formatEuro(balance, 'de')}).`,
+      en: `${formatCredits(credits, 'en')} credits have arrived. New balance: ${formatCredits(balance, 'en')} (${formatEuro(balance, 'en')}).`,
+    },
+    {
+      key: `topup-${credits}-${Date.now()}`,
+      color: COLORS.ok,
+      quiet: QUIET.event,
+      event: 'billing',
+      url: `${config.publicUrl}/en/app#/credits`,
+    }
+  );
+
+// ---------------------------------------------------------------- Konten und Bots
+
+export const accountBroken = (userId, name, reason) =>
+  notify(
+    userId,
+    { de: `Konto "${name}" muss neu verbunden werden`, en: `Account "${name}" needs reconnecting` },
+    {
+      de: `Die gespeicherte Microsoft-Anmeldung geht nicht mehr.${reason ? `\n${reason}` : ''}`,
+      en: `The stored Microsoft sign-in no longer works.${reason ? `\n${reason}` : ''}`,
+    },
+    {
+      key: `account-${name}`,
+      color: COLORS.warn,
+      quiet: QUIET.state,
+      event: 'account',
+      url: `${config.publicUrl}/en/app#/accounts`,
+    }
+  );
+
+export const botOnline = (userId, profile, account) =>
+  notify(
+    userId,
+    { de: `Bot "${account}" ist im Spiel`, en: `Bot "${account}" is in game` },
+    { de: `Auf "${profile}".`, en: `On "${profile}".` },
+    { key: `online-${profile}-${account}`, color: COLORS.ok, quiet: QUIET.state, event: 'bot' }
+  );
 
 export const lowBalance = (userId, credits) =>
   notify(
     userId,
     { de: 'Guthaben wird knapp', en: 'Credits are running low' },
     {
-      de: `Noch ${formatCredits(credits)} Credits (${formatEuro(credits, 'de')}). Für die nächste Verlängerung könnte es zu wenig sein.`,
-      en: `${formatCredits(credits)} credits left (${formatEuro(credits, 'en')}). That may not cover the next renewal.`,
+      de: `Noch ${formatCredits(credits, 'de')} Credits (${formatEuro(credits, 'de')}). Für die nächste Verlängerung könnte es zu wenig sein.`,
+      en: `${formatCredits(credits, 'en')} credits left (${formatEuro(credits, 'en')}). That may not cover the next renewal.`,
     },
-    { key: 'low-balance', color: COLORS.warn, quiet: DAILY_MS }
+    { key: 'low-balance', color: COLORS.warn, quiet: QUIET.daily, event: 'billing' }
   );
 
 export const planRenewed = (userId, name, price) =>
@@ -109,7 +271,7 @@ export const planRenewed = (userId, name, price) =>
       de: `"${name}" läuft weitere 30 Tage. Abgebucht: ${price} Credits.`,
       en: `"${name}" runs for another 30 days. ${price} credits were charged.`,
     },
-    { key: `renew-${name}`, color: COLORS.ok }
+    { key: `renew-${name}`, color: COLORS.ok, quiet: QUIET.event, event: 'plan' }
   );
 
 export const planSuspended = (userId, name, reason) =>
@@ -125,7 +287,7 @@ export const planSuspended = (userId, name, reason) =>
           de: `"${name}" ist ausgelaufen, weil die Verlängerung abgeschaltet war. Die Bots sind aus.`,
           en: `"${name}" ran out because renewal was switched off. The bots are stopped.`,
         },
-    { key: `suspend-${name}`, color: COLORS.bad }
+    { key: `suspend-${name}`, color: COLORS.bad, quiet: QUIET.event, event: 'plan' }
   );
 
 export const planExpiring = (userId, name, days, missing) =>
@@ -136,7 +298,7 @@ export const planExpiring = (userId, name, days, missing) =>
       de: `"${name}" wird in ${days} Tag(en) verlängert – es fehlen noch ${missing} Credits.`,
       en: `"${name}" renews in ${days} day(s) and is ${missing} credits short.`,
     },
-    { key: `expire-${name}`, color: COLORS.warn, quiet: DAILY_MS }
+    { key: `expire-${name}`, color: COLORS.warn, quiet: QUIET.daily, event: 'plan' }
   );
 
 export const botTrouble = (userId, name, reason) =>
@@ -147,5 +309,5 @@ export const botTrouble = (userId, name, reason) =>
       de: String(reason || 'Der Client wurde beendet.'),
       en: 'The client stopped unexpectedly. Open the panel for the full reason.',
     },
-    { key: `bot-${name}`, color: COLORS.bad }
+    { key: `bot-${name}`, color: COLORS.bad, quiet: QUIET.state, event: 'bot' }
   );
