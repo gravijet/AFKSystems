@@ -256,7 +256,7 @@ export function noticeNewDevice(user, req) {
 
 // ---------------------------------------------------------------- E-Mail bestätigen
 
-/** Wie lange ein Bestätigungslink gilt. Danach schickt „erneut senden" einen frischen. */
+/** Wie lange ein Bestätigungslink gilt. Danach schickt „erneut senden“ einen frischen. */
 const VERIFY_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function verifyEmail(rawToken) {
@@ -273,7 +273,7 @@ export function verifyEmail(rawToken) {
   }
   // Ein Bestätigungslink meldet an – also ist er ein Schlüssel zum Konto und darf nicht ewig
   // gelten. Wer eine alte Mail wiederfindet oder weitergeleitet hat, bekommt hier eine Absage
-  // und über „erneut senden" einen neuen Link.
+  // und über „erneut senden“ einen neuen Link.
   if (user.verify_sent_at && Date.now() - user.verify_sent_at > VERIFY_MS) {
     db.prepare('UPDATE users SET verify_token = NULL WHERE id = ?').run(user.id);
     return null;
@@ -355,6 +355,8 @@ export function publicUser(user) {
     language: user.language,
     chat_limit: user.chat_limit,
     discord_webhook: user.discord_webhook || '',
+    // Welche Ereignisarten der Webhook meldet. Leer heißt alles – siehe notify.js.
+    discord_events: user.discord_events || '',
     discord: user.discord_id
       ? { id: user.discord_id, name: user.discord_name, avatar: user.discord_avatar }
       : null,

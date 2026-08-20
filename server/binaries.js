@@ -85,7 +85,17 @@ export const BUILDS = {
   },
 };
 
-/** Was `--help` verrät. Jeder Schlüssel ist eine Zeichenkette, die in der Hilfe stehen muss. */
+/**
+ * Was `--help` verrät. Jeder Schlüssel ist ein Muster, das in der Hilfe stehen muss.
+ *
+ * Der Grund für dieses Verfahren steht in docs/aufbau.md: Es gibt nirgends eine gepflegte Liste
+ * von Fähigkeiten, die veralten könnte. Bekommt der Client eine neue Option, taucht sie in seiner
+ * Hilfe auf, und das Panel benutzt sie – bekommt er sie nicht, bleibt der Knopf dafür aus.
+ *
+ * Die vier Einträge unten kamen mit Client 2.1.0 bis 2.4.0 dazu. Sie einfach mitzuschicken wäre
+ * riskant: Eine ältere Bauform, die `--pov-size` nicht kennt, bricht damit beim Start ab, und
+ * dann liefe gar kein Bot mehr.
+ */
 const PROBES = {
   proxy: /--proxy\b/,
   fakehost: /--fakehost\b/,
@@ -95,6 +105,14 @@ const PROBES = {
   oncooldown: /--on-cooldown\b/,
   antiafk: /--antiafk\b/,
   sneak: /--sneak\b/,
+  /** `--view-distance <2-32>`: wie viele Chunks der Client anfordert. */
+  viewdistance: /--view-distance\b/,
+  /** `--pov an|aus`: ob die Live-Ansicht schon beim Beitritt läuft. */
+  povstart: /--pov\s+an\|aus/,
+  /** `--pov-size <b>x<h>`: die Bildgröße von Anfang an, ohne Umweg über `:pov size`. */
+  povsize: /--pov-size\b/,
+  /** `--pov-fps <1-20>`: wie oft gezeichnet wird. */
+  povfps: /--pov-fps\b/,
 };
 
 export const state = {
@@ -156,19 +174,29 @@ export async function sync({ force = false } = {}) {
       updated_at: asset.updated_at,
     }));
 
+    // **Jede Datei für sich.** Vorher stand der ganze Durchlauf in einem einzigen `try`: Ein
+    // Download, der scheiterte (Netz weg, Datei gerade ersetzt, GitHub antwortet mit 502), brach
+    // die Schleife ab – und alles, was in der alphabetischen Reihenfolge dahinter lag, wurde nie
+    // geholt. Die Bauform am Ende der Liste ist `ultra-afk-linux`, also ausgerechnet die für
+    // Premium-Kunden mit Live-Ansicht. Sichtbar war davon nur ein Satz in `state.error`.
+    const failed = [];
     for (const asset of release.assets) {
       const target = path.join(paths.bin, asset.name);
       const known = manifest[asset.name];
       if (!force && fs.existsSync(target) && known && known.updated_at === asset.updated_at) continue;
-      // Über die API-Adresse, nicht über browser_download_url: nur so klappt der Download auch
-      // bei einem privaten Repository (mit Token im Kopf).
-      await download(asset.url, target);
-      manifest[asset.name] = { updated_at: asset.updated_at, size: asset.size };
-      if (Object.values(BUILDS).some((build) => build.file === asset.name)) fs.chmodSync(target, 0o755);
+      try {
+        // Über die API-Adresse, nicht über browser_download_url: nur so klappt der Download auch
+        // bei einem privaten Repository (mit Token im Kopf).
+        await download(asset.url, target);
+        manifest[asset.name] = { updated_at: asset.updated_at, size: asset.size };
+        if (Object.values(BUILDS).some((build) => build.file === asset.name)) fs.chmodSync(target, 0o755);
+      } catch (error) {
+        failed.push(`${asset.name} (${error.message})`);
+      }
     }
     manifest._release = { tag: release.tag_name, published_at: release.published_at };
     writeManifest(manifest);
-    state.error = null;
+    state.error = failed.length ? `Nicht geladen: ${failed.join(', ')}` : null;
   } catch (error) {
     // Ohne Netz läuft das Panel mit dem weiter, was schon da ist.
     state.error = error.message;

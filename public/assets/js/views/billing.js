@@ -1,7 +1,10 @@
 // Guthaben: Stand, Serverplätze, Aufladen, Gutschein einlösen, Kontoauszug.
 
-import { api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, copy, formDialog } from '../ui.js';
+import {
+  api, icon, escapeHtml, credits, euro, datetime, date, safeLink, tr, $, $$, ok, fail, copy, formDialog,
+} from '../ui.js';
 import { appbar, refresh, draw } from '../app.js';
+import * as chart from '../charts.js';
 
 const KIND = {
   topup: 'bill.kind.topup',
@@ -107,7 +110,7 @@ export async function render(root) {
           data.methods.tebex
             ? `<span class="small muted">${escapeHtml(tr('bill.card'))}${
                 data.tebex_store
-                  ? ` · <a href="${escapeHtml(data.tebex_store)}" target="_blank" rel="noopener">${escapeHtml(
+                  ? ` · <a href="${escapeHtml(safeLink(data.tebex_store))}" target="_blank" rel="noopener">${escapeHtml(
                       tr('bill.store')
                     )}</a>`
                   : ''
@@ -146,6 +149,8 @@ export async function render(root) {
           </section>`
         : ''
     }
+
+    ${money(data)}
 
     <div class="grid two" style="margin-top:1.5rem">
       <section class="panel">
@@ -202,6 +207,75 @@ export async function render(root) {
       </section>
     </div>`;
 
+  /**
+   * Drei Bilder zum Geld: Verlauf, Monate, Verteilung.
+   *
+   * Sie beantworten drei verschiedene Fragen, deshalb drei verschiedene Formen. „Wie steht es
+   * gerade“ steht als Zahl in den Kacheln oben – dafür braucht es kein Diagramm.
+   *
+   *   * **Verlauf des Guthabens** (Linie): geht es rauf oder runter? Eine Reihe, also keine
+   *     Legende; der Titel sagt, was gezeigt wird.
+   *   * **Ausgaben je Monat** (Balken): war dieser Monat teurer als der letzte?
+   *   * **Kosten je Serverplatz** (waagerechte Balken): welcher Platz kostet eigentlich was?
+   *     Waagerecht, weil Serverplätze Namen haben und Namen waagerecht sind.
+   *
+   * Wer noch nie Guthaben bewegt hat, bekommt hier gar nichts: Drei leere Achsenkreuze sind keine
+   * Auskunft, sondern Fläche.
+   */
+  function money(data_) {
+    const days = data_.balance_days || [];
+    const spend = data_.spend || [];
+    const slots = data_.slot_costs || [];
+    const spent = spend.reduce((sum, month) => sum + month.credits, 0);
+    if (!spent && !slots.length && data_.balance <= 0) return '';
+
+    const monthName = (key) => {
+      const [year, month] = key.split('-');
+      return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(
+        document.documentElement.lang === 'de' ? 'de-DE' : 'en-GB',
+        { month: 'short' }
+      );
+    };
+    // Auf der Achse steht Euro, nicht Credits: Der Kunde bezahlt in Euro, und "1.200" sagt weniger
+    // als "12 €". Die genauen Credits stehen in der Sprechblase am Balken.
+    const asEuro = (value) => `${(value / 100).toFixed(value >= 10_000 ? 0 : 2)} €`;
+
+    return `<div class="grid three" style="margin-top:1.5rem">
+      ${chart.card({
+        title: tr('bill.chart.balance'),
+        value: credits(data_.balance),
+        note: tr('bill.chart.days', { n: days.length }),
+        chart: chart.line(
+          days.map((entry) => ({ label: entry.day, short: entry.day.slice(8), value: entry.credits })),
+          { format: asEuro }
+        ),
+        foot: escapeHtml(euro(data_.balance)),
+      })}
+      ${chart.card({
+        title: tr('bill.chart.spend'),
+        value: credits(spend[spend.length - 1]?.credits || 0),
+        note: tr('bill.chart.thisMonth'),
+        chart: chart.bars(
+          spend.map((month) => ({ label: month.month, short: monthName(month.month), value: month.credits })),
+          { format: asEuro }
+        ),
+        foot: escapeHtml(tr('bill.chart.spendFoot', { total: credits(spent) })),
+      })}
+      ${chart.card({
+        title: tr('bill.chart.slots'),
+        value: credits(data_.monthly_cost),
+        note: tr('bill.chart.perMonth'),
+        chart: slots.length
+          ? chart.hbars(
+              slots.map((slot) => ({ label: slot.label, value: slot.credits })),
+              { format: (value) => `${credits(value)}` }
+            )
+          : `<p class="small muted">${escapeHtml(tr('bill.chart.noSlots'))}</p>`,
+        foot: escapeHtml(euro(data_.monthly_cost)),
+      })}
+    </div>`;
+  }
+
   function ledgerRow(row, index) {
     return `<li class="${index >= 12 ? 'hide extra' : ''}">
       <span class="ledger-when small muted mono">${datetime(row.created_at)}</span>
@@ -251,13 +325,17 @@ export async function render(root) {
 
 /** Zahlweg wählen, dann je nach Anbieter weiterleiten oder die Anweisung zeigen. */
 async function startTopup(data, index) {
+  // Ohne eingerichtete Pakete gibt es nichts aufzuladen. Vorher lief der Knopf trotzdem los,
+  // griff mit dem Index -1 ins Leere und starb an `pack.label` – für den Kunden ein Knopf, der
+  // gar nichts tut, und in der Konsole ein Fehler, den er nicht sieht.
+  if (!data.packages.length) return fail(new Error(tr('bill.noPackages')));
   const methods = [];
   if (data.methods.tebex) methods.push({ value: 'tebex', label: tr('bill.card') });
   if (data.methods.transfer) methods.push({ value: 'transfer', label: tr('bill.transfer') });
   if (data.methods.paypal) methods.push({ value: 'paypal', label: tr('bill.paypal') });
   if (!methods.length) return fail(new Error(tr('pricing.onRequest')));
 
-  const pack = data.packages[index];
+  const pack = data.packages[Math.max(0, Math.min(data.packages.length - 1, index))];
   const answer = await formDialog(
     tr('bill.topUp'),
     [

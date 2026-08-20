@@ -124,12 +124,18 @@ bewusst pipe-fähig gebaut, deshalb braucht es zwischen Panel und Client kein ei
 | Items | `items-afk-linux` | dazu Menüs und Gegenstandsdaten |
 | Premium | `premium-afk-linux` | Bewegung, Scoreboard, Menü-Klicks, Schleichen, Anti-AFK |
 | Premium + Items | `premium-items-afk-linux` | Premium plus Gegenstände mit Namen, Farben, Lore |
-| POV | `pov-afk-linux` | Live-Ansicht, startet von selbst |
+| POV | `pov-afk-linux` | Live-Ansicht (das Panel startet sie erst, wenn jemand zusieht) |
 | Ultra | `ultra-afk-linux` | alles; Live-Ansicht mit `:pov live` zuschaltbar |
 
 `server/binaries.js` lädt sie aus dem GitHub-Release `latest`, ruft für jede `--help` auf und merkt
 sich, **was sie wirklich kann**. Es steht nirgends im Code eine Liste von Fähigkeiten, die
-veralten könnte: fehlt etwas, ist der Knopf dafür aus.
+veralten könnte: fehlt etwas, ist der Knopf dafür aus. Umgekehrt gilt dasselbe – eine Option, die
+in der Hilfe steht, wird benutzt (`--pov-size`, `--pov-fps`, `--view-distance`), und eine, die
+dort fehlt, wird nicht mitgeschickt: Eine ältere Datei bräche bei einer unbekannten Option beim
+Start ab, und dann liefe gar kein Bot mehr.
+
+Jede Datei wird für sich geladen. Ein Download, der scheitert, überspringt nicht mehr alles, was in
+der alphabetischen Reihenfolge dahinter liegt – das war ausgerechnet `ultra-afk-linux`.
 
 Alle Rust-Bauformen sprechen Minecraft 1.21.1, 1.21.11, 26.1 und 26.2, gewählt mit `--mc`.
 
@@ -186,7 +192,7 @@ Drei Dinge, die keine Chatzeilen sind und deshalb einen eigenen Weg nehmen (`bot
 | --- | --- | --- |
 | **Scoreboard** | `@event board titel …` / `@event board zeile …` | Tarifmerkmal `board` |
 | **Menü** | `@event menu open …`, `@event slot …`, `@event lore …` | Tarifmerkmal `menus` |
-| **Live-Ansicht** | ein Raster aus Zeichen hinter `ESC[H` | Zusatz `pov` |
+| **Live-Ansicht** | ein Raster aus Halbblöcken hinter `ESC[H` | Zusatz `pov` |
 
 Scoreboard und Menü behalten ihre `§`-Farbcodes bis in den Browser – dort sehen sie aus wie im
 Spiel. Zahlenformate, Team-Präfixe und ausgeblendete Punktzahlen bleiben erhalten.

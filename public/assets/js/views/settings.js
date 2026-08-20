@@ -5,7 +5,7 @@
 // die wichtigste Frage – "war diese E-Mail wirklich von euch?" – ließ sich gar nicht beantworten.
 
 import {
-  api, icon, escapeHtml, datetime, tr, url, switchLang, $, $$, ok, fail, confirmDialog,
+  api, icon, escapeHtml, datetime, credits, safeLink, tr, url, switchLang, $, $$, ok, fail, confirmDialog,
 } from '../ui.js';
 import { state, appbar, refresh, draw } from '../app.js';
 
@@ -24,10 +24,12 @@ export async function render(root) {
 
     <div class="settings">
       ${section('user', tr('set.account'), tr('set.appearance'), accountBody(me))}
-      ${section('message', tr('set.linked'), tr('set.linkedSub'), linkedBody(me, providers))}
-      ${section('mail', tr('set.notify'), tr('set.notifySub'), notifyBody(me))}
+      ${section('globe', tr('set.linked'), tr('set.linkedSub'), linkedBody(me, providers))}
+      ${section('send', tr('set.notify'), tr('set.notifySub'), notifyBody(me))}
       ${section('shield', tr('set.security'), tr('set.securitySub'), securityBody(sessions.sessions || []))}
-      ${section('clock', tr('set.mailsTitle'), tr('set.mailsSub'), mailsBody(mails.mails || []))}
+      <!-- Ein Briefumschlag fürs Postfach und eine Uhr für gar nichts: Vorher stand über den
+           verschickten Nachrichten eine Uhr und über den Einstellungen dazu der Umschlag. -->
+      ${section('mail', tr('set.mailsTitle'), tr('set.mailsSub'), mailsBody(mails.mails || []))}
     </div>`;
 
   bind(me, mails.mails || []);
@@ -68,6 +70,13 @@ function flash(params) {
 
 // ---------------------------------------------------------------- Konto
 
+/**
+ * Der Kontokasten.
+ *
+ * Das Guthaben geht durch `credits()` – das schreibt die Zahl in der Sprache des Panels. Ein
+ * blankes `toLocaleString()` nimmt dagegen die des Betriebssystems: Auf einem englischen Rechner
+ * stand im deutschen Panel "1,234" und einen Klick weiter, im Guthaben-Bereich, "1.234".
+ */
 function accountBody(me) {
   return `
     <dl class="facts">
@@ -78,7 +87,7 @@ function accountBody(me) {
           tr(me.role === 'admin' ? 'set.role.admin' : 'set.role.user')
         )}</span></dd></div>
       <div><dt>${escapeHtml(tr('bill.balance'))}</dt>
-        <dd class="mono"><a href="#/credits">${me.credits.toLocaleString()}</a></dd></div>
+        <dd class="mono"><a href="#/credits">${credits(me.credits)}</a></dd></div>
     </dl>
 
     <div class="row wrap" style="gap:1rem;align-items:flex-end">
@@ -132,7 +141,7 @@ function linkedBody(me, providers) {
         )}
         ${
           !access.ok && invite
-            ? ` · <a href="${escapeHtml(invite)}" target="_blank" rel="noopener">${escapeHtml(
+            ? ` · <a href="${escapeHtml(safeLink(invite))}" target="_blank" rel="noopener">${escapeHtml(
                 tr('discord.join')
               )}</a>`
             : ''
@@ -169,8 +178,37 @@ function linkedBody(me, providers) {
       <button class="btn" id="test-hook" ${me.discord_webhook ? '' : 'disabled'}>${escapeHtml(
         tr('set.webhookTest')
       )}</button>
-    </div>`;
+    </div>
+
+    <!-- Was der Webhook meldet. Nichts angehakt heißt **alles** – wer einen Webhook einträgt,
+         will Bescheid wissen, und eine Voreinstellung, die nichts schickt, sähe aus wie ein
+         kaputter Webhook. -->
+    <ul class="switch-list" style="margin-top:1rem" id="hook-events">
+      ${WEBHOOK_EVENTS.map(
+        (key) => `<li>
+          <div class="grow">
+            <div class="strong">${escapeHtml(tr(`set.hook.${key}`))}</div>
+            <p class="small muted">${escapeHtml(tr(`set.hook.${key}.what`))}</p>
+          </div>
+          <span class="switch" role="switch" tabindex="0" data-hook="${key}"
+            aria-label="${escapeHtml(tr(`set.hook.${key}`))}"
+            aria-checked="${wantsEvent(me, key)}"></span>
+        </li>`
+      ).join('')}
+    </ul>`;
 }
+
+/**
+ * Die Ereignisarten, die ein Webhook melden kann – dieselbe Liste wie `EVENTS` in server/notify.js.
+ * Was hier nicht steht, gibt es nicht.
+ */
+const WEBHOOK_EVENTS = ['ticket', 'billing', 'plan', 'bot', 'account'];
+
+/** Leer heißt alles – siehe `wants()` in server/notify.js. Die Regel steht auf beiden Seiten gleich. */
+const wantsEvent = (me, key) => {
+  const raw = String(me.discord_events || '').trim();
+  return !raw || raw.split(',').includes(key);
+};
 
 // ---------------------------------------------------------------- Nachrichten
 
@@ -245,7 +283,10 @@ function mailsBody(mails) {
   return `<ul class="plain-list mail-list">
     ${mails
       .map(
-        (entry) => `<li class="row spread" data-mail="${entry.id}">
+        // Die Zeile ist anklickbar – dann muss sie auch mit der Tastatur erreichbar sein und sich
+        // wie ein Knopf ankündigen. Ein `<li>` mit `cursor: pointer` ist für einen Screenreader
+        // und für jeden, der nicht mit der Maus bedient, schlicht nicht vorhanden.
+        (entry) => `<li class="row spread" data-mail="${entry.id}" role="button" tabindex="0">
           <span class="grow truncate">${escapeHtml(entry.subject)}
             ${
               entry.status !== 'sent'
@@ -309,6 +350,34 @@ function bind(me, mails) {
     }
   });
 
+  // Welche Ereignisse der Webhook meldet. Gespeichert wird die Liste dessen, was **an** ist –
+  // alles an heißt: leere Liste, und leer heißt beim Server "alles" (siehe notify.js).
+  $$('[data-hook]').forEach((node) => {
+    const toggle = async () => {
+      const next = node.getAttribute('aria-checked') !== 'true';
+      node.setAttribute('aria-checked', String(next));
+      const on = $$('[data-hook]')
+        .filter((entry) => entry.getAttribute('aria-checked') === 'true')
+        .map((entry) => entry.dataset.hook);
+      try {
+        await api('/me', {
+          method: 'PATCH',
+          body: { discord_events: on.length === WEBHOOK_EVENTS.length ? '' : on.join(',') },
+        });
+        me.discord_events = on.length === WEBHOOK_EVENTS.length ? '' : on.join(',');
+      } catch (error) {
+        node.setAttribute('aria-checked', String(!next));
+        fail(error);
+      }
+    };
+    node.addEventListener('click', toggle);
+    node.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      toggle();
+    });
+  });
+
   // Die Schalter speichern sofort. Ein "Speichern"-Knopf für fünf Ja/Nein-Fragen wäre eine Hürde
   // ohne Zweck – und wer eine Sorte abbestellt, will das jetzt und nicht nach einem Klick mehr.
   $$('[data-pref]').forEach((node) => {
@@ -364,8 +433,8 @@ function bind(me, mails) {
     location.href = url('/login');
   });
 
-  $$('[data-mail]').forEach((row) =>
-    row.addEventListener('click', async () => {
+  $$('[data-mail]').forEach((row) => {
+    const open = async () => {
       const entry = mails.find((item) => item.id === Number(row.dataset.mail));
       try {
         const data = await api(`/me/mails/${row.dataset.mail}`);
@@ -373,8 +442,14 @@ function bind(me, mails) {
       } catch (error) {
         fail(error);
       }
-    })
-  );
+    };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      open();
+    });
+  });
 }
 
 /** Eine verschickte Nachricht im Wortlaut. */

@@ -33,6 +33,8 @@ export const S = {
   'common.close': { en: 'Close', de: 'Schließen' },
   'common.confirm': { en: 'Please confirm', de: 'Bitte bestätigen' },
   'common.yes': { en: 'Yes, go ahead', de: 'Ja, weiter' },
+  // Der Wert eines Ja/Nein-Feldes – nicht die Beschriftung eines Knopfes.
+  'common.on': { en: 'Yes', de: 'Ja' },
   'common.back': { en: 'Back', de: 'Zurück' },
   'common.loading': { en: 'Loading …', de: 'Wird geladen …' },
   'common.none': { en: 'None yet.', de: 'Noch nichts.' },
@@ -61,6 +63,8 @@ export const S = {
   'common.language': { en: 'Language', de: 'Sprache' },
   'common.optional': { en: 'optional', de: 'optional' },
   'common.remove': { en: 'Remove', de: 'Entfernen' },
+  'common.more': { en: 'Read more', de: 'Mehr dazu' },
+  'common.order': { en: 'Order', de: 'Reihenfolge' },
   'common.forever': { en: 'forever', de: 'dauerhaft' },
   'common.paidSlot': { en: 'Paid server slot', de: 'Bezahlter Serverplatz' },
   'common.created': { en: 'Added', de: 'Hinzugefügt' },
@@ -528,9 +532,23 @@ export const S = {
   'todo.count': { en: '{n} open', de: '{n} offen' },
   'ov.connectAccount': { en: 'Connect a Minecraft account', de: 'Minecraft-Konto verbinden' },
   'ov.openTicket': { en: 'Ask support', de: 'Support fragen' },
-  'ov.client': { en: 'What the client here can do', de: 'Was der Client hier kann' },
   'ov.clientVersions': { en: 'Minecraft versions', de: 'Minecraft-Versionen' },
   'ov.builds': { en: 'Builds in use', de: 'Genutzte Bauformen' },
+
+  // Die Diagramme der Übersicht.
+  'ov.inGameLine': {
+    en: '{online} of {n} in game · {accounts} accounts',
+    de: '{online} von {n} im Spiel · {accounts} Konten',
+  },
+  'ov.chart.balance': { en: 'Your balance', de: 'Dein Guthaben' },
+  'ov.chart.spend': { en: 'What it costs each month', de: 'Was es im Monat kostet' },
+  'ov.chart.uptime': { en: 'How long the bots ran', de: 'Wie lange die Bots liefen' },
+  'ov.chart.total': { en: 'all told', de: 'insgesamt' },
+  'ov.chart.connections': { en: '{n} connections all told', de: '{n} Verbindungen insgesamt' },
+  'ov.chart.noUptime': {
+    en: 'No bot has run yet.',
+    de: 'Noch ist kein Bot gelaufen.',
+  },
 
   // ---------------------------------------------------------------- Konten
   'acc.title': { en: 'Minecraft accounts', de: 'Minecraft-Konten' },
@@ -668,31 +686,57 @@ export const S = {
     de: 'Ein Kick oder Verbindungsabbruch beendet den Client. Für eine neue Verbindung startest du ihn bewusst im Panel erneut.',
   },
   'srv.walk': { en: 'Walk', de: 'Gehen' },
+  'srv.walkHint': { en: 'a few blocks at a time', de: 'ein paar Blöcke auf einmal' },
   'srv.blocks': { en: 'Blocks per step', de: 'Blöcke je Schritt' },
   'srv.jump': { en: 'Jump', de: 'Springen' },
   'srv.pos': { en: 'Where am I?', de: 'Wo bin ich?' },
+  'srv.stopWalk': { en: 'Stop', de: 'Anhalten' },
+  // Die vier Richtungen sind relativ zur Blickrichtung des Bots und nicht zur Himmelsrichtung –
+  // deshalb "vor" und nicht "Norden".
+  'srv.dir.forward': { en: 'Forward', de: 'Vor' },
+  'srv.dir.back': { en: 'Back', de: 'Zurück' },
+  'srv.dir.left': { en: 'Left', de: 'Links' },
+  'srv.dir.right': { en: 'Right', de: 'Rechts' },
   'srv.positionMissing': { en: 'No coordinates received.', de: 'Keine Koordinaten empfangen.' },
   'srv.positionLook': { en: 'View: {yaw}° / {pitch}°', de: 'Blick: {yaw}° / {pitch}°' },
   'srv.look': { en: 'Look', de: 'Blickrichtung' },
-  'srv.lookHint': {
-    en: 'Yaw as in the F3 screen: 0 south, 90 west, −90 east, 180 north. Negative pitch looks up.',
-    de: 'Yaw wie im F3-Bildschirm: 0 Süden, 90 Westen, −90 Osten, 180 Norden. Pitch negativ heißt nach oben.',
-  },
-  'srv.home': { en: 'Home position', de: 'Heimatposition' },
+  'srv.lookHint': { en: 'where the bot faces', de: 'wohin der Bot schaut' },
+  // Himmelsrichtungen ausgeschrieben: "E" konnte auf Deutsch auch "Ende" heißen, und die vier
+  // Buchstaben nebeneinander sahen aus wie eine Abkürzung, die man kennen muss.
+  'srv.compass.n': { en: 'North', de: 'Norden' },
+  'srv.compass.e': { en: 'East', de: 'Osten' },
+  'srv.compass.s': { en: 'South', de: 'Süden' },
+  'srv.compass.w': { en: 'West', de: 'Westen' },
+  'srv.turnAround': { en: 'Turn around', de: 'Umdrehen' },
+  'srv.lookUp': { en: 'Up', de: 'Nach oben' },
+  'srv.lookDown': { en: 'Down', de: 'Nach unten' },
+  'srv.lookLevel': { en: 'Level', de: 'Geradeaus' },
+  'srv.lookExact': { en: 'Exact angle', de: 'Genauer Winkel' },
+  'srv.yaw': { en: 'Yaw (0 south, 180 north)', de: 'Gierwinkel (0 Süden, 180 Norden)' },
+  'srv.pitch': { en: 'Pitch (negative looks up)', de: 'Neigung (negativ = nach oben)' },
+  'srv.turnTo': { en: 'Turn', de: 'Drehen' },
+  'srv.show': { en: 'Show', de: 'Zeigen' },
+  'srv.home': { en: 'Home position and route', de: 'Heimatposition und Route' },
   'srv.homeAuto': { en: 'Return home automatically', de: 'Automatisch nach Hause laufen' },
+  'srv.homeAutoHint': {
+    en: 'after every join, along the route if one is recorded',
+    de: 'nach jedem Beitritt, über die Route falls eine aufgezeichnet ist',
+  },
   'srv.homeHint': {
     en: 'The bot remembers a spot and walks back there after every join – handy when the server drops you in a lobby.',
     de: 'Der Bot merkt sich eine Stelle und läuft nach jedem Beitritt dorthin zurück – praktisch, wenn der Server dich in die Lobby setzt.',
   },
   'srv.homeSet': { en: 'Remember here', de: 'Hier merken' },
   'srv.homeGo': { en: 'Walk there now', de: 'Jetzt hinlaufen' },
+  'srv.homeClear': { en: 'Forget it', de: 'Vergessen' },
   'srv.route': { en: 'Route', de: 'Route' },
   'srv.routeHint': {
-    en: 'Record, walk the path with the buttons above, stop – the bot takes exactly that way home afterwards.',
-    de: 'Aufzeichnen, die Strecke mit den Knöpfen oben ablaufen, beenden – danach nimmt der Bot genau diesen Weg.',
+    en: 'Is the way home not a straight line? Record, walk it with the buttons above, stop – then the bot takes exactly that way.',
+    de: 'Führt der Weg nach Hause nicht geradeaus? Aufzeichnen, die Strecke mit den Knöpfen oben ablaufen, beenden – danach nimmt der Bot genau diesen Weg.',
   },
   'srv.recStart': { en: 'Start recording', de: 'Aufzeichnung starten' },
   'srv.recStop': { en: 'Stop recording', de: 'Aufzeichnung beenden' },
+  'srv.routeClear': { en: 'Delete route', de: 'Route löschen' },
   'srv.on': { en: 'On', de: 'An' },
   'srv.off': { en: 'Off', de: 'Aus' },
   'srv.body': { en: 'Body', de: 'Körper' },
@@ -789,6 +833,16 @@ export const S = {
     en: 'Pick a proxy per account on the server’s proxy tab.',
     de: 'Welcher Proxy zu welchem Konto gehört, stellst du im Reiter „Proxys“ des Servers ein.',
   },
+  // Der Hinweis, den `GET /api/proxies` mitschickt. Er stand als deutscher Satz im Quelltext der
+  // Route und kam deshalb auch im englischen Panel auf Deutsch zurück.
+  'px.hintPaying': {
+    en: 'Proxies are assigned by hand. Open a ticket and say which server slot it is for.',
+    de: 'Proxys werden von Hand zugeteilt – mach dafür ein Ticket auf und schreib dazu, für welchen Serverplatz.',
+  },
+  'px.hintFree': {
+    en: 'Proxies come with a paid server slot.',
+    de: 'Proxys gibt es ab einem bezahlten Serverplatz.',
+  },
 
   // ---------------------------------------------------------------- Guthaben
   'bill.title': { en: 'Credits', de: 'Guthaben' },
@@ -823,6 +877,19 @@ export const S = {
   'bill.kind.admin': { en: 'By an administrator', de: 'Durch Administrator' },
   'bill.kind.bonus': { en: 'Bonus', de: 'Bonus' },
   'bill.noHistory': { en: 'Nothing booked yet.', de: 'Noch nichts gebucht.' },
+
+  // Die Diagramme im Guthaben-Bereich. Jede Überschrift ist eine Frage, die das Bild beantwortet.
+  'bill.chart.balance': { en: 'How your balance developed', de: 'Wie sich dein Guthaben entwickelt hat' },
+  'bill.chart.days': { en: 'last {n} days', de: 'letzte {n} Tage' },
+  'bill.chart.spend': { en: 'What you spent per month', de: 'Was du je Monat ausgegeben hast' },
+  'bill.chart.thisMonth': { en: 'this month', de: 'dieser Monat' },
+  'bill.chart.spendFoot': { en: '{total} credits in six months', de: '{total} Credits in sechs Monaten' },
+  'bill.chart.slots': { en: 'What each server slot costs', de: 'Was jeder Serverplatz kostet' },
+  'bill.chart.perMonth': { en: 'per month', de: 'im Monat' },
+  'bill.chart.noSlots': {
+    en: 'Only the free server slot – it costs nothing.',
+    de: 'Nur der Gratis-Serverplatz – der kostet nichts.',
+  },
 
   // ---------------------------------------------------------------- Tickets
   'tk.title': { en: 'Support', de: 'Support' },
@@ -886,6 +953,33 @@ export const S = {
     de: 'Trage einen Webhook deines Discord-Servers ein, dann meldet das Panel Abbrüche, Kontoprobleme und knappes Guthaben. Höchstens eine Nachricht je Thema alle zehn Minuten.',
   },
   'set.webhookTest': { en: 'Send a test message', de: 'Testnachricht schicken' },
+
+  // Was der Webhook meldet. Die Schlüssel sind dieselben wie `EVENTS` in server/notify.js.
+  'set.hook.ticket': { en: 'Support', de: 'Support' },
+  'set.hook.ticket.what': {
+    en: 'A reply to your ticket, a new ticket, a closed one.',
+    de: 'Eine Antwort auf dein Ticket, ein neues Ticket, ein geschlossenes.',
+  },
+  'set.hook.billing': { en: 'Credits', de: 'Guthaben' },
+  'set.hook.billing.what': {
+    en: 'Money that arrived, and a warning when it runs low.',
+    de: 'Angekommenes Geld und eine Warnung, wenn es knapp wird.',
+  },
+  'set.hook.plan': { en: 'Server slots', de: 'Serverplätze' },
+  'set.hook.plan.what': {
+    en: 'Renewed, expiring, suspended.',
+    de: 'Verlängert, läuft ab, stillgelegt.',
+  },
+  'set.hook.bot': { en: 'Bots', de: 'Bots' },
+  'set.hook.bot.what': {
+    en: 'A bot that stopped unexpectedly.',
+    de: 'Ein Bot, der unerwartet aufgehört hat.',
+  },
+  'set.hook.account': { en: 'Minecraft accounts', de: 'Minecraft-Konten' },
+  'set.hook.account.what': {
+    en: 'An account whose sign-in no longer works.',
+    de: 'Ein Konto, dessen Anmeldung nicht mehr geht.',
+  },
   'set.webhookSent': { en: 'Test message sent.', de: 'Testnachricht ist raus.' },
   'set.password': { en: 'Change password', de: 'Passwort ändern' },
   'set.passwordOld': { en: 'Current password', de: 'Aktuelles Passwort' },
@@ -957,6 +1051,30 @@ export const S = {
   'adm.unread': { en: '{n} unread', de: '{n} ungelesen' },
   'adm.revenueAll': { en: '{total} all time', de: '{total} insgesamt' },
   'adm.attention': { en: 'Needs a look', de: 'Braucht einen Blick' },
+
+  // Die To-do-Liste des Teams und die Diagramme darunter.
+  'adm.todo': { en: 'What the team has to do', de: 'Was das Team zu tun hat' },
+  'adm.stats.title': { en: 'How it is going', de: 'Wie es läuft' },
+  'adm.stats.revenue': { en: 'Money coming in', de: 'Was hereinkommt' },
+  'adm.stats.revenueFoot': {
+    en: '{total} all time · {back} refunded',
+    de: '{total} insgesamt · {back} zurückerstattet',
+  },
+  'adm.stats.signups': { en: 'New accounts', de: 'Neue Konten' },
+  'adm.stats.signupsFoot': { en: '{total} accounts all told', de: '{total} Konten insgesamt' },
+  'adm.stats.spent': { en: 'Credits spent on plans', de: 'Credits für Tarife ausgegeben' },
+  'adm.stats.spentFoot': {
+    en: '{open} credits are still on customer accounts',
+    de: '{open} Credits liegen noch auf Kundenkonten',
+  },
+  'adm.stats.months': { en: 'Money coming in per month', de: 'Was je Monat hereinkommt' },
+  'adm.stats.monthsFoot': { en: 'the last twelve months', de: 'die letzten zwölf Monate' },
+  'adm.stats.tickets': { en: 'Tickets opened', de: 'Neue Tickets' },
+  'adm.stats.plans': { en: 'Server slots per plan', de: 'Serverplätze je Tarif' },
+  'adm.stats.providers': { en: 'Where the money comes from', de: 'Woher das Geld kommt' },
+  'adm.stats.uptime': { en: 'Where the hours went', de: 'Wo die Stunden hingingen' },
+  'adm.stats.customers': { en: 'Who paid the most', de: 'Wer am meisten bezahlt hat' },
+  'adm.stats.customersNote': { en: 'paying accounts', de: 'zahlende Konten' },
   'adm.attentionLine': {
     en: '{blocked} blocked · {unverified} unconfirmed',
     de: '{blocked} gesperrt · {unverified} unbestätigt',
@@ -1073,6 +1191,11 @@ export const S = {
   'pov.stop': { en: 'Stop', de: 'Stoppen' },
   'pov.frame': { en: 'Single frame', de: 'Einzelbild' },
   'pov.waiting': { en: 'Waiting for the first frame …', de: 'Warte auf das erste Bild …' },
+  'pov.idle': {
+    en: 'The view is not running. Start it – the client only renders while somebody is watching.',
+    de: 'Die Ansicht läuft nicht. Starte sie – der Client zeichnet nur, solange jemand zusieht.',
+  },
+  'pov.stopped': { en: 'View stopped.', de: 'Ansicht gestoppt.' },
   'pov.offline': { en: 'Start the bot first – there is nothing to see yet.', de: 'Erst den Bot starten – noch gibt es nichts zu sehen.' },
   'pov.note': {
     en: 'Minecraft never sends finished pictures or block textures. The view is rendered from chunk data, block changes and entities, so it costs the machine noticeably more than a quiet bot – it stops on its own when you leave this tab or close the window.',
@@ -1194,6 +1317,9 @@ export const S = {
   'tk.typingMany': { en: 'Several people are writing …', de: 'Mehrere schreiben …' },
   'tk.viaDiscord': { en: 'via Discord', de: 'über Discord' },
   'tk.inDiscord': { en: 'Also open in Discord', de: 'Läuft auch in Discord' },
+  // Steht an genau dem Ticket, um das es geht – nicht nur als Zahl in der Seitenleiste.
+  'tk.unread': { en: 'New', de: 'Neu' },
+  'tk.unreadStaff': { en: 'Waiting', de: 'Wartet' },
   'tk.setStatus': { en: 'Status', de: 'Zustand' },
   'tk.assign': { en: 'Handled by', de: 'Bearbeitet von' },
   'tk.unassigned': { en: 'nobody yet', de: 'noch niemand' },
@@ -1224,6 +1350,10 @@ export const S = {
   'bill.movements': { en: 'Movements', de: 'Bewegungen' },
   'bill.movementsSub': { en: 'Every change to your balance.', de: 'Jede Änderung an deinem Guthaben.' },
   'bill.showAll': { en: 'Show all', de: 'Alle anzeigen' },
+  'bill.noPackages': {
+    en: 'No top-up packages are set up on this server yet.',
+    de: 'Auf diesem Server sind noch keine Aufladepakete eingerichtet.',
+  },
   'bill.kind.addon': { en: 'Add-on', de: 'Zusatz' },
   'bill.runsOut': { en: 'runs out {date}', de: 'reicht bis {date}' },
   'bill.covered': { en: 'covered', de: 'gedeckt' },
@@ -1381,10 +1511,123 @@ export const S = {
   'adm.testMail': { en: 'Send a test email', de: 'Test-E-Mail schicken' },
   'adm.mailsFailed': { en: '{n} could not be delivered', de: '{n} kamen nicht an' },
   'adm.everything': { en: 'Everything about this customer', de: 'Alles zu diesem Kunden' },
+  // Beschriftungen, die vorher `common.edit` ("Ändern") geliehen hatten – über einem Notizfeld
+  // und über der Begründung einer Gutschrift stand damit ein Wort, das nichts erklärt.
+  'adm.notes': { en: 'Internal notes', de: 'Interne Notizen' },
+  'adm.reason': { en: 'Reason', de: 'Grund' },
+  'adm.allowance': { en: 'Proxies allowed', de: 'Erlaubte Proxys' },
+
+  // ------------------------------------------------ Der Tarif-Editor
+  //
+  // Die Beschriftungen der Ja/Nein-Merkmale standen als deutsche Sätze im Quelltext des
+  // Admin-Bereichs. Ein englischsprachiger Betreiber bekam damit ein Formular, in dem die halbe
+  // Seite in einer Sprache stand, die er nicht bestellt hat.
+  'plan.slug': { en: 'Short key', de: 'Kürzel' },
+  'plan.blurbDe': { en: 'Description (DE)', de: 'Beschreibung (DE)' },
+  'plan.blurbEn': { en: 'Description (EN)', de: 'Beschreibung (EN)' },
+  'plan.blurbHint': {
+    en: 'One sentence saying who the plan is for. It sits under the name on the pricing page.',
+    de: 'Ein Satz, für wen der Tarif gedacht ist. Steht auf der Preisseite unter dem Namen.',
+  },
+  'plan.featuresDe': { en: 'Bullets on the pricing page (DE)', de: 'Merkmale auf der Preisseite (DE)' },
+  'plan.featuresEn': { en: 'Bullets on the pricing page (EN)', de: 'Merkmale auf der Preisseite (EN)' },
+  'plan.featuresHint': {
+    en: 'One line per bullet. Empty means the list is built from the numbers below.',
+    de: 'Eine Zeile je Punkt. Leer lassen heißt: die Liste wird aus den Zahlen unten gebaut.',
+  },
+  'plan.macros': { en: 'Macros per server slot', de: 'Macros je Serverplatz' },
+  'plan.discordRole': { en: 'Discord role', de: 'Discord-Rolle' },
+  'plan.discordRoleHint': {
+    en: 'Role ID. Empty means the role from the settings.',
+    de: 'Rollen-ID. Leer = die Rolle aus den Einstellungen.',
+  },
+  'plan.flag.free_slot': { en: 'The free slot (exactly one plan)', de: 'Der kostenlose Platz (genau ein Tarif)' },
+  'plan.flag.premium': {
+    en: 'Premium client: movement, anti-AFK, sneaking',
+    de: 'Premium-Client: Bewegung, Anti-AFK, Schleichen',
+  },
+  'plan.flag.movement': { en: 'The “Movement” tab in the panel', de: 'Reiter „Bewegung“ im Panel' },
+  'plan.flag.proxy': { en: 'Own outgoing address on request', de: 'Eigene Ausgangsadresse auf Anfrage' },
+  'plan.flag.offline_accounts': { en: 'Offline/cracked accounts allowed', de: 'Offline-/Cracked-Konten erlaubt' },
+  'plan.flag.fakehost': {
+    en: 'Fake host: the address the bot claims to have connected to',
+    de: 'Fake-Host: die Adresse, über die der Bot angeblich hereinkommt',
+  },
+  'plan.flag.chat_limit_editable': { en: 'Chat history adjustable by the customer', de: 'Chatverlauf selbst einstellbar' },
+  'plan.flag.priority_support': { en: 'Support with priority', de: 'Support-Vorrang' },
+  'plan.flag.board': { en: 'Scoreboard', de: 'Scoreboard' },
+  'plan.flag.menus': { en: 'Use menus', de: 'Menüs bedienen' },
+  'plan.flag.pov': { en: 'Live view (POV)', de: 'Live-Ansicht (POV)' },
+  'plan.flag.addons': { en: 'Extras bookable', de: 'Zusätze buchbar' },
+  'plan.flag.highlight': { en: 'Highlight on the pricing page', de: 'Auf der Preisseite hervorheben' },
+  'plan.flag.active': { en: 'Bookable', de: 'Buchbar' },
+
+  'nd.accessLabel': { en: 'Who may use it', de: 'Wer ihn benutzen darf' },
+  'nd.usersHint': { en: 'User IDs, comma separated', de: 'Benutzernummern, mit Komma getrennt' },
+
+  // ------------------------------------------------ Der Zusatz-Editor
+  'ad.key': { en: 'Short key', de: 'Kürzel' },
+  'ad.keyHint': { en: 'a–z, 0–9 and -', de: 'a–z, 0–9 und -' },
+  'ad.kind': { en: 'What it does', de: 'Art' },
+  'ad.kind.flag': { en: 'Switch a feature on', de: 'Merkmal einschalten' },
+  'ad.kind.slot': { en: 'More bots', de: 'Mehr Bots' },
+  'ad.flag': { en: 'Which feature', de: 'Welches Merkmal' },
+  'ad.amount': { en: 'How much per unit', de: 'Wie viel je Stück' },
+  'ad.maxQty': { en: 'At most', de: 'Höchstens' },
+  'ad.needCap': { en: 'Needs this client capability', de: 'Braucht diese Client-Fähigkeit' },
+  'ad.available': { en: 'Bookable', de: 'Buchbar' },
+  'ad.visible': { en: 'Visible', de: 'Sichtbar' },
+
+  // ------------------------------------------------ Gutscheine und Proxys
+  'adm.voucherCount': { en: 'How many codes', de: 'Wie viele Codes' },
+  'adm.voucherUses': { en: 'Redemptions per code', de: 'Einlösungen je Code' },
+  // Auf dem Knopf stand `common.yes` ("Ja, weiter") – die Beschriftung eines Bestätigungsknopfes
+  // als Beschriftung der Handlung selbst. Was der Knopf tut, sagt er jetzt.
+  'adm.markPaid': { en: 'Mark as paid', de: 'Als bezahlt buchen' },
+  'adm.voucherLeft': { en: '{n} left', de: '{n}× übrig' },
+  'adm.voucherUsedUp': { en: 'Used up', de: 'Aufgebraucht' },
+  // Der Zustand einer Aufladung stand als roher Datenbankwert da ("open", "refunded").
+  'adm.topup.open': { en: 'Open', de: 'Offen' },
+  'adm.topup.paid': { en: 'Paid', de: 'Bezahlt' },
+  'adm.topup.cancelled': { en: 'Withdrawn', de: 'Zurückgezogen' },
+  'adm.topup.refunded': { en: 'Refunded', de: 'Zurückerstattet' },
+  'adm.proxyKind': { en: 'Type', de: 'Typ' },
+  'adm.note': { en: 'Note', de: 'Notiz' },
 
   // ---------------------------------------------------------------- Website
   'nav.discord': { en: 'Discord', de: 'Discord' },
   'discord.join': { en: 'Join our Discord', de: 'Auf unseren Discord' },
+
+  // Der Gratis-Platz hängt an einer Discord-Mitgliedschaft. Diese Sätze stehen überall dort, wo
+  // das gerade der Grund ist, warum etwas nicht läuft – Streifen, Kasten, Dialog.
+  'join.joinTitle': { en: 'Your free server slot is waiting', de: 'Dein Gratis-Serverplatz wartet' },
+  'join.joinText': {
+    en: 'It only runs while your Discord account is a member of our server. One click, and the bots start.',
+    de: 'Er läuft nur, solange dein Discord-Konto Mitglied auf unserem Server ist. Ein Klick, und die Bots gehen an.',
+  },
+  'join.linkTitle': { en: 'Link your Discord account', de: 'Verknüpfe dein Discord-Konto' },
+  'join.linkText': {
+    en: 'The free server slot needs it – we cannot check a membership without knowing the account.',
+    de: 'Der Gratis-Serverplatz braucht sie – ohne das Konto lässt sich keine Mitgliedschaft prüfen.',
+  },
+  'join.linkAction': { en: 'Link it now', de: 'Jetzt verknüpfen' },
+  'join.how': { en: 'How it works', de: 'So geht es' },
+  'join.boxTitle': { en: 'One step is missing', de: 'Ein Schritt fehlt noch' },
+  'join.boxFree': {
+    en: 'The free plan costs nothing, and this is why: your Discord account has to be a member of the {brand} server. Leave it and the slot stops – nothing is deleted, and rejoining starts it again.',
+    de: 'Der Gratis-Tarif kostet nichts, und das ist der Grund: Dein Discord-Konto muss Mitglied im {brand}-Server sein. Trittst du aus, hält der Platz an – gelöscht wird nichts, und beim erneuten Beitritt läuft er weiter.',
+  },
+  'join.dialogTitle': { en: 'Join the Discord first', de: 'Zuerst dem Discord beitreten' },
+  'join.dialogText': {
+    en: 'The free server slot only runs while a linked Discord account is a member of our server. Join, then create the slot – it takes a moment and then it works right away.',
+    de: 'Der Gratis-Serverplatz läuft nur, solange ein verknüpftes Discord-Konto Mitglied auf unserem Server ist. Tritt bei, dann leg den Platz an – das dauert einen Moment und funktioniert danach sofort.',
+  },
+  'join.anyway': { en: 'Create it anyway', de: 'Trotzdem anlegen' },
+  'join.paid': { en: 'Pick a paid plan', de: 'Bezahlten Tarif wählen' },
+  'join.checking': {
+    en: 'Your membership could not be confirmed just now. The bots start again as soon as it is.',
+    de: 'Deine Mitgliedschaft ließ sich gerade nicht bestätigen. Die Bots laufen wieder, sobald sie es ist.',
+  },
   'discord.lead': {
     en: 'Questions, status, and the people who run this. Tickets work there too – linked to the panel.',
     de: 'Fragen, Störungen und die Leute dahinter. Tickets gehen auch dort – synchron mit dem Panel.',
@@ -1423,7 +1666,11 @@ export const S = {
 
 /** Ein Text in einer Sprache, mit {platzhaltern}. */
 export function t(key, lang = DEFAULT_LANG, vars = null) {
-  const entry = S[key];
+  // `Object.hasOwn`, nicht `S[key]`: Viele Aufrufe setzen den Schlüssel aus Daten zusammen
+  // (`state.${zustand}`, `tk.status.${status}`). Ein Wert wie `constructor` oder `toString` träfe
+  // sonst die Prototypenkette – heraus käme kein Text, sondern eine Funktion. Dieselbe Stelle
+  // gibt es im Vorlagen-System des Servers, und dort war genau das schon einmal ein Fehler.
+  const entry = Object.hasOwn(S, key) ? S[key] : null;
   let text = entry ? entry[lang] ?? entry[DEFAULT_LANG] ?? key : key;
   if (vars) {
     for (const [name, value] of Object.entries(vars)) {

@@ -13,13 +13,25 @@
 // Kunde, hier bearbeitet er.
 
 import {
-  api, icon, escapeHtml, credits, euro, datetime, date, since, bytes, meter, mcText, tr, $, $$,
-  ok, fail, toast, confirmDialog, formDialog, copy, debounce,
+  api, icon, escapeHtml, credits, euro, datetime, date, clock, since, bytes, meter, mcText, todoList,
+  safeLink, lang, tr, $, $$, ok, fail, toast, confirmDialog, formDialog, copy, debounce,
 } from '../ui.js';
 import { mergeLines } from '../chatlog.js';
 import { state, appbar, draw, go, ADMIN_GROUPS } from '../app.js';
+import * as chart from '../charts.js';
 
 const ADMIN_ITEMS = ADMIN_GROUPS.flatMap((group) => group.items);
+
+/**
+ * Ein zweisprachiges Feld in der Sprache des Panels.
+ *
+ * Tarife, Zusätze und Ankündigungen liegen in beiden Sprachen in der Datenbank – der Admin-Bereich
+ * las an mehreren Stellen aber fest die deutsche Fassung. Ein englischsprachiger Betreiber sah
+ * dort deutsche Namen, während dieselbe Sache eine Zeile weiter englisch dastand. Fehlt die
+ * Fassung der eigenen Sprache, gilt die andere: ein leerer Name wäre schlechter als ein fremder.
+ */
+const bilingual = (row, field) =>
+  String((lang === 'de' ? row?.[`${field}_de`] : row?.[`${field}_en`]) || row?.[`${field}_de`] || row?.[`${field}_en`] || '');
 
 const accountKindLabel = (kind) =>
   tr(kind === 'offline' ? 'acc.kind.offline' : kind === 'microsoft' ? 'acc.kind.microsoft' : 'common.none');
@@ -28,6 +40,51 @@ const accountStatusLabel = (status) => {
   const keys = { ok: 'acc.ok', pending: 'acc.pending', error: 'acc.error' };
   return tr(keys[status] || 'state.offline');
 };
+
+/**
+ * Zeilen, die sich anklicken lassen – und zwar auch mit der Tastatur.
+ *
+ * Eine Tabellenzeile mit `cursor: pointer` und einem Klick-Ereignis ist für die Maus ein Knopf und
+ * für alles andere gar nichts: kein Tab-Stopp, keine Ansage im Screenreader, keine Enter-Taste.
+ * Das betraf im Admin-Bereich jede Liste – Nutzer, Serverplätze, Tickets, Post. Hier steht das
+ * einmal und gilt überall.
+ */
+function bindRows(selector, open, root = document) {
+  for (const row of $$(selector, root)) {
+    if (!row.hasAttribute('role')) row.setAttribute('role', 'button');
+    if (!row.hasAttribute('tabindex')) row.setAttribute('tabindex', '0');
+    row.addEventListener('click', () => open(row));
+    row.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      // Nur die Zeile selbst: Ein Knopf **in** der Zeile hat seine eigene Bedeutung, und die soll
+      // die Leertaste nicht überschreiben.
+      if (event.target !== row) return;
+      event.preventDefault();
+      open(row);
+    });
+  }
+}
+
+/**
+ * Einen Aufruf abschicken und **ehrlich** melden, was daraus wurde.
+ *
+ * Das Muster `await api(…).catch(fail); ok('Gespeichert.')` stand an einem guten Dutzend Stellen –
+ * und es zeigte im Fehlerfall beides nebeneinander: die rote Absage und die grüne Bestätigung.
+ * Wer nur auf die zweite sah, hielt eine Änderung für gespeichert, die nie ankam.
+ *
+ * Gibt `true` zurück, wenn es geklappt hat – damit der Aufrufer entscheiden kann, ob er die
+ * Ansicht neu zeichnet.
+ */
+async function send(path, options, { done = true } = {}) {
+  try {
+    const result = await api(path, options);
+    if (done) ok(tr('adm.saved'));
+    return result ?? true;
+  } catch (error) {
+    fail(error);
+    return false;
+  }
+}
 
 function bindAdminSwitches(selector, save) {
   $$(selector).forEach((node) => {
@@ -149,9 +206,17 @@ function numbers(answer, extra = []) {
 // ---------------------------------------------------------------- Überblick
 
 async function overview(root) {
-  const data = await api('/admin/overview');
+  // Zwei Aufrufe, weil es zwei verschiedene Dinge sind: `/overview` zählt den Zustand von jetzt,
+  // `/stats` rechnet Reihen über Wochen. Zusammen wären sie eine Abfrage, die bei jedem Öffnen
+  // die halbe Datenbank durchgeht.
+  const [data, stats] = await Promise.all([
+    api('/admin/overview'),
+    api('/admin/stats').catch(() => null),
+  ]);
 
   root.innerHTML = `
+    ${todoList(data.todos || [], { title: tr("adm.todo") })}
+
     <div class="grid four" style="margin-bottom:1.5rem">
       ${stat(tr('adm.users'), data.users, tr('adm.usersLine', { new: data.users_new_30d, active: data.users_active_24h }))}
       ${stat(tr('adm.bots'), data.bots_running, `${data.bots_online} × ${tr('state.online')}`)}
@@ -217,7 +282,9 @@ async function overview(root) {
           ${health(tr('auth.register.title'), Number(data.settings.registration_open))}
         </div>
       </section>
-    </div>`;
+    </div>
+
+    ${statsPanels(stats)}`;
 
   $('#sync').addEventListener('click', async (event) => {
     event.target.disabled = true;
@@ -230,6 +297,185 @@ async function overview(root) {
       event.target.disabled = false;
     }
   });
+}
+
+/**
+ * Die Diagramme der Administration.
+ *
+ * Sie beantworten die Fragen, die man am Monatsende stellt und für die sonst jemand die Datenbank
+ * aufmachen müsste: Kommt Geld herein und wie viel? Kommen Kunden dazu? Wofür geben sie ihr
+ * Guthaben aus? Wie verteilt sich alles auf die Tarife? Wo geht die Arbeit hin?
+ *
+ * Die Reihenfolge ist die einer Antwort und keine Sammlung: erst das Geld über die Zeit, dann die
+ * Kunden, dann die Verteilung, ganz unten die Bestenlisten. Jede Kachel trägt ihre wichtigste Zahl
+ * groß über dem Bild – wer nur die sucht, muss die Kurve gar nicht lesen.
+ */
+function statsPanels(stats) {
+  if (!stats) return '';
+  const langCode = lang === 'de' ? 'de-DE' : 'en-GB';
+  /**
+   * Ein Geldformat **je Diagramm**, nicht je Zahl.
+   *
+   * Vorher entschied jeder Wert für sich, ob er Nachkommastellen bekommt – und in derselben Liste
+   * standen dann „294 €“ und „30.00 €“ untereinander. Zwei Schreibweisen für dieselbe Sorte Zahl
+   * liest man als zwei verschiedene Sorten Zahl. Die Entscheidung fällt deshalb einmal, am
+   * größten Wert der Reihe.
+   */
+  const euroScale = (values) => {
+    const top = Math.max(0, ...values.map((value) => Number(value) || 0));
+    const digits = top >= 10_000 ? 0 : 2;
+    return (cent) => `${(cent / 100).toFixed(digits)} €`;
+  };
+  const asEuro = euroScale([stats.totals.revenue_cent]);
+  const count = (value) => Number(value || 0).toLocaleString(langCode);
+  const hours = (seconds) => `${Math.round(seconds / 3600).toLocaleString(langCode)} h`;
+  const dayShort = (key) => key.slice(8);
+  const monthShort = (key) => {
+    const [year, month] = key.split('-');
+    return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(langCode, { month: 'short' });
+  };
+
+  const revenueDays = stats.revenue_days || [];
+  const revenueWindow = revenueDays.reduce((sum, entry) => sum + entry.value, 0);
+  const signups = stats.signups || [];
+  const newUsers = signups.reduce((sum, entry) => sum + entry.value, 0);
+  const spent = stats.spent_days || [];
+  const ticketDays = stats.tickets_days || [];
+
+  return `
+    <h2 class="section-title">${escapeHtml(tr('adm.stats.title'))}</h2>
+
+    <div class="grid three" style="margin-bottom:1.5rem">
+      ${chart.card({
+        title: tr('adm.stats.revenue'),
+        value: asEuro(revenueWindow),
+        note: tr('bill.chart.days', { n: stats.days }),
+        chart: chart.bars(
+          revenueDays.map((entry) => ({ label: entry.day, short: dayShort(entry.day), value: entry.value })),
+          { format: euroScale(revenueDays.map((entry) => entry.value)) }
+        ),
+        foot: escapeHtml(
+          tr('adm.stats.revenueFoot', {
+            total: asEuro(stats.totals.revenue_cent),
+            back: asEuro(stats.totals.refunded_cent),
+          })
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.signups'),
+        value: count(newUsers),
+        note: tr('bill.chart.days', { n: stats.days }),
+        // Balken, keine Linie: Das sind gezählte Ereignisse je Tag und keine Größe, die sich
+        // zwischen zwei Tagen stetig ändert. Eine Linie zwischen null und eins behauptet, es habe
+        // zwischendurch eine halbe Anmeldung gegeben.
+        chart: chart.bars(
+          signups.map((entry) => ({ label: entry.day, short: dayShort(entry.day), value: entry.value })),
+          { format: count, color: chart.SERIES[2] }
+        ),
+        foot: escapeHtml(tr('adm.stats.signupsFoot', { total: count(stats.totals.users) })),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.spent'),
+        value: count(spent.reduce((sum, entry) => sum + entry.value, 0)),
+        note: tr('bill.chart.days', { n: stats.days }),
+        chart: chart.bars(
+          spent.map((entry) => ({ label: entry.day, short: dayShort(entry.day), value: entry.value })),
+          { format: count, color: chart.SERIES[1] }
+        ),
+        foot: escapeHtml(
+          tr('adm.stats.spentFoot', { open: count(stats.totals.credits_outstanding) })
+        ),
+      })}
+    </div>
+
+    <div class="grid three" style="margin-bottom:1.5rem">
+      ${chart.card({
+        title: tr('adm.stats.months'),
+        value: asEuro((stats.revenue_months || []).slice(-1)[0]?.cent || 0),
+        note: tr('bill.chart.thisMonth'),
+        chart: chart.bars(
+          (stats.revenue_months || []).map((entry) => ({
+            label: entry.month,
+            short: monthShort(entry.month),
+            value: entry.cent,
+          })),
+          { format: euroScale((stats.revenue_months || []).map((entry) => entry.cent)) }
+        ),
+        foot: escapeHtml(tr('adm.stats.monthsFoot')),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.tickets'),
+        value: count(ticketDays.reduce((sum, entry) => sum + entry.value, 0)),
+        note: tr('bill.chart.days', { n: stats.days }),
+        chart: chart.bars(
+          ticketDays.map((entry) => ({ label: entry.day, short: dayShort(entry.day), value: entry.value })),
+          { format: count, color: chart.SERIES[3] }
+        ),
+        foot: chart.stacked(
+          (stats.by_ticket_status || []).map((row) => ({
+            label: tr(`tk.status.${row.label}`),
+            value: row.n,
+          })),
+          { format: count }
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.plans'),
+        value: count(stats.totals.profiles),
+        note: tr('adm.servers'),
+        chart: chart.hbars(
+          (stats.by_plan || []).map((row) => ({ label: row.label, value: row.n })),
+          { format: count }
+        ),
+        foot: chart.stacked(
+          (stats.by_bot_state || []).map((row) => ({ label: tr(`state.${row.label}`), value: row.n })),
+          { format: count }
+        ),
+      })}
+    </div>
+
+    <div class="grid three" style="margin-bottom:1.5rem">
+      ${chart.card({
+        title: tr('adm.stats.providers'),
+        value: count((stats.by_provider || []).reduce((sum, row) => sum + row.n, 0)),
+        note: tr('adm.topups'),
+        chart: chart.hbars(
+          (stats.by_provider || []).map((row) => ({ label: row.label, value: row.cent })),
+          { format: euroScale((stats.by_provider || []).map((row) => row.cent)) }
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.uptime'),
+        value: hours(stats.totals.uptime_sec),
+        note: tr('ov.chart.total'),
+        chart: chart.hbars(
+          (stats.top_slots || []).map((row) => ({
+            label: `${row.label} · ${row.username}`,
+            value: row.seconds,
+          })),
+          { format: hours, color: chart.SERIES[2] }
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.customers'),
+        // Die Zahl über einem Diagramm gehört zu dem, was darunter steht. Hier stand die Zahl der
+        // laufenden Bots über einer Liste zahlender Kunden – zwei Dinge, die nichts miteinander zu
+        // tun haben, in einer Kachel.
+        value: count((stats.top_customers || []).length),
+        note: tr('adm.stats.customersNote'),
+        chart: chart.hbars(
+          (stats.top_customers || []).map((row) => ({ label: row.label, value: row.cent })),
+          { format: euroScale((stats.top_customers || []).map((row) => row.cent)), color: chart.SERIES[1] }
+        ),
+        foot: chart.stacked(
+          (stats.by_account_status || []).map((row) => ({
+            label: accountStatusLabel(row.label),
+            value: row.n,
+          })),
+          { format: count }
+        ),
+      })}
+    </div>`;
 }
 
 const health = (label, good, note = '') => `<div class="row spread">
@@ -334,9 +580,7 @@ async function system(root) {
         )
       )}`;
 
-    $$('[data-server]').forEach((row) =>
-      row.addEventListener('click', () => go(`/admin/servers/${row.dataset.server}`))
-    );
+    bindRows('[data-server]', (row) => go(`/admin/servers/${row.dataset.server}`));
   };
 
   paint(await api('/admin/metrics'));
@@ -412,9 +656,7 @@ async function staffTickets(root) {
       </div>
     </section>`;
 
-  $$('[data-open]').forEach((node) =>
-    node.addEventListener('click', () => go(`/admin/tickets/${node.dataset.open}`))
-  );
+  bindRows('[data-open]', (node) => go(`/admin/tickets/${node.dataset.open}`));
 
   const reload = debounce(() => {
     go(
@@ -439,12 +681,16 @@ async function staffTickets(root) {
 }
 
 function staffRow(ticket) {
-  return `<li class="ticket-row ${ticket.unread_staff ? 'is-unread' : ''}" data-open="${ticket.id}">
-    <span class="ticket-dot ${ticket.status}"></span>
+  // Dieselbe Regel wie in der Kundenansicht: Die Benachrichtigung steht **am Ticket**. Die Zahl
+  // in der Seitenleiste sagt nur, dass etwas wartet, nicht worauf.
+  const waiting = Boolean(ticket.unread_staff);
+  return `<li class="ticket-row ${waiting ? 'is-unread' : ''}" data-open="${ticket.id}">
+    <span class="ticket-dot ${escapeHtml(ticket.status)}"></span>
     <div class="grow" style="min-width:0">
       <div class="row" style="gap:.5rem">
         <span class="strong truncate">${escapeHtml(ticket.subject)}</span>
         <span class="small muted mono">#${ticket.id}</span>
+        ${waiting ? `<span class="pill unread">${icon('bell')} ${escapeHtml(tr('tk.unreadStaff'))}</span>` : ''}
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
       </div>
       <div class="small muted truncate">
@@ -570,9 +816,7 @@ async function users(root) {
   }, 350);
   $('#search').addEventListener('input', search);
   $('#filter').addEventListener('change', search);
-  $$('[data-user]').forEach((row) =>
-    row.addEventListener('click', () => go(`/admin/users/${row.dataset.user}`))
-  );
+  bindRows('[data-user]', (row) => go(`/admin/users/${row.dataset.user}`));
 
   $('#new').addEventListener('click', async () => {
     const answer = await formDialog(
@@ -778,12 +1022,12 @@ async function userDetail(root, id) {
     <section class="panel">
       <header><h3>${escapeHtml(tr('adm.detail'))}</h3></header>
       <div class="body stack">
-        <div class="field"><label for="notes">${escapeHtml(tr('common.edit'))}</label>
+        <div class="field"><label for="notes">${escapeHtml(tr('adm.notes'))}</label>
           <textarea id="notes" rows="4" placeholder="${escapeHtml(tr('adm.everything'))}">${escapeHtml(
             user.notes || ''
           )}</textarea></div>
         <div class="row">
-          <div class="field" style="max-width:10rem"><label for="allowance">${escapeHtml(tr('px.title'))}</label>
+          <div class="field" style="max-width:10rem"><label for="allowance">${escapeHtml(tr('adm.allowance'))}</label>
             <input id="allowance" type="number" min="0" max="100" value="${user.proxy_allowance || 0}"></div>
           <button class="btn btn-primary" id="save-notes" style="align-self:flex-end">${escapeHtml(
             tr('common.save')
@@ -814,7 +1058,7 @@ async function userDetail(root, id) {
       tr('adm.addCredits'),
       [
         { key: 'credits_delta', label: tr('common.credits'), type: 'number', value: 100, required: true },
-        { key: 'note', label: tr('common.edit'), value: '' },
+        { key: 'note', label: tr('adm.reason'), value: '' },
       ],
       { submit: tr('common.save'), note: `${tr('bill.balance')}: ${credits(user.credits)}` }
     );
@@ -915,14 +1159,21 @@ async function userDetail(root, id) {
   $('#role').addEventListener('click', () => patch({ role: user.role === 'admin' ? 'user' : 'admin' }));
   $('#verify')?.addEventListener('click', () => patch({ email_verified: true }));
 
-  $('#stop').addEventListener('click', async () => {
-    await api(`/admin/users/${id}/stop-bots`, { method: 'POST' }).catch(fail);
-    ok(tr('adm.saved'));
-  });
+  // `.catch(fail)` fängt den Fehler – und danach lief trotzdem `ok('Gespeichert.')`. Der
+  // Betreiber sah also beides nebeneinander: die Absage und die Bestätigung. Was schiefging,
+  // wird gemeldet; bestätigt wird nur, was geklappt hat.
+  const doPost = async (path) => {
+    try {
+      await api(path, { method: 'POST' });
+      ok(tr('adm.saved'));
+    } catch (error) {
+      fail(error);
+    }
+  };
+  $('#stop').addEventListener('click', () => doPost(`/admin/users/${id}/stop-bots`));
   $('#logout').addEventListener('click', async () => {
     if (!(await confirmDialog(tr('adm.logoutUser')))) return;
-    await api(`/admin/users/${id}/logout`, { method: 'POST' }).catch(fail);
-    ok(tr('adm.saved'));
+    await doPost(`/admin/users/${id}/logout`);
   });
 
   $('#impersonate').addEventListener('click', async () => {
@@ -949,21 +1200,15 @@ async function userDetail(root, id) {
   $$('[data-extend]').forEach((button) =>
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
-      await api(`/admin/profiles/${button.dataset.extend}`, {
+      if (await send(`/admin/profiles/${button.dataset.extend}`, {
         method: 'PATCH',
         body: { extend_days: 30 },
-      }).catch(fail);
-      ok(tr('adm.saved'));
-      draw();
+      })) draw();
     })
   );
 
-  $$('[data-server]').forEach((row) =>
-    row.addEventListener('click', () => go(`/admin/servers/${row.dataset.server}`))
-  );
-  $$('[data-ticket]').forEach((row) =>
-    row.addEventListener('click', () => go(`/admin/tickets/${row.dataset.ticket}`))
-  );
+  bindRows('[data-server]', (row) => go(`/admin/servers/${row.dataset.server}`));
+  bindRows('[data-ticket]', (row) => go(`/admin/tickets/${row.dataset.ticket}`));
 }
 
 // ---------------------------------------------------------------- Serverplätze
@@ -998,9 +1243,7 @@ async function servers(root) {
     )
   );
 
-  $$('[data-open]').forEach((row) =>
-    row.addEventListener('click', () => go(`/admin/servers/${row.dataset.open}`))
-  );
+  bindRows('[data-open]', (row) => go(`/admin/servers/${row.dataset.open}`));
   $$('[data-extend]').forEach((button) =>
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
@@ -1014,8 +1257,7 @@ async function servers(root) {
     button.addEventListener('click', async (event) => {
       event.stopPropagation();
       if (!(await confirmDialog(tr('common.delete'), { confirm: tr('common.delete') }))) return;
-      await api(`/admin/profiles/${button.dataset.del}`, { method: 'DELETE' }).catch(fail);
-      draw();
+      if (await send(`/admin/profiles/${button.dataset.del}`, { method: 'DELETE' })) draw();
     })
   );
 }
@@ -1089,7 +1331,7 @@ async function serverDetail(root, id) {
                         ${account.pid ? `· PID ${account.pid}` : ''}</div>
                       ${
                         account.suspended
-                          ? `<div class="small" style="color:var(--warn)">${escapeHtml(
+                          ? `<div class="small" style="color:var(--warn-text)">${escapeHtml(
                               account.suspend_reason || tr('acc.suspended')
                             )}</div>`
                           : ''
@@ -1163,7 +1405,7 @@ async function serverDetail(root, id) {
             .map((addon) => {
               const booked = data.addons.find((entry) => entry.id === addon.id);
               return `<div class="row spread">
-                <span>${escapeHtml(addon.name_de)}
+                <span>${escapeHtml(bilingual(addon, 'name'))}
                   <span class="small muted">· ${credits(addon.price_credits)}</span></span>
                 <input type="number" class="mini" min="0" max="${addon.max_qty}" value="${booked?.qty || 0}"
                   data-addon="${addon.id}" style="max-width:5rem">
@@ -1186,7 +1428,10 @@ async function serverDetail(root, id) {
     box.innerHTML = mergeLines(lines)
       .slice(-500)
       .map(
-        (entry) => `<div class="line ${entry.type}"><span class="t">${new Date(entry.t).toLocaleTimeString()}</span>
+        // `clock()` schreibt die Uhrzeit in der Sprache des Panels – ein blankes
+        // `toLocaleTimeString()` nimmt die des Betriebssystems, und dann stand in der
+        // Admin-Konsole "3:07:11 PM", während im Chat des Kunden daneben "15:07:11" steht.
+        (entry) => `<div class="line ${entry.type}"><span class="t">${clock(entry.t)}</span>
           ${
             data.accounts.length > 1 && entry.account_id
               ? `<span class="who">${escapeHtml(names[entry.account_id] || '')}</span>`
@@ -1240,15 +1485,13 @@ async function serverDetail(root, id) {
 
   for (const [selector, action] of [['#start', 'start'], ['#stop', 'stop'], ['#restart', 'restart']]) {
     $(selector).addEventListener('click', async () => {
-      await api(`/admin/servers/${id}/${action}`, { method: 'POST' }).catch(fail);
-      ok(tr('adm.saved'));
+      await send(`/admin/servers/${id}/${action}`, { method: 'POST' });
     });
   }
 
   $('#lock').addEventListener('click', async () => {
     if (profile.locked) {
-      await api(`/admin/servers/${id}/lock`, { method: 'POST', body: { locked: false } }).catch(fail);
-      draw();
+      if (await send(`/admin/servers/${id}/lock`, { method: 'POST', body: { locked: false } })) draw();
       return;
     }
     const answer = await formDialog(
@@ -1257,25 +1500,21 @@ async function serverDetail(root, id) {
       { submit: tr('adm.lock') }
     );
     if (!answer) return;
-    await api(`/admin/servers/${id}/lock`, {
+    if (await send(`/admin/servers/${id}/lock`, {
       method: 'POST',
       body: { locked: true, reason: answer.reason },
-    }).catch(fail);
-    draw();
+    })) draw();
   });
 
   $('#extend').addEventListener('click', async () => {
-    await api(`/admin/profiles/${id}`, { method: 'PATCH', body: { extend_days: 30 } }).catch(fail);
-    ok(tr('adm.saved'));
-    draw();
+    if (await send(`/admin/profiles/${id}`, { method: 'PATCH', body: { extend_days: 30 } })) draw();
   });
 
   $('#suspend').addEventListener('click', async () => {
-    await api(`/admin/profiles/${id}`, {
+    if (await send(`/admin/profiles/${id}`, {
       method: 'PATCH',
       body: { suspended: !profile.suspended },
-    }).catch(fail);
-    draw();
+    })) draw();
   });
 
   $$('[data-account-suspend]').forEach((button) => {
@@ -1284,12 +1523,10 @@ async function serverDetail(root, id) {
   });
 
   $('#plan').addEventListener('change', async (event) => {
-    await api(`/admin/profiles/${id}`, {
+    if (await send(`/admin/profiles/${id}`, {
       method: 'PATCH',
       body: { plan_id: Number(event.target.value) },
-    }).catch(fail);
-    ok(tr('adm.saved'));
-    draw();
+    })) draw();
   });
 
   $('#move').addEventListener('click', async () => {
@@ -1307,11 +1544,10 @@ async function serverDetail(root, id) {
       { submit: tr('nd.change') }
     );
     if (!answer) return;
-    await api(`/admin/servers/${id}/node`, {
+    if (await send(`/admin/servers/${id}/node`, {
       method: 'POST',
       body: { node_id: Number(answer.node_id) },
-    }).catch(fail);
-    draw();
+    })) draw();
   });
 
   $$('[data-addon]').forEach((input) =>
@@ -1560,7 +1796,7 @@ async function nodes(root) {
     },
     {
       key: 'access',
-      label: tr('nd.access.all'),
+      label: tr('nd.accessLabel'),
       type: 'select',
       value: node.access || 'all',
       options: data.access.map((value) => ({ value, label: tr(`nd.access.${value}`) })),
@@ -1568,7 +1804,7 @@ async function nodes(root) {
     {
       key: 'users',
       label: tr('adm.users'),
-      hint: `${tr('nd.access.listed')} — IDs, Komma getrennt`,
+      hint: `${tr('nd.access.listed')} — ${tr('nd.usersHint')}`,
       value: (node.users || []).map((user) => user.id).join(', '),
     },
     { key: 'note', label: tr('nd.note'), value: node.note || '' },
@@ -1658,22 +1894,30 @@ async function nodes(root) {
  * Vorher stand hier der reine Spaltenname als Beschriftung ("offline_accounts", "chat_limit_
  * editable") – wer den Tarif ändern wollte, musste raten oder in der Datenbank nachsehen.
  */
-const PLAN_FLAGS = [
-  ['free_slot', 'Der kostenlose Platz (genau ein Tarif)'],
-  ['premium', 'Premium-Client: Bewegung, Anti-AFK, Schleichen'],
-  ['movement', 'Reiter "Bewegung" im Panel'],
-  ['proxy', 'Eigene Ausgangsadresse auf Anfrage'],
-  ['offline_accounts', 'Offline-/Cracked-Konten erlaubt'],
-  ['chat_limit_editable', 'Chatverlauf selbst einstellbar'],
-  ['priority_support', 'Support-Vorrang'],
-  ['board', 'Scoreboard'],
-  ['menus', 'Menüs bedienen'],
-  ['pov', 'Live-Ansicht (POV)'],
-  ['addons', 'Zusätze buchbar'],
-  ['highlight', 'Auf der Preisseite hervorheben'],
-  ['active', 'Buchbar'],
+/**
+ * Die Ja/Nein-Merkmale eines Tarifs.
+ *
+ * Die Beschriftung steht in i18n.js wie jeder andere sichtbare Text (`plan.flag.<merkmal>`) –
+ * vorher standen hier deutsche Sätze im Quelltext, und der Admin-Bereich war damit auf Englisch
+ * halb deutsch. `fakehost` fehlte ganz: Die Spalte gibt es, der Server nimmt sie entgegen, und
+ * `profiles.js` entscheidet daran über den Fake-Host – nur ändern ließ sie sich hier nicht.
+ */
+const PLAN_FLAG_KEYS = [
+  'free_slot',
+  'premium',
+  'movement',
+  'proxy',
+  'offline_accounts',
+  'fakehost',
+  'chat_limit_editable',
+  'priority_support',
+  'board',
+  'menus',
+  'pov',
+  'addons',
+  'highlight',
+  'active',
 ];
-const PLAN_FLAG_KEYS = PLAN_FLAGS.map(([key]) => key);
 
 async function plans(root) {
   const data = await api('/admin/plans');
@@ -1713,42 +1957,43 @@ async function plans(root) {
     { key: 'name_en', label: 'Name (EN)', value: plan.name_en || '', required: true },
     {
       key: 'blurb_de',
-      label: 'Beschreibung (DE)',
+      label: tr('plan.blurbDe'),
       type: 'textarea',
       value: plan.blurb_de || '',
-      hint: 'Ein Satz, für wen der Tarif gedacht ist. Steht auf der Preisseite unter dem Namen.',
+      hint: tr('plan.blurbHint'),
     },
-    { key: 'blurb_en', label: 'Beschreibung (EN)', type: 'textarea', value: plan.blurb_en || '' },
+    { key: 'blurb_en', label: tr('plan.blurbEn'), type: 'textarea', value: plan.blurb_en || '' },
     // Der Wortlaut der Merkmalsliste auf der Preisseite. Leer = die Liste baut sich aus den
     // Zahlen dieses Tarifs zusammen (siehe planLines in server/landing.js).
     {
       key: 'features_de',
-      label: 'Merkmale auf der Preisseite (DE)',
+      label: tr('plan.featuresDe'),
       type: 'textarea',
       value: plan.features_de || '',
-      hint: 'Eine Zeile je Punkt. Leer lassen heißt: die Liste wird aus den Zahlen unten gebaut.',
+      hint: tr('plan.featuresHint'),
     },
     {
       key: 'features_en',
-      label: 'Merkmale auf der Preisseite (EN)',
+      label: tr('plan.featuresEn'),
       type: 'textarea',
       value: plan.features_en || '',
-      hint: 'One line per bullet. Empty means the list is built from the numbers below.',
+      hint: tr('plan.featuresHint'),
     },
     { key: 'price_credits', label: `${tr('common.credits')} / 30 d`, type: 'number', min: 0, value: plan.price_credits ?? 0 },
     { key: 'max_accounts', label: tr('pricing.bots'), type: 'number', min: 1, value: plan.max_accounts ?? 1 },
     { key: 'chat_limit', label: tr('pricing.chatHistory'), type: 'number', min: 20, value: plan.chat_limit ?? 200 },
-    { key: 'max_macros', label: 'Macros', type: 'number', min: 0, value: plan.max_macros ?? 20 },
-    { key: 'sort', label: tr('common.status'), type: 'number', min: 0, value: plan.sort ?? 50 },
+    { key: 'max_macros', label: tr('plan.macros'), type: 'number', min: 0, value: plan.max_macros ?? 20 },
+    // "Zustand" stand über dem Feld für die **Reihenfolge** – ein Wort, das nichts damit zu tun hat.
+    { key: 'sort', label: tr('common.order'), type: 'number', min: 0, value: plan.sort ?? 50 },
     {
       key: 'discord_role',
-      label: 'Discord-Rolle',
+      label: tr('plan.discordRole'),
       value: plan.discord_role || '',
-      hint: 'Rollen-ID. Leer = die Rolle aus den Einstellungen.',
+      hint: tr('plan.discordRoleHint'),
     },
-    ...PLAN_FLAGS.map(([flag, label]) => ({
+    ...PLAN_FLAG_KEYS.map((flag) => ({
       key: flag,
-      label,
+      label: tr(`plan.flag.${flag}`),
       type: 'checkbox',
       value: Boolean(plan[flag]),
     })),
@@ -1757,7 +2002,7 @@ async function plans(root) {
   $('#new').addEventListener('click', async () => {
     const answer = await formDialog(
       tr('common.create'),
-      [{ key: 'slug', label: 'slug', required: true }, ...fields()],
+      [{ key: 'slug', label: tr('plan.slug'), required: true }, ...fields()],
       { submit: tr('common.create') }
     );
     if (!answer) return;
@@ -1843,7 +2088,7 @@ async function addons(root) {
     )}`;
 
   const fields = (addon = {}) => [
-    { key: 'key', label: 'Kürzel', value: addon.key || '', required: true, hint: 'a–z, 0–9 und -' },
+    { key: 'key', label: tr('ad.key'), value: addon.key || '', required: true, hint: tr('ad.keyHint') },
     { key: 'name_de', label: 'Name (DE)', value: addon.name_de || '', required: true },
     { key: 'name_en', label: 'Name (EN)', value: addon.name_en || '' },
     { key: 'text_de', label: 'Text (DE)', type: 'textarea', value: addon.text_de || '' },
@@ -1851,26 +2096,26 @@ async function addons(root) {
     { key: 'price_credits', label: `${tr('common.credits')} / 30 d`, type: 'number', min: 0, value: addon.price_credits ?? 0 },
     {
       key: 'kind',
-      label: 'Art',
+      label: tr('ad.kind'),
       type: 'select',
       value: addon.kind || 'flag',
       options: [
-        { value: 'flag', label: 'Merkmal einschalten' },
-        { value: 'slot', label: 'Mehr Bots' },
+        { value: 'flag', label: tr('ad.kind.flag') },
+        { value: 'slot', label: tr('ad.kind.slot') },
       ],
     },
     {
       key: 'flag',
-      label: 'Merkmal',
+      label: tr('ad.flag'),
       value: addon.flag || '',
       hint: 'board · menus · pov · movement · proxy · fakehost · offline_accounts',
     },
-    { key: 'amount', label: 'Wie viel je Stück', type: 'number', min: 1, value: addon.amount ?? 1 },
-    { key: 'max_qty', label: 'Höchstens', type: 'number', min: 1, value: addon.max_qty ?? 1 },
-    { key: 'need_cap', label: 'Braucht Client-Fähigkeit', value: addon.need_cap || '' },
-    { key: 'sort', label: tr('common.status'), type: 'number', min: 0, value: addon.sort ?? 50 },
-    { key: 'available', label: 'Buchbar', type: 'checkbox', value: addon.available !== 0 },
-    { key: 'active', label: 'Sichtbar', type: 'checkbox', value: addon.active !== 0 },
+    { key: 'amount', label: tr('ad.amount'), type: 'number', min: 1, value: addon.amount ?? 1 },
+    { key: 'max_qty', label: tr('ad.maxQty'), type: 'number', min: 1, value: addon.max_qty ?? 1 },
+    { key: 'need_cap', label: tr('ad.needCap'), value: addon.need_cap || '' },
+    { key: 'sort', label: tr('common.order'), type: 'number', min: 0, value: addon.sort ?? 50 },
+    { key: 'available', label: tr('ad.available'), type: 'checkbox', value: addon.available !== 0 },
+    { key: 'active', label: tr('ad.visible'), type: 'checkbox', value: addon.active !== 0 },
   ];
 
   $('#new').addEventListener('click', async () => {
@@ -1917,6 +2162,13 @@ async function addons(root) {
 
 // ---------------------------------------------------------------- Aufladungen und Gutscheine
 
+/** Der Zustand einer Aufladung, wie ihn ein Mensch liest – nicht der rohe Datenbankwert. */
+const topupStatus = (status) => {
+  const label = tr(`adm.topup.${status}`);
+  // Ein unbekannter Zustand bleibt sichtbar, statt als leere Zelle zu verschwinden.
+  return label === `adm.topup.${status}` ? String(status) : label;
+};
+
 async function topups(root) {
   const data = await api('/admin/topups');
   root.innerHTML = panel(
@@ -1930,12 +2182,14 @@ async function topups(root) {
           <td class="small">${escapeHtml(topup.provider)}</td>
           <td class="mono">${credits(topup.credits)} <span class="small muted">${euro(topup.amount_cent)}</span></td>
           <td class="mono small">${escapeHtml(topup.reference || '–')}</td>
-          <td><span class="pill ${topup.status === 'open' ? 'missing' : ''}">${escapeHtml(topup.status)}</span></td>
+          <td><span class="pill ${topup.status === 'open' ? 'missing' : ''}">${escapeHtml(
+            topupStatus(topup.status)
+          )}</span></td>
           <td style="text-align:right;white-space:nowrap">
             ${
               topup.status === 'open'
                 ? `<button class="btn btn-sm btn-primary" data-settle="${topup.id}">${escapeHtml(
-                    tr('common.yes')
+                    tr('adm.markPaid')
                   )}</button>
                    <button class="btn btn-sm" data-cancel="${topup.id}">${escapeHtml(tr('common.cancel'))}</button>`
                 : `<span class="small muted mono">${topup.paid_at ? datetime(topup.paid_at) : ''}</span>`
@@ -1981,8 +2235,8 @@ async function vouchers(root) {
               // In der Datenbank steht, wie viele Einlösungen **übrig** sind – nicht, wie viele
               // schon waren. Die frühere Anzeige "used/uses" gab es nirgends und blieb leer.
               voucher.uses_left > 0
-                ? `${voucher.uses_left}× ${tr('common.open')}`
-                : `<span class="pill missing">${tr('bill.voucher')}</span>`
+                ? escapeHtml(tr('adm.voucherLeft', { n: voucher.uses_left }))
+                : `<span class="pill missing">${escapeHtml(tr('adm.voucherUsedUp'))}</span>`
             }${voucher.expires_at ? ` · ${date(voucher.expires_at)}` : ''}</td>
             <td class="small muted">${escapeHtml(voucher.note || '')}</td>
             <td style="text-align:right;white-space:nowrap">
@@ -2001,10 +2255,16 @@ async function vouchers(root) {
       tr('common.create'),
       [
         { key: 'credits', label: tr('common.credits'), type: 'number', min: 1, value: 500, required: true },
-        { key: 'count', label: 'Wie viele Codes', type: 'number', min: 1, max: 50, value: 1 },
-        { key: 'uses', label: 'Einlösungen je Code', type: 'number', min: 1, value: 1 },
-        { key: 'expires_days', label: `${tr('common.days')} (0 = nie)`, type: 'number', min: 0, value: 0 },
-        { key: 'note', label: tr('common.edit'), value: '' },
+        { key: 'count', label: tr('adm.voucherCount'), type: 'number', min: 1, max: 50, value: 1 },
+        { key: 'uses', label: tr('adm.voucherUses'), type: 'number', min: 1, value: 1 },
+        {
+          key: 'expires_days',
+          label: `${tr('common.days')} (0 = ${tr('common.never')})`,
+          type: 'number',
+          min: 0,
+          value: 0,
+        },
+        { key: 'note', label: tr('adm.note'), value: '' },
       ],
       { submit: tr('common.create') }
     );
@@ -2074,7 +2334,7 @@ async function proxies(root) {
     },
     {
       key: 'kind',
-      label: 'Typ',
+      label: tr('adm.proxyKind'),
       type: 'select',
       value: proxy.kind || 'socks5',
       options: ['socks5', 'socks4', 'http'],
@@ -2091,7 +2351,7 @@ async function proxies(root) {
         ...userList.users.map((user) => ({ value: String(user.id), label: user.username })),
       ],
     },
-    { key: 'note', label: tr('common.edit'), value: proxy.note || '' },
+    { key: 'note', label: tr('adm.note'), value: proxy.note || '' },
   ];
 
   const shape = (answer) => {
@@ -2156,10 +2416,10 @@ async function announcements(root) {
                 <div style="min-width:0">
                   <div class="row" style="gap:.5rem">
                     <span class="pill ${entry.kind === 'info' ? '' : 'missing'}">${escapeHtml(entry.kind)}</span>
-                    <span class="strong">${escapeHtml(entry.title_de)}</span>
+                    <span class="strong">${escapeHtml(bilingual(entry, 'title'))}</span>
                     ${entry.active ? `<span class="pill primary">live</span>` : ''}
                   </div>
-                  <p class="small muted" style="margin:.5rem 0 0">${escapeHtml(entry.body_de || '')}</p>
+                  <p class="small muted" style="margin:.5rem 0 0">${escapeHtml(bilingual(entry, 'body'))}</p>
                   <p class="small muted" style="margin:.5rem 0 0">
                     ${datetime(entry.created_at)}
                     ${entry.created_by_name ? ` · ${escapeHtml(entry.created_by_name)}` : ''}
@@ -2186,7 +2446,7 @@ async function announcements(root) {
 
   const fields = (entry = {}) => [
     { key: 'title_de', label: 'Titel (DE)', value: entry.title_de || '', required: true },
-    { key: 'title_en', label: 'Title (EN)', value: entry.title_en || '' },
+    { key: 'title_en', label: 'Titel (EN)', value: entry.title_en || '' },
     { key: 'body_de', label: 'Text (DE)', type: 'textarea', value: entry.body_de || '' },
     { key: 'body_en', label: 'Text (EN)', type: 'textarea', value: entry.body_en || '' },
     { key: 'link', label: 'Link', value: entry.link || '', placeholder: 'https://…' },
@@ -2211,7 +2471,7 @@ async function announcements(root) {
   $$('[data-edit]').forEach((button) =>
     button.addEventListener('click', async () => {
       const entry = data.announcements.find((item) => item.id === Number(button.dataset.edit));
-      const answer = await formDialog(entry.title_de, fields(entry));
+      const answer = await formDialog(bilingual(entry, 'title'), fields(entry));
       if (!answer) return;
       await api(`/admin/announcements/${entry.id}`, { method: 'PATCH', body: answer }).catch(fail);
       state.meta = await api('/meta');
@@ -2810,7 +3070,7 @@ async function settings(root) {
       const result = await api('/admin/tebex/test', { method: 'POST' });
       box.innerHTML = `${escapeHtml(result.message)}${
         result.checkout_url
-          ? ` <a href="${escapeHtml(result.checkout_url)}" target="_blank" rel="noopener">${escapeHtml(
+          ? ` <a href="${escapeHtml(safeLink(result.checkout_url))}" target="_blank" rel="noopener">${escapeHtml(
               tr('adm.tebexOpen')
             )}</a>`
           : ''
@@ -2949,8 +3209,8 @@ async function mails(root) {
   $('#status').addEventListener('change', reload);
   $('#q').addEventListener('input', reload);
 
-  $$('[data-mail]').forEach((row) =>
-    row.addEventListener('click', async () => {
+  bindRows('[data-mail]', async (row) => {
+    try {
       const { mail } = await api(`/admin/mails/${row.dataset.mail}`);
       const dialog = document.createElement('dialog');
       dialog.innerHTML = `
@@ -2972,8 +3232,12 @@ async function mails(root) {
       dialog.addEventListener('close', () => dialog.remove());
       $('#close', dialog).addEventListener('click', () => dialog.close());
       dialog.showModal();
-    })
-  );
+    } catch (error) {
+      // Eine Nachricht, die sich nicht öffnen lässt, gehört gesagt. Vorher blieb der Klick
+      // wirkungslos und der Fehler stand nur in der Browser-Konsole.
+      fail(error);
+    }
+  });
 }
 
 async function ledger(root) {
@@ -3062,10 +3326,13 @@ async function audit(root) {
                                   <dd>${
                                     field.flag !== null
                                       ? `<span class="pill ${field.flag ? 'primary' : 'missing'}">${
-                                          field.flag ? tr('common.yes') : '–'
+                                          // `common.yes` ist die Beschriftung eines
+                                          // Bestätigungsknopfes ("Ja, weiter") – als Wert eines
+                                          // Ja/Nein-Feldes im Protokoll stand dort ein halber Satz.
+                                          field.flag ? escapeHtml(tr('common.on')) : '–'
                                         }</span>`
                                       : field.link
-                                        ? `<a href="${escapeHtml(field.link)}">${escapeHtml(field.value)}</a>`
+                                        ? `<a href="${escapeHtml(safeLink(field.link))}">${escapeHtml(field.value)}</a>`
                                         : escapeHtml(field.value)
                                   }</dd>
                                 </div>`

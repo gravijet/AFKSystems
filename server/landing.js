@@ -5,6 +5,7 @@
 // nichts davon. Also kommt hier fertiges HTML heraus, das pages.js einsetzt.
 
 import { getSetting } from './db.js';
+import { config } from './config.js';
 import { formatEuro, safeUrl } from './util.js';
 import * as binaries from './binaries.js';
 import * as billing from './billing.js';
@@ -367,6 +368,8 @@ export function legalVars(kind, lang) {
   return {
     legalTitle: t(`legal.${kind}.title`, lang),
     legalBody: body,
-    title: `${t(`legal.${kind}.title`, lang)} – AFKSystems`,
+    // Der Markenname kommt aus der Einstellung, nicht aus dem Quelltext: wer das Panel unter
+    // eigenem Namen betreibt, stand sonst auf genau diesen zwei Seiten weiter als "AFKSystems" da.
+    title: `${t(`legal.${kind}.title`, lang)} – ${config.brand}`,
   };
 }

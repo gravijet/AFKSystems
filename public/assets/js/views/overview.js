@@ -7,7 +7,7 @@ import {
   euro,
   since,
   stateBadge,
-  safeLink,
+  todoList,
   tr,
   $,
   $$,
@@ -17,14 +17,25 @@ import {
   debounce,
 } from '../ui.js';
 import { state, appbar, refresh, drawSide, draw } from '../app.js';
+import * as chart from '../charts.js';
+
+/**
+ * Die Zahlen für die Diagramme.
+ *
+ * Sie werden **einmal** geholt und dann behalten: Die Übersicht zeichnet sich bei jedem
+ * Zustandswechsel eines Bots neu, und dabei jedes Mal einen Monat Kontoauszug durchzurechnen wäre
+ * Arbeit für Zahlen, die sich in dieser Sekunde nicht geändert haben. Beim nächsten echten Öffnen
+ * der Seite ist der Wert ohnehin wieder frisch.
+ */
+let insights = null;
 
 export async function render(root) {
   const bots = [...state.bots.values()].filter((bot) => bot.state && bot.state !== 'offline');
   const online = bots.filter((bot) => bot.online).length;
   const monthly = state.me.monthly_cost || 0;
-  const paidSlots = state.profiles.filter((profile) => !profile.plan?.free_slot).length;
   const monthsLeft = monthly > 0 ? Math.floor(state.me.credits / monthly) : null;
   const todos = state.todos || [];
+  if (!insights) insights = await api('/me/insights').catch(() => null);
 
   root.innerHTML = `
     ${appbar(
@@ -34,27 +45,20 @@ export async function render(root) {
       tr('dash.subtitle')
     )}
 
-    ${todoPanel(todos)}
+    ${todoList(todos)}
 
-    <div class="grid four" style="margin-bottom:1.5rem">
-      <div class="stat"><div class="k">${escapeHtml(tr('ov.inGame'))}</div><div class="v">${online}</div>
-        <div class="s">${escapeHtml(tr('ov.ofRunning', { n: bots.length }))}</div></div>
-      <div class="stat"><div class="k">${escapeHtml(tr('ov.balance'))}</div>
-        <div class="v">${credits(state.me.credits)}</div>
-        <div class="s">${escapeHtml(euro(state.me.credits))}</div></div>
-      <div class="stat"><div class="k">${escapeHtml(tr('ov.monthly'))}</div>
-        <div class="v">${credits(monthly)}</div>
-        <div class="s">${escapeHtml(
-          monthly > 0 ? tr('ov.monthsLeft', { n: monthsLeft }) : tr('ov.monthsPlenty')
-        )}</div></div>
-      <div class="stat"><div class="k">${escapeHtml(tr('ov.accounts'))}</div>
-        <div class="v">${state.accounts.length}</div>
-        <div class="s">${escapeHtml(tr('ov.serversCount', { n: state.profiles.length }))}</div></div>
-    </div>
+    <!-- Die Diagramme stehen dort, wo vorher vier Kacheln mit denselben Zahlen standen.
+         Guthaben und Monatskosten hatten damit jeweils zwei Plätze auf derselben Seite – einmal
+         als Zahl, einmal als Zahl mit Kurve. Die Kurve kann alles, was die Kachel konnte, und
+         beantwortet zusätzlich die Frage, ob es rauf oder runter geht. -->
+    ${charts()}
 
     <section class="panel" style="margin-bottom:1.5rem">
       <header>
         <h3>${escapeHtml(tr('ov.bots'))}</h3>
+        <span class="small muted">${escapeHtml(
+          tr('ov.inGameLine', { online, n: bots.length, accounts: state.accounts.length })
+        )}</span>
         <div class="row">
           <button class="btn btn-sm" id="stop-all" ${bots.length ? '' : 'disabled'}>${icon('stop')} ${escapeHtml(
             tr('ov.stopAll')
@@ -85,79 +89,111 @@ export async function render(root) {
       </div>
     </section>
 
-    <div class="grid two">
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('ov.client'))}</h3></header>
-        <div class="body stack">
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('ov.clientVersions'))}</span>
-            <span class="mono">${state.meta.versions.map(escapeHtml).join(', ') || '–'}</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('ov.builds'))}</span>
-            <span class="row" style="gap:.35rem">${Object.entries(state.meta.builds || {})
-              .map(
-                ([name, present]) =>
-                  `<span class="pill ${present ? 'primary' : 'missing'}">${escapeHtml(name)}</span>`
-              )
-              .join('')}</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('bill.slots'))}</span>
-            <span class="mono">${escapeHtml(
-              tr('bill.slotsLine', {
-                paid: paidSlots,
-                free: state.profiles.length - paidSlots,
-              })
-            )}</span></div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('ov.quick'))}</h3></header>
-        <div class="body stack">
-          <a class="row spread" href="#/accounts">
-            <span class="row">${icon('users')} ${escapeHtml(tr('ov.connectAccount'))}</span>${icon('arrow')}</a>
-          <a class="row spread" href="#/credits">
-            <span class="row">${icon('wallet')} ${escapeHtml(tr('bill.topUp'))}</span>${icon('arrow')}</a>
-          <a class="row spread" href="#/tickets">
-            <span class="row">${icon('ticket')} ${escapeHtml(tr('ov.openTicket'))}</span>${icon('arrow')}</a>
-          <a class="row spread" href="#/settings">
-            <span class="row">${icon('settings')} ${escapeHtml(tr('set.webhook'))}</span>${icon('arrow')}</a>
-        </div>
-      </section>
-    </div>`;
+    <section class="panel">
+      <header><h3>${escapeHtml(tr('ov.quick'))}</h3></header>
+      <div class="body stack">
+        <a class="row spread" href="#/accounts">
+          <span class="row">${icon('users')} ${escapeHtml(tr('ov.connectAccount'))}</span>${icon('arrow')}</a>
+        <a class="row spread" href="#/credits">
+          <span class="row">${icon('wallet')} ${escapeHtml(tr('bill.topUp'))}</span>${icon('arrow')}</a>
+        <a class="row spread" href="#/tickets">
+          <span class="row">${icon('ticket')} ${escapeHtml(tr('ov.openTicket'))}</span>${icon('arrow')}</a>
+        <!-- Wohin dieser Punkt führt, ist der Punkt: in die Einstellungen. Dort steht neben dem
+             Discord-Webhook noch ein Dutzend anderes, und wer nach seinem Passwort sucht, findet
+             es nicht unter "Discord-Benachrichtigungen". -->
+        <a class="row spread" href="#/settings">
+          <span class="row">${icon('settings')} ${escapeHtml(tr('dash.settings'))}</span>${icon('arrow')}</a>
+      </div>
+    </section>`;
 
   /**
-   * Was offen ist – ganz oben, weil es der Grund ist, warum jemand hierher kommt.
+   * Drei Bilder: Guthaben, Kosten, Laufzeit.
    *
-   * Ist nichts offen, steht hier auch nichts. Ein leerer Kasten mit "alles erledigt" wäre eine
-   * Zeile, die jeden Tag da ist und nie etwas sagt – dann sieht man auch nicht mehr hin, wenn
-   * einmal etwas darin steht. Die Zahl in der Seitenleiste erfüllt denselben Zweck ohne Fläche.
+   * Sie stehen zwischen der Bot-Tabelle und dem Schnellzugriff, weil sie die Fragen beantworten,
+   * die nach „läuft alles?“ kommen: reicht das Geld noch, wofür geht es drauf, und was hat sich
+   * überhaupt gelohnt.
    *
-   * Der Inhalt kommt vollständig vom Server (server/todos.js). Hier steht nur, wie er aussieht.
+   * An dieser Stelle stand vorher „Was der Client hier kann“ – eine Liste von Bauformen und
+   * Protokollversionen. Das ist die Antwort auf eine Frage, die ein Kunde nie stellt: Welche
+   * Datei ein Bot benutzt, sucht er sich nicht aus, und ob sie „premiumItems“ heißt, ändert für
+   * ihn nichts. Wer es doch wissen will, findet es im Serverplatz unter Einstellungen.
    */
-  function todoPanel(list) {
-    if (!list.length) return '';
-    return `<section class="panel todo" style="margin-bottom:1.5rem">
-      <header>
-        <h3>${escapeHtml(tr('todo.title'))}</h3>
-        <span class="small muted">${escapeHtml(tr('todo.count', { n: list.length }))}</span>
-      </header>
-      <ul class="todo-list">
-        ${list.map(todoItem).join('')}
-      </ul>
-    </section>`;
-  }
+  function charts() {
+    if (!insights) return '';
+    const paid = insights.slots.filter((slot) => !slot.free_slot);
+    const ran = insights.slots.filter((slot) => slot.uptime_sec > 0);
+    const spend = insights.spend || [];
+    // Nichts bewegt, nichts gelaufen, nichts bezahlt: dann steht hier auch nichts. Ein leeres
+    // Achsenkreuz ist keine Auskunft. Wer gerade erst angefangen hat, bekommt stattdessen die
+    // Zahlen als Kacheln – sie sind kurz, aber sie stimmen.
+    if (!spend.some((month) => month.credits) && !ran.length && !paid.length) {
+      return `<div class="grid three" style="margin-bottom:1.5rem">
+        <div class="stat"><div class="k">${escapeHtml(tr('ov.balance'))}</div>
+          <div class="v">${credits(state.me.credits)}</div>
+          <div class="s">${escapeHtml(euro(state.me.credits))}</div></div>
+        <div class="stat"><div class="k">${escapeHtml(tr('ov.monthly'))}</div>
+          <div class="v">${credits(monthly)}</div>
+          <div class="s">${escapeHtml(
+            monthly > 0 ? tr('ov.monthsLeft', { n: monthsLeft }) : tr('ov.monthsPlenty')
+          )}</div></div>
+        <div class="stat"><div class="k">${escapeHtml(tr('ov.accounts'))}</div>
+          <div class="v">${state.accounts.length}</div>
+          <div class="s">${escapeHtml(tr('ov.serversCount', { n: state.profiles.length }))}</div></div>
+      </div>`;
+    }
 
-  function todoItem(entry) {
-    const external = entry.external
-      ? ' target="_blank" rel="noopener"'
-      : '';
-    return `<li class="todo-item ${entry.kind === 'info' ? '' : entry.kind}">
-      <span class="todo-mark">${icon(entry.kind === 'bad' ? 'alert' : entry.kind === 'warn' ? 'clock' : 'info')}</span>
-      <div class="todo-text">
-        <strong>${escapeHtml(entry.title)}</strong>
-        <p class="small muted">${escapeHtml(entry.text)}</p>
-      </div>
-      <a class="btn btn-sm ${entry.kind === 'bad' ? 'btn-primary' : ''}"
-        href="${escapeHtml(safeLink(entry.href))}"${external}>${escapeHtml(entry.label)}</a>
-    </li>`;
+    const lang = document.documentElement.lang === 'de' ? 'de-DE' : 'en-GB';
+    const monthName = (key) => {
+      const [year, month] = key.split('-');
+      return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(lang, { month: 'short' });
+    };
+    const asEuro = (value) => `${(value / 100).toFixed(value >= 10_000 ? 0 : 2)} €`;
+    const hours = (seconds) => `${Math.round(seconds / 3600).toLocaleString(lang)} h`;
+
+    return `<div class="grid three" style="margin-bottom:1.5rem">
+      ${chart.card({
+        title: tr('ov.chart.balance'),
+        value: credits(insights.balance),
+        note: tr('bill.chart.days', { n: (insights.balance_days || []).length }),
+        chart: chart.line(
+          (insights.balance_days || []).map((entry) => ({
+            label: entry.day,
+            short: entry.day.slice(8),
+            value: entry.credits,
+          })),
+          { format: asEuro }
+        ),
+        foot: escapeHtml(
+          monthly > 0 ? tr('ov.monthsLeft', { n: monthsLeft }) : tr('ov.monthsPlenty')
+        ),
+      })}
+      ${chart.card({
+        title: tr('ov.chart.spend'),
+        value: credits(monthly),
+        note: tr('bill.chart.perMonth'),
+        chart: chart.bars(
+          spend.map((month) => ({ label: month.month, short: monthName(month.month), value: month.credits })),
+          { format: asEuro }
+        ),
+        foot: escapeHtml(euro(monthly)),
+      })}
+      ${chart.card({
+        title: tr('ov.chart.uptime'),
+        value: hours(insights.slots.reduce((sum, slot) => sum + slot.uptime_sec, 0)),
+        note: tr('ov.chart.total'),
+        chart: ran.length
+          ? chart.hbars(
+              ran.map((slot) => ({ label: slot.name, value: slot.uptime_sec })),
+              { format: hours }
+            )
+          : `<p class="small muted">${escapeHtml(tr('ov.chart.noUptime'))}</p>`,
+        foot: escapeHtml(
+          tr('ov.chart.connections', {
+            n: insights.slots.reduce((sum, slot) => sum + slot.connections, 0),
+          })
+        ),
+      })}
+    </div>`;
   }
 
   function rows() {
@@ -236,7 +272,14 @@ export async function render(root) {
 
   $('#stop-all')?.addEventListener('click', async () => {
     for (const profile of state.profiles) {
-      if (profile.accounts.some((member) => member.state !== 'offline')) {
+      // `member.state !== 'offline'` traf auch auf ein Konto zu, dessen Zustand noch gar nicht
+      // feststeht (`undefined`) – der Knopf schickte dann ein "Stopp" an Plätze, auf denen
+      // nichts lief. Gefragt ist, ob dort wirklich etwas zu stoppen ist.
+      const running = profile.accounts.some((member) => {
+        const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
+        return Boolean(bot.state) && bot.state !== 'offline';
+      });
+      if (running) {
         await api(`/profiles/${profile.id}/stop`, { method: 'POST', body: {} }).catch(() => {});
       }
     }
@@ -252,6 +295,8 @@ export async function render(root) {
     });
   }, 600);
   state.onLive = (event) => {
+    // Ändert sich das Guthaben, stimmt auch die Kurve nicht mehr – dann eben doch neu holen.
+    if (event.type === 'credits' || event.type === 'suspended') insights = null;
     if (event.type === 'state' || event.type === 'credits' || event.type === 'suspended') redraw();
   };
   drawSide();

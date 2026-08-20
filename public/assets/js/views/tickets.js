@@ -12,14 +12,27 @@
 // der Route. Die Rolle allein reicht nicht: Ein Admin ist unter "Support" selbst Kunde.
 
 import {
-  api, icon, escapeHtml, datetime, since, tr, $, $$, ok, fail, toast, formDialog, debounce, fileSize,
+  api, icon, escapeHtml, datetime, since, safeLink, tr, $, $$, ok, fail, toast, formDialog, debounce, fileSize,
 } from '../ui.js';
 import { state, appbar, refresh, draw, go } from '../app.js';
 
 const STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
 
-/** 20 MB – dieselbe Grenze wie auf dem Server (attachments.js). */
-export const MAX_UPLOAD = 20 * 1024 * 1024;
+/**
+ * Wie groß ein Anhang sein darf.
+ *
+ * 20 MB als Ausgangswert, damit die Angabe schon dasteht, bevor die erste Antwort da ist – **die
+ * Wahrheit sagt aber der Server**. `GET /tickets` schickt seine Grenze mit (`max_upload`), und die
+ * gilt ab dann. Vorher stand die Zahl nur hier: Wer sie auf dem Server änderte, bekam entweder
+ * einen Hinweis, der zu wenig verspricht, oder – schlimmer – einen Upload, den der Browser
+ * durchlässt und der Server danach ablehnt.
+ */
+export let MAX_UPLOAD = 20 * 1024 * 1024;
+
+const setMaxUpload = (bytes) => {
+  const value = Number(bytes);
+  if (Number.isFinite(value) && value > 0) MAX_UPLOAD = value;
+};
 
 /**
  * Dateien hochladen und ihre Nummern zurückgeben.
@@ -82,6 +95,7 @@ export const renderStaffTicket = (root, id) =>
 async function list(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const data = await api('/tickets');
+  setMaxUpload(data.max_upload);
   const invite = state.meta?.discord_invite || '';
   const personalAdmin = state.me?.role === 'admin';
   const title = personalAdmin ? tr('dash.myTickets') : tr('tk.title');
@@ -106,7 +120,7 @@ async function list(root) {
          wissen, dass es ihn gibt – deshalb steht der Link hier und nicht nur im Fußbereich. -->
     ${
       invite
-        ? `<a class="ticket-discord" href="${escapeHtml(invite)}" target="_blank" rel="noopener">
+        ? `<a class="ticket-discord" href="${escapeHtml(safeLink(invite))}" target="_blank" rel="noopener">
             <span class="ticket-discord-icon">${icon('discord')}</span>
             <span class="grow">
               <span class="strong">${escapeHtml(tr('tk.discordTitle'))}</span>
@@ -131,9 +145,15 @@ async function list(root) {
       </div>
     </section>`;
 
-  $$('[data-open]').forEach((node) =>
-    node.addEventListener('click', () => go(`/tickets/${node.dataset.open}`))
-  );
+  $$('[data-open]').forEach((node) => {
+    const open = () => go(`/tickets/${node.dataset.open}`);
+    node.addEventListener('click', open);
+    node.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      event.preventDefault();
+      open();
+    });
+  });
   for (const id of ['#new', '#new-2']) $(id)?.addEventListener('click', () => create());
 
   if (params.get('new')) create();
@@ -149,13 +169,31 @@ async function list(root) {
   }, 500);
 }
 
+/**
+ * Eine Zeile der Ticketliste.
+ *
+ * **Die Benachrichtigung steht am Ticket.** Die Zahl in der Seitenleiste sagt, dass etwas da ist;
+ * sie sagt nicht, wo. Wer drei Tickets offen hat, stand damit vor drei gleich aussehenden Zeilen
+ * und musste sie der Reihe nach aufmachen. Hier steht jetzt an genau der Zeile, um die es geht,
+ * ein Punkt und das Wort „Neu“ – und zwar auch dann, wenn es nur ein einziges Ticket gibt: Die
+ * Auskunft „hier ist etwas passiert“ hängt nicht daran, wie viele Zeilen daneben stehen.
+ *
+ * (Und das `<li>` hatte kein schließendes `>`. Der Punkt für den Zustand wurde deshalb vom Browser
+ * als Attribut des Listeneintrags gelesen und nie gezeichnet – seit es ihn gibt.)
+ */
 function row(ticket) {
-  return `<li class="ticket-row ${ticket.unread_user ? 'is-unread' : ''}" data-open="${ticket.id}">
-    <span class="ticket-dot ${ticket.status}"></span>
+  // Anklickbar heißt auch: mit der Tastatur erreichbar. Ohne `role`/`tabindex` war die ganze
+  // Ticketliste für jeden unbedienbar, der keine Maus benutzt.
+  const unread = Boolean(ticket.unread_user);
+  const label = `#${ticket.id} ${ticket.subject}${unread ? ` – ${tr('tk.unread')}` : ''}`;
+  return `<li class="ticket-row ${unread ? 'is-unread' : ''}" data-open="${ticket.id}"
+    role="button" tabindex="0" aria-label="${escapeHtml(label)}">
+    <span class="ticket-dot ${escapeHtml(ticket.status)}"></span>
     <div class="grow" style="min-width:0">
       <div class="row" style="gap:.5rem">
         <span class="strong truncate">${escapeHtml(ticket.subject)}</span>
         <span class="small muted mono">#${ticket.id}</span>
+        ${unread ? `<span class="pill unread">${icon('bell')} ${escapeHtml(tr('tk.unread'))}</span>` : ''}
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
         ${ticket.shared ? `<span class="pill">${icon('users')}</span>` : ''}
       </div>

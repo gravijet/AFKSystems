@@ -231,8 +231,35 @@ export async function fromUrl({ ticketId, messageId, userId, name, url, size = 0
   if (declared > MAX_BYTES) {
     throw bad('Die Datei ist größer als 20 MB.', { en: 'That file is larger than 20 MB.' });
   }
-  const buffer = Buffer.from(await response.arrayBuffer());
+  // **Beim Lesen mitzählen, nicht erst danach.** Die Kopfzeile oben ist eine Behauptung der
+  // Gegenstelle; fehlt sie oder stimmt sie nicht, lag der ganze Körper trotzdem im Arbeitsspeicher,
+  // bevor `store()` ihn ablehnen konnte. Ein einziger Anhang hätte damit so viel Speicher belegen
+  // können, wie die andere Seite schickt – und der Dienst hält jeden laufenden Bot.
+  const buffer = await readCapped(response, MAX_BYTES);
   return store({ ticketId, messageId, userId, name, buffer, source: 'discord' });
+}
+
+/**
+ * Den Körper einer Antwort lesen und dabei mitzählen – bei Überschreitung abbrechen.
+ *
+ * `response.arrayBuffer()` liest, bis nichts mehr kommt: Wer die Länge verschweigt, bestimmt damit,
+ * wie viel Arbeitsspeicher hier belegt wird. Ein Zähler über den Datenstücken beendet das nach dem
+ * ersten Stück, das die Grenze reißt.
+ */
+async function readCapped(response, limit) {
+  if (!response.body) return Buffer.alloc(0);
+  const parts = [];
+  let total = 0;
+  for await (const chunk of response.body) {
+    total += chunk.length;
+    if (total > limit) {
+      // Den Rest gar nicht erst holen.
+      await response.body.cancel?.().catch?.(() => {});
+      throw bad('Die Datei ist größer als 20 MB.', { en: 'That file is larger than 20 MB.' });
+    }
+    parts.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(parts, total);
 }
 
 /**

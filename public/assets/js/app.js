@@ -588,7 +588,11 @@ export function drawSide() {
     <div class="side-bottom">
       ${
         state.meta?.discord_invite
-          ? `<a class="side-item side-discord" href="${escapeHtml(state.meta.discord_invite)}"
+          ? // Hebt sich ab, solange der Gratis-Platz auf genau diesen Beitritt wartet: dann ist es
+            // kein Angebot mehr, sondern der Weg zurück in den Betrieb.
+            `<a class="side-item side-discord ${
+              state.me?.free_access?.reason === 'discord-join' ? 'is-needed' : ''
+            }" href="${escapeHtml(safeLink(state.meta.discord_invite))}"
                target="_blank" rel="noopener" title="${escapeHtml(tr('discord.join'))}">
                <span class="side-item-icon">${icon('discord')}</span>
                <span class="side-item-label">${escapeHtml(tr('discord.join'))}</span></a>`
@@ -865,6 +869,7 @@ export async function draw() {
   } finally {
     drawing = false;
     banner();
+    discordBanner();
     announcements();
     if (redrawWanted) {
       redrawWanted = false;
@@ -905,7 +910,10 @@ function announcements() {
           ${
             entry.link
               ? `<p style="margin:.5rem 0 0"><a href="${escapeHtml(safeLink(entry.link))}" target="_blank" rel="noopener">${escapeHtml(
-                  tr('home.what.link')
+                  // "Mehr dazu", nicht "Alle Funktionen": Der Link einer Ankündigung führt
+                  // dorthin, wohin der Betreiber ihn gelegt hat – die Funktionsseite ist das
+                  // in aller Regel nicht.
+                  tr('common.more')
                 )}</a></p>`
               : ''
           }
@@ -920,7 +928,14 @@ function announcements() {
   box.querySelectorAll('[data-dismiss]').forEach((button) =>
     button.addEventListener('click', () => {
       hidden.push(Number(button.dataset.dismiss));
-      localStorage.setItem('afk-seen-news', JSON.stringify(hidden.slice(-50)));
+      // Der lokale Speicher darf fehlen (privater Modus). Gelesen wurde er schon geschützt,
+      // geschrieben nicht – und die geworfene Ausnahme nahm den Rest des Klicks mit: die
+      // Ankündigung blieb stehen, obwohl jemand gerade auf das Kreuz gedrückt hatte.
+      try {
+        localStorage.setItem('afk-seen-news', JSON.stringify(hidden.slice(-50)));
+      } catch {
+        /* dann kommt sie beim nächsten Laden wieder – weggeklickt ist sie trotzdem */
+      }
       button.closest('[data-news]').remove();
       if (!box.querySelector('[data-news]')) box.remove();
     })
@@ -947,6 +962,53 @@ function banner() {
       fail(error);
     }
   });
+}
+
+/**
+ * Der Gratis-Platz hängt an einer Discord-Mitgliedschaft – und das muss man sehen.
+ *
+ * Bisher stand es an genau einer Stelle: als Eintrag in der To-do-Liste auf der Übersicht. Wer
+ * einen Gratis-Platz angelegt hatte und dann auf den Serverplatz ging, sah nur, dass die Bots
+ * nicht starten – und suchte den Fehler beim Bot. Die Bedingung ist aber keine Störung, sondern
+ * der Preis des Gratis-Tarifs, und der gehört auf jede Seite, solange er nicht erfüllt ist.
+ *
+ * Deshalb hier ein Streifen über allem, mit dem Einladungslink als Knopf. Er lässt sich **nicht**
+ * wegklicken: Was weg ist, kommt nicht wieder, und dann steht der Platz still, ohne dass jemand
+ * noch weiß, warum. Er verschwindet von selbst, sobald die Mitgliedschaft bestätigt ist – und
+ * genau dann ist er auch nicht mehr nötig.
+ *
+ * "Konnte gerade nicht bestätigt werden" (`discord-check`) steht bewusst **nicht** darin: Das ist
+ * unsere Lücke und nicht die des Kunden, und ein Knopf hilft ihm dabei nicht.
+ */
+export function discordBanner() {
+  document.querySelector('#discord-join')?.remove();
+  const access = state.me?.free_access;
+  const reason = access?.reason;
+  if (reason !== 'discord-link' && reason !== 'discord-join') return;
+  // Nur wen es angeht: wer gar keinen Gratis-Platz hat, für den ist das keine Nachricht.
+  const hasFree = state.profiles.some((profile) => profile.plan?.free_slot);
+  if (!hasFree) return;
+
+  const invite = state.meta?.discord_invite || '';
+  const bar = document.createElement('div');
+  bar.id = 'discord-join';
+  bar.className = 'joinbar';
+  bar.innerHTML = `
+    <span class="joinbar-icon">${icon('discord')}</span>
+    <span class="joinbar-text">
+      <strong>${escapeHtml(tr(reason === 'discord-link' ? 'join.linkTitle' : 'join.joinTitle'))}</strong>
+      <span class="small">${escapeHtml(tr(reason === 'discord-link' ? 'join.linkText' : 'join.joinText'))}</span>
+    </span>
+    ${
+      reason === 'discord-link'
+        ? `<a class="btn btn-sm" href="#/settings">${escapeHtml(tr('join.linkAction'))}</a>`
+        : invite
+          ? `<a class="btn btn-sm" href="${escapeHtml(safeLink(invite))}" target="_blank" rel="noopener">${escapeHtml(
+              tr('discord.join')
+            )}</a>`
+          : `<a class="btn btn-sm" href="#/settings">${escapeHtml(tr('join.how'))}</a>`
+    }`;
+  document.body.prepend(bar);
 }
 
 window.addEventListener('hashchange', draw);

@@ -65,17 +65,20 @@ systemctl --no-pager --lines=10 status "$DIENST" || true
 echo "== Discord-Bot =="
 # Der Bot ist ein eigener Dienst. Er wird nur angefasst, wenn seine .env schon ausgefüllt ist –
 # sonst liefe er in eine Schleife aus Neustarts, und die Einrichtung steht in docs/discord-bot.md.
-if [ -f "$ZIEL/bot/.env" ] && grep -q '^PANEL_SECRET=.\+' "$ZIEL/bot/.env"; then
-  ( cd "$ZIEL/bot" && sudo -u "$DIENST" -H npm ci --omit=dev 2>/dev/null || npm ci --omit=dev )
-  chown -R "$DIENST:$DIENST" "$ZIEL/bot"
-  chmod 600 "$ZIEL/bot/.env"
+# Die Abhängigkeiten kommen **immer** – auch wenn der Bot noch nicht eingerichtet ist. Vorher
+# hingen sie an derselben Bedingung wie das Starten, und der Hinweis darunter schickte den
+# Betreiber in einen Dienst, der nur "Cannot find module 'discord.js'" ins Protokoll schreiben
+# konnte. Installieren kostet nichts; starten ist die Entscheidung, die von der .env abhängt.
+[ -f "$ZIEL/bot/.env" ] || cp "$QUELLE/bot/.env.example" "$ZIEL/bot/.env"
+( cd "$ZIEL/bot" && sudo -u "$DIENST" -H npm ci --omit=dev 2>/dev/null || npm ci --omit=dev )
+chown -R "$DIENST:$DIENST" "$ZIEL/bot"
+chmod 600 "$ZIEL/bot/.env"
+
+if grep -q '^PANEL_SECRET=.\+' "$ZIEL/bot/.env"; then
   systemctl enable "$DIENST-bot"
   systemctl restart "$DIENST-bot"
   echo "Bot neu gestartet."
 else
-  [ -f "$ZIEL/bot/.env" ] || cp "$QUELLE/bot/.env.example" "$ZIEL/bot/.env"
-  chown "$DIENST:$DIENST" "$ZIEL/bot/.env"
-  chmod 600 "$ZIEL/bot/.env"
   echo "Bot noch nicht eingerichtet – $ZIEL/bot/.env ausfüllen, dann:"
   echo "  systemctl enable --now $DIENST-bot"
   echo "  (Anleitung: docs/discord-bot.md)"

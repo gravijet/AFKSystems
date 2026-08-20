@@ -18,6 +18,7 @@ import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
 import * as tebex from '../tebex.js';
 import { supervisor } from '../supervisor.js';
+import { staffTodos } from '../todos.js';
 import { planView, ticketView } from './core.js';
 import { botState, MIN_SECRET } from './bot.js';
 import { bridge } from '../bridge.js';
@@ -36,6 +37,10 @@ admin.get(
     const day = Date.now() - 86_400_000;
     const month = Date.now() - 30 * 86_400_000;
     res.json({
+      // Was das Team gerade zu tun hat – dieselbe Sorte Liste wie beim Kunden, nur für die andere
+      // Seite des Schreibtisches. Sie steht in server/todos.js und nicht hier: Ob etwas zu tun
+      // ist, entscheidet die Datenbank und nicht die Oberfläche.
+      todos: staffTodos(langOf(req)),
       users: db.prepare('SELECT COUNT(*) AS n FROM users').get().n,
       users_new_30d: db.prepare('SELECT COUNT(*) AS n FROM users WHERE created_at > ?').get(month).n,
       users_active_24h: db.prepare('SELECT COUNT(*) AS n FROM users WHERE last_seen_at > ?').get(day).n,
@@ -77,6 +82,143 @@ admin.get(
       oauth: oauth.state(),
       bot: botState(),
       settings: safeSettings(),
+    });
+  })
+);
+
+/**
+ * Zahlen über die Zeit – die Grundlage der Diagramme im Admin-Bereich.
+ *
+ * Alles kommt aus Tabellen, die ohnehin geführt werden: `topups` weiß, wann welches Geld kam,
+ * `users` wann sich jemand angemeldet hat, `ledger` wohin die Credits gehen, `tickets` wie viel
+ * Arbeit hereinkommt. Es gibt **keine** eigene Statistiktabelle: eine zweite Buchführung neben der
+ * ersten geht irgendwann auseinander, und dann glaubt niemand mehr einer von beiden.
+ *
+ * Alle Reihen sind lückenlos: Ein Tag ohne Umsatz ist eine Null und kein fehlender Punkt. Sonst
+ * schöbe sich die Kurve an einer ruhigen Woche zusammen und sähe aus wie ein Einbruch.
+ */
+admin.get(
+  '/stats',
+  wrap((req, res) => {
+    const lang = langOf(req);
+    const days = Math.min(90, Math.max(7, Number(req.query.days) || 30));
+
+    /** Ein Korb je Tag, von vor `days` Tagen bis heute – in Ortszeit, nicht in UTC. */
+    const dayKey = (date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    const from = start.getTime();
+
+    const series = (rows, field = 'value') => {
+      const buckets = new Map();
+      for (let i = 0; i < days; i++) {
+        const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        buckets.set(dayKey(date), 0);
+      }
+      for (const row of rows) {
+        const key = dayKey(new Date(row.at));
+        if (buckets.has(key)) buckets.set(key, buckets.get(key) + (row[field] || 0));
+      }
+      return [...buckets].map(([day, value]) => ({ day, value }));
+    };
+
+    // Zwölf Monatskörbe für den langen Blick aufs Geld.
+    const monthStart = new Date();
+    monthStart.setHours(0, 0, 0, 0);
+    monthStart.setDate(1);
+    monthStart.setMonth(monthStart.getMonth() - 11);
+    const monthKey = (date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    const months = new Map();
+    for (let i = 0; i < 12; i++) {
+      const date = new Date(monthStart.getFullYear(), monthStart.getMonth() + i, 1);
+      months.set(monthKey(date), 0);
+    }
+    for (const row of db
+      .prepare("SELECT paid_at AS at, amount_cent FROM topups WHERE status = 'paid' AND paid_at >= ?")
+      .all(monthStart.getTime())) {
+      const key = monthKey(new Date(row.at));
+      if (months.has(key)) months.set(key, months.get(key) + row.amount_cent);
+    }
+
+    const bots = [...supervisor.bots.values()];
+    const planName = (row) => (lang === 'de' ? row.name_de : row.name_en) || row.slug;
+
+    res.json({
+      days,
+      // --- über die Zeit ------------------------------------------------------------------
+      revenue_days: series(
+        db
+          .prepare("SELECT paid_at AS at, amount_cent AS value FROM topups WHERE status = 'paid' AND paid_at >= ?")
+          .all(from)
+      ),
+      revenue_months: [...months].map(([month, cent]) => ({ month, cent })),
+      signups: series(db.prepare('SELECT created_at AS at, 1 AS value FROM users WHERE created_at >= ?').all(from)),
+      tickets_days: series(
+        db.prepare('SELECT created_at AS at, 1 AS value FROM tickets WHERE created_at >= ?').all(from)
+      ),
+      // Was an Credits ausgegeben wurde (Tarife und Zusätze) – das ist die Gegenrichtung zum Umsatz
+      // und zeigt, ob gekauftes Guthaben auch benutzt wird.
+      spent_days: series(
+        db
+          .prepare("SELECT created_at AS at, -delta AS value FROM ledger WHERE delta < 0 AND kind IN ('plan','addon') AND created_at >= ?")
+          .all(from)
+      ),
+      // --- wie es sich gerade verteilt ----------------------------------------------------
+      by_plan: db
+        .prepare(
+          `SELECT pl.slug, pl.name_de, pl.name_en, pl.price_credits, COUNT(p.id) AS n
+             FROM plans pl LEFT JOIN profiles p ON p.plan_id = pl.id
+            GROUP BY pl.id ORDER BY pl.sort, pl.id`
+        )
+        .all()
+        .map((row) => ({ label: planName(row), slug: row.slug, n: row.n, price_credits: row.price_credits })),
+      by_provider: db
+        .prepare(
+          "SELECT provider AS label, COUNT(*) AS n, COALESCE(SUM(amount_cent), 0) AS cent FROM topups WHERE status = 'paid' GROUP BY provider ORDER BY cent DESC"
+        )
+        .all(),
+      by_ticket_status: db
+        .prepare('SELECT status AS label, COUNT(*) AS n FROM tickets GROUP BY status')
+        .all(),
+      by_bot_state: Object.entries(
+        bots.reduce((out, bot) => {
+          out[bot.state] = (out[bot.state] || 0) + 1;
+          return out;
+        }, {})
+      ).map(([label, n]) => ({ label, n })),
+      by_account_status: db
+        .prepare('SELECT status AS label, COUNT(*) AS n FROM mc_accounts GROUP BY status')
+        .all(),
+      // --- Bestenlisten -------------------------------------------------------------------
+      top_slots: db
+        .prepare(
+          `SELECT p.name AS label, u.username, COALESCE(SUM(b.uptime_sec), 0) AS seconds
+             FROM profiles p JOIN users u ON u.id = p.user_id
+        LEFT JOIN bots b ON b.profile_id = p.id
+            GROUP BY p.id HAVING seconds > 0 ORDER BY seconds DESC LIMIT 8`
+        )
+        .all(),
+      top_customers: db
+        .prepare(
+          `SELECT u.username AS label, COALESCE(SUM(t.amount_cent), 0) AS cent
+             FROM users u JOIN topups t ON t.user_id = u.id AND t.status = 'paid'
+            GROUP BY u.id ORDER BY cent DESC LIMIT 8`
+        )
+        .all(),
+      // --- Summen, die neben den Kurven stehen --------------------------------------------
+      totals: {
+        revenue_cent: db.prepare("SELECT COALESCE(SUM(amount_cent), 0) AS n FROM topups WHERE status = 'paid'").get().n,
+        refunded_cent: db
+          .prepare("SELECT COALESCE(SUM(amount_cent), 0) AS n FROM topups WHERE status = 'refunded'")
+          .get().n,
+        credits_outstanding: db.prepare('SELECT COALESCE(SUM(credits), 0) AS n FROM users').get().n,
+        users: db.prepare('SELECT COUNT(*) AS n FROM users').get().n,
+        profiles: db.prepare('SELECT COUNT(*) AS n FROM profiles').get().n,
+        bots_online: bots.filter((bot) => bot.online).length,
+        uptime_sec: db.prepare('SELECT COALESCE(SUM(uptime_sec), 0) AS n FROM bots').get().n,
+      },
     });
   })
 );
@@ -305,7 +447,7 @@ admin.patch(
       if (!Number.isFinite(delta) || delta === 0) throw bad('Betrag fehlt.');
       // Ins Minus geht es nirgends im Panel – auch hier nicht. Ein negativer Stand wäre eine
       // stille Schuld beim Kunden: Aufladen fühlt sich danach an wie Bezahlen für nichts, und
-      // jede Rechnung, die auf „Guthaben ≥ Preis" prüft, rechnet plötzlich mit Vorzeichen.
+      // jede Rechnung, die auf „Guthaben ≥ Preis“ prüft, rechnet plötzlich mit Vorzeichen.
       if (delta < 0 && user.credits + delta < 0) {
         throw bad(
           `Das würde auf ${user.credits + delta} Credits führen. Höchstens ${user.credits} lassen sich abziehen.`,
@@ -814,6 +956,9 @@ admin.get(
     res.json({
       tickets: tickets.listAll({
         status: req.query.status === undefined ? null : String(req.query.status),
+        // `listAll` kann nach Dringlichkeit filtern; hier wurde der Wert nie durchgereicht,
+        // also blieb der Filter im Panel wirkungslos.
+        priority: req.query.priority === undefined ? null : String(req.query.priority),
         search: String(req.query.q || '').trim(),
       }),
       statuses: tickets.STATUSES,
@@ -868,7 +1013,7 @@ admin.post(
       files: req.body?.files,
     });
     // Interne Notizen sieht nur das Team – dafür gibt es keine Post an den Kunden.
-    if (!internal) tickets.notifyUser(updated, req.body?.body || '');
+    if (!internal) tickets.notifyUser(updated, req.body?.body || '', req.user.username);
     res.json({
       ticket: ticketView(updated),
       messages: tickets.messages(ticket.id, { staff: true }),
@@ -1592,14 +1737,20 @@ function explainDetail(raw, lang = 'de') {
   }
   if (value === null || typeof value !== 'object') return { text: String(value), fields: [] };
   const labels = DETAIL_LABELS[lang === 'en' ? 'en' : 'de'];
+  // `Object.hasOwn` statt einer bloßen Wahrheitsprüfung: Ein Protokolleintrag mit dem Feld
+  // `constructor` (oder `toString`) traf sonst die Prototypenkette – die Beschriftung war dann
+  // der Quelltext einer Funktion und der "Link" ein Aufruf des Object-Konstruktors.
+  const labelOf = (key) => (Object.hasOwn(labels, key) ? labels[key] : key);
+  const linkOf = (key, entry) =>
+    Object.hasOwn(DETAIL_LINKS, key) && /^\d+$/.test(String(entry)) ? DETAIL_LINKS[key](entry) : null;
   const fields = Object.entries(value)
     .filter(([, entry]) => entry !== null && entry !== undefined && entry !== '')
     .map(([key, entry]) => ({
       key,
-      label: labels[key] || key,
+      label: labelOf(key),
       value: Array.isArray(entry) ? entry.join(', ') : typeof entry === 'object' ? JSON.stringify(entry) : String(entry),
       flag: DETAIL_FLAGS.has(key) ? Boolean(Number(entry)) : null,
-      link: DETAIL_LINKS[key] && /^\d+$/.test(String(entry)) ? DETAIL_LINKS[key](entry) : null,
+      link: linkOf(key, entry),
     }));
   return { text: '', fields };
 }
@@ -1620,7 +1771,10 @@ admin.get(
     const lang = langOf(req);
     const action = String(req.query.action || '').trim();
     const search = String(req.query.q || '').trim();
-    const userId = req.query.user ? Number(req.query.user) : null;
+    // `Number("abc")` ist `NaN`, und damit hätte die Bedingung stillschweigend nie zugetroffen:
+    // Das Protokoll wäre leer geblieben, ohne dass irgendwo stünde, warum.
+    const wantedUser = Number(req.query.user);
+    const userId = Number.isInteger(wantedUser) && wantedUser > 0 ? wantedUser : null;
     const where = [];
     const values = [];
     if (action) {
@@ -1667,7 +1821,10 @@ admin.get(
             ORDER BY l.id DESC LIMIT 300`
         )
         .all(),
-      total: formatCredits(db.prepare('SELECT COALESCE(SUM(credits), 0) AS n FROM users').get().n),
+      total: formatCredits(
+        db.prepare('SELECT COALESCE(SUM(credits), 0) AS n FROM users').get().n,
+        langOf(req)
+      ),
     });
   })
 );
@@ -2032,12 +2189,19 @@ admin.post(
   '/servers/:id/addons',
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Server');
+    // Ohne diese Zeile legte eine erfundene Nummer eine Zeile an, die zu keinem Serverplatz gehört
+    // und die niemand je wieder sieht.
+    if (!db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(id)) {
+      throw notFound('Diesen Server gibt es nicht.');
+    }
     const addon = billing.addonById(requireInt(req.body?.addon_id, 'Zusatz'));
     if (!addon) throw notFound('Diesen Zusatz gibt es nicht.');
     const qty = requireInt(req.body?.qty ?? 1, 'Menge', { min: 0, max: addon.max_qty });
     if (qty > 0) {
+      // `paid_credits` bleibt bei 0: Von Hand gelegt heißt geschenkt, und was nie bezahlt wurde,
+      // kommt beim Abbestellen auch nicht als Guthaben zurück (billing.removeAddon, refundValue).
       db.prepare(
-        `INSERT INTO profile_addons (profile_id, addon_id, qty, created_at) VALUES (?, ?, ?, ?)
+        `INSERT INTO profile_addons (profile_id, addon_id, qty, paid_credits, created_at) VALUES (?, ?, ?, 0, ?)
          ON CONFLICT(profile_id, addon_id) DO UPDATE SET qty = ?`
       ).run(id, addon.id, qty, Date.now(), qty);
     } else {

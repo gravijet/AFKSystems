@@ -121,9 +121,20 @@ export function ansiToMinecraft(raw) {
  *
  * Der Client kann 24×12 bis 160×80. Alles unterhalb des Größten ist ein schlechteres Bild für
  * denselben Preis – die Rechenzeit dafür fällt beim Kunden ohnehin an, sobald die Ansicht läuft.
- * Deshalb setzt das Panel vor jedem Start die größte Größe und nimmt von außen keine andere an.
+ * Deshalb setzt das Panel die größte Größe und nimmt von außen keine andere an.
  */
 export const POV_SIZE = { width: 160, height: 80 };
+
+/**
+ * Wie oft der Client zeichnen soll.
+ *
+ * Er kann bis zwanzig Bilder je Sekunde; an den Browser gehen davon höchstens fünf (siehe
+ * `POV_MIN_GAP_MS`). Die übrigen fünfzehn wären Rechenzeit für Bilder, die das Panel gleich
+ * wieder wegwirft – bei 160×80 sind das je Bild gut 300 Kilobyte, die durch eine Pipe müssen und
+ * dann in den Papierkorb gehen. Fünf ist deshalb kein Sparen an der Ansicht, sondern das Ende
+ * einer Doppelarbeit: Die Auflösung bleibt die volle, nur wird sie nicht dreimal umsonst gerechnet.
+ */
+export const POV_FPS = 5;
 
 /** Die Kopfzeile eines Bildes. Davor stehen je nach Lage `ESC[2J` und `ESC[H`. */
 const POV_HEAD = /^(?:\x1b\[[0-9;?]*[A-Za-z])*POV\s+x=/;
@@ -231,6 +242,15 @@ const AUTH_WAIT_MS = 10 * 60 * 1000;
 /** Ab dieser Größe wird das Protokoll eines Bots umgelegt (siehe Bot#rotateLog). */
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
 
+/**
+ * Wie lang eine Zeile ohne Zeilenumbruch werden darf, bevor der Puffer vorn beschnitten wird.
+ *
+ * Großzügig gewählt: Eine Bildzeile der Live-Ansicht sind 160 Zellen zu je gut dreißig Zeichen
+ * Steuersequenz, also einige Kilobyte. Alles jenseits davon ist keine Zeile mehr, sondern ein
+ * Client, der schreibt und nie umbricht – und dessen Puffer sonst den Speicher auffrisst.
+ */
+const MAX_LINE_BYTES = 256 * 1024;
+
 function classify(line) {
   for (const pattern of PATTERNS) {
     const match = pattern.re.exec(line);
@@ -317,8 +337,25 @@ function parseView(kind, lines) {
       text,
     };
   }
+  /**
+   * Die Antwort auf `:home` oder `:route` – **ohne sie zu deuten**.
+   *
+   * Der Client schreibt dort eine kleine Übersicht als Text: die gemerkte Heimatposition, die
+   * Wegpunkte, ob eine Aufzeichnung läuft. Sie zu zerlegen hieße, Meldungstexte festzunageln, und
+   * genau das tut dieses Panel sonst nirgends (siehe `@event` in docs/aufbau.md). Hier ist es auch
+   * nicht nötig: Die Zeilen sind für Menschen geschrieben und werden von Menschen gelesen.
+   *
+   * Der Gewinn liegt woanders: Bisher fielen diese Zeilen als Statusmeldungen in den Chatverlauf,
+   * also in einen anderen Reiter. Wer im Bewegungs-Reiter auf "Zeigen" drückte, bekam dort
+   * scheinbar keine Antwort.
+   */
+  if (kind === 'movement') {
+    return rows.length ? { empty: false, lines: rows, at: Date.now() } : { empty: true, lines: [] };
+  }
   if (kind === 'board') {
-    if (!rows.length || rows.some((line) => /keine Seitenleiste/i.test(line))) {
+    // Beide Sprachen: welche der Client spricht, hängt an seiner Umgebung, und eine Tafel, die als
+    // "no sidebar" gemeldet wurde, stand vorher als eine Zeile Fließtext in der Anzeige.
+    if (!rows.length || rows.some((line) => /keine Seitenleiste|no sidebar/i.test(line))) {
       return { empty: true, title: '', rows: [] };
     }
     const [head, ...rest] = rows;
@@ -334,7 +371,7 @@ function parseView(kind, lines) {
   }
 
   const text = rows.join(' ');
-  if (!rows.length || /kein Men(ü|ue) offen/i.test(text)) {
+  if (!rows.length || /kein Men(ü|ue) offen|no menu open/i.test(text)) {
     return { empty: true, title: '', slots: 0, items: {} };
   }
   return {
@@ -411,7 +448,7 @@ class Bot extends EventEmitter {
     // Anzeigetafel und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
     // dem Client; gesammelt werden sie nur, wenn das Panel gerade danach gefragt hat (siehe
     // `capture`). Ohne das stünden dreizehn Zeilen Seitenleiste zwischen den Chatnachrichten.
-    this.views = { board: null, menu: null, position: null, pov: null };
+    this.views = { board: null, menu: null, position: null, movement: null, pov: null };
     this.capture = null;
     // Live-Ansicht: `povWanted` ist der Schalter (`:pov live`), `povRows` das Bild, das gerade
     // Zeile für Zeile hereinkommt. Solange niemand die Ansicht angefordert hat, kostet die
@@ -432,7 +469,7 @@ class Bot extends EventEmitter {
      * Ein Datenstück endet dort, wo das Betriebssystem es abschneidet, und das ist mitten in einem
      * Zeichen genauso wahrscheinlich wie anderswo. `toString` macht aus so einem angefangenen
      * Zeichen ein Fragezeichen; der Decoder hält es zurück, bis der Rest kommt. Bei Chatzeilen fiel
-     * das kaum auf – ein zerbrochenes „ä" alle paar tausend Zeilen. Bei der Live-Ansicht fällt es
+     * das kaum auf – ein zerbrochenes „ä“ alle paar tausend Zeilen. Bei der Live-Ansicht fällt es
      * sofort auf: Ein Bild sind 240 Kilobyte aus Halbblöcken zu je drei Byte, also alle 64 Kilobyte
      * ein zerbrochenes Zeichen – und die Zeile, in der es steckt, ist damit keine Bildzeile mehr.
      * Das Bild brach mittendrin ab, und der Rest stand als Zeichensalat im Chatverlauf.
@@ -501,6 +538,25 @@ class Bot extends EventEmitter {
     }
     if (caps.sneak && this.plan.premium && profile.sneak) args.push('--sneak');
 
+    // ---- Live-Ansicht ---------------------------------------------------------------------
+    //
+    // Die Einstellungen der Ansicht gehören auf die Kommandozeile und nicht in einen Befehl
+    // hinterher. Vorher schickte das Panel `:pov size 160 80` erst, wenn der Bot im Spiel war –
+    // die Bauform `pov-afk-linux` hatte da längst zu zeichnen begonnen, und die ersten Bilder
+    // kamen in 64×32 an. Ein Kunde, der die Live-Ansicht bezahlt, soll sie nicht erst ab dem
+    // dritten Bild in voller Auflösung bekommen.
+    //
+    // Geschickt wird nur, was die Bauform laut ihrer eigenen Hilfe versteht: Eine ältere Datei
+    // bricht bei einer unbekannten Option beim Start ab, und dann läuft gar kein Bot mehr.
+    if (caps.pov) {
+      // `aus` heißt nicht "abgeschaltet", sondern "wartet". Gezeichnet wird erst, wenn wirklich
+      // jemand zusieht – ein Bild aus geladenen Chunks zu rechnen ist das Teuerste, was dieses
+      // Panel anstoßen kann, und für einen leeren Browser lohnt es sich nie.
+      if (caps.povstart) args.push('--pov', 'aus');
+      if (caps.povsize) args.push('--pov-size', `${POV_SIZE.width}x${POV_SIZE.height}`);
+      if (caps.povfps) args.push('--pov-fps', String(POV_FPS));
+    }
+
     // Befehle, die schon der Client selbst takten kann (Beitritt + Wiederholung). Alles, was
     // sich zur Laufzeit ändern können soll, taktet dagegen das Panel über die Standardeingabe.
     for (const entry of this.supervisor.joinCommands(profile.id, this.account.id)) {
@@ -563,9 +619,11 @@ class Bot extends EventEmitter {
 
     this.stopping = false;
     this.lastReason = null;
-    // `pov-afk-linux` beginnt gleich nach dem Beitritt zu zeichnen; da wartet niemand auf
-    // `:pov live`. Bei `ultra-afk-linux` bleibt die Ansicht aus, bis sie jemand einschaltet.
-    this.povWanted = build === 'pov' && Boolean(caps.pov);
+    // Gezeichnet wird erst auf Anforderung – auch bei `pov-afk-linux`, das von Haus aus sofort
+    // loslegt: Dafür steht `--pov aus` in den Argumenten. Kann die Bauform diese Option nicht
+    // (Client älter als 2.1.0), fängt sie trotzdem an, und dann muss das Panel ab der ersten
+    // Zeile mitlesen – sonst stünden Hunderte Bildzeilen je Sekunde im Chatverlauf.
+    this.povWanted = build === 'pov' && Boolean(caps.pov) && !caps.povstart;
     this.povSkip = false;
     this.povRows = null;
     this.setState('starting', `${this.profile.host} · MC ${this.profile.mc_version}`);
@@ -652,15 +710,26 @@ class Bot extends EventEmitter {
       return;
     }
     this.setState('stopping', '');
-    this.proc.kill('SIGTERM');
     const proc = this.proc;
+    proc.kill('SIGTERM');
+    // **Nicht `proc.killed` fragen.** Node setzt das Merkmal, sobald ein Signal *abgeschickt*
+    // wurde – nach dem SIGTERM oben ist es also immer `true`, und der Nachschlag darunter kam nie.
+    // Ein Client, der auf SIGTERM nicht hört (weil er gerade in einer Schleife hängt), blieb damit
+    // für immer stehen und belegte seinen Platz. Ob der Prozess wirklich weg ist, sagt sein
+    // Ende: `exitCode`/`signalCode` bei einem Kindprozess, `this.proc` bei einem entfernten.
     setTimeout(() => {
-      if (proc && !proc.killed) {
-        try {
-          proc.kill('SIGKILL');
-        } catch {
-          /* schon weg */
-        }
+      // Weg ist er, wenn `cleanup()` ihn abgehängt hat – das gilt für einen Kindprozess wie für
+      // einen entfernten gleichermaßen, denn beide melden ihr Ende über dasselbe `exit`.
+      if (this.proc !== proc) return;
+      // Zusätzlich, falls das Ereignis noch unterwegs ist: Bei einem `ChildProcess` steht nach dem
+      // Ende eine Zahl bzw. ein Signalname da. Ein `RemoteProcess` kennt beides nicht – dort ist
+      // es `undefined`, und `!= null` ist genau der Vergleich, der das mit abdeckt.
+      if (proc.exitCode !== undefined && proc.exitCode !== null) return;
+      if (proc.signalCode !== undefined && proc.signalCode !== null) return;
+      try {
+        proc.kill('SIGKILL');
+      } catch {
+        /* schon weg */
       }
     }, 5000).unref();
   }
@@ -677,11 +746,14 @@ class Bot extends EventEmitter {
     this.startedAt = null;
     this.auth = null;
     this.menu = null;
-    this.views = { board: null, menu: null, position: null, pov: null };
+    this.views = { board: null, menu: null, position: null, movement: null, pov: null };
     this.povWanted = false;
     this.povRows = null;
     this.povSkip = false;
     this.povStatus = '';
+    // Auch der Zeitstempel: Er beantwortet in `snapshot()` die Frage "ist schon ein Bild
+    // angekommen?", und für einen beendeten Prozess lautet die Antwort nein.
+    this.povSentAt = 0;
     if (this.capture) {
       clearTimeout(this.capture.timer);
       this.capture = null;
@@ -706,6 +778,13 @@ class Bot extends EventEmitter {
       : String(chunk);
     const lines = this.buffers[stream].split('\n');
     this.buffers[stream] = lines.pop();
+    // Ein Rest ohne Zeilenumbruch wächst sonst unbegrenzt weiter. Der Normalfall dafür ist kein
+    // Angriff, sondern ein Client, der etwas ohne `\n` schreibt und dann hängt – und ein Puffer,
+    // der Megabyte um Megabyte im Arbeitsspeicher liegt, nimmt am Ende den ganzen Dienst mit.
+    // Eine Bildzeile der Live-Ansicht ist das Längste, was hier legitim vorkommt.
+    if (this.buffers[stream].length > MAX_LINE_BYTES) {
+      this.buffers[stream] = this.buffers[stream].slice(-MAX_LINE_BYTES);
+    }
     for (const raw of lines) {
       const source = raw.replace(/\r$/, '');
       // Zuerst die Live-Ansicht: ein Bild besteht aus vielen Zeilen, die weder Chat noch Zustand
@@ -1209,6 +1288,9 @@ class Bot extends EventEmitter {
     // Abfragen, deren Antwort als Ansicht gehört und nicht als Textzeilen.
     if (verb === 'board' || verb === 'menu') this.beginCapture(verb);
     if (verb === 'pos' || verb === 'position') this.beginCapture('position');
+    // `:home` und `:route` ohne Argument sind Abfragen und keine Befehle – ihre Antwort gehört in
+    // den Reiter, in dem gefragt wurde, und nicht zwischen die Chatnachrichten.
+    if ((verb === 'home' || verb === 'route') && !arg) this.beginCapture('movement');
     if (verb === 'pov') {
       // Erst die Größe, dann der Befehl: `:pov live` zeichnet sonst in der Größe, die der Client
       // gerade für richtig hält – bei `pov-afk-linux` sind das 64×32.
@@ -1236,21 +1318,31 @@ class Bot extends EventEmitter {
       this.povWanted = false;
       this.povRows = null;
       this.povSkip = false;
+      this.povSentAt = 0;
       this.views.pov = { empty: true };
       this.emitView('pov');
       return;
     }
     // live, frame und info liefern alle Bildzeilen – ab jetzt zuhören.
+    if (this.povWanted) return;
     this.povWanted = true;
+    // Der Browser soll sofort erfahren, dass die Ansicht bestellt ist: Zwischen dem Befehl und
+    // dem ersten Bild vergeht knapp eine Sekunde, und in dieser Zeit ist "wird gestartet" die
+    // richtige Auskunft – nicht "warte auf das erste Bild", was auch dastand, wenn nie jemand
+    // etwas bestellt hatte.
+    this.supervisor.emit('bot-state', { userId: this.userId, key: this.key, state: this.snapshot() });
   }
 
   /**
-   * Dem Client die volle Bildgröße sagen.
+   * Dem Client die volle Bildgröße sagen – **nur, wenn er sie nicht schon von der Kommandozeile hat.**
    *
-   * Nötig vor jedem Start, und nicht nur einmal: Die Bauform `pov-afk-linux` beginnt von selbst
-   * mit 64×32 zu zeichnen, und ein neu gestarteter Prozess weiß nichts von der letzten Sitzung.
+   * Seit Client 2.1.0 steht `--pov-size 160x80` in den Startargumenten (siehe `args`), und damit
+   * stimmt die Größe schon beim allerersten Bild. Diese Zeile bleibt für ältere Bauformen: Dort
+   * gibt es die Option nicht, und ohne sie käme das Bild in der Vorgabe des Clients (64×32) –
+   * dieselbe Rechenzeit für ein Viertel der Fläche.
    */
   applyPovSize() {
+    if (binaries.caps(this.build || 'slim').povsize) return;
     try {
       this.send(`:pov size ${POV_SIZE.width} ${POV_SIZE.height}`, { local: true });
     } catch {
@@ -1292,8 +1384,17 @@ class Bot extends EventEmitter {
       menu: this.menu,
       // Ohne das Bild: ein Zustandswechsel wird bei laufender Live-Ansicht sonst zu einem
       // Datenpaket von zig Kilobyte. Bilder gehen ihren eigenen Weg (`bot-view`).
-      views: { board: this.views.board, menu: this.views.menu, position: this.views.position },
-      pov: { on: this.povWanted, ...POV_SIZE },
+      views: {
+        board: this.views.board,
+        menu: this.views.menu,
+        position: this.views.position,
+        movement: this.views.movement,
+      },
+      // `on` heißt "das Panel hört zu", `frames` heißt "es ist auch schon etwas angekommen".
+      // Die Oberfläche kann damit "noch nicht gestartet" von "gestartet, wartet auf das erste
+      // Bild" unterscheiden – vorher stand beides unter demselben Satz, und wer nie auf "Live
+      // starten" gedrückt hatte, wartete auf ein Bild, das niemand bestellt hatte.
+      pov: { on: this.povWanted, frames: Boolean(this.povSentAt), fps: POV_FPS, ...POV_SIZE },
       uptime: this.startedAt ? Date.now() - this.startedAt : 0,
       // Nur gesetzt, wenn der Client gerade auf eine neue Microsoft-Anmeldung wartet.
       auth: this.state === 'auth' ? this.auth : null,

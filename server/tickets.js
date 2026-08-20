@@ -415,17 +415,31 @@ export const notifyStaffReply = (ticket, user, body) =>
 /**
  * Alle Beteiligten außer einem benachrichtigen. Wer selbst geschrieben hat, bekommt keine Post
  * über die eigene Nachricht.
+ *
+ * **Zwei Wege, ein Aufruf.** Bis hierher ging von hier nur E-Mail hinaus, und der Discord-Webhook
+ * aus den Einstellungen des Kunden meldete ausschließlich Bots und Guthaben – ausgerechnet die
+ * Antwort auf sein eigenes Ticket kam dort nie an. Wer einen Webhook einträgt, will Bescheid
+ * wissen; welcher der beiden Wege ihn erreicht, ist seine Entscheidung und nicht unsere.
+ *
+ * Der Webhook wirft nie und wartet nicht: `notify.*` fängt jeden Fehler und läuft nebenher. Ein
+ * Discord, das gerade nicht antwortet, darf keine Antwort im Panel aufhalten.
  */
 export function notifyParticipants(ticket, kind, vars = {}, exceptUserId = null) {
-  if (!mail.configured()) return;
+  const hook = { ticket_reply: 'reply', ticket_opened: 'opened', ticket_closed: 'closed' }[kind];
   for (const person of participants(ticket.id)) {
     if (person.id === exceptUserId) continue;
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(person.id);
     if (!user) continue;
-    mail.sendTo(user, kind, { id: ticket.id, subject: ticket.subject, ...vars });
+    if (mail.configured()) mail.sendTo(user, kind, { id: ticket.id, subject: ticket.subject, ...vars });
+    if (hook === 'reply') notify.ticketReply(user.id, ticket, vars.author || 'Support', vars.preview || '');
+    else if (hook === 'opened') notify.ticketOpened(user.id, ticket);
+    else if (hook === 'closed') notify.ticketClosed(user.id, ticket);
   }
 }
 
 /** Kurzform für den häufigsten Fall: das Team hat geantwortet. */
-export const notifyUser = (ticket, preview = '') =>
-  notifyParticipants(ticket, 'ticket_reply', { preview: String(preview).slice(0, 160) });
+export const notifyUser = (ticket, preview = '', author = '') =>
+  notifyParticipants(ticket, 'ticket_reply', {
+    preview: String(preview).slice(0, 160),
+    author: author || undefined,
+  });

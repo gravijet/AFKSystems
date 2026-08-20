@@ -20,6 +20,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { execFile } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import WebSocket from 'ws';
@@ -224,8 +225,12 @@ const sha256 = async (file) => {
  * einen GitHub-Zugang einrichten.
  */
 async function syncBinaries() {
+  // Mit Zeitlimit: Ein Panel, das die Verbindung annimmt und dann schweigt, ließ diesen Aufruf
+  // sonst ewig offen – und mit ihm den ganzen Verbindungsaufbau, in dem er steht. Der Standort
+  // hätte danach nie ein `hello` geschickt und stünde im Panel für immer als "nicht erreichbar".
   const response = await fetch(`${config.panel}/api/node/manifest`, {
     headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
+    signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) throw new Error(`Manifest ${response.status}`);
   const manifest = await response.json();
@@ -238,6 +243,8 @@ async function syncBinaries() {
     }
     const file = await fetch(`${config.panel}/api/node/binaries/${encodeURIComponent(entry.name)}`, {
       headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
+      // Eine Client-Datei sind ein paar Dutzend Megabyte – großzügiger als das Manifest.
+      signal: AbortSignal.timeout(10 * 60_000),
     });
     if (!file.ok) throw new Error(`Download ${entry.name}: ${file.status}`);
     const temp = `${target}.neu`;
@@ -327,8 +334,17 @@ function startJob(link, message) {
   });
   jobs.set(job, { proc, userId, home });
 
-  proc.stdout.on('data', (chunk) => link.send({ type: 'out', job, data: chunk.toString('utf8') }));
-  proc.stderr.on('data', (chunk) => link.send({ type: 'err', job, data: chunk.toString('utf8') }));
+  // **Je Kanal ein Decoder, kein `chunk.toString('utf8')`.**
+  //
+  // Ein Datenstück endet dort, wo das Betriebssystem es abschneidet, und das ist mitten in einem
+  // Zeichen genauso wahrscheinlich wie anderswo. `toString` macht daraus ein Fragezeichen, der
+  // Decoder hält den Anfang zurück, bis der Rest kommt. Im Panel steht diese Stelle längst richtig
+  // (supervisor.js) – hier fehlte sie, und damit hatte jeder Bot auf einem Standort genau den
+  // Fehler, der örtlich schon behoben war: zerbrochene Umlaute im Chat und, viel sichtbarer, ein
+  // Bild der Live-Ansicht, das alle 64 Kilobyte mittendrin abriss.
+  const decoders = { out: new StringDecoder('utf8'), err: new StringDecoder('utf8') };
+  proc.stdout.on('data', (chunk) => link.send({ type: 'out', job, data: decoders.out.write(chunk) }));
+  proc.stderr.on('data', (chunk) => link.send({ type: 'err', job, data: decoders.err.write(chunk) }));
   proc.on('error', (error) => {
     jobs.delete(job);
     link.send({ type: 'error', job, error: error.message });
@@ -482,11 +498,20 @@ function connect() {
   socket.on('error', (error) => down(`gestört (${error.message})`));
 }
 
+let closing = false;
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
+    // Zweimal Strg-C heißt "jetzt". Ohne diese Zeile lief nur ein zweiter Zeitgeber los und der
+    // Dienst blieb dieselben drei Sekunden stehen, obwohl jemand offensichtlich nicht warten will.
+    if (closing) process.exit(0);
+    closing = true;
     log('Beende – stoppe alle Bots ...');
     stopAll();
-    setTimeout(() => process.exit(0), 3000).unref();
+    // **Nicht `unref()`.** Der Zeitgeber ist das Einzige, was den Prozess in diesem Moment noch
+    // offen hält: Mit `unref()` beendete Node sich sofort, die Bots bekamen ihr SIGTERM zwar
+    // abgeschickt, aber niemand wartete darauf – und wer nicht sofort ging, blieb als Waise auf
+    // der Maschine stehen, ohne Leitung und ohne jemanden, der ihn noch beenden könnte.
+    setTimeout(() => process.exit(0), 3000);
   });
 }
 

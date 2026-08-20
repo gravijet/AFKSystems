@@ -29,8 +29,13 @@ router.get(
     const lang = langOf(req);
     const slots = db
       .prepare(
-        `SELECT p.id, p.name, p.paid_until, p.renew, p.suspended, pl.price_credits, pl.free_slot,
-                pl.name_de, pl.name_en
+        // Der Preis ist Tarif **plus** gebuchte Zusätze – dieselbe Rechnung wie in
+        // `billing.monthlyPrice`. Ohne die Zusätze stünde neben einem Platz mit Live-Ansicht die
+        // Hälfte dessen, was am Monatsende wirklich abgebucht wird.
+        `SELECT p.id, p.name, p.paid_until, p.renew, p.suspended, pl.free_slot, pl.name_de, pl.name_en,
+                pl.price_credits + COALESCE((SELECT SUM(a.price_credits * pa.qty)
+                    FROM profile_addons pa JOIN addons a ON a.id = pa.addon_id
+                   WHERE pa.profile_id = p.id), 0) AS price_credits
            FROM profiles p JOIN plans pl ON pl.id = p.plan_id WHERE p.user_id = ? ORDER BY p.ordinal, p.id`
       )
       .all(user.id)
@@ -51,7 +56,7 @@ router.get(
     const monthly = billing.monthlyCost(user.id);
     res.json({
       balance: user.credits,
-      balance_text: formatCredits(user.credits),
+      balance_text: formatCredits(user.credits, lang),
       balance_euro: (user.credits / 100).toFixed(2),
       monthly_cost: monthly,
       months_left: monthly > 0 ? Math.floor(user.credits / monthly) : null,
@@ -64,6 +69,14 @@ router.get(
       packages: billing.packages(),
       history: billing.history(user.id, 80),
       spend: billing.spendByMonth(user.id, 6),
+      // Für die Diagramme: der Verlauf des Guthabens, wofür es draufging, und was jeder einzelne
+      // Serverplatz im Monat kostet. Alles drei aus denselben Zeilen, aus denen auch der
+      // Kontoauszug darunter kommt – zwei Quellen für dieselbe Zahl gehen sonst auseinander.
+      balance_days: billing.balanceByDay(user.id, 30),
+      spend_kinds: billing.spendByKind(user.id, 6),
+      slot_costs: slots
+        .filter((row) => !row.free_slot)
+        .map((row) => ({ label: row.name, credits: row.price_credits })),
       topups: db.prepare('SELECT * FROM topups WHERE user_id = ? ORDER BY id DESC LIMIT 20').all(user.id),
       methods: {
         tebex: tebex.configured(),
@@ -89,7 +102,7 @@ router.post(
   requireUser,
   wrap((req, res) => {
     const result = billing.redeemVoucher(req.user.id, req.body?.code);
-    res.json({ ...result, balance_text: formatCredits(result.balance) });
+    res.json({ ...result, balance_text: formatCredits(result.balance, langOf(req)) });
   })
 );
 

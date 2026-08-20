@@ -47,17 +47,37 @@ das gerade niemand einlösen kann.
 Der Reiter **Live-Ansicht** steht bei jedem Serverplatz, der den Zusatz gebucht hat und dessen
 Client sie mitbringt.
 
+**Der Reiter startet die Ansicht von selbst**, sobald wenigstens ein Bot im Spiel ist. Das ist
+keine Bequemlichkeit, sondern die Behebung des häufigsten Missverständnisses: `ultra-afk-linux`
+– die Bauform jedes Premium-Tarifs mit gebuchter Live-Ansicht – zeichnet erst auf `:pov live`, und
+das schickte das Panel früher nur, wenn jemand den Knopf fand. Bis dahin stand unter der leeren
+Fläche „Warte auf das erste Bild …“, also ein Satz über etwas, das gar nicht unterwegs war.
+
 | Knopf | Wirkung |
 | --- | --- |
-| **Live-Ansicht starten** | setzt die Auflösung und startet den laufenden Bildstrom |
+| **Live-Ansicht starten** | startet den Bildstrom noch einmal (nach *Stoppen*) |
 | **Einzelbild** | zeichnet genau ein Bild und hört danach wieder auf |
 | **Stoppen** | beendet den Bildstrom |
 
+Unter der Fläche steht, woran es gerade liegt, wenn kein Bild da ist – und die vier Fälle sind
+auseinandergehalten: *Bot ist nicht im Spiel*, *Ansicht läuft nicht*, *Ansicht läuft, das erste
+Bild ist unterwegs*, *gestoppt*.
+
 **Die Auflösung steht fest auf 160 × 80** – dem Größten, was der Client rechnen kann. Eine Auswahl
 gibt es bewusst nicht: Die Rechenzeit fällt an, sobald die Ansicht läuft, und ein kleineres Bild
-macht sie nicht billiger genug, um dafür schlechter zu sehen. Das Panel setzt die Größe vor jedem
-Start selbst (`POV_SIZE` in `server/supervisor.js`) und nimmt von außen keine andere entgegen –
-auch nicht über den Befehlsendpunkt.
+macht sie nicht billiger genug, um dafür schlechter zu sehen.
+
+Gesetzt wird sie **beim Start des Bots**, als `--pov-size 160x80` auf der Kommandozeile (siehe
+`Bot#args` in `server/supervisor.js`), und nicht mehr als Befehl hinterher. Der Unterschied ist ein
+sichtbarer: `pov-afk-linux` beginnt von sich aus zu zeichnen, und bis der nachgeschickte Befehl
+ankam, kamen die ersten Bilder in der Vorgabe des Clients – 64 × 32, also ein Viertel der Fläche
+für dieselbe Rechenzeit. Dazu gehört `--pov aus`: Gezeichnet wird erst, wenn wirklich jemand
+zusieht. Von außen nimmt das Panel weiterhin keine Größe entgegen, auch nicht über den
+Befehlsendpunkt.
+
+`--pov-fps 5` steht ebenfalls in den Startargumenten. Der Client könnte zwanzig Bilder je Sekunde,
+an den Browser gehen davon fünf (`POV_MIN_GAP_MS`) – die übrigen fünfzehn wären dreihundert
+Kilobyte je Bild durch eine Pipe und danach in den Papierkorb.
 
 Wer den Reiter verlässt, stoppt die Ansicht automatisch. Das ist kein Komfort, sondern nötig: eine
 laufende Ansicht kostet auf der Maschine deutlich mehr als ein stiller Bot. Dasselbe gilt für ein
@@ -75,13 +95,14 @@ die Auswahl über den Knöpfen.
 | --- | --- |
 | Rechenzeit | der Client raycastet je Bild; bei 160×80 sind das 12 800 Strahlen |
 | Speicher | der Client hält die geladenen Chunks vor (deutlich mehr als ein AFK-Bot ohne POV) |
-| Leitung | der Client schreibt ~15 Bilder je Sekunde (bei 160×80 gut 3 MB/s in die Pipe) |
+| Leitung | der Client schreibt **fünf** Bilder je Sekunde (`--pov-fps 5`, bei 160×80 gut 1,5 MB/s in die Pipe) |
 | Leitung | das Panel schickt höchstens **fünf Bilder je Sekunde** an den Browser |
 | Browser | ein Canvas je Bot, gezeichnet aus einem ImageData – kein DOM je Zelle |
 
-Die fünf Bilder je Sekunde sind eine feste Bremse im Panel (`POV_MIN_GAP_MS` in
-`server/supervisor.js`). Der Client zeichnet schneller, aber schneller nützt an dieser Stelle
-niemandem und kostet Bandbreite bei jedem, der zusieht. **Verworfen wird früh:** Ob ein Bild
+Die fünf Bilder je Sekunde stehen an **zwei** Stellen, und das ist Absicht: `--pov-fps 5` sagt dem
+Client, gar nicht erst schneller zu zeichnen, und `POV_MIN_GAP_MS` in `server/supervisor.js` hält
+die Regel auch dann ein, wenn eine ältere Client-Datei die Option nicht kennt. Schneller nützt an
+dieser Stelle niemandem und kostet bei jedem, der zusieht. **Verworfen wird früh:** Ob ein Bild
 überhaupt eingesammelt wird, entscheidet sich an seiner Kopfzeile – die Zeilen eines Bildes, das
 ohnehin niemand bekommt, werden nur überlesen und nicht zerlegt. Ohne das kostete die Bremse mehr,
 als sie spart.
@@ -132,12 +153,17 @@ Die örtlichen Befehle des Clients dahinter:
 | `:pov stop` | laufende Ansicht stoppen |
 | `:pov frame` | genau ein Bild zeichnen |
 | `:pov info` | Dimension, Welthöhe, Chunk- und Entity-Zahl |
-| `:pov size 160 80` | setzt das Panel selbst, vor jedem Start |
+| `:pov size 160 80` | braucht das Panel nur noch für Client-Dateien vor 2.1.0 – seitdem steht die Größe als `--pov-size` im Start |
 
 Sie lassen sich nicht als Chatzeile absetzen. Alles, was mit `:` beginnt, geht durch dieselbe
 Prüfung wie der Befehlsendpunkt – wer den Zusatz nicht gebucht hat, bekommt eine klare Absage
 statt einer Ansicht. `size` nimmt das Panel dabei **nicht** entgegen: Die Größe steht fest, und
 eine Ansicht, die sich von außen kleiner stellen lässt, wäre eine schlechtere für dasselbe Geld.
+
+Welche dieser Optionen benutzt werden, entscheidet nicht eine Liste im Code, sondern die Hilfe der
+Datei selbst: `binaries.js` sucht in `--help` nach `--pov an|aus`, `--pov-size` und `--pov-fps` und
+schickt nur, was dort steht. Eine ältere Bauform bräche bei einer unbekannten Option beim Start ab –
+und dann liefe gar kein Bot mehr, nicht nur die Ansicht nicht.
 
 ---
 
@@ -147,33 +173,31 @@ eine Ansicht, die sich von außen kleiner stellen lässt, wäre eine schlechtere
 | --- | --- | --- |
 | Der Reiter fehlt | Zusatz nicht gebucht, oder der Client kann es nicht | **Zusätze** ansehen; **Administration → Client** zeigt, welche Bauformen da sind |
 | *"Die Live-Ansicht ist für diesen Serverplatz nicht gebucht."* | genau das | Zusatz buchen |
-| *"Warte auf das erste Bild …"* bleibt stehen | der Bot ist noch nicht im Spiel | erst verbinden, dann zusehen |
-| … obwohl der Bot online ist | der Server hat noch keine Chunks geschickt | ein paar Sekunden warten; bei `:pov info` steht die Chunk-Zahl |
-| … und der Bot fällt gleich nach dem Beitritt aus | bekannter Fehler im Client (`src/pov.rs`) auf normal erzeugten Welten | siehe unten |
+| *"Erst den Bot starten …"* | der Bot ist nicht im Spiel | erst verbinden, dann zusehen |
+| *"Die Ansicht läuft nicht."* | gestoppt, oder der Start ist fehlgeschlagen | **Live-Ansicht starten** |
+| *"Warte auf das erste Bild …"* bleibt stehen | der Server hat noch keine Chunks geschickt | ein paar Sekunden warten; bei `:pov info` steht die Chunk-Zahl |
+| … und der Bot fällt gleich nach dem Beitritt aus | alte Client-Datei (vor 2.1.0) | **Administration → Client → Abgleichen**, siehe unten |
 | Das Bild ist fast schwarz | der Bot steht im Dunkeln | stimmt so – die Farbe kommt aus dem Bild, nicht aus einer Beleuchtung |
 | Das Bild ruckelt | fünf Bilder je Sekunde sind die Obergrenze | so gewollt |
 | Die Ansicht läuft weiter, obwohl der Reiter zu ist | der Browser wurde hart geschlossen | der nächste Aufruf des Reiters stoppt sie; sonst Bot neu starten |
 
 ---
 
-## Ein offener Fehler im Client
+## Der Fehler im Client – erledigt
 
-Auf einer **normal erzeugten** Welt (kein Superflach) brechen beide POV-Bauformen wenige Sekunden
-nach dem Beitritt ab, noch bevor jemand `:pov live` geschickt hat – sie halten die Welt ja von
-Anfang an nach:
+Hier stand lange ein offener Fehler: Auf einer **normal erzeugten** Welt (kein Superflach) brachen
+beide POV-Bauformen wenige Sekunden nach dem Beitritt ab, noch bevor jemand `:pov live` geschickt
+hatte – sie halten die Welt ja von Anfang an nach.
 
 ```
 thread 'afk-net' panicked at src/pov.rs:638:55:
 index out of bounds: the len is 91 but the index is 394
 ```
 
-Nachgestellt gegen Paper 1.21.11 (`--mc 1.21.11`) und Paper 26.2 (`--mc 26.2`), mit
-`pov-afk-linux` wie mit `ultra-afk-linux`; `premium-items-afk-linux`, `premium-afk-linux` und
-`afk-linux` laufen daneben störungsfrei weiter. Der Index liegt weit über der Palettenlänge – das
-sieht nach einer Palette aus, die mit der falschen Bitbreite gelesen wird. Auf Superflach fällt es
-nicht auf, weil die Paletten dort winzig sind.
+Der Client hat das in **2.1.0** behoben („Absturz an gemischten Block-Paletten"), und seit 2.4.0
+liegt diese Fassung hier. Nachgeprüft, nicht angenommen: ein Lauf gegen den Testserver des Clients
+mit gemischten Paletten und acht gefüllten Abschnitten je Chunk – also genau der Fall, an dem er
+abbrach – liefert sechs vollständige Bilder in 160 × 80 und keinen einzigen Abbruch.
 
-**Das lässt sich hier nicht beheben** – es steckt im Client, nicht im Panel. Bis es dort behoben
-ist, betrifft es jeden Serverplatz mit gebuchter Live-Ansicht. Alle übrigen sind seit der Änderung
-an `binaries.buildFor()` nicht mehr betroffen: Die POV-Bauform bekommt nur noch, wer die Ansicht
-auch gebucht hat (vorher bekam sie jeder Ultra-Tarif, ob er sie brauchte oder nicht).
+Wer noch eine ältere Client-Datei liegen hat, holt sie mit **Administration → Client → Abgleichen**
+nach; unter **Version** muss dort mindestens `2.1.0` stehen.

@@ -22,9 +22,10 @@ const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const tickets = await import('../server/tickets.js');
 const { Tickets } = await import('../bot/handlers/tickets.js');
-const { Bot, simpleChatMacro, parseEvent, parseView, ansiToMinecraft } = await import(
-  '../server/supervisor.js'
-);
+const { Bot, simpleChatMacro, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
+  await import('../server/supervisor.js');
+const notify = await import('../server/notify.js');
+const { staffTodos } = await import('../server/todos.js');
 const { parseFormatting } = await import('../public/assets/js/chatlog.js');
 const { Roles } = await import('../bot/handlers/roles.js');
 const { ChannelAccess } = await import('../bot/handlers/channelAccess.js');
@@ -64,13 +65,20 @@ function createUser(overrides = {}) {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
 }
 
+/**
+ * Ein Serverplatz, wie `billing.setPlan` ihn hinterlässt.
+ *
+ * `paidCredits` sagt, was für die laufende Periode wirklich abgebucht wurde – ohne Angabe der
+ * Monatspreis des Tarifs, denn genau das tut eine gewöhnliche Buchung. Wer den Fall "von der
+ * Verwaltung geschenkt" prüfen will, übergibt ausdrücklich 0.
+ */
 function createProfile(user, plan, overrides = {}) {
   sequence += 1;
   const info = db
     .prepare(
       `INSERT INTO profiles
-        (user_id, name, slug, host, mc_version, plan_id, paid_until, chat_limit, created_at)
-       VALUES (?, ?, ?, 'mc.example.test', '26.1', ?, ?, ?, ?)`
+        (user_id, name, slug, host, mc_version, plan_id, paid_until, paid_credits, chat_limit, created_at)
+       VALUES (?, ?, ?, 'mc.example.test', '26.1', ?, ?, ?, ?, ?)`
     )
     .run(
       user.id,
@@ -78,6 +86,7 @@ function createProfile(user, plan, overrides = {}) {
       overrides.slug || `server-${sequence}`,
       plan.id,
       plan.free_slot ? null : overrides.paidUntil || Date.now() + billing.MONTH_MS,
+      plan.free_slot ? 0 : (overrides.paidCredits ?? plan.price_credits),
       plan.chat_limit,
       Date.now()
     );
@@ -514,6 +523,62 @@ test('a long-extended slot never refunds more than one month', () => {
   assert.ok(billing.balance(user.id) - before <= premium.price_credits);
 });
 
+test('a slot the staff handed out for free never turns into credits', () => {
+  const user = createUser({ credits: 0 });
+  const ultra = billing.planBySlug('ultra');
+  // Genau das, was `PATCH /admin/profiles/:id` tut: Laufzeit und Tarif setzen, **ohne Abbuchung**.
+  const profile = createProfile(user, ultra, {
+    paidUntil: Date.now() + billing.MONTH_MS,
+    paidCredits: 0,
+  });
+
+  assert.equal(billing.refundValue(profile), 0, 'geschenkte Laufzeit ist kein Guthaben');
+
+  // Und dasselbe für einen Zusatz, den die Verwaltung von Hand auf den Platz gelegt hat.
+  const addon = billing.addonByKey('pov');
+  db.prepare(
+    'INSERT INTO profile_addons (profile_id, addon_id, qty, paid_credits, created_at) VALUES (?, ?, 1, 0, ?)'
+  ).run(profile.id, addon.id, Date.now());
+  assert.equal(billing.refundValue(profile), 0, 'ein geschenkter Zusatz ist ebenfalls kein Guthaben');
+
+  // Der Tarifwechsel ist derselbe Weg: Er schreibt den Restwert gut, bevor er abbucht. Für einen
+  // geschenkten Platz ist dieser Restwert null – abgebucht wird also der volle neue Monatspreis
+  // samt der Zusätze, die mitgehen.
+  billing.grant(user.id, 10_000, 'admin', 'Test');
+  const before = billing.balance(user.id);
+  const premium = billing.planBySlug('premium');
+  billing.setPlan(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id), premium);
+  assert.equal(
+    billing.balance(user.id),
+    before - (premium.price_credits + addon.price_credits),
+    'beim Wechsel kommt für Geschenktes nichts zurück'
+  );
+});
+
+test('what was really paid comes back, and never more than that', () => {
+  const user = createUser({ credits: 10_000 });
+  const premium = billing.planBySlug('premium');
+  const profile = createProfile(user, premium);
+  // Ein voller Monat steht noch offen, also ist der Restwert der volle Monatspreis – abgerundet
+  // auf den Bruchteil einer Sekunde, die zwischen dem Anlegen und dieser Zeile vergangen ist.
+  const full = billing.refundValue(profile);
+  assert.ok(
+    full <= premium.price_credits && full >= premium.price_credits - 1,
+    `Restwert ${full} sollte beim Monatspreis ${premium.price_credits} liegen`
+  );
+
+  // Ein Zusatz mitten in der Periode kostet anteilig – und genau das kommt auch zurück.
+  const addon = billing.addonByKey('slot');
+  const { charged } = billing.addAddon(profile, addon, 1);
+  const fresh = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id);
+  const refund = billing.refundValue(fresh);
+  assert.ok(
+    refund <= premium.price_credits + charged,
+    `Restwert ${refund} darf nicht über dem Bezahlten (${premium.price_credits} + ${charged}) liegen`
+  );
+  assert.ok(refund > premium.price_credits - 5, 'der Tarifanteil gehört weiterhin dazu');
+});
+
 test('a refunded top-up is never credited a second time', () => {
   const user = createUser();
   const topup = billing.createTopup({
@@ -879,6 +944,106 @@ test('a chat line is never swallowed as part of a picture', () => {
   // ähnlich, ist aber keine – und darf deshalb nicht verschwinden.
   bot.feed('out', Buffer.from('<Steve> ▀▀▀ sieht aus wie ein Bild\n', 'utf8'));
   assert.match(bot.chat.at(-1).text, /sieht aus wie ein Bild/);
+});
+
+/**
+ * Die Einstellungen der Live-Ansicht gehören auf die Kommandozeile.
+ *
+ * Vorher schickte das Panel `:pov size 160 80` erst, wenn der Bot im Spiel war – bis dahin
+ * zeichnete `pov-afk-linux` längst in seiner eigenen Vorgabe (64×32). Und **nur**, wenn die Datei
+ * die Option laut ihrer Hilfe kennt: Eine ältere Bauform bricht bei einer unbekannten Option beim
+ * Start ab, und dann liefe gar kein Bot mehr, nicht nur die Ansicht nicht.
+ */
+test('the live view is set up on the command line, but only where the client understands it', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('ultra'));
+  const bot = new Bot(
+    { emit: () => {}, macros: { onChat: () => {} }, joinCommands: () => [], clientMacros: () => [] },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+
+  const modern = bot.args({ pov: true, povstart: true, povsize: true, povfps: true });
+  assert.deepEqual(
+    modern.slice(modern.indexOf('--pov')),
+    ['--pov', 'aus', '--pov-size', '160x80', '--pov-fps', String(POV_FPS)]
+  );
+  assert.equal(`${POV_SIZE.width}x${POV_SIZE.height}`, '160x80');
+
+  // Dieselbe Bauform, aber ohne die Optionen in der Hilfe: dann steht keine davon im Aufruf.
+  const older = bot.args({ pov: true });
+  assert.ok(!older.some((entry) => String(entry).startsWith('--pov')));
+
+  // Und ohne gebuchte Live-Ansicht überhaupt nicht – `gateCaps` hat `pov` dann schon abgeräumt.
+  const withoutAddon = bot.args({ povstart: true, povsize: true, povfps: true });
+  assert.ok(!withoutAddon.some((entry) => String(entry).startsWith('--pov')));
+});
+
+/**
+ * Der Webhook eines Kunden meldet, was er bestellt hat – und leer heißt alles.
+ *
+ * Die Regel steht auf beiden Seiten (server/notify.js und views/settings.js) und ist die einzige
+ * Stelle, an der eine Voreinstellung "nichts" bedeuten könnte. Sie darf es nicht: Wer einen
+ * Webhook einträgt, will Bescheid wissen, und ein stummer Webhook sieht aus wie ein kaputter.
+ */
+test('a customer webhook sends what the customer asked for, and everything by default', async () => {
+  const user = createUser();
+  const sent = [];
+  const original = globalThis.fetch;
+  globalThis.fetch = async (url, options) => {
+    sent.push(JSON.parse(options.body));
+    return { ok: true };
+  };
+  try {
+    db.prepare('UPDATE users SET discord_webhook = ? WHERE id = ?').run(
+      'https://discord.com/api/webhooks/1/abc',
+      user.id
+    );
+    const ticket = { id: 7, subject: 'Der Bot startet nicht' };
+
+    // Ohne Auswahl: alles.
+    await notify.ticketReply(user.id, ticket, 'Support', 'Schau mal in die Konsole.');
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].embeds[0].title, /#7/);
+
+    // Nur Guthaben bestellt – Support kommt dann nicht mehr an.
+    db.prepare("UPDATE users SET discord_events = 'billing' WHERE id = ?").run(user.id);
+    await notify.ticketReply(user.id, ticket, 'Support', 'Und noch etwas.');
+    assert.equal(sent.length, 1, 'abbestellte Art darf nicht hinausgehen');
+
+    await notify.topupPaid(user.id, 1000, 1000);
+    assert.equal(sent.length, 2, 'bestellte Art muss hinausgehen');
+
+    // Zwei Antworten hintereinander sind zwei Nachrichten und nicht dieselbe zweimal.
+    db.prepare("UPDATE users SET discord_events = '' WHERE id = ?").run(user.id);
+    await notify.ticketReply(user.id, ticket, 'Support', 'Erste');
+    await notify.ticketReply(user.id, ticket, 'Support', 'Zweite');
+    assert.equal(sent.length, 4);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+/** Die To-do-Liste des Teams zählt Warteschlangen – und schweigt, wenn nichts wartet. */
+test('the staff to-do list names what is waiting', () => {
+  const owner = createUser();
+  const before = staffTodos('de').length;
+
+  const info = db
+    .prepare(
+      `INSERT INTO tickets (user_id, subject, category, status, priority, source, unread_staff, unread_user, created_at, updated_at)
+       VALUES (?, 'Warten auf Antwort', 'general', 'open', 'urgent', 'panel', 1, 0, ?, ?)`
+    )
+    .run(owner.id, Date.now(), Date.now());
+  const after = staffTodos('de');
+  const entry = after.find((row) => row.key === 'staff-tickets');
+  assert.ok(entry, 'ein wartendes Ticket gehört auf die Liste');
+  assert.equal(entry.kind, 'bad', 'dringend heißt dringend');
+  assert.match(entry.href, /^#\/admin\/tickets/);
+  assert.ok(after.length > before);
+
+  db.prepare('DELETE FROM tickets WHERE id = ?').run(info.lastInsertRowid);
+  assert.ok(!staffTodos('de').some((row) => row.key === 'staff-tickets'));
 });
 
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {
