@@ -253,6 +253,200 @@ admin.get(
   })
 );
 
+// ---------------------------------------------------------------- Suche über alles
+
+/**
+ * Eine Suche für den ganzen Admin-Bereich.
+ *
+ * Der Betreiber hat selten eine Tabelle im Kopf, sondern einen Anhaltspunkt: eine Mailadresse aus
+ * einer Beschwerde, den Namen eines Bots aus einem Screenshot, eine Ticketnummer aus Discord, den
+ * Gutscheincode von einem Zettel. Vorher hieß das: erraten, in welcher Liste das Ding wohl steht,
+ * dorthin klicken, dort noch einmal suchen. Ein Anhaltspunkt gehört aber nicht zu einer Tabelle,
+ * sondern zu einer Sache – deshalb fragt diese Stelle alle Tabellen und sortiert die Antwort nach
+ * Art, nicht nach Herkunft.
+ *
+ * Jeder Treffer bringt seinen eigenen Weg mit (`route`). Damit weiß die Oberfläche nicht, wie ein
+ * Nutzer, ein Serverplatz oder ein Ticket adressiert wird – das steht hier, an einer Stelle, und
+ * kann nicht zwischen Palette und Liste auseinanderlaufen.
+ *
+ * Absichtlich ohne Volltextindex: Bei dieser Größe ist `LIKE` über ein paar tausend Zeilen schnell
+ * genug, und ein Index, der beim Schreiben gepflegt werden muss, ist ein zweiter Datenbestand, der
+ * irgendwann nicht mehr zum ersten passt.
+ */
+const SEARCH_LIMIT = 6;
+
+admin.get(
+  '/search',
+  wrap((req, res) => {
+    const raw = String(req.query.q || '').trim();
+    // Eine reine Zahl ist meistens eine Nummer und keine Zeichenkette: Wer "412" eintippt, meint
+    // Ticket 412 oder Nutzer 412 – und will ihn oben sehen, nicht hinter jedem Namen, in dem
+    // zufällig eine 412 vorkommt.
+    const id = /^\d{1,9}$/.test(raw) ? Number(raw) : null;
+    // Ein einzelnes Zeichen ist keine Suche: `LIKE '%a%'` liest jede Zeile jeder Tabelle und
+    // liefert alles zurück, was ein a enthält – das ist keine Antwort, sondern ein Ausdruck der
+    // Datenbank. **Eine einzelne Ziffer** ist trotzdem eine gültige Frage, weil Ticket 7 und
+    // Nutzer 7 wirklich so heißen; dann wird nur nach der Nummer gesucht und nach nichts sonst.
+    if (!raw || (raw.length < 2 && id === null)) return res.json({ query: raw, groups: [] });
+
+    const lang = langOf(req);
+    // `spalte LIKE NULL` ist in SQL nie wahr. Das ist der ehrlichste Weg, den Textteil einer
+    // Suche stillzulegen, ohne dafür ein zweites Abfragegerüst danebenzustellen.
+    const like =
+      raw.length < 2 ? null : `%${raw.replace(/[%_]/g, (char) => `\\${char}`)}%`;
+    const groups = [];
+    const add = (kind, label, rows) => {
+      if (rows.length) groups.push({ kind, label, hits: rows });
+    };
+
+    add(
+      'users',
+      lang === 'de' ? 'Nutzer' : 'Users',
+      db
+        .prepare(
+          `SELECT id, username, email, credits, blocked, role FROM users
+            WHERE id = ? OR username LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\'
+               OR discord_name LIKE ? ESCAPE '\\' OR discord_id = ?
+            ORDER BY (id = ?) DESC, last_seen_at DESC LIMIT ?`
+        )
+        .all(id ?? -1, like, like, like, raw, id ?? -1, SEARCH_LIMIT)
+        .map((row) => ({
+          id: row.id,
+          title: row.username,
+          sub: row.email,
+          route: `/admin/users/${row.id}`,
+          tags: [row.role === 'admin' ? 'admin' : '', row.blocked ? 'blocked' : ''].filter(Boolean),
+          value: formatCredits(row.credits, lang),
+        }))
+    );
+
+    add(
+      'servers',
+      lang === 'de' ? 'Serverplätze' : 'Server slots',
+      db
+        .prepare(
+          `SELECT p.id, p.name, p.host, p.port, p.suspended, p.locked, u.username FROM profiles p
+             JOIN users u ON u.id = p.user_id
+            WHERE p.id = ? OR p.name LIKE ? ESCAPE '\\' OR p.host LIKE ? ESCAPE '\\'
+            ORDER BY (p.id = ?) DESC, p.id DESC LIMIT ?`
+        )
+        .all(id ?? -1, like, like, id ?? -1, SEARCH_LIMIT)
+        .map((row) => ({
+          id: row.id,
+          title: row.name,
+          sub: `${row.port ? `${row.host}:${row.port}` : row.host} · ${row.username}`,
+          route: `/admin/servers/${row.id}`,
+          tags: [row.suspended ? 'suspended' : '', row.locked ? 'locked' : ''].filter(Boolean),
+          value: supervisor.runningOnProfile(row.id) ? 'online' : '',
+        }))
+    );
+
+    add(
+      'accounts',
+      lang === 'de' ? 'Accounts' : 'Accounts',
+      db
+        .prepare(
+          `SELECT a.id, a.name, a.kind, a.status, a.suspended, a.user_id, u.username FROM mc_accounts a
+             JOIN users u ON u.id = a.user_id
+            WHERE a.name LIKE ? ESCAPE '\\' OR a.uuid LIKE ? ESCAPE '\\'
+            ORDER BY a.name LIMIT ?`
+        )
+        .all(like, like, SEARCH_LIMIT)
+        .map((row) => ({
+          id: row.id,
+          title: row.name,
+          sub: `${row.kind} · ${row.username}`,
+          // Ein Account hat keine eigene Seite; er gehört zu seinem Nutzer, und dort steht er.
+          route: `/admin/users/${row.user_id}`,
+          tags: [row.suspended ? 'suspended' : '', row.status === 'error' ? 'error' : ''].filter(Boolean),
+          value: '',
+        }))
+    );
+
+    add(
+      'tickets',
+      lang === 'de' ? 'Tickets' : 'Tickets',
+      db
+        .prepare(
+          `SELECT t.id, t.subject, t.status, t.priority, u.username FROM tickets t
+             JOIN users u ON u.id = t.user_id
+            WHERE t.id = ? OR t.subject LIKE ? ESCAPE '\\'
+               OR EXISTS (SELECT 1 FROM ticket_messages m WHERE m.ticket_id = t.id AND m.body LIKE ? ESCAPE '\\')
+            ORDER BY (t.id = ?) DESC, t.updated_at DESC LIMIT ?`
+        )
+        .all(id ?? -1, like, like, id ?? -1, SEARCH_LIMIT)
+        .map((row) => ({
+          id: row.id,
+          title: `#${row.id} ${row.subject}`,
+          sub: row.username,
+          route: `/admin/tickets/${row.id}`,
+          tags: [row.status, row.priority === 'urgent' || row.priority === 'high' ? row.priority : ''].filter(Boolean),
+          value: '',
+        }))
+    );
+
+    add(
+      'vouchers',
+      lang === 'de' ? 'Gutscheine' : 'Vouchers',
+      db
+        .prepare(
+          `SELECT code, credits, uses_left FROM vouchers WHERE code LIKE ? ESCAPE '\\' ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(like, SEARCH_LIMIT)
+        .map((row) => ({
+          id: row.code,
+          title: row.code,
+          sub: formatCredits(row.credits, lang),
+          route: '/admin/vouchers',
+          tags: row.uses_left > 0 ? [] : ['used'],
+          value: '',
+        }))
+    );
+
+    add(
+      'nodes',
+      lang === 'de' ? 'Standorte' : 'Locations',
+      db
+        .prepare(
+          `SELECT id, name, kind, region, active FROM nodes
+            WHERE name LIKE ? ESCAPE '\\' OR region LIKE ? ESCAPE '\\' ORDER BY sort, id LIMIT ?`
+        )
+        .all(like, like, SEARCH_LIMIT)
+        .map((row) => ({
+          id: row.id,
+          title: row.name,
+          sub: `${row.kind}${row.region ? ` · ${row.region}` : ''}`,
+          route: '/admin/nodes',
+          tags: row.active ? [] : ['inactive'],
+          value: '',
+        }))
+    );
+
+    add(
+      'topups',
+      lang === 'de' ? 'Aufladungen' : 'Top-ups',
+      db
+        .prepare(
+          `SELECT t.id, t.amount_cent, t.credits, t.status, t.provider, t.reference, u.username FROM topups t
+             JOIN users u ON u.id = t.user_id
+            WHERE t.id = ? OR t.reference LIKE ? ESCAPE '\\' OR t.external_id LIKE ? ESCAPE '\\'
+            ORDER BY (t.id = ?) DESC, t.id DESC LIMIT ?`
+        )
+        .all(id ?? -1, like, like, id ?? -1, SEARCH_LIMIT)
+        .map((row) => ({
+          id: row.id,
+          title: `#${row.id} ${formatCredits(row.credits, lang)}`,
+          sub: `${row.provider} · ${row.username}`,
+          route: '/admin/topups',
+          tags: [row.status],
+          value: '',
+        }))
+    );
+
+    res.json({ query: raw, groups });
+  })
+);
+
 function clientState() {
   return {
     tag: binaries.state.tag,

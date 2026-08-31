@@ -2598,6 +2598,121 @@ dialog footer {
   box-shadow: inset 0 1px 0 var(--line-soft);
 }
 
+/* ---------------------------------------------------------------- Sprungmarke (Strg+K)
+
+   Ein Dialog, aber keiner mit Kopf, Körper und Fuß: hier ist das Eingabefeld der Kopf. Er sitzt
+   oben statt in der Mitte, weil der Blick beim Tippen nach unten wandert – eine Liste, die sich
+   um ihre eigene Mitte herum ausdehnt, springt bei jedem Zeichen. */
+
+dialog.palette {
+  width: min(42rem, calc(100vw - 2rem));
+  margin-top: min(12vh, 7rem);
+  overflow: hidden;
+}
+.palette-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.85rem 1rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.palette-head .icon {
+  color: var(--muted);
+  flex: none;
+}
+.palette-head input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  padding: 0.2rem 0;
+  font-size: 1.0625rem;
+  color: var(--text);
+}
+.palette-head input:focus {
+  outline: none;
+}
+.palette-body {
+  max-height: min(58vh, 30rem);
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+.palette-empty {
+  padding: 1.75rem 0.75rem;
+  text-align: center;
+}
+.palette-label {
+  display: block;
+  padding: 0.6rem 0.6rem 0.35rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.palette-hit {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.55rem 0.6rem;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.palette-hit:hover {
+  background: var(--surface);
+}
+/* Die Auswahl der Tastatur ist dieselbe Hervorhebung wie die der Maus – wer zwischen beiden
+   wechselt, soll nicht zwei verschiedene Zustände auseinanderhalten müssen. */
+.palette-hit[aria-selected='true'] {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent);
+}
+.palette-icon {
+  display: flex;
+  color: var(--muted);
+  flex: none;
+}
+.palette-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.palette-title,
+.palette-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.palette-value {
+  flex: none;
+  color: var(--muted);
+}
+.palette-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  padding: 0.6rem 1rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.palette-foot kbd,
+.palette-head kbd {
+  display: inline-block;
+  min-width: 1.4rem;
+  padding: 0.05rem 0.35rem;
+  margin-right: 0.15rem;
+  border-radius: 0.35rem;
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-align: center;
+  color: var(--muted);
+}
+
 /* ---------------------------------------------------------------- Meldungen */
 
 .toasts {

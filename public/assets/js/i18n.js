@@ -1003,6 +1003,23 @@ export const S = {
     de: 'Überall abmelden? Du musst dich danach neu anmelden.',
   },
 
+  // ---------------------------------------------------------------- Sprungmarke (Strg+K)
+  'pal.title': { en: 'Search', de: 'Suche' },
+  'pal.shortcut': { en: 'Ctrl+K', de: 'Strg+K' },
+  'pal.placeholder': {
+    en: 'Search for a page, user, server, ticket …',
+    de: 'Seite, Nutzer, Server, Ticket suchen …',
+  },
+  'pal.pages': { en: 'Pages', de: 'Seiten' },
+  'pal.start': { en: 'Type to search.', de: 'Tippen, um zu suchen.' },
+  'pal.empty': { en: 'Nothing found.', de: 'Nichts gefunden.' },
+  'pal.move': { en: 'choose', de: 'wählen' },
+  'pal.go': { en: 'open', de: 'öffnen' },
+  'pal.hint': {
+    en: 'Users, servers, accounts, tickets, vouchers, locations, top-ups',
+    de: 'Nutzer, Server, Accounts, Tickets, Gutscheine, Standorte, Aufladungen',
+  },
+
   // ---------------------------------------------------------------- Administration
   'adm.title': { en: 'Administration', de: 'Administration' },
   // Die Gruppen der Seitenleiste im Admin-Bereich.
