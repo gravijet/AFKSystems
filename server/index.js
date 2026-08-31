@@ -31,6 +31,7 @@ import { router as nodeRouter, nodeByToken } from './routes/node.js';
 import * as agents from './agents.js';
 import * as security from './security.js';
 import * as backup from './backup.js';
+import * as jobs from './jobs.js';
 import { HttpError, langOf } from './util.js';
 
 const app = express();
@@ -726,28 +727,16 @@ for (const type of ['ticket.message', 'ticket.status', 'ticket.typing', 'ticket.
   });
 }
 
-/**
- * Ein Takt, der nicht den Dienst mitnimmt.
- *
- * Alles, was hier unten in `setInterval` läuft, läuft ohne Aufrufer. Ein Fehler darin ist in Node
- * eine unbehandelte Ausnahme, und die beendet den Prozess – mit ihm jeden laufenden Bot. Eine
- * kaputte Einstellung oder eine Datenbankzeile, die nicht passt, darf höchstens **einen**
- * Durchlauf kosten; beim nächsten ist sie vielleicht schon behoben.
- */
-const guarded = (name, task) => () => {
-  try {
-    const result = task();
-    if (result && typeof result.catch === 'function') {
-      result.catch((error) => console.error(`[takt ${name}]`, error));
-    }
-  } catch (error) {
-    console.error(`[takt ${name}]`, error);
-  }
-};
+// Die wiederkehrenden Aufgaben stehen ab hier in server/jobs.js statt in anonymen Intervallen:
+// Ein Fehler darin darf weiterhin höchstens einen Durchlauf kosten (ohne Aufrufer beendete er
+// sonst den Prozess und mit ihm jeden Bot) – nur ist jetzt auch nachlesbar, wann eine Aufgabe
+// zuletzt lief, wie lange sie brauchte und was dabei herauskam.
 
 // Tote Verbindungen alle 30 s aussortieren – Browser, Bot wie Standort.
-setInterval(
-  guarded('verbindungen', () => {
+jobs.every(
+  'verbindungen',
+  30_000,
+  () => {
     agents.heartbeat();
     for (const ws of [...wss.clients, ...botSockets.clients, ...nodeSockets.clients]) {
       if (!ws.isAlive) {
@@ -757,9 +746,13 @@ setInterval(
       ws.isAlive = false;
       ws.ping();
     }
-  }),
-  30_000
-).unref();
+  },
+  {
+    label: { de: 'Tote Verbindungen aussortieren', en: 'Drop dead connections' },
+    // Von Hand anzustoßen bringt hier nichts: Der Takt ist die halbe Bedeutung der Aufgabe.
+    manual: false,
+  }
+);
 
 // ---------------------------------------------------------------- Laufzeiten
 
@@ -888,8 +881,12 @@ function onceADay(key) {
   return true;
 }
 
-setInterval(guarded('abrechnung', billingTick), 3_600_000).unref();
-setInterval(guarded('gratis-plaetze', enforceFreePlans), 60_000).unref();
+jobs.every('abrechnung', 3_600_000, billingTick, {
+  label: { de: 'Abrechnung: verlängern, mahnen, suspendieren', en: 'Billing: renew, warn, suspend' },
+});
+jobs.every('gratis-plaetze', 60_000, enforceFreePlans, {
+  label: { de: 'Gratis-Plätze prüfen', en: 'Check free slots' },
+});
 /**
  * Und danach: hochfahren, was laufen soll und gerade nicht läuft.
  *
@@ -899,13 +896,15 @@ setInterval(guarded('gratis-plaetze', enforceFreePlans), 60_000).unref();
  * nach dem Aufladen fortgesetzt wurde. Ein abgestürzter Client kommt so nicht wieder: der löscht
  * seinen Startwunsch selbst.
  */
-setInterval(
-  guarded('wiederanlauf', () => {
+jobs.every(
+  'wiederanlauf',
+  60_000,
+  () => {
     const started = supervisor.restoreAll();
     if (started) console.log(`${started} Bot(s) wieder gestartet.`);
-  }),
-  60_000
-).unref();
+  },
+  { label: { de: 'Bots wieder hochfahren', en: 'Bring bots back up' } }
+);
 
 /**
  * Der eigene Zustand als Standort-Meldung.
@@ -921,13 +920,16 @@ function localNodeTick() {
     .catch(() => {});
 }
 localNodeTick();
-// Auch dieser Takt läuft ohne Aufrufer – `guarded` ist der Unterschied zwischen "eine Messung
-// fällt aus" und "der Prozess ist weg" (siehe oben).
-setInterval(guarded('standort-eigen', localNodeTick), 15_000).unref();
+jobs.every('standort-eigen', 15_000, localNodeTick, {
+  label: { de: 'Eigene Auslastung melden', en: 'Report own load' },
+  manual: false,
+});
 
 // Stündlich: abgelaufene Sitzungen weg, Client-Release nachsehen, liegengebliebene Anhänge weg.
-setInterval(
-  guarded('aufraeumen', () => {
+jobs.every(
+  'aufraeumen',
+  3_600_000,
+  () => {
     auth.cleanupSessions();
     security.cleanup();
     // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
@@ -935,10 +937,10 @@ setInterval(
     const made = backup.dailyTick();
     if (made) console.log(`Sicherung angelegt: ${made.name}`);
     attachments.sweepOrphans();
-    binaries.sync().then(() => agents.syncAll()).catch(() => {});
-  }),
-  3_600_000
-).unref();
+    return binaries.sync().then(() => agents.syncAll());
+  },
+  { label: { de: 'Aufräumen, sichern, Client abgleichen', en: 'Clean up, back up, sync client' } }
+);
 
 // ---------------------------------------------------------------- Start
 

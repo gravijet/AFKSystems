@@ -21,6 +21,7 @@ import * as stripe from '../stripe.js';
 import * as exportCsv from '../export.js';
 import * as security from '../security.js';
 import * as backup from '../backup.js';
+import * as jobs from '../jobs.js';
 import { supervisor } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
 import { planView, ticketView } from './core.js';
@@ -1824,16 +1825,40 @@ admin.delete(
 admin.get(
   '/bots',
   wrap((req, res) => {
+    // Ein Name je Standort, einmal geholt statt einmal je Bot: Bei fünfzig laufenden Bots wären
+    // das sonst fünfzig Abfragen für zwei verschiedene Antworten.
+    const nodeNames = new Map(nodes.list({ includeInactive: true }).map((node) => [node.id, node.name]));
+    const users = new Map(
+      db.prepare('SELECT id, username FROM users').all().map((row) => [row.id, row.username])
+    );
     const rows = [...supervisor.bots.values()].map((bot) => ({
       ...bot.snapshot(),
       user_id: bot.userId,
-      username: db.prepare('SELECT username FROM users WHERE id = ?').get(bot.userId)?.username,
+      username: users.get(bot.userId),
       profile: bot.profile.name,
       host: bot.profile.host,
+      port: bot.profile.port,
       version: bot.profile.mc_version,
       plan: bot.plan?.slug,
+      // Wo er läuft. Ohne Standort ist es diese Maschine – dieselbe Regel wie überall sonst.
+      node_id: bot.profile.node_id || null,
+      node: bot.profile.node_id ? nodeNames.get(bot.profile.node_id) || `#${bot.profile.node_id}` : null,
+      suspended: Boolean(bot.profile.suspended),
+      locked: Boolean(bot.profile.locked),
     }));
-    res.json({ bots: rows });
+    res.json({
+      bots: rows,
+      running: supervisor.runningCount(),
+      online: rows.filter((row) => row.online).length,
+      nodes: nodes.list({ includeInactive: true }).map((node) => ({
+        id: node.id,
+        name: node.name,
+        kind: node.kind,
+        active: Boolean(node.active),
+        online: nodes.reachable(node),
+        bots: rows.filter((row) => row.node_id === node.id).length,
+      })),
+    });
   })
 );
 
@@ -2173,6 +2198,28 @@ admin.get(
         langOf(req)
       ),
     });
+  })
+);
+
+// ---------------------------------------------------------------- Wiederkehrende Aufgaben
+
+/**
+ * Was im Takt läuft – und wann es zuletzt lief.
+ *
+ * Die häufigste Frage an eine stündliche Aufgabe ist "muss ich wirklich eine Stunde warten, um
+ * zu sehen, ob es jetzt geht?". Deshalb steht neben jeder ein Knopf. Nicht neben jeder: Wo der
+ * Takt die halbe Bedeutung ist (tote Verbindungen aussortieren), bringt ein Anstoßen nichts, und
+ * ein Knopf ohne Wirkung ist schlimmer als keiner.
+ */
+admin.get('/jobs', wrap((req, res) => res.json({ jobs: jobs.list() })));
+
+admin.post(
+  '/jobs/:key/run',
+  wrap(async (req, res) => {
+    const result = await jobs.runNow(String(req.params.key));
+    if (!result) throw notFound('Diese Aufgabe gibt es nicht.', { en: 'No such job.' });
+    audit(req.user.id, 'job-run', { key: req.params.key, error: result.last_error });
+    res.json({ job: result, jobs: jobs.list() });
   })
 );
 

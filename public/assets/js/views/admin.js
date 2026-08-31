@@ -13,7 +13,7 @@
 // Kunde, hier bearbeitet er.
 
 import {
-  api, icon, escapeHtml, credits, euro, datetime, date, clock, since, bytes, meter, mcText, todoList,
+  api, icon, escapeHtml, credits, euro, datetime, date, clock, since, bytes, meter, mcText, todoList, stateBadge,
   safeLink, lang, tr, $, $$, ok, fail, toast, confirmDialog, formDialog, copy, debounce,
 } from '../ui.js';
 import { mergeLines } from '../chatlog.js';
@@ -177,6 +177,7 @@ export async function render(root, route) {
     ledger,
     audit,
     security,
+    ops,
   };
   try {
     await views[tab](body);
@@ -3909,4 +3910,167 @@ async function security(root) {
       if (await send(`/admin/security/sessions/${button.dataset.revoke}`, { method: 'DELETE' })) draw();
     })
   );
+}
+
+// ---------------------------------------------------------------- Betrieb
+//
+// Was **gerade** läuft, auf allen Standorten zusammen, und was regelmäßig läuft.
+//
+// Beides stand vorher nirgends an einer Stelle: Laufende Bots waren über die Serverplätze
+// verteilt, und wer wissen wollte, ob auf dem zweiten Standort noch etwas lief, klickte sich
+// durch fremde Kundenkonten. Die wiederkehrenden Aufgaben gab es überhaupt nur als Zeilen in
+// index.js – ob die Abrechnung heute Nacht lief, wusste das journal und sonst niemand.
+//
+// Die Ansicht lädt sich alle fünf Sekunden selbst nach. Das ist kein Live-Bild über die
+// WebSocket-Leitung, und das ist Absicht: Ein Betreiber, der hier zusieht, ist die Ausnahme, und
+// eine Ausnahme rechtfertigt keine zweite Zustandsverteilung neben der, die die Kundenansicht
+// ohnehin schon hat.
+
+async function ops(root) {
+  let timer = null;
+  let onlyRunning = true;
+
+  const paint = (data, jobs) => {
+    const bots = data.bots.filter((bot) => (onlyRunning ? bot.state !== 'offline' : true));
+    const nodes = data.nodes;
+
+    root.innerHTML = `
+      <div class="grid four" style="margin-bottom:1.5rem">
+        ${stat(tr('ops.running'), String(data.running), tr('ops.runningFoot', { n: data.online }))}
+        ${stat(tr('adm.nodes'), String(nodes.filter((node) => node.online).length), tr('ops.nodesFoot', { n: nodes.length }))}
+        ${stat(tr('ops.slots'), String(new Set(data.bots.map((bot) => bot.profile_id)).size), tr('ops.slotsFoot'))}
+        ${stat(tr('ops.errors'), String(data.bots.filter((bot) => bot.last_error).length), tr('ops.errorsFoot'))}
+      </div>
+
+      ${
+        nodes.length
+          ? panel(
+              tr('adm.nodes'),
+              table(
+                [tr('common.name'), tr('common.status'), tr('adm.bots'), ''],
+                nodes.map(
+                  (node) => `<tr>
+                    <td>${escapeHtml(node.name)} <span class="small muted">${escapeHtml(node.kind)}</span></td>
+                    <td>${
+                      node.active
+                        ? stateBadge(node.online ? 'online' : 'offline')
+                        : `<span class="pill missing">${escapeHtml(tr('common.off'))}</span>`
+                    }</td>
+                    <td class="mono small">${node.bots}</td>
+                    <td style="text-align:right"><a class="btn btn-sm" href="#/admin/nodes">${escapeHtml(
+                      tr('common.open')
+                    )}</a></td>
+                  </tr>`
+                )
+              )
+            )
+          : ''
+      }
+
+      ${panel(
+        `${bots.length} ${tr('adm.bots')}`,
+        table(
+          [tr('ov.col.account'), tr('adm.servers'), tr('adm.users'), tr('ops.node'), tr('common.status'), tr('ops.uptime'), ''],
+          bots.map(
+            (bot) => `<tr>
+              <td><span class="strong">${escapeHtml(bot.account)}</span>
+                ${bot.build ? `<span class="small muted"> · ${escapeHtml(bot.build)}</span>` : ''}</td>
+              <td class="small"><a href="#/admin/servers/${bot.profile_id}">${escapeHtml(bot.profile)}</a>
+                <span class="muted mono"> ${escapeHtml(bot.port ? `${bot.host}:${bot.port}` : bot.host)}</span></td>
+              <td class="small"><a href="#/admin/users/${bot.user_id}">${escapeHtml(bot.username || '')}</a></td>
+              <td class="small muted">${escapeHtml(bot.node || tr('ops.here'))}</td>
+              <td>${stateBadge(bot.state, bot.detail || '')}
+                ${bot.last_error ? `<span class="small muted">${escapeHtml(bot.last_error)}</span>` : ''}</td>
+              <td class="mono small muted">${bot.uptime ? uptime(Math.round(bot.uptime / 1000)) : '–'}</td>
+              <td style="text-align:right;white-space:nowrap">
+                <button class="btn btn-sm" data-restart="${bot.profile_id}">${icon('refresh')}</button>
+                <button class="btn btn-sm btn-danger" data-stop="${bot.profile_id}"
+                  data-account="${bot.account_id}">${icon('stop')}</button>
+              </td>
+            </tr>`
+          )
+        ),
+        `<label class="check small"><input type="checkbox" id="only-running" ${onlyRunning ? 'checked' : ''}>
+          <span>${escapeHtml(tr('ops.onlyRunning'))}</span></label>`
+      )}
+
+      ${panel(
+        tr('ops.jobs'),
+        table(
+          [tr('common.name'), tr('ops.every'), tr('ops.last'), tr('ops.took'), ''],
+          jobs.map(
+            (job) => `<tr>
+              <td>${escapeHtml(job.label[lang] || job.label.de || job.key)}
+                <span class="small muted mono"> ${escapeHtml(job.key)}</span>
+                ${job.last_error ? `<div class="small bad">${escapeHtml(job.last_error)}</div>` : ''}</td>
+              <td class="small muted">${escapeHtml(interval(job.interval_ms))}</td>
+              <td class="small muted">${job.last_at ? since(job.last_at) : tr('ops.never')}</td>
+              <td class="mono small muted">${job.last_ms === null ? '–' : `${job.last_ms} ms`}</td>
+              <td style="text-align:right">
+                ${
+                  job.manual
+                    ? `<button class="btn btn-sm" data-job="${escapeHtml(job.key)}" ${job.running ? 'disabled' : ''}>
+                        ${escapeHtml(tr('ops.runNow'))}</button>`
+                    : ''
+                }
+              </td>
+            </tr>`
+          )
+        )
+      )}`;
+
+    $('#only-running').addEventListener('change', async (event) => {
+      onlyRunning = event.target.checked;
+      paint(await api('/admin/bots'), (await api('/admin/jobs')).jobs);
+    });
+    $$('[data-stop]').forEach((button) =>
+      button.addEventListener('click', async () => {
+        if (
+          await send(`/admin/bots/${button.dataset.stop}/${button.dataset.account}/stop`, { method: 'POST' }, { done: false })
+        ) {
+          load();
+        }
+      })
+    );
+    $$('[data-restart]').forEach((button) =>
+      button.addEventListener('click', async () => {
+        if (await send(`/admin/servers/${button.dataset.restart}/restart`, { method: 'POST' }, { done: false })) load();
+      })
+    );
+    $$('[data-job]').forEach((button) =>
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        const answer = await send(`/admin/jobs/${button.dataset.job}/run`, { method: 'POST' }, { done: false });
+        // Ehrlich melden, was daraus wurde: Eine Aufgabe, die mit einem Fehler endet, hat nicht
+        // "geklappt", auch wenn der Aufruf durchging.
+        if (answer && answer.job) {
+          if (answer.job.last_error) toast(answer.job.last_error, 'bad');
+          else ok(tr('ops.ranIn', { ms: answer.job.last_ms }));
+          paint(await api('/admin/bots'), answer.jobs);
+        } else button.disabled = false;
+      })
+    );
+  };
+
+  const load = async () => {
+    if (state.route.name !== 'admin' || state.route.tab !== 'ops') return clearInterval(timer);
+    try {
+      const [bots, jobs] = await Promise.all([api('/admin/bots'), api('/admin/jobs')]);
+      // Steht ein Dialog offen, wäre ein Neuzeichnen ein Griff unter der Hand weg.
+      if (document.querySelector('dialog[open]')) return;
+      paint(bots, jobs.jobs);
+    } catch {
+      /* beim nächsten Mal wieder */
+    }
+  };
+
+  await load();
+  timer = setInterval(load, 5000);
+}
+
+/** Ein Takt, wie ihn ein Mensch liest: „alle 30 s“, „stündlich“. */
+function interval(ms) {
+  if (ms >= 3_600_000) return tr('ops.hours', { n: Math.round(ms / 3_600_000) });
+  if (ms >= 60_000) return tr('ops.minutes', { n: Math.round(ms / 60_000) });
+  return tr('ops.seconds', { n: Math.round(ms / 1000) });
 }
