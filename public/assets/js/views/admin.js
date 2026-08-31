@@ -176,6 +176,7 @@ export async function render(root, route) {
     mails,
     ledger,
     audit,
+    security,
   };
   try {
     await views[tab](body);
@@ -3690,6 +3691,157 @@ async function audit(root) {
       const row = head.parentElement;
       row.classList.toggle('open');
       row.querySelector('.log-detail').classList.toggle('hide');
+    })
+  );
+}
+
+// ---------------------------------------------------------------- Sicherheit
+//
+// Drei Listen, die zusammen eine Geschichte ergeben: wer klopft, wer drin ist, wer draußen
+// bleibt. Getrennt wären sie drei Bildschirme, zwischen denen niemand hin und her sieht – und
+// genau der Vergleich ist die Arbeit: Die Adresse, die achtzigmal danebengetippt hat, ist die,
+// die gesperrt gehört.
+
+async function security(root) {
+  const data = await api('/admin/security');
+  const failed = data.ips.reduce((sum, row) => sum + row.failed, 0);
+  const active = data.blocks.filter((block) => !block.expired);
+
+  const reason = (attempt) => {
+    if (attempt.ok) return `<span class="pill primary">${escapeHtml(tr('sec.ok'))}</span>`;
+    const keys = { wrong: 'sec.wrong', blocked: 'sec.blockedAccount', throttled: 'sec.throttled' };
+    return `<span class="pill missing">${escapeHtml(tr(keys[attempt.reason] || 'sec.wrong'))}</span>`;
+  };
+
+  root.innerHTML = `
+    <div class="grid three" style="margin-bottom:1.5rem">
+      ${stat(tr('sec.failed48'), String(failed), tr('sec.failedFoot', { n: data.ips.length }))}
+      ${stat(tr('sec.sessions'), String(data.sessions.length), tr('sec.sessionsFoot'))}
+      ${stat(tr('sec.blocks'), String(active.length), tr('sec.blocksFoot'))}
+    </div>
+
+    ${panel(
+      tr('sec.busy'),
+      table(
+        [tr('sec.address'), tr('sec.tries'), tr('sec.failedShort'), tr('sec.accounts'), tr('sec.last'), ''],
+        data.ips.map(
+          (row) => `<tr>
+            <td class="mono small">${escapeHtml(row.ip)}
+              ${row.ip === data.own_ip ? `<span class="pill">${escapeHtml(tr('sec.you'))}</span>` : ''}
+              ${
+                active.some((block) => block.value === row.ip)
+                  ? `<span class="pill missing">${escapeHtml(tr('sec.blocked'))}</span>`
+                  : ''
+              }</td>
+            <td class="mono small muted">${row.attempts}</td>
+            <td class="mono">${row.failed}</td>
+            <td class="mono small muted">${row.accounts}</td>
+            <td class="small muted">${since(row.last_at)}</td>
+            <td style="text-align:right">
+              ${
+                row.ip === data.own_ip
+                  ? ''
+                  : `<button class="btn btn-sm btn-danger" data-block="${escapeHtml(row.ip)}">${escapeHtml(
+                      tr('sec.block')
+                    )}</button>`
+              }
+            </td>
+          </tr>`
+        )
+      ),
+      `<span class="small muted">${escapeHtml(
+        tr('sec.limits', {
+          ip: data.limits.per_ip,
+          account: data.limits.per_account,
+          minutes: data.limits.window_minutes,
+        })
+      )}</span>`
+    )}
+
+    ${panel(
+      tr('sec.blocks'),
+      table(
+        [tr('sec.address'), tr('adm.reason'), tr('sec.until'), ''],
+        data.blocks.map(
+          (block) => `<tr>
+            <td class="mono small">${escapeHtml(block.value)}
+              ${block.expired ? `<span class="pill">${escapeHtml(tr('sec.expired'))}</span>` : ''}</td>
+            <td class="small muted">${escapeHtml(block.reason || '–')}</td>
+            <td class="small muted">${block.expires_at ? datetime(block.expires_at) : tr('sec.forever')}</td>
+            <td style="text-align:right">
+              <button class="btn btn-sm" data-unblock="${block.id}">${escapeHtml(tr('sec.unblock'))}</button>
+            </td>
+          </tr>`
+        )
+      ),
+      `<button class="btn btn-sm btn-primary" id="new-block">${icon('plus')} ${escapeHtml(tr('sec.block'))}</button>`
+    )}
+
+    ${panel(
+      tr('sec.sessions'),
+      table(
+        [tr('adm.users'), tr('sec.address'), tr('sec.device'), tr('sec.since'), ''],
+        data.sessions.map(
+          (session) => `<tr>
+            <td class="small"><a href="#/admin/users/${session.user_id}">${escapeHtml(session.username)}</a>
+              ${session.role === 'admin' ? '<span class="pill primary">admin</span>' : ''}</td>
+            <td class="mono small muted">${escapeHtml(session.ip || '–')}</td>
+            <td class="small muted truncate" style="max-width:22rem">${escapeHtml(session.agent || '–')}</td>
+            <td class="small muted">${since(session.created_at)}</td>
+            <td style="text-align:right">
+              <button class="btn btn-sm" data-revoke="${session.id}">${escapeHtml(tr('sec.revoke'))}</button>
+            </td>
+          </tr>`
+        )
+      )
+    )}
+
+    ${panel(
+      tr('sec.attempts'),
+      table(
+        ['', tr('sec.address'), tr('sec.tried'), ''],
+        data.attempts.map(
+          (attempt) => `<tr>
+            <td class="small muted mono">${datetime(attempt.created_at)}</td>
+            <td class="mono small">${escapeHtml(attempt.ip || '–')}</td>
+            <td class="small">${
+              attempt.user_id
+                ? `<a href="#/admin/users/${attempt.user_id}">${escapeHtml(attempt.identifier)}</a>`
+                : escapeHtml(attempt.identifier || '–')
+            }</td>
+            <td style="text-align:right">${reason(attempt)}</td>
+          </tr>`
+        )
+      )
+    )}`;
+
+  const block = async (value) => {
+    const answer = await formDialog(
+      tr('sec.block'),
+      [
+        { key: 'value', label: tr('sec.address'), value, required: true, hint: tr('sec.cidrHint') },
+        { key: 'reason', label: tr('adm.reason'), value: '' },
+        { key: 'days', label: tr('sec.days'), type: 'number', value: 0, min: 0, hint: tr('sec.daysHint') },
+      ],
+      { submit: tr('sec.block') }
+    );
+    if (!answer) return;
+    if (await send('/admin/security/blocks', { method: 'POST', body: { ...answer, days: Number(answer.days) } })) {
+      draw();
+    }
+  };
+
+  $('#new-block').addEventListener('click', () => block(''));
+  $$('[data-block]').forEach((button) => button.addEventListener('click', () => block(button.dataset.block)));
+  $$('[data-unblock]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (await send(`/admin/security/blocks/${button.dataset.unblock}`, { method: 'DELETE' })) draw();
+    })
+  );
+  $$('[data-revoke]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('sec.revokeAsk')))) return;
+      if (await send(`/admin/security/sessions/${button.dataset.revoke}`, { method: 'DELETE' })) draw();
     })
   );
 }

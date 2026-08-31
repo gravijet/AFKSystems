@@ -19,6 +19,7 @@ import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
 import * as stripe from '../stripe.js';
 import * as exportCsv from '../export.js';
+import * as security from '../security.js';
 import { supervisor } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
 import { planView, ticketView } from './core.js';
@@ -2171,6 +2172,68 @@ admin.get(
         langOf(req)
       ),
     });
+  })
+);
+
+// ---------------------------------------------------------------- Sicherheit
+
+/**
+ * Was an der Tür passiert.
+ *
+ * Drei Listen auf einem Bildschirm, weil sie zusammen eine Geschichte ergeben: auffällige
+ * Adressen (wer klopft), offene Sitzungen (wer drin ist) und Sperren (wer draußen bleibt). Wer
+ * eine Adresse in der ersten Liste sieht, kann sie mit einem Klick in die dritte schieben.
+ */
+admin.get(
+  '/security',
+  wrap((req, res) => {
+    res.json({
+      ips: security.busyIps(48),
+      attempts: security.attempts(120),
+      sessions: security.sessions(200),
+      blocks: security.listBlocks(),
+      // Die eigene Adresse steht dabei, damit die Ansicht sie kennzeichnen kann – gesperrt wird
+      // sie ohnehin nicht (security.addBlock), aber ein Knopf, der immer absagt, ist ärgerlich.
+      own_ip: req.ip,
+      limits: {
+        window_minutes: security.WINDOW_MS / 60_000,
+        per_ip: security.MAX_PER_IP,
+        per_account: security.MAX_PER_ACCOUNT,
+      },
+    });
+  })
+);
+
+admin.post(
+  '/security/blocks',
+  wrap((req, res) => {
+    const body = req.body || {};
+    security.addBlock({
+      value: body.value,
+      reason: body.reason || '',
+      days: Number(body.days) || 0,
+      by: req.user.id,
+      ownIp: req.ip,
+    });
+    res.json({ blocks: security.listBlocks() });
+  })
+);
+
+admin.delete(
+  '/security/blocks/:id',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Sperre');
+    if (!security.removeBlock(id, req.user.id)) throw notFound('Diese Sperre gibt es nicht.');
+    res.json({ blocks: security.listBlocks() });
+  })
+);
+
+admin.delete(
+  '/security/sessions/:id',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Sitzung');
+    if (!security.revokeSession(id, req.user.id)) throw notFound('Diese Sitzung gibt es nicht mehr.');
+    res.json({ sessions: security.sessions(200) });
   })
 );
 

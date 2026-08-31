@@ -29,6 +29,7 @@ import { admin as adminRouter } from './routes/admin.js';
 import { router as botRouter, tryBotSecret } from './routes/bot.js';
 import { router as nodeRouter, nodeByToken } from './routes/node.js';
 import * as agents from './agents.js';
+import * as security from './security.js';
 import { HttpError, langOf } from './util.js';
 
 const app = express();
@@ -177,6 +178,24 @@ app.use('/api/auth', (req, _res, next) => {
 app.use(express.json({ limit: '256kb' }));
 app.use(cookieParser);
 app.use(auth.attachUser);
+
+/**
+ * Gesperrte Adressen.
+ *
+ * Die Prüfung steht **hinter** `attachUser`, und das ist Absicht: Eine bestehende
+ * Administrator-Sitzung kommt durch jede Sperre hindurch. Wer sich mit einem zu weiten Netz
+ * selbst aussperrt, hätte sonst nur noch SSH – und die Sperre, die ihn draußen hält, steht
+ * ausgerechnet in der Datenbank, an die er dann nicht mehr herankommt. Die zweite Sicherung ist
+ * in security.js: Die eigene Adresse lässt sich gar nicht erst eintragen.
+ *
+ * Geantwortet wird knapp und ohne Begründung. Wer gesperrt ist, hat kein Anrecht darauf zu
+ * erfahren, warum – und eine ausführliche Antwort wäre eine Anleitung, es anders zu versuchen.
+ */
+app.use((req, res, next) => {
+  if (req.user?.role === 'admin') return next();
+  if (!security.blockFor(req.ip)) return next();
+  res.status(403).type('text/plain').send('Forbidden');
+});
 
 app.use('/api', coreRouter);
 app.use('/api', billingRouter);
@@ -909,6 +928,7 @@ setInterval(guarded('standort-eigen', localNodeTick), 15_000).unref();
 setInterval(
   guarded('aufraeumen', () => {
     auth.cleanupSessions();
+    security.cleanup();
     attachments.sweepOrphans();
     binaries.sync().then(() => agents.syncAll()).catch(() => {});
   }),

@@ -21,6 +21,7 @@ const billing = await import('../server/billing.js');
 const stripe = await import('../server/stripe.js');
 const vat = await import('../server/vat.js');
 const roles = await import('../server/roles.js');
+const security = await import('../server/security.js');
 const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const resources = await import('../server/resources.js');
@@ -1513,6 +1514,79 @@ test('a self-written legal text that still names the old payment provider is fla
   assert.ok(!staffTodos('de').some((row) => row.key === 'staff-legal-provider'));
 });
 
+test('an address block matches single addresses and whole networks, in both address families', () => {
+  assert.ok(security.ipMatches('203.0.113.7', '203.0.113.7'));
+  assert.ok(!security.ipMatches('203.0.113.7', '203.0.113.8'));
+  assert.ok(security.ipMatches('203.0.113.0/24', '203.0.113.200'));
+  assert.ok(!security.ipMatches('203.0.113.0/24', '203.0.114.1'));
+  assert.ok(security.ipMatches('0.0.0.0/0', '8.8.8.8'));
+
+  // Dieselbe Adresse in zwei Schreibweisen: Node liefert IPv4 über einen IPv6-Socket so. Eine
+  // Sperre, die das nicht erkennt, sperrt ins Leere.
+  assert.ok(security.ipMatches('203.0.113.7', '::ffff:203.0.113.7'));
+
+  assert.ok(security.ipMatches('2001:db8::/32', '2001:db8:1234::1'));
+  assert.ok(!security.ipMatches('2001:db8::/32', '2001:db9::1'));
+  // Ein IPv4-Netz enthält keine IPv6-Adresse, auch wenn die Zahlen zufällig passen.
+  assert.ok(!security.ipMatches('0.0.0.0/0', '2001:db8::1'));
+
+  assert.equal(security.validBlock('203.0.113.0/24'), '203.0.113.0/24');
+  assert.equal(security.validBlock('203.0.113.999'), null);
+  assert.equal(security.validBlock('203.0.113.0/33'), null);
+  assert.equal(security.validBlock('kein netz'), null);
+});
+
+test('the block list keeps the operator out of their own trap', () => {
+  const admin = createUser({ role: 'admin' });
+  assert.throws(
+    () => security.addBlock({ value: '198.51.100.0/24', by: admin.id, ownIp: '198.51.100.12' }),
+    /eigene Adresse/
+  );
+  security.addBlock({ value: '198.51.100.0/24', by: admin.id, ownIp: '203.0.113.5', reason: 'Bot-Netz' });
+  assert.ok(security.blockFor('198.51.100.77'));
+  assert.ok(!security.blockFor('203.0.113.5'));
+
+  // Abgelaufen ist wie nicht gesperrt – ohne dass jemand aufräumen muss.
+  db.prepare(
+    'INSERT INTO ip_blocks (value, reason, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)'
+  ).run('198.51.101.200', 'abgelaufen', admin.id, Date.now() - 86_400_000, Date.now() - 1_000);
+  // Der nächste Eintrag lädt die Liste neu; danach steht die abgelaufene Sperre zwar noch da,
+  // greift aber nicht mehr.
+  security.addBlock({ value: '198.51.101.201', by: admin.id });
+  assert.ok(security.listBlocks().find((entry) => entry.value === '198.51.101.200').expired);
+  assert.ok(!security.blockFor('198.51.101.200'));
+  assert.ok(security.blockFor('198.51.101.201'));
+
+  const row = security.listBlocks().find((entry) => entry.value === '198.51.100.0/24');
+  assert.ok(security.removeBlock(row.id, admin.id));
+  assert.ok(!security.blockFor('198.51.100.77'));
+});
+
+test('failed sign-ins are counted per address and per account, and success does not clear them', () => {
+  db.prepare('DELETE FROM login_attempts').run();
+  const ip = '192.0.2.44';
+  for (let i = 0; i < security.MAX_PER_IP - 1; i++) {
+    security.record({ ip, identifier: `opfer${i}@example.test`, ok: false, reason: 'wrong' });
+  }
+  assert.equal(security.tooMany(ip, 'jemand@example.test'), null);
+  security.record({ ip, identifier: 'noch-einer@example.test', ok: false, reason: 'wrong' });
+  assert.equal(security.tooMany(ip, 'jemand@example.test').scope, 'ip');
+
+  // Eine geglückte Anmeldung setzt nichts zurück: Sonst räumte der Angreifer beim ersten
+  // erratenen Passwort seinen eigenen Zähler ab.
+  security.record({ ip, identifier: 'jemand@example.test', ok: true });
+  assert.equal(security.tooMany(ip, 'jemand@example.test').scope, 'ip');
+
+  // Von vielen Adressen auf **ein** Konto: die zweite, großzügigere Grenze.
+  db.prepare('DELETE FROM login_attempts').run();
+  for (let i = 0; i < security.MAX_PER_ACCOUNT; i++) {
+    security.record({ ip: `192.0.2.${i + 100}`, identifier: 'ziel@example.test', ok: false, reason: 'wrong' });
+  }
+  assert.equal(security.tooMany('192.0.2.250', 'ziel@example.test').scope, 'account');
+  assert.equal(security.tooMany('192.0.2.250', 'jemand-anderes@example.test'), null);
+  db.prepare('DELETE FROM login_attempts').run();
+});
+
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {
   // Mindestens 24 Zeichen – kürzer nimmt das Panel bewusst nicht an (routes/bot.js).
   const BOT_SECRET = 'bot-test-secret-long-enough-0123456789';
@@ -1878,6 +1952,53 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
   });
   assert.equal(csvUnknown.status, 404);
+
+  // Passwort-Raten: Zehn Fehlversuche von derselben Adresse, dann macht die Tür nicht mehr auf –
+  // und zwar bevor überhaupt ein Passwort geprüft wird.
+  db.prepare('DELETE FROM login_attempts').run();
+  let throttled = null;
+  for (let attempt = 0; attempt < 11; attempt++) {
+    const tried = await api(base, '/api/auth/login', {
+      method: 'POST',
+      body: { login: user.email, password: 'das-ist-es-nicht' },
+    });
+    if (tried.response.status === 429) {
+      throttled = attempt;
+      break;
+    }
+    assert.equal(tried.response.status, 401);
+  }
+  assert.equal(throttled, 10, 'nach zehn Fehlversuchen ist Schluss');
+  const written = db.prepare('SELECT reason, ok FROM login_attempts ORDER BY id').all();
+  assert.equal(written.length, 11);
+  assert.equal(written.at(-1).reason, 'throttled');
+  assert.ok(written.every((row) => row.ok === 0));
+
+  // Der Admin-Bereich zeigt genau das – zusammengefasst nach Adresse, nicht als elf Zeilen.
+  const securityView = await api(base, '/api/admin/security', { token: ADMIN_TOKEN });
+  assert.equal(securityView.response.status, 200);
+  assert.equal(securityView.data.ips[0].failed, 11);
+  assert.ok(securityView.data.sessions.some((session) => session.username === admin.username));
+  // Sitzungsschlüssel sind Passwortersatz und haben in einer Ansicht nichts verloren.
+  assert.ok(!JSON.stringify(securityView.data.sessions).includes(ADMIN_TOKEN));
+
+  // Eine Sperre auf ein fremdes Netz stört den laufenden Betrieb nicht – und die eigene Adresse
+  // lässt sich gar nicht erst eintragen.
+  const blockOther = await api(base, '/api/admin/security/blocks', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { value: '203.0.113.0/24', reason: 'Testnetz', days: 2 },
+  });
+  assert.equal(blockOther.response.status, 200);
+  const blockSelf = await api(base, '/api/admin/security/blocks', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { value: '127.0.0.1' },
+  });
+  assert.equal(blockSelf.response.status, 400);
+  const stillWorks = await api(base, '/api/admin/overview', { token: ADMIN_TOKEN });
+  assert.equal(stillWorks.response.status, 200);
+  db.prepare('DELETE FROM login_attempts').run();
 
   const premium = billing.planBySlug('premium');
   const premiumFeatures = premium.features_de;
