@@ -937,6 +937,36 @@ const migrations = [
       );
     `,
   },
+  {
+    // Das Postfach im Panel ist kein zweiter Discord-Webhook. Es ist die verlässliche Chronik
+    // der Dinge, die das eigene Konto betreffen: Antworten vom Support, Gutschriften, auslaufende
+    // Plätze und Bots, die Hilfe brauchen. Bisher verschwanden diese Hinweise vollständig, wenn
+    // kein Discord-Webhook eingerichtet war. Ab hier bleiben die letzten Ereignisse am Konto und
+    // können auf jedem Gerät gelesen werden.
+    name: '017-aktivitaetszentrale',
+    sql: `
+      CREATE TABLE user_notifications (
+        id         INTEGER PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        event      TEXT NOT NULL DEFAULT 'info', -- ticket | billing | bot | account | plan | info
+        tone       TEXT NOT NULL DEFAULT 'info', -- info | ok | warn | bad
+        title_de   TEXT NOT NULL,
+        title_en   TEXT NOT NULL,
+        body_de    TEXT NOT NULL DEFAULT '',
+        body_en    TEXT NOT NULL DEFAULT '',
+        href       TEXT,
+        dedupe_key TEXT,
+        created_at INTEGER NOT NULL,
+        read_at    INTEGER
+      );
+      CREATE INDEX user_notifications_user
+        ON user_notifications(user_id, created_at DESC);
+      CREATE INDEX user_notifications_unread
+        ON user_notifications(user_id, read_at) WHERE read_at IS NULL;
+      CREATE INDEX user_notifications_dedupe
+        ON user_notifications(user_id, dedupe_key, created_at DESC);
+    `,
+  },
 ];
 
 /**
@@ -1288,6 +1318,10 @@ const defaults = {
   content_lock_ui: 0,
   maintenance: 0,
   maintenance_text: '',
+  // Sicherungen der Datenbank: eine je Tag, die letzten vierzehn bleiben liegen. Vierzehn, weil
+  // das zwei Wochen sind – lange genug, um einen Fehler zu bemerken, der am Freitag passiert ist.
+  backup_daily: 1,
+  backup_keep: 14,
   max_bots_per_user: 25,
   support_hours: '',
   // Die Adresse, unter der man den Support **ohne** Konto erreicht: im Fuß jeder öffentlichen

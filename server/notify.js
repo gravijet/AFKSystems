@@ -39,6 +39,60 @@ const readUser = db.prepare(
   'SELECT discord_webhook, discord_events, username, language FROM users WHERE id = ?'
 );
 
+const insertNotification = db.prepare(
+  `INSERT INTO user_notifications
+     (user_id, event, tone, title_de, title_en, body_de, body_en, href, dedupe_key, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+);
+
+/** Die Farbe des Webhooks wird im Panel als ruhiger, semantischer Zustand weiterverwendet. */
+const toneOf = (color) => {
+  if (color === COLORS.ok) return 'ok';
+  if (color === COLORS.warn) return 'warn';
+  if (color === COLORS.bad) return 'bad';
+  return 'info';
+};
+
+/**
+ * Ein Ereignis für das Postfach im Panel aufheben.
+ *
+ * Die Sperrzeit wird zusätzlich in SQLite geprüft. Der Speicher oben ist der schnelle Weg im
+ * laufenden Prozess; die Datenbank verhindert, dass ein Neustart aus einer täglichen Warnung
+ * plötzlich zwei macht. Je Konto bleiben höchstens 250 Einträge – genug für eine Chronik, ohne
+ * aus einer Statusliste ein endlos wachsendes Archiv zu machen.
+ */
+function remember(userId, title, body, { event, color, url, key, quiet }, now) {
+  const dedupeKey = String(key ?? pick(title, 'de')).slice(0, 300);
+  if (quiet > 0) {
+    const last = db
+      .prepare(
+        `SELECT created_at FROM user_notifications
+          WHERE user_id = ? AND dedupe_key = ? ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(userId, dedupeKey);
+    if (last && now - last.created_at < quiet) return false;
+  }
+  insertNotification.run(
+    userId,
+    EVENTS.includes(event) ? event : 'info',
+    toneOf(color),
+    pick(title, 'de'),
+    pick(title, 'en'),
+    pick(body, 'de'),
+    pick(body, 'en'),
+    url || null,
+    dedupeKey,
+    now
+  );
+  db.prepare(
+    `DELETE FROM user_notifications
+      WHERE user_id = ? AND id NOT IN (
+        SELECT id FROM user_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 250
+      )`
+  ).run(userId, userId);
+  return true;
+}
+
 /**
  * Welche Ereignisse ein Kunde über seinen Webhook bekommen will.
  *
@@ -123,13 +177,15 @@ export async function notify(
   { key = null, color = COLORS.info, quiet = QUIET_MS, event = null, url = null } = {}
 ) {
   const user = readUser.get(userId);
-  if (!user?.discord_webhook) return false;
-  if (!wants(user, event)) return false;
-  const lang = 'en';
+  if (!user) return false;
 
   const mapKey = `${userId}:${key ?? pick(title, 'de')}`;
   const now = Date.now();
   if (quiet > 0 && now - (lastSent.get(mapKey) || 0) < quiet) return false;
+  // Das Postfach im Panel ist unabhängig von Discord: Auch ohne Webhook bleibt die Meldung da.
+  // Gibt es sie seit einem Neustart schon in SQLite, beendet `remember` auch den Webhook-Weg –
+  // sonst käme dieselbe Warnung zwar nicht zweimal ins Panel, aber trotzdem zweimal nach Discord.
+  if (!remember(userId, title, text, { event, color, url, key, quiet }, now)) return false;
   lastSent.set(mapKey, now);
   // Aufräumen, sonst wächst diese Tabelle für immer: Der Schlüssel enthält den Serverplatznamen
   // (und bei der Testnachricht sogar einen Zeitstempel), also entsteht bei jedem umbenannten Platz
@@ -141,9 +197,77 @@ export async function notify(
     }
   }
 
+  if (!user.discord_webhook || !wants(user, event)) return false;
+  const lang = 'en';
+
   return post(user.discord_webhook, {
     embeds: [{ title: pick(title, lang), description: pick(text, lang), color, url: url || undefined }],
   });
+}
+
+// ---------------------------------------------------------------- Aktivitätszentrale im Panel
+
+/** Absolute Panel-Adressen werden beim Lesen wieder zu einer Route im gerade geöffneten Panel. */
+function panelHref(value) {
+  const raw = String(value || '');
+  const hash = raw.indexOf('#/');
+  return hash >= 0 ? raw.slice(hash) : raw;
+}
+
+export function unreadFor(userId) {
+  return db
+    .prepare('SELECT COUNT(*) AS n FROM user_notifications WHERE user_id = ? AND read_at IS NULL')
+    .get(userId).n;
+}
+
+export function notificationsFor(userId, lang = 'en', { limit = 100, event = '' } = {}) {
+  const wanted = EVENTS.includes(event) ? event : '';
+  const rows = wanted
+    ? db
+        .prepare(
+          `SELECT * FROM user_notifications
+            WHERE user_id = ? AND event = ? ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(userId, wanted, limit)
+    : db
+        .prepare(
+          'SELECT * FROM user_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+        )
+        .all(userId, limit);
+  return rows.map((row) => ({
+    id: row.id,
+    event: row.event,
+    tone: row.tone,
+    title: lang === 'de' ? row.title_de : row.title_en,
+    body: lang === 'de' ? row.body_de : row.body_en,
+    href: panelHref(row.href),
+    created_at: row.created_at,
+    read_at: row.read_at,
+  }));
+}
+
+export function markRead(userId, ids = null) {
+  const now = Date.now();
+  if (!ids?.length) {
+    return db
+      .prepare('UPDATE user_notifications SET read_at = ? WHERE user_id = ? AND read_at IS NULL')
+      .run(now, userId).changes;
+  }
+  const clean = [...new Set(ids)].filter(Number.isInteger).slice(0, 100);
+  if (!clean.length) return 0;
+  const placeholders = clean.map(() => '?').join(',');
+  return db
+    .prepare(
+      `UPDATE user_notifications SET read_at = COALESCE(read_at, ?)
+        WHERE user_id = ? AND id IN (${placeholders})`
+    )
+    .run(now, userId, ...clean).changes;
+}
+
+export function removeRead(userId) {
+  return db
+    .prepare('DELETE FROM user_notifications WHERE user_id = ? AND read_at IS NOT NULL')
+    .run(userId).changes;
 }
 
 // ---------------------------------------------------------------- Support

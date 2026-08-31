@@ -674,6 +674,26 @@ export const SETTINGS = [
     en: { label: 'Maintenance text', help: 'What visitors read in the meantime.' },
   },
   {
+    key: 'backup_daily',
+    group: 'ops',
+    type: 'switch',
+    de: {
+      label: 'Tägliche Sicherung',
+      help: 'Einmal am Tag eine Kopie der Datenbank unter data/backups. Läuft im laufenden Betrieb, hält nichts an und dauert einen Wimpernschlag.',
+    },
+    en: {
+      label: 'Daily backup',
+      help: 'Once a day a copy of the database under data/backups. Runs while everything is up, stops nothing and takes the blink of an eye.',
+    },
+  },
+  {
+    key: 'backup_keep',
+    group: 'ops',
+    type: 'number',
+    de: { label: 'Sicherungen aufheben', help: 'Wie viele Sicherungen liegen bleiben. Ältere werden nach einer neuen weggeräumt.' },
+    en: { label: 'Backups to keep', help: 'How many backups stay on disk. Older ones are removed after a new one is made.' },
+  },
+  {
     key: 'support_hours',
     group: 'ops',
     type: 'text',

@@ -605,11 +605,16 @@ const health = (label, good, note = '') => `<div class="row spread">
 
 async function system(root) {
   let timer = null;
+  // Zwei Bereiche: oben die Messwerte, die sich alle vier Sekunden selbst neu zeichnen, unten
+  // die Sicherungen. Getrennt, weil das Neuzeichnen sonst jeden Klick unter dem Zeiger wegzöge –
+  // eine Liste von Dateien ändert sich nicht im Sekundentakt.
+  root.innerHTML = '<div id="sys-live"></div><div id="sys-backups"></div>';
+  const live = $('#sys-live');
 
   const paint = (data) => {
     const host = data.host;
     const own = data.afksystems;
-    root.innerHTML = `
+    live.innerHTML = `
       <div class="grid three" style="margin-bottom:1.5rem">
         <div class="usage-card">
           <div class="row spread"><span class="k">${escapeHtml(tr('adm.cpu'))}</span>
@@ -708,6 +713,66 @@ async function system(root) {
   };
   timer = setInterval(tick, 4000);
   setTimeout(tick, 1200);
+
+  await backups($('#sys-backups'));
+}
+
+/**
+ * Sicherungen der Datenbank.
+ *
+ * Der Weg zurück steht als Befehl daneben und nicht als Knopf: Eine Datenbank auszutauschen,
+ * während das Panel auf ihr arbeitet, geht nicht gut aus – offene Verbindungen zeigen weiter auf
+ * die alte Datei. Ein Knopf, der so tut, als ginge das, wäre die gefährlichere Bequemlichkeit.
+ */
+async function backups(root) {
+  const data = await api('/admin/backups');
+  const command = `systemctl stop afksystems && cp ${data.dir}/<datei> ${data.db} && systemctl start afksystems`;
+
+  root.innerHTML = panel(
+    tr('bak.title'),
+    `<div class="body stack" style="padding:1rem 1.25rem 0">
+      <p class="small muted">${escapeHtml(
+        data.daily ? tr('bak.dailyOn', { n: data.keep }) : tr('bak.dailyOff')
+      )}</p>
+    </div>
+    ${table(
+      [tr('common.name'), tr('bak.size'), tr('common.date'), ''],
+      data.entries.map(
+        (entry) => `<tr>
+          <td class="mono small">${escapeHtml(entry.name)}</td>
+          <td class="mono small muted">${bytes(entry.size)}</td>
+          <td class="small muted">${datetime(entry.created_at)}</td>
+          <td style="text-align:right;white-space:nowrap">
+            <a class="btn btn-sm" href="/api/admin/backups/${encodeURIComponent(entry.name)}" download>
+              ${icon('download')} ${escapeHtml(tr('bak.download'))}</a>
+            <button class="btn btn-ghost btn-sm btn-danger" data-drop="${escapeHtml(entry.name)}">${icon('trash')}</button>
+          </td>
+        </tr>`
+      )
+    )}
+    <div class="body stack" style="padding:1rem 1.25rem">
+      <p class="small muted">${escapeHtml(tr('bak.restore'))}</p>
+      <code class="mono small" style="display:block;overflow-x:auto;white-space:pre">${escapeHtml(command)}</code>
+    </div>`,
+    `<span class="small muted">${escapeHtml(bytes(data.total))}</span>
+     <button class="btn btn-sm btn-primary" id="bak-now">${icon('disk')} ${escapeHtml(tr('bak.now'))}</button>`
+  );
+
+  $('#bak-now').addEventListener('click', async () => {
+    const button = $('#bak-now');
+    button.disabled = true;
+    if (await send('/admin/backups', { method: 'POST' })) await backups(root);
+    else button.disabled = false;
+  });
+  $$('[data-drop]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('bak.dropAsk', { name: button.dataset.drop }), { confirm: tr('common.delete') })))
+        return;
+      if (await send(`/admin/backups/${encodeURIComponent(button.dataset.drop)}`, { method: 'DELETE' })) {
+        await backups(root);
+      }
+    })
+  );
 }
 
 function uptime(seconds) {

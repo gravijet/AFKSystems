@@ -396,6 +396,7 @@ router.get(
         monthly_cost: billing.monthlyCost(req.user.id),
         free_slots_left: Math.max(0, billing.freeSlots() - billing.usedFreeSlots(req.user.id)),
         tickets_unread: tickets.unreadFor(req.user),
+        notifications_unread: notify.unreadFor(req.user.id),
         staff_tickets: req.user.role === 'admin' ? tickets.openForStaff() : 0,
         todos: todos.length,
       },
@@ -454,6 +455,46 @@ router.get(
         online: byProfile.get(row.id)?.online || 0,
       })),
     });
+  })
+);
+
+// ---------------------------------------------------------------- Aktivitätszentrale
+
+router.get(
+  '/me/notifications',
+  auth.requireUser,
+  wrap((req, res) => {
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 100));
+    const event = String(req.query.event || '').trim();
+    res.json({
+      notifications: notify.notificationsFor(req.user.id, langOf(req), { limit, event }),
+      unread: notify.unreadFor(req.user.id),
+    });
+  })
+);
+
+router.patch(
+  '/me/notifications',
+  auth.requireUser,
+  wrap((req, res) => {
+    const raw = req.body?.ids;
+    if (raw !== undefined && !Array.isArray(raw)) {
+      throw bad('Die Auswahl ist ungültig.', { en: 'The selection is invalid.' });
+    }
+    const ids = Array.isArray(raw)
+      ? raw.map(Number).filter((id) => Number.isInteger(id) && id > 0).slice(0, 100)
+      : null;
+    const changed = notify.markRead(req.user.id, ids);
+    res.json({ ok: true, changed, unread: notify.unreadFor(req.user.id) });
+  })
+);
+
+router.delete(
+  '/me/notifications',
+  auth.requireUser,
+  wrap((req, res) => {
+    const changed = notify.removeRead(req.user.id);
+    res.json({ ok: true, changed, unread: notify.unreadFor(req.user.id) });
   })
 );
 

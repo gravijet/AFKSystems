@@ -87,10 +87,13 @@ export const paths = {
   // Die Original-Client-JARs von Minecraft, eine je Protokollversion. Sie kommen nicht aus dem
   // Release des Clients und liegen deshalb nicht bei den Bauformen (siehe server/resources.js).
   resources: path.join(config.dataDir, 'mc'),
+  // Sicherungen der Datenbank. Sie liegen neben ihr und nicht darin: Wer den Datenbestand
+  // wegkopiert, nimmt damit auch die Sicherungen mit (siehe server/backup.js).
+  backups: path.join(config.dataDir, 'backups'),
   public: path.join(ROOT, 'public'),
 };
 
-for (const dir of [config.dataDir, paths.bin, paths.users, paths.logs, paths.resources]) {
+for (const dir of [config.dataDir, paths.bin, paths.users, paths.logs, paths.resources, paths.backups]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 
