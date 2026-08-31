@@ -9,9 +9,15 @@ import {
   ok, fail, toast, confirmDialog, formDialog, debounce,
 } from '../ui.js';
 import { mergeLines, stripFormatting } from '../chatlog.js';
-import { state, appbar, refresh, draw, profileById, tabsFor, linesOf } from '../app.js';
+import { state, appbar, refresh, draw, drawSide, profileById, tabsFor, linesOf } from '../app.js';
 import { noAccounts, accountPicker, commandRunner, anyOnline, itemSlot } from './parts.js';
 import { tabPov, tabInventory } from './live.js';
+import {
+  preferences,
+  setPreference,
+  isFavoriteServer,
+  toggleFavoriteServer,
+} from '../preferences.js';
 
 export async function render(root, route) {
   if (route.name === 'servers') return renderList(root);
@@ -21,6 +27,9 @@ export async function render(root, route) {
 // ---------------------------------------------------------------- Liste
 
 async function renderList(root) {
+  let query = '';
+  let filter = 'all';
+  let view = preferences(state.me.id).serverView;
   root.innerHTML = `
     ${appbar(
       tr('dash.servers'),
@@ -29,7 +38,25 @@ async function renderList(root) {
     )}
     ${
       state.profiles.length
-        ? `<div class="grid two">${state.profiles.map(card).join('')}</div>`
+        ? `<div class="server-tools">
+            <label class="server-search">${icon('search')}
+              <input id="server-search" type="search" autocomplete="off" placeholder="${escapeHtml(
+                tr('srv.search')
+              )}" aria-label="${escapeHtml(tr('srv.search'))}"></label>
+            <select id="server-filter" class="mini" aria-label="${escapeHtml(tr('common.status'))}">
+              <option value="all">${escapeHtml(tr('srv.filter.all'))}</option>
+              <option value="online">${escapeHtml(tr('srv.filter.online'))}</option>
+              <option value="attention">${escapeHtml(tr('srv.filter.attention'))}</option>
+            </select>
+            <div class="view-switch" role="group" aria-label="${escapeHtml(tr('common.appearance'))}">
+              <button type="button" data-server-view="cards" aria-pressed="${view === 'cards'}"
+                title="${escapeHtml(tr('srv.view.cards'))}">${icon('grid')}</button>
+              <button type="button" data-server-view="list" aria-pressed="${view === 'list'}"
+                title="${escapeHtml(tr('srv.view.list'))}">${icon('list')}</button>
+            </div>
+            <span class="small muted" id="server-count"></span>
+          </div>
+          <div id="server-list"></div>`
         : `<div class="empty"><h3>${escapeHtml(tr('ov.noServer.title'))}</h3>
             <p>${escapeHtml(tr('ov.noServer.text'))}</p>
             <button class="btn btn-primary" id="add-2">${icon('plus')} ${escapeHtml(tr('dash.newServer'))}</button></div>`
@@ -37,31 +64,93 @@ async function renderList(root) {
 
   $('#add')?.addEventListener('click', newProfile);
   $('#add-2')?.addEventListener('click', newProfile);
+
+  function visibleProfiles() {
+    return [...state.profiles]
+      .filter((profile) => {
+        const unavailable =
+          profile.locked || profile.suspended || (profile.plan.free_slot && profile.free_access?.ok === false);
+        if (filter === 'online' && !profile.online) return false;
+        if (filter === 'attention' && !unavailable) return false;
+        return !query || `${profile.name} ${profile.address} ${profile.plan.name}`.toLowerCase().includes(query);
+      })
+      .sort(
+        (a, b) =>
+          Number(isFavoriteServer(state.me.id, b.id)) - Number(isFavoriteServer(state.me.id, a.id)) ||
+          Number(b.online > 0) - Number(a.online > 0) ||
+          a.name.localeCompare(b.name)
+      );
+  }
+
+  function paint() {
+    const box = $('#server-list');
+    if (!box) return;
+    const profiles = visibleProfiles();
+    box.className = view === 'list' ? 'server-list' : 'grid two server-grid';
+    box.innerHTML =
+      profiles.map(card).join('') ||
+      `<div class="empty" style="grid-column:1/-1"><h3>${escapeHtml(tr('srv.noMatches'))}</h3></div>`;
+    $('#server-count').textContent = tr('act.count', { n: profiles.length, total: state.profiles.length });
+    $$('[data-favorite]', box).forEach((button) =>
+      button.addEventListener('click', () => {
+        toggleFavoriteServer(state.me.id, Number(button.dataset.favorite));
+        paint();
+        drawSide();
+      })
+    );
+  }
+
+  $('#server-search')?.addEventListener('input', (event) => {
+    query = String(event.target.value || '').trim().toLowerCase();
+    paint();
+  });
+  $('#server-filter')?.addEventListener('change', (event) => {
+    filter = event.target.value;
+    paint();
+  });
+  $$('[data-server-view]').forEach((button) =>
+    button.addEventListener('click', () => {
+      view = button.dataset.serverView;
+      setPreference(state.me.id, 'serverView', view);
+      $$('[data-server-view]').forEach((entry) =>
+        entry.setAttribute('aria-pressed', String(entry === button))
+      );
+      paint();
+    })
+  );
+  paint();
 }
 
 function card(profile) {
   const unavailable = profile.locked || profile.suspended || (profile.plan.free_slot && profile.free_access?.ok === false);
-  return `<a class="card" href="#/servers/${profile.id}/connect" style="display:block">
-    <div class="row spread">
-      <div class="row">
-        <span class="dot ${profile.online ? 'live' : ''}"
-          style="color:${profile.online ? 'var(--ok)' : 'var(--text-2)'}"></span>
-        <div>
-          <div class="strong">${escapeHtml(profile.name)}</div>
-          <div class="small muted mono">${escapeHtml(profile.address)}</div>
+  const favorite = isFavoriteServer(state.me.id, profile.id);
+  return `<article class="card server-card ${favorite ? 'is-favorite' : ''}">
+    <a class="server-card-main" href="#/servers/${profile.id}/connect">
+      <div class="row spread server-card-head">
+        <div class="row">
+          <span class="dot ${profile.online ? 'live' : ''}"
+            style="color:${profile.online ? 'var(--ok)' : 'var(--text-2)'}"></span>
+          <div>
+            <div class="strong">${escapeHtml(profile.name)}</div>
+            <div class="small muted mono">${escapeHtml(profile.address)}</div>
+          </div>
         </div>
+        <span class="pill ${profile.plan.free_slot ? '' : 'primary'}">${escapeHtml(profile.plan.name)}</span>
       </div>
-      <span class="pill ${profile.plan.free_slot ? '' : 'primary'}">${escapeHtml(profile.plan.name)}</span>
-    </div>
-    <div class="row spread" style="margin-top:1rem">
-      <span class="small muted">${profile.online}/${profile.total} · MC ${escapeHtml(profile.mc_version)}</span>
-      ${
-        unavailable
-          ? `<span class="pill missing">${escapeHtml(tr('srv.unavailable'))}</span>`
-          : `<span class="small" style="color:var(--primary-text)">${escapeHtml(tr('common.open'))} ${icon('arrow')}</span>`
-      }
-    </div>
-  </a>`;
+      <div class="row spread server-card-foot">
+        <span class="small muted">${profile.online}/${profile.total} · MC ${escapeHtml(profile.mc_version)}</span>
+        ${
+          unavailable
+            ? `<span class="pill missing">${escapeHtml(tr('srv.unavailable'))}</span>`
+            : `<span class="small server-open">${escapeHtml(tr('common.open'))} ${icon('arrow')}</span>`
+        }
+      </div>
+    </a>
+    <button class="server-favorite" type="button" data-favorite="${profile.id}"
+      aria-pressed="${favorite}" title="${escapeHtml(
+        tr(favorite ? 'srv.favoriteRemove' : 'srv.favoriteAdd')
+      )}" aria-label="${escapeHtml(tr(favorite ? 'srv.favoriteRemove' : 'srv.favoriteAdd'))}">${icon('star')}</button>
+  </article>`;
 }
 
 export async function newProfile() {
@@ -207,7 +296,11 @@ async function renderProfile(root, route) {
   root.innerHTML = `
     ${appbar(
       profile.name,
-      `<span class="pill">MC ${escapeHtml(profile.mc_version)}</span>
+      `<button class="btn btn-ghost btn-sm profile-favorite" type="button" data-profile-favorite="${profile.id}"
+         aria-pressed="${isFavoriteServer(state.me.id, profile.id)}" title="${escapeHtml(
+           tr(isFavoriteServer(state.me.id, profile.id) ? 'srv.favoriteRemove' : 'srv.favoriteAdd')
+         )}">${icon('star')}</button>
+       <span class="pill">MC ${escapeHtml(profile.mc_version)}</span>
        <span class="pill ${profile.plan.free_slot ? '' : 'primary'}">${escapeHtml(profile.plan.name)}</span>
        ${profile.node ? `<span class="pill">${icon('pin')}${escapeHtml(profile.node.name)}</span>` : ''}
        <span class="pill">${profile.online}/${profile.features?.max_accounts ?? profile.total}</span>`,
@@ -260,6 +353,13 @@ async function renderProfile(root, route) {
     addons: tabAddons,
     settings: tabSettings,
   };
+  $('[data-profile-favorite]')?.addEventListener('click', (event) => {
+    const button = event.currentTarget;
+    const favorite = toggleFavoriteServer(state.me.id, profile.id);
+    button.setAttribute('aria-pressed', String(favorite));
+    button.title = tr(favorite ? 'srv.favoriteRemove' : 'srv.favoriteAdd');
+    drawSide();
+  });
   await (views[current] || tabConnect)($('#tab-body'), profile);
 }
 

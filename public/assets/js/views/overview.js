@@ -45,6 +45,8 @@ export async function render(root) {
       tr('dash.subtitle')
     )}
 
+    ${onboarding()}
+
     ${todoList(todos)}
 
     <!-- Die Diagramme stehen dort, wo vorher vier Kacheln mit denselben Zahlen standen.
@@ -60,6 +62,10 @@ export async function render(root) {
           tr('ov.inGameLine', { online, n: bots.length, accounts: state.accounts.length })
         )}</span>
         <div class="row">
+          <button class="btn btn-sm btn-primary" id="start-all"
+            ${state.profiles.some((profile) => profile.active && profile.accounts.length) ? '' : 'disabled'}>${icon(
+              'play'
+            )} ${escapeHtml(tr('ov.startAll'))}</button>
           <button class="btn btn-sm" id="stop-all" ${bots.length ? '' : 'disabled'}>${icon('stop')} ${escapeHtml(
             tr('ov.stopAll')
           )}</button>
@@ -68,15 +74,46 @@ export async function render(root) {
       <div class="body" style="padding:0">
         ${
           state.profiles.length
-            ? `<div class="table-wrap"><table class="table">
+            ? `<div class="overview-bot-tools">
+                <label class="overview-bot-search">${icon('search')}
+                  <input id="bot-search" type="search" autocomplete="off"
+                    placeholder="${escapeHtml(tr('ov.searchBots'))}" aria-label="${escapeHtml(
+                      tr('ov.searchBots')
+                    )}"></label>
+                <select id="bot-filter" class="mini" aria-label="${escapeHtml(tr('common.status'))}">
+                  <option value="all">${escapeHtml(tr('ov.filter.all'))}</option>
+                  <option value="online">${escapeHtml(tr('ov.filter.online'))}</option>
+                  <option value="attention">${escapeHtml(tr('ov.filter.attention'))}</option>
+                  <option value="offline">${escapeHtml(tr('ov.filter.offline'))}</option>
+                </select>
+                <select id="bot-sort" class="mini" aria-label="${escapeHtml(tr('common.order'))}">
+                  <option value="status">${escapeHtml(tr('ov.sort.status'))}</option>
+                  <option value="account">${escapeHtml(tr('ov.sort.account'))}</option>
+                  <option value="server">${escapeHtml(tr('ov.sort.server'))}</option>
+                </select>
+              </div>
+              <div class="bulk overview-bulk" data-empty="true" id="bot-bulk">
+                <span id="bulk-count">${escapeHtml(tr('ov.selected', { n: 0 }))}</span>
+                <div class="row wrap" id="bulk-actions">
+                  <button class="btn btn-primary btn-sm" id="bulk-start">${icon('play')} ${escapeHtml(
+                    tr('ov.startSelected')
+                  )}</button>
+                  <button class="btn btn-sm" id="bulk-stop">${icon('stop')} ${escapeHtml(
+                    tr('ov.stopSelected')
+                  )}</button>
+                </div>
+                <button class="btn btn-ghost btn-sm" id="bulk-clear">${escapeHtml(tr('ov.clearSelection'))}</button>
+              </div>
+              <div class="table-wrap"><table class="table overview-bots">
                 <thead><tr>
+                  <th><input type="checkbox" id="pick-all-bots" aria-label="${escapeHtml(tr('ov.filter.all'))}"></th>
                   <th>${escapeHtml(tr('ov.col.account'))}</th>
                   <th>${escapeHtml(tr('ov.col.server'))}</th>
                   <th>${escapeHtml(tr('common.status'))}</th>
                   <th>${escapeHtml(tr('ov.col.uptime'))}</th>
                   <th></th>
                 </tr></thead>
-                <tbody>${rows()}</tbody>
+                <tbody id="bot-rows">${rows()}</tbody>
               </table></div>`
             : `<div class="empty" style="box-shadow:none;background:transparent">
                 <h3>${escapeHtml(tr('ov.noServer.title'))}</h3>
@@ -105,6 +142,67 @@ export async function render(root) {
           <span class="row">${icon('settings')} ${escapeHtml(tr('dash.settings'))}</span>${icon('arrow')}</a>
       </div>
     </section>`;
+
+  /** Der Einstieg zeigt nur reale Schritte und verschwindet vollständig, wenn alles läuft. */
+  function onboarding() {
+    const assigned = state.profiles.some((profile) => profile.accounts.length > 0);
+    const firstOnline = [...state.bots.values()].some((bot) => bot.online);
+    const steps = [
+      {
+        done: state.accounts.length > 0,
+        icon: 'user',
+        title: tr('onboard.account'),
+        text: tr('onboard.accountText'),
+        href: '#/accounts',
+      },
+      {
+        done: state.profiles.length > 0,
+        icon: 'server',
+        title: tr('onboard.server'),
+        text: tr('onboard.serverText'),
+        href: '#/servers',
+      },
+      {
+        done: assigned,
+        icon: 'plus',
+        title: tr('onboard.assign'),
+        text: tr('onboard.assignText'),
+        href: state.profiles[0] ? `#/servers/${state.profiles[0].id}/connect` : '#/servers',
+      },
+      {
+        done: firstOnline,
+        icon: 'play',
+        title: tr('onboard.online'),
+        text: tr('onboard.onlineText'),
+        href: state.profiles[0] ? `#/servers/${state.profiles[0].id}/connect` : '#/servers',
+      },
+    ];
+    const done = steps.filter((step) => step.done).length;
+    if (done === steps.length) return '';
+    return `<section class="onboarding">
+      <div class="onboarding-head">
+        <div><span class="eyebrow">${escapeHtml(tr('onboard.progress', { n: done }))}</span>
+          <h2>${escapeHtml(tr('onboard.title'))}</h2></div>
+        <div class="onboarding-meter" aria-label="${escapeHtml(tr('onboard.progress', { n: done }))}">
+          ${steps.map((step) => `<span class="${step.done ? 'done' : ''}"></span>`).join('')}
+        </div>
+      </div>
+      <ol class="onboarding-steps">
+        ${steps
+          .map(
+            (step, index) => `<li class="${step.done ? 'done' : ''}">
+              <a href="${step.href}">
+                <span class="onboarding-number">${step.done ? icon('check') : index + 1}</span>
+                <span class="grow"><strong>${escapeHtml(step.title)}</strong>
+                  <span>${escapeHtml(step.text)}</span></span>
+                ${step.done ? '' : icon('arrow')}
+              </a>
+            </li>`
+          )
+          .join('')}
+      </ol>
+    </section>`;
+  }
 
   /**
    * Drei Bilder: Guthaben, Kosten, Laufzeit.
@@ -205,14 +303,25 @@ export async function render(root) {
       }
     }
     if (!list.length) {
-      return `<tr><td colspan="5" class="muted small" style="padding:1.5rem;text-align:center">
+      return `<tr><td colspan="6" class="muted small" style="padding:1.5rem;text-align:center">
         ${escapeHtml(tr('ov.noMembers'))}</td></tr>`;
     }
     // Laufende zuerst.
     list.sort((a, b) => Number(b.bot.online) - Number(a.bot.online));
     return list
       .map(
-        ({ profile, member, bot }) => `<tr>
+        ({ profile, member, bot }) => {
+          const status = bot.online
+            ? 'online'
+            : bot.state && !['offline', 'stopping'].includes(bot.state)
+              ? 'attention'
+              : 'offline';
+          return `<tr data-bot-row="${profile.id}:${member.account_id}"
+            data-search="${escapeHtml(`${member.name} ${profile.name} ${profile.address}`.toLowerCase())}"
+            data-status="${status}" data-account="${escapeHtml(member.name.toLowerCase())}"
+            data-server="${escapeHtml(profile.name.toLowerCase())}" data-rank="${status === 'online' ? 0 : status === 'attention' ? 1 : 2}">
+          <td><input type="checkbox" class="pick-bot" data-pick-bot="${profile.id}:${member.account_id}"
+            aria-label="${escapeHtml(member.name)}"></td>
           <td><span class="row"><img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy">
             ${escapeHtml(member.name)}</span></td>
           <td><a href="#/servers/${profile.id}/connect" class="row" style="gap:.4rem">
@@ -229,7 +338,8 @@ export async function render(root) {
                      ${profile.active ? '' : 'disabled'}>${escapeHtml(tr('ov.start'))}</button>`
             }
           </td>
-        </tr>`
+        </tr>`;
+        }
       )
       .join('');
   }
@@ -237,6 +347,114 @@ export async function render(root) {
   for (const id of ['#new-profile-2', '#new-profile-3']) {
     $(id)?.addEventListener('click', () => import('./server.js').then((m) => m.newProfile()));
   }
+
+  // ------------------------------------------------------------ Suchen, sortieren, auswählen
+
+  const selected = new Set();
+  const rowNodes = () => $$('[data-bot-row]');
+
+  function updateSelection() {
+    for (const checkbox of $$('[data-pick-bot]')) checkbox.checked = selected.has(checkbox.dataset.pickBot);
+    const visible = rowNodes().filter((row) => !row.hidden);
+    const visiblePicked = visible.filter((row) => selected.has(row.dataset.botRow)).length;
+    const all = $('#pick-all-bots');
+    if (all) {
+      all.checked = Boolean(visible.length) && visiblePicked === visible.length;
+      all.indeterminate = visiblePicked > 0 && visiblePicked < visible.length;
+    }
+    const bulk = $('#bot-bulk');
+    if (bulk) bulk.dataset.empty = String(selected.size === 0);
+    if ($('#bulk-count')) $('#bulk-count').textContent = tr('ov.selected', { n: selected.size });
+  }
+
+  function arrangeRows() {
+    const needle = String($('#bot-search')?.value || '').trim().toLowerCase();
+    const filter = $('#bot-filter')?.value || 'all';
+    const sort = $('#bot-sort')?.value || 'status';
+    const rows = rowNodes();
+    for (const row of rows) {
+      row.hidden = Boolean(needle && !row.dataset.search.includes(needle)) ||
+        (filter !== 'all' && row.dataset.status !== filter);
+    }
+    rows.sort((a, b) => {
+      if (sort === 'account') return a.dataset.account.localeCompare(b.dataset.account);
+      if (sort === 'server') return a.dataset.server.localeCompare(b.dataset.server);
+      return Number(a.dataset.rank) - Number(b.dataset.rank) || a.dataset.account.localeCompare(b.dataset.account);
+    });
+    const body = $('#bot-rows');
+    for (const row of rows) body.append(row);
+    body.querySelector('#bot-no-match')?.remove();
+    if (rows.length && !rows.some((row) => !row.hidden)) {
+      body.insertAdjacentHTML(
+        'beforeend',
+        `<tr id="bot-no-match"><td colspan="6" class="muted small center" style="padding:1.5rem">${escapeHtml(
+          tr('ov.noMatches')
+        )}</td></tr>`
+      );
+    }
+    updateSelection();
+  }
+
+  $$('[data-pick-bot]').forEach((checkbox) =>
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) selected.add(checkbox.dataset.pickBot);
+      else selected.delete(checkbox.dataset.pickBot);
+      updateSelection();
+    })
+  );
+  $('#pick-all-bots')?.addEventListener('change', (event) => {
+    for (const row of rowNodes().filter((entry) => !entry.hidden)) {
+      if (event.target.checked) selected.add(row.dataset.botRow);
+      else selected.delete(row.dataset.botRow);
+    }
+    updateSelection();
+  });
+  $('#bulk-clear')?.addEventListener('click', () => {
+    selected.clear();
+    updateSelection();
+  });
+  $('#bot-search')?.addEventListener('input', arrangeRows);
+  $('#bot-filter')?.addEventListener('change', arrangeRows);
+  $('#bot-sort')?.addEventListener('change', arrangeRows);
+  arrangeRows();
+
+  async function actSelection(what, keys) {
+    const grouped = new Map();
+    for (const key of keys) {
+      const [profileId, accountId] = key.split(':').map(Number);
+      if (!grouped.has(profileId)) grouped.set(profileId, []);
+      grouped.get(profileId).push(accountId);
+    }
+    const buttons = [$('#bulk-start'), $('#bulk-stop'), $('#start-all'), $('#stop-all')].filter(Boolean);
+    buttons.forEach((button) => (button.disabled = true));
+    let failures = 0;
+    await Promise.all(
+      [...grouped].map(async ([profileId, accounts]) => {
+        try {
+          const answer = await api(`/profiles/${profileId}/${what}`, { method: 'POST', body: { accounts } });
+          failures += (answer.results || []).filter((entry) => !entry.ok).length;
+        } catch (error) {
+          failures += accounts.length;
+          fail(error);
+        }
+      })
+    );
+    if (!failures) ok(what === 'start' ? tr('ov.started') : tr('ov.stoppedAll'));
+    buttons.forEach((button) => (button.disabled = false));
+  }
+
+  $('#bulk-start')?.addEventListener('click', () => actSelection('start', selected));
+  $('#bulk-stop')?.addEventListener('click', () => actSelection('stop', selected));
+  $('#start-all')?.addEventListener('click', () => {
+    const keys = [];
+    for (const profile of state.profiles.filter((entry) => entry.active)) {
+      for (const member of profile.accounts) {
+        const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
+        if (!bot.state || bot.state === 'offline') keys.push(`${profile.id}:${member.account_id}`);
+      }
+    }
+    if (keys.length) actSelection('start', keys);
+  });
 
   $$('[data-start]').forEach((button) =>
     button.addEventListener('click', async () => {

@@ -85,6 +85,11 @@ const PATHS = {
   arrow: '<path d="M5 12h14"/><path d="m12 5 7 7-7 7"/>',
   check: '<path d="M20 6 9 17l-5-5"/>',
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
+  star: '<path d="m12 2 3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01z"/>',
+  list: '<path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/>',
+  grid: '<rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/>',
+  sliders: '<path d="M4 21v-7"/><path d="M4 10V3"/><path d="M12 21v-9"/><path d="M12 8V3"/><path d="M20 21v-5"/><path d="M20 12V3"/><path d="M1 14h6"/><path d="M9 8h6"/><path d="M17 16h6"/>',
+  keyboard: '<rect width="20" height="16" x="2" y="4" rx="2"/><path d="M6 8h.01"/><path d="M10 8h.01"/><path d="M14 8h.01"/><path d="M18 8h.01"/><path d="M8 12h.01"/><path d="M12 12h.01"/><path d="M16 12h.01"/><path d="M7 16h10"/>',
   sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>',
   moon: '<path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9"/>',
   monitor: '<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
@@ -168,10 +173,11 @@ export function applyTheme(value) {
 }
 
 export function themeSwitch() {
+  const current = store.get('afk-theme') || 'system';
   return `<div class="themes" role="group" aria-label="${escapeHtml(tr('common.appearance'))}">
-    <button data-theme="light" title="${escapeHtml(tr('common.light'))}" aria-pressed="false">${icon('sun')}</button>
-    <button data-theme="system" title="${escapeHtml(tr('common.system'))}" aria-pressed="true">${icon('monitor')}</button>
-    <button data-theme="dark" title="${escapeHtml(tr('common.dark'))}" aria-pressed="false">${icon('moon')}</button>
+    <button data-theme="light" title="${escapeHtml(tr('common.light'))}" aria-pressed="${current === 'light'}">${icon('sun')}</button>
+    <button data-theme="system" title="${escapeHtml(tr('common.system'))}" aria-pressed="${current === 'system'}">${icon('monitor')}</button>
+    <button data-theme="dark" title="${escapeHtml(tr('common.dark'))}" aria-pressed="${current === 'dark'}">${icon('moon')}</button>
   </div>`;
 }
 

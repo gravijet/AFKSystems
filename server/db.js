@@ -967,6 +967,68 @@ const migrations = [
         ON user_notifications(user_id, dedupe_key, created_at DESC);
     `,
   },
+  {
+    // Textbausteine für Ticketantworten. Sie stehen in der Datenbank und nicht im Quelltext:
+    // Was ein Team dreimal am Tag schreibt, hängt vom Betrieb ab und nicht von diesem Programm –
+    // und wer den Wortlaut ändern will, soll dafür kein Deployment brauchen.
+    name: '018-textbausteine-fuer-tickets',
+    sql: `
+      CREATE TABLE ticket_templates (
+        id         INTEGER PRIMARY KEY,
+        title_de   TEXT NOT NULL,
+        title_en   TEXT NOT NULL,
+        body_de    TEXT NOT NULL,
+        body_en    TEXT NOT NULL,
+        category   TEXT NOT NULL DEFAULT 'general',
+        sort       INTEGER NOT NULL DEFAULT 0,
+        uses       INTEGER NOT NULL DEFAULT 0,
+        created_at INTEGER NOT NULL
+      );
+    `,
+    run() {
+      // Ein paar zum Anfangen – die vier Antworten, die in jedem Support geschrieben werden.
+      // Sie sind Beispiele und kein Gesetz: löschen, ändern, eigene dazu.
+      const seed = [
+        {
+          title_de: 'Eingegangen',
+          title_en: 'Received',
+          body_de: 'Hallo {name},\n\ndanke für deine Nachricht – wir haben sie und sehen uns das an. Wir melden uns, sobald wir mehr wissen.',
+          body_en: 'Hi {name},\n\nthanks for your message – we have it and are looking into it. We will get back to you as soon as we know more.',
+          category: 'general',
+          sort: 10,
+        },
+        {
+          title_de: 'Mehr Angaben nötig',
+          title_en: 'Need more detail',
+          body_de: 'Hallo {name},\n\ndamit wir das nachstellen können: Um welchen Serverplatz und welches Konto geht es, und wann ist es zuletzt passiert? Ein Bild vom Chat hilft uns sehr.',
+          body_en: 'Hi {name},\n\nso we can reproduce it: which server slot and which account is this about, and when did it last happen? A screenshot of the chat helps a lot.',
+          category: 'general',
+          sort: 20,
+        },
+        {
+          title_de: 'Bot startet nicht',
+          title_en: 'Bot does not start',
+          body_de: 'Hallo {name},\n\nbitte prüf zuerst: Steht beim Konto ein Fehler, passt die Minecraft-Version des Serverplatzes zum Server, und lässt der Server Bots überhaupt zu? Wenn alles drei stimmt, schreib uns die Meldung, die im Zustand des Bots steht.',
+          body_en: 'Hi {name},\n\nplease check these first: does the account show an error, does the server slot\'s Minecraft version match the server, and does that server allow bots at all? If all three are fine, send us the message shown in the bot state.',
+          category: 'bug',
+          sort: 30,
+        },
+        {
+          title_de: 'Erledigt',
+          title_en: 'Sorted',
+          body_de: 'Hallo {name},\n\ndas sollte jetzt passen. Melde dich einfach wieder, wenn noch etwas offen ist – wir lassen das Ticket so lange offen.',
+          body_en: 'Hi {name},\n\nthis should be sorted now. Just reply if anything is still open – we will leave the ticket open until then.',
+          category: 'general',
+          sort: 40,
+        },
+      ];
+      const insert = db.prepare(
+        `INSERT INTO ticket_templates (title_de, title_en, body_de, body_en, category, sort, created_at)
+         VALUES (@title_de, @title_en, @body_de, @body_en, @category, @sort, @created_at)`
+      );
+      for (const row of seed) insert.run({ ...row, created_at: Date.now() });
+    },
+  },
 ];
 
 /**

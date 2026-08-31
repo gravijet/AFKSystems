@@ -5,9 +5,11 @@
 // die wichtigste Frage – "war diese E-Mail wirklich von euch?" – ließ sich gar nicht beantworten.
 
 import {
-  api, icon, escapeHtml, datetime, credits, safeLink, tr, url, switchLang, $, $$, ok, fail, confirmDialog,
+  api, icon, themeSwitch, escapeHtml, datetime, credits, safeLink, tr, url, switchLang, $, $$, ok, fail,
+  confirmDialog,
 } from '../ui.js';
-import { state, appbar, refresh, draw } from '../app.js';
+import { state, appbar, refresh, draw, showShortcuts } from '../app.js';
+import { preferences, setPreference } from '../preferences.js';
 
 export async function render(root) {
   const me = state.me;
@@ -23,7 +25,8 @@ export async function render(root) {
     ${flash(params)}
 
     <div class="settings">
-      ${section('user', tr('set.account'), tr('set.appearance'), accountBody(me))}
+      ${section('user', tr('set.account'), tr('set.accountSub'), accountBody(me))}
+      ${section('sliders', tr('set.experience'), tr('set.experienceSub'), experienceBody(me))}
       ${section('globe', tr('set.linked'), tr('set.linkedSub'), linkedBody(me, providers))}
       ${section('send', tr('set.notify'), tr('set.notifySub'), notifyBody(me))}
       ${section('shield', tr('set.security'), tr('set.securitySub'), securityBody(sessions.sessions || []))}
@@ -33,6 +36,52 @@ export async function render(root) {
     </div>`;
 
   bind(me, mails.mails || []);
+}
+
+// ---------------------------------------------------------------- Panel auf diesem Gerät
+
+function experienceBody(me) {
+  const value = preferences(me.id);
+  const choices = (name, options) => `<div class="preference-choice" role="group">
+    ${options
+      .map(
+        ([key, label]) => `<button type="button" data-device-pref="${name}" data-value="${key}"
+          aria-pressed="${value[name] === key}">${escapeHtml(label)}</button>`
+      )
+      .join('')}
+  </div>`;
+  return `
+    <div class="preference-row">
+      <div class="grow"><div class="strong">${escapeHtml(tr('set.theme'))}</div>
+        <p class="small muted">${escapeHtml(tr('set.deviceSaved'))}</p></div>
+      ${themeSwitch()}
+    </div>
+    <div class="preference-row">
+      <div class="grow"><div class="strong">${escapeHtml(tr('set.density'))}</div></div>
+      ${choices('density', [
+        ['comfortable', tr('set.density.comfortable')],
+        ['compact', tr('set.density.compact')],
+      ])}
+    </div>
+    <div class="preference-row">
+      <div class="grow"><div class="strong">${escapeHtml(tr('set.motion'))}</div></div>
+      ${choices('motion', [
+        ['system', tr('set.motion.system')],
+        ['reduced', tr('set.motion.reduced')],
+      ])}
+    </div>
+    <div class="preference-row wrap">
+      <label class="grow strong" for="start-page">${escapeHtml(tr('set.startPage'))}</label>
+      <select id="start-page" style="max-width:18rem">
+        <option value="overview" ${value.start === 'overview' ? 'selected' : ''}>${escapeHtml(
+          tr('set.start.overview')
+        )}</option>
+        <option value="last" ${value.start === 'last' ? 'selected' : ''}>${escapeHtml(tr('set.start.last'))}</option>
+      </select>
+    </div>
+    <button class="btn" type="button" id="show-shortcuts">${icon('keyboard')} ${escapeHtml(
+      tr('set.shortcuts')
+    )}</button>`;
 }
 
 /** Ein Bereich: Symbol, Überschrift, ein Satz Erklärung, Inhalt. */
@@ -303,6 +352,17 @@ function mailsBody(mails) {
 // ---------------------------------------------------------------- Verhalten
 
 function bind(me, mails) {
+  $$('[data-device-pref]').forEach((button) =>
+    button.addEventListener('click', () => {
+      setPreference(me.id, button.dataset.devicePref, button.dataset.value);
+      for (const sibling of $$(`[data-device-pref="${button.dataset.devicePref}"]`)) {
+        sibling.setAttribute('aria-pressed', String(sibling === button));
+      }
+    })
+  );
+  $('#start-page')?.addEventListener('change', (event) => setPreference(me.id, 'start', event.target.value));
+  $('#show-shortcuts')?.addEventListener('click', showShortcuts);
+
   $('#save-language').addEventListener('click', async () => {
     const next = $('#language').value;
     try {

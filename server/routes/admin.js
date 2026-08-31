@@ -29,7 +29,7 @@ import { botState, MIN_SECRET } from './bot.js';
 import { bridge } from '../bridge.js';
 import { SETTINGS, byKey as settingSchema, schemaFor } from '../settings-schema.js';
 import { mergeLines } from '../../public/assets/js/chatlog.js';
-import { wrap, requireInt, requireString, bad, notFound, hashPassword, parseAddress, formatCredits, langOf } from '../util.js';
+import { wrap, requireInt, requireString, bad, notFound, hashPassword, parseAddress, formatCredits, langOf, safeUrl } from '../util.js';
 
 export const admin = express.Router();
 admin.use(auth.requireUser, auth.requireAdmin);
@@ -2198,6 +2198,230 @@ admin.get(
         langOf(req)
       ),
     });
+  })
+);
+
+// ---------------------------------------------------------------- Textbausteine
+
+/**
+ * Vorgefertigte Antworten für Tickets.
+ *
+ * Support besteht zu einem guten Teil aus denselben vier Sätzen: "haben wir, sehen wir uns an",
+ * "sag uns bitte noch, welcher Serverplatz", "prüf bitte erst diese drei Dinge", "sollte jetzt
+ * passen". Wer sie jedes Mal neu tippt, tippt sie jedes Mal ein bisschen anders – mal freundlich,
+ * mal knapp, je nach Tageszeit. Ein Baustein ist deshalb nicht nur schneller, er ist auch der
+ * Grund, warum zwei Kunden dieselbe Antwort bekommen.
+ *
+ * Sie stehen in der Datenbank und nicht im Quelltext: Was ein Team dreimal am Tag schreibt, hängt
+ * vom Betrieb ab und nicht von diesem Programm.
+ *
+ * `{name}`, `{ticket}` und `{subject}` setzt die Oberfläche beim Einfügen ein – dort, wo Kunde
+ * und Ticket ohnehin auf dem Bildschirm stehen. Ein Baustein bleibt damit ein Text und wird nie
+ * zu einer Vorlage, die der Server rendern muss.
+ */
+const TEMPLATE_FIELDS = ['title_de', 'title_en', 'body_de', 'body_en', 'category'];
+
+admin.get(
+  '/ticket-templates',
+  wrap((req, res) => {
+    res.json({
+      templates: db.prepare('SELECT * FROM ticket_templates ORDER BY sort, id').all(),
+    });
+  })
+);
+
+admin.post(
+  '/ticket-templates',
+  wrap((req, res) => {
+    const body = req.body || {};
+    const values = {
+      title_de: requireString(body.title_de, 'Titel', { max: 120 }),
+      title_en: String(body.title_en || body.title_de || '').slice(0, 120),
+      body_de: requireString(body.body_de, 'Text', { max: 4000 }),
+      body_en: String(body.body_en || body.body_de || '').slice(0, 4000),
+      category: String(body.category || 'general').slice(0, 40),
+      sort: Number(body.sort) || 0,
+      created_at: Date.now(),
+    };
+    const info = db
+      .prepare(
+        `INSERT INTO ticket_templates (title_de, title_en, body_de, body_en, category, sort, created_at)
+         VALUES (@title_de, @title_en, @body_de, @body_en, @category, @sort, @created_at)`
+      )
+      .run(values);
+    audit(req.user.id, 'template-create', { id: info.lastInsertRowid });
+    res.json({ template: db.prepare('SELECT * FROM ticket_templates WHERE id = ?').get(info.lastInsertRowid) });
+  })
+);
+
+admin.patch(
+  '/ticket-templates/:id',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Baustein');
+    const row = db.prepare('SELECT * FROM ticket_templates WHERE id = ?').get(id);
+    if (!row) throw notFound('Diesen Baustein gibt es nicht.', { en: 'No such template.' });
+    const body = req.body || {};
+    for (const field of TEMPLATE_FIELDS) {
+      if (body[field] === undefined) continue;
+      db.prepare(`UPDATE ticket_templates SET ${field} = ? WHERE id = ?`).run(
+        String(body[field]).slice(0, 4000),
+        id
+      );
+    }
+    if (body.sort !== undefined) {
+      db.prepare('UPDATE ticket_templates SET sort = ? WHERE id = ?').run(Number(body.sort) || 0, id);
+    }
+    res.json({ template: db.prepare('SELECT * FROM ticket_templates WHERE id = ?').get(id) });
+  })
+);
+
+admin.delete(
+  '/ticket-templates/:id',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Baustein');
+    db.prepare('DELETE FROM ticket_templates WHERE id = ?').run(id);
+    audit(req.user.id, 'template-delete', { id });
+    res.json({ ok: true });
+  })
+);
+
+/**
+ * Ein Baustein wurde benutzt.
+ *
+ * Der Zähler ist die einzige ehrliche Antwort auf die Frage, welche Bausteine ihren Platz in der
+ * Liste verdienen. Er wird beim **Einfügen** hochgezählt und nicht beim Absenden: Was jemand
+ * einfügt und dann umschreibt, hat trotzdem geholfen.
+ */
+admin.post(
+  '/ticket-templates/:id/used',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Baustein');
+    db.prepare('UPDATE ticket_templates SET uses = uses + 1 WHERE id = ?').run(id);
+    res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------- Rundmail
+
+/**
+ * Wer bekommt eine Rundmail?
+ *
+ * Eine Nachricht an **alle** ist selten die gemeinte: "Wir stellen den Standort in Falkenstein
+ * ab" geht die Gratis-Kunden nichts an, "dein Guthaben verfällt nicht" nur die mit welchem. Wer
+ * nicht auswählen kann, schreibt entweder allen (und wird zur Nachricht, die man wegklickt) oder
+ * niemandem.
+ *
+ * Gesperrte und unbestätigte Adressen sind überall ausgenommen, außer im Abschnitt, der genau
+ * sie meint: An eine nie bestätigte Adresse zu schreiben, ist der schnellste Weg auf eine
+ * Sperrliste.
+ */
+const SEGMENTS = {
+  all: {
+    de: 'Alle bestätigten Konten',
+    en: 'All confirmed accounts',
+    where: 'u.blocked = 0 AND u.email_verified = 1',
+  },
+  paying: {
+    de: 'Zahlende Kunden',
+    en: 'Paying customers',
+    where: `u.blocked = 0 AND u.email_verified = 1 AND EXISTS (
+              SELECT 1 FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+               WHERE p.user_id = u.id AND pl.free_slot = 0 AND p.paid_until > :now)`,
+  },
+  free: {
+    de: 'Nur Gratis-Plätze',
+    en: 'Free slots only',
+    where: `u.blocked = 0 AND u.email_verified = 1 AND NOT EXISTS (
+              SELECT 1 FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+               WHERE p.user_id = u.id AND pl.free_slot = 0 AND p.paid_until > :now)`,
+  },
+  credits: {
+    de: 'Mit Guthaben',
+    en: 'With credits left',
+    where: 'u.blocked = 0 AND u.email_verified = 1 AND u.credits > 0',
+  },
+  inactive: {
+    de: 'Seit 90 Tagen nicht da',
+    en: 'Not seen for 90 days',
+    where: 'u.blocked = 0 AND u.email_verified = 1 AND (u.last_seen_at IS NULL OR u.last_seen_at < :old)',
+  },
+  unverified: {
+    de: 'Adresse nie bestätigt',
+    en: 'Address never confirmed',
+    where: 'u.blocked = 0 AND u.email_verified = 0',
+  },
+};
+
+const segmentUsers = (key) => {
+  const segment = SEGMENTS[key];
+  if (!segment) throw bad('Unbekannter Empfängerkreis.', { en: 'Unknown recipient group.' });
+  return db
+    .prepare(`SELECT u.* FROM users u WHERE ${segment.where} ORDER BY u.id`)
+    .all({ now: Date.now(), old: Date.now() - 90 * 86_400_000 });
+};
+
+admin.get(
+  '/broadcast',
+  wrap((req, res) => {
+    const lang = langOf(req);
+    res.json({
+      segments: Object.entries(SEGMENTS).map(([key, segment]) => ({
+        key,
+        label: segment[lang] || segment.de,
+        count: segmentUsers(key).length,
+      })),
+      configured: mail.configured(),
+    });
+  })
+);
+
+/**
+ * Eine Rundmail verschicken.
+ *
+ * Sie geht denselben Weg wie jede andere Nachricht: dieselbe Vorlage, dieselbe Kategorie, dasselbe
+ * Protokoll – und damit auch dieselbe Abbestellung. Wer Ankündigungen abbestellt hat, bekommt
+ * keine, und das ist keine Einschränkung dieser Funktion, sondern ihr Sinn.
+ *
+ * Der Probeversand geht nur an den Absender selbst und ignoriert dessen Abbestellung: Wer prüfen
+ * will, wie die Nachricht aussieht, will sie sehen und nicht übersprungen bekommen.
+ */
+admin.post(
+  '/broadcast',
+  wrap(async (req, res) => {
+    if (!mail.configured()) throw bad('Es ist kein SMTP-Server hinterlegt.', { en: 'No SMTP server is set up.' });
+    const body = req.body || {};
+    const title_de = requireString(body.title_de, 'Betreff', { max: 200 });
+    const title_en = String(body.title_en || title_de).slice(0, 200);
+    const text_de = requireString(body.body_de, 'Text', { max: 8000 });
+    const text_en = String(body.body_en || text_de).slice(0, 8000);
+    const test = Boolean(body.test);
+    const link = safeUrl(body.link) || '';
+
+    const recipients = test
+      ? [db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)]
+      : segmentUsers(String(body.segment || 'all'));
+
+    let sent = 0;
+    let skipped = 0;
+    for (const user of recipients) {
+      const result = await mail.sendTo(
+        user,
+        'announcement',
+        {
+          title: user.language === 'en' ? title_en : title_de,
+          body: user.language === 'en' ? text_en : text_de,
+          link,
+        },
+        { force: test }
+      );
+      if (result.ok) sent += 1;
+      else skipped += 1;
+      // Derselbe kurze Abstand wie beim Versand einer Ankündigung: unauffällig für den Mailserver,
+      // nicht spürbar für den, der wartet.
+      if (!test) await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    audit(req.user.id, 'broadcast', { segment: body.segment, sent, skipped, test }, req.ip);
+    res.json({ sent, skipped, test });
   })
 );
 

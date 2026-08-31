@@ -21,7 +21,8 @@
 // eigenen Seiten. Die Suche ist eine Admin-Schnittstelle und wird gar nicht erst gefragt.
 
 import { api, icon, escapeHtml, tr, $, $$, debounce } from './ui.js';
-import { state, go, draw, ADMIN_GROUPS, NAV_PRIMARY, NAV_ACCOUNT } from './app.js';
+import { state, go, draw, showShortcuts, ADMIN_GROUPS, NAV_PRIMARY, NAV_ACCOUNT } from './app.js';
+import { isFavoriteServer } from './preferences.js';
 
 /** Alle Seiten, die dieser Benutzer aufrufen darf – in der Reihenfolge der Seitenleiste. */
 function pages() {
@@ -154,17 +155,75 @@ export async function openPalette(initial = '') {
     const hit = items[index];
     if (!hit) return;
     close();
+    if (hit.action === 'new-server') {
+      import('./views/server.js').then((module) => module.newProfile());
+      return;
+    }
+    if (hit.action === 'shortcuts') {
+      showShortcuts();
+      return;
+    }
     go(hit.route);
     draw();
   };
 
-  /** Die Seiten stehen immer schon da; die Sachen kommen nach, wenn der Server geantwortet hat. */
+  /**
+   * Die eigenen Server und Konten sind längst im Zustand des Panels. Für normale Nutzer ist das
+   * der wichtigste Teil der Suche – sie sollen „SMP“ tippen und dort sein, nicht erst eine
+   * Administrationsschnittstelle brauchen. Schnellaktionen nehmen außerdem die Wege auf, die
+   * sonst mit „Seite öffnen, Knopf suchen“ beginnen.
+   */
   const localGroups = () => {
     const needle = input.value.trim().toLowerCase();
-    const hits = pages()
+    const pageHits = pages()
       .filter((page) => !needle || matches(page, needle))
       .slice(0, needle ? 6 : 8);
-    return hits.length ? [{ label: tr('pal.pages'), hits }] : [];
+    const quick = [
+      {
+        title: tr('dash.newServer'),
+        sub: tr('ov.noServer.text'),
+        icon: 'plus',
+        action: 'new-server',
+        route: '',
+      },
+      { title: tr('ov.connectAccount'), sub: tr('acc.sub'), icon: 'users', route: '/accounts' },
+      { title: tr('bill.topUp'), sub: tr('bill.balance'), icon: 'wallet', route: '/credits' },
+      { title: tr('ov.openTicket'), sub: tr('dash.tickets'), icon: 'ticket', route: '/tickets' },
+      { title: tr('keys.title'), sub: tr('keys.help'), icon: 'keyboard', action: 'shortcuts', route: '' },
+    ].filter((item) => !needle || matches(item, needle));
+    const serverHits = [...state.profiles]
+      .sort(
+        (a, b) =>
+          Number(isFavoriteServer(state.me?.id, b.id)) - Number(isFavoriteServer(state.me?.id, a.id)) ||
+          Number(b.online > 0) - Number(a.online > 0)
+      )
+      .filter((profile) =>
+        !needle || `${profile.name} ${profile.address} ${profile.plan?.name || ''}`.toLowerCase().includes(needle)
+      )
+      .slice(0, needle ? 8 : 4)
+      .map((profile) => ({
+        title: profile.name,
+        sub: `${profile.address} · ${profile.online}/${profile.total}`,
+        icon: 'server',
+        route: `/servers/${profile.id}/connect`,
+        tags: isFavoriteServer(state.me?.id, profile.id) ? [tr('srv.favorite')] : [],
+      }));
+    const accountHits = state.accounts
+      .filter((account) => !needle || `${account.name} ${account.kind}`.toLowerCase().includes(needle))
+      .slice(0, needle ? 6 : 3)
+      .map((account) => ({
+        title: account.name,
+        sub: tr(account.kind === 'offline' ? 'acc.kind.offline' : 'acc.kind.microsoft'),
+        icon: 'user',
+        route: '/accounts',
+        tags: account.status === 'error' ? [tr('acc.error')] : [],
+      }));
+    return [
+      quick.length && { label: tr('pal.quick'), hits: quick.slice(0, needle ? 5 : 3) },
+      serverHits.length && { label: tr('pal.servers'), hits: serverHits },
+      accountHits.length && { label: tr('pal.accounts'), hits: accountHits },
+      pageHits.length && { label: tr('pal.pages'), hits: pageHits },
+    ].filter(Boolean);
   };
 
   let generation = 0;
