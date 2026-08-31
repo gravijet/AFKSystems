@@ -119,14 +119,15 @@ export async function render(root) {
 
   function activityItem(item) {
     const href = item.href ? safeLink(item.href) : '';
+    const eventLabel = ['ticket', 'billing', 'plan', 'bot', 'account'].includes(item.event)
+      ? tr(`set.hook.${item.event}`)
+      : tr('act.title');
     const content = `
       <span class="activity-mark ${escapeHtml(item.tone)}">${icon(EVENT_ICONS[item.event] || 'bell')}</span>
       <span class="activity-copy">
         <span class="activity-title">${escapeHtml(item.title)}</span>
         ${item.body ? `<span class="activity-body">${escapeHtml(item.body)}</span>` : ''}
-        <span class="activity-meta">${escapeHtml(datetime(item.created_at))} · ${escapeHtml(
-          tr(`set.hook.${item.event}`) || tr('act.title')
-        )}</span>
+        <span class="activity-meta">${escapeHtml(datetime(item.created_at))} · ${escapeHtml(eventLabel)}</span>
       </span>
       ${item.read_at ? '' : `<span class="activity-new">${escapeHtml(tr('act.new'))}</span>`}
       ${href ? `<span class="activity-arrow">${icon('arrow')}</span>` : ''}`;

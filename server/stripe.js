@@ -222,6 +222,39 @@ export const expireCheckout = (sessionId) =>
   call(`/checkout/sessions/${encodeURIComponent(sessionId)}/expire`);
 
 /**
+ * Geld zurückgeben.
+ *
+ * Die Erstattung selbst löst Stripe aus; **was das für das Guthaben bedeutet, entscheidet hier
+ * niemand.** Das steht schon im Webhook (routes/billing.js, `charge.refunded`), und dieselbe
+ * Meldung kommt auch, wenn die Erstattung im Stripe-Dashboard ausgelöst wurde. Zwei Stellen, die
+ * Credits zurücknehmen, wären zwei Chancen, es doppelt zu tun – und die Meldung ist der einzige
+ * Weg, der in beiden Fällen läuft.
+ *
+ * Ohne Betrag gibt Stripe alles zurück. Mit Betrag ist es eine Teilerstattung, und die nimmt
+ * bewusst keine Credits zurück: Wie viele das sein sollen, ist keine Rechenaufgabe, sondern eine
+ * Entscheidung (siehe docs/stripe.md, Abschnitt 8).
+ *
+ * `idempotency-key` trägt die Nummer der Aufladung: Ein zweiter Klick auf denselben Knopf – oder
+ * ein Netzfehler mit Wiederholung – erstattet innerhalb von 24 Stunden nicht zweimal.
+ */
+export async function refund({ paymentIntent, amountCent = 0, topupId = 0, reason = '' }) {
+  if (!paymentIntent) {
+    throw bad('Zu dieser Aufladung ist keine Stripe-Zahlung hinterlegt.', {
+      en: 'No Stripe payment is stored for this top-up.',
+    });
+  }
+  const body = { payment_intent: paymentIntent };
+  if (amountCent > 0) body.amount = Math.round(amountCent);
+  // Stripe kennt genau drei Gründe. Alles andere wäre eine erfundene Angabe in einem fremden
+  // System – der eigene Wortlaut steht ohnehin im Protokoll dieses Panels.
+  if (['duplicate', 'fraudulent', 'requested_by_customer'].includes(reason)) body.reason = reason;
+  return call('/refunds', {
+    body,
+    idempotencyKey: `refund-${topupId || paymentIntent}-${amountCent || 'voll'}`,
+  });
+}
+
+/**
  * Die Einrichtung prüfen, ohne dass Geld fließt.
  *
  * Zwei Fragen, die beim Einrichten alles entscheiden, und beide lassen sich ohne einen Cent

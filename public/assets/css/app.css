@@ -5489,3 +5489,693 @@ hr.rule {
   background: #4752c4;
   color: #fff;
 }
+
+/* ================================================================ Persönlicher Arbeitsbereich
+ * Aktivitätszentrale, Favoriten, dichte Ansicht und die Bedienhilfen teilen dieselben ruhigen
+ * Flächen wie das übrige Panel. Keine freischwebenden Glaskarten und keine zweite Formsprache.
+ */
+
+/* Native Bedienelemente bekommen dieselbe Formsprache wie Textfelder und Knöpfe. */
+input[type='checkbox']:not(.visually-hidden) {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  flex: none;
+  width: 1.05rem;
+  height: 1.05rem;
+  margin: 0;
+  border: 0;
+  border-radius: 0.32rem;
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--text) 28%, transparent);
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+input[type='checkbox']:not(.visually-hidden)::before {
+  content: '';
+  width: 0.62rem;
+  height: 0.62rem;
+  background: var(--primary-ink);
+  clip-path: polygon(14% 44%, 0 59%, 40% 100%, 100% 19%, 84% 5%, 38% 69%);
+  transform: scale(0);
+  transition: transform 0.12s ease;
+}
+input[type='checkbox']:not(.visually-hidden):checked {
+  background: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+input[type='checkbox']:not(.visually-hidden):checked::before {
+  transform: scale(1);
+}
+input[type='checkbox']:not(.visually-hidden):indeterminate {
+  background: var(--primary);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+input[type='checkbox']:not(.visually-hidden):indeterminate::before {
+  width: 0.6rem;
+  height: 2px;
+  clip-path: none;
+  transform: scale(1);
+}
+input[type='file']::file-selector-button {
+  margin: -0.55rem 0.75rem -0.55rem -0.75rem;
+  padding: 0.55rem 0.8rem;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+input[type='number'] {
+  appearance: textfield;
+}
+input[type='number']::-webkit-inner-spin-button,
+input[type='number']::-webkit-outer-spin-button,
+input[type='search']::-webkit-search-cancel-button {
+  appearance: none;
+}
+select option {
+  background: var(--surface-2);
+  color: var(--text);
+}
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Globale Werkzeuge in jeder Kopfzeile. */
+.appbar-actions {
+  justify-content: flex-end;
+}
+.appbar-search kbd {
+  padding: 0.05rem 0.35rem;
+  border-radius: var(--r-md);
+  background: color-mix(in oklab, var(--text) 7%, transparent);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 0.65rem;
+  font-weight: 500;
+}
+.appbar-bell {
+  position: relative;
+  width: 2.25rem;
+  padding-inline: 0;
+}
+.appbar-bell > span {
+  position: absolute;
+  top: -0.25rem;
+  right: -0.25rem;
+  min-width: 1.05rem;
+  padding: 0.05rem 0.25rem;
+  border: 2px solid var(--background);
+  border-radius: 999px;
+  background: var(--bad);
+  color: #fff;
+  font-size: 0.58rem;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+}
+.side-favorite {
+  display: inline-flex;
+  color: var(--warn-text);
+}
+.side-favorite .icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  fill: currentColor;
+}
+
+/* Tastaturkürzel: Bedeutung links, die tatsächlichen Tasten rechts. */
+dialog.shortcuts {
+  width: min(32rem, calc(100vw - 2rem));
+}
+.shortcut-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shortcut-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 3rem;
+  padding: 0.6rem 0;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+  font-size: 0.875rem;
+}
+.shortcut-list li:last-child {
+  box-shadow: none;
+}
+.shortcut-keys {
+  display: inline-flex;
+  gap: 0.3rem;
+}
+.shortcut-keys kbd {
+  display: grid;
+  min-width: 2rem;
+  height: 1.8rem;
+  place-items: center;
+  padding: 0 0.45rem;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: inset 0 -2px 0 var(--line), inset 0 0 0 1px var(--line);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+/* Gerätebezogene Einstellungen. */
+.preference-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-height: 2.75rem;
+}
+.preference-row + .preference-row {
+  padding-top: 0.9rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.preference-choice,
+.view-switch {
+  display: inline-flex;
+  flex: none;
+  padding: 0.2rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.preference-choice button,
+.view-switch button {
+  min-height: 2rem;
+  padding: 0.35rem 0.7rem;
+  border: 0;
+  border-radius: calc(var(--r-lg) - 0.15rem);
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.preference-choice button[aria-pressed='true'],
+.view-switch button[aria-pressed='true'] {
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+  color: var(--text);
+}
+.view-switch button {
+  display: grid;
+  width: 2.05rem;
+  padding: 0;
+  place-items: center;
+}
+
+/* Server suchen, filtern, favorisieren und je nach Bildschirm lesen. */
+.server-tools,
+.overview-bot-tools,
+.activity-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+.server-search,
+.overview-bot-search,
+.activity-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 14rem;
+  max-width: 26rem;
+}
+.server-search .icon,
+.overview-bot-search .icon,
+.activity-search .icon {
+  position: absolute;
+  left: 0.7rem;
+  z-index: 1;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.server-search input,
+.overview-bot-search input,
+.activity-search input {
+  height: 2.35rem;
+  padding-left: 2.25rem;
+  font-size: 0.85rem;
+}
+.server-tools > .small,
+.activity-count {
+  margin-left: auto;
+}
+.server-card {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  transition: box-shadow 0.16s, transform 0.16s;
+}
+.server-card:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 55%, var(--line)), var(--shadow);
+}
+.server-card.is-favorite {
+  box-shadow: inset 3px 0 0 var(--warn), inset 0 0 0 1px var(--line);
+}
+.server-card-main {
+  display: block;
+  height: 100%;
+  padding: 1.15rem 3.25rem 1.15rem 1.25rem;
+}
+.server-card-foot {
+  margin-top: 1rem;
+}
+.server-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--primary-text);
+}
+.server-favorite {
+  position: absolute;
+  top: 0.85rem;
+  right: 0.8rem;
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.server-favorite:hover,
+.server-favorite[aria-pressed='true'],
+.profile-favorite[aria-pressed='true'] {
+  background: color-mix(in oklab, var(--warn) 14%, transparent);
+  color: var(--warn-text);
+}
+.server-favorite[aria-pressed='true'] .icon,
+.profile-favorite[aria-pressed='true'] .icon {
+  fill: currentColor;
+}
+.server-list {
+  display: grid;
+  gap: 0.55rem;
+}
+.server-list .server-card-main {
+  display: grid;
+  grid-template-columns: minmax(13rem, 1.4fr) minmax(12rem, 1fr);
+  align-items: center;
+  gap: 1rem;
+  padding-block: 0.8rem;
+}
+.server-list .server-card-foot {
+  margin: 0;
+}
+.server-list .server-card-head > .pill {
+  display: none;
+}
+
+/* Der Einrichtungsweg ist eine nummerierte Strecke, keine Werbekachel. */
+.onboarding {
+  margin-bottom: 1.5rem;
+  border-radius: var(--r-2xl);
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.onboarding-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.15rem 1.25rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.onboarding-head h2 {
+  margin-top: 0.25rem;
+  font-size: 1.15rem;
+}
+.onboarding-meter {
+  display: grid;
+  grid-template-columns: repeat(4, 2.25rem);
+  gap: 0.3rem;
+}
+.onboarding-meter span {
+  height: 0.32rem;
+  border-radius: 999px;
+  background: var(--line);
+}
+.onboarding-meter span.done {
+  background: var(--ok);
+}
+.onboarding-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.onboarding-steps li + li {
+  box-shadow: inset 1px 0 0 var(--line-soft);
+}
+.onboarding-steps a {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  height: 100%;
+  padding: 1rem 1.1rem;
+}
+.onboarding-steps li:not(.done) a:hover {
+  background: color-mix(in oklab, var(--primary) 6%, transparent);
+}
+.onboarding-number {
+  display: grid;
+  flex: none;
+  width: 1.65rem;
+  height: 1.65rem;
+  place-items: center;
+  border-radius: 999px;
+  background: color-mix(in oklab, var(--primary) 12%, transparent);
+  color: var(--primary-text);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+.onboarding-steps li.done .onboarding-number {
+  background: color-mix(in oklab, var(--ok) 14%, transparent);
+  color: var(--ok-text);
+}
+.onboarding-number .icon {
+  width: 0.85rem;
+  height: 0.85rem;
+}
+.onboarding-steps strong,
+.onboarding-steps .grow > span {
+  display: block;
+}
+.onboarding-steps strong {
+  font-size: 0.85rem;
+}
+.onboarding-steps .grow > span {
+  margin-top: 0.2rem;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+.onboarding-steps > li.done {
+  opacity: 0.72;
+}
+
+/* Bot-Tabelle: Werkzeuge bleiben Teil des Panels und springen bei Auswahl nicht. */
+.overview-bot-tools {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.overview-bulk {
+  margin: 0;
+  border-radius: 0;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.overview-bulk #bulk-clear {
+  margin-left: auto;
+}
+.overview-bots th:first-child,
+.overview-bots td:first-child {
+  width: 2.5rem;
+  text-align: center;
+}
+
+/* Aktivität: eine chronologische Liste mit einer einzigen farbigen Zustandsmarke je Ereignis. */
+.activity-shell {
+  max-width: 62rem;
+}
+.activity-tools {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  margin-bottom: 1.25rem;
+  padding: 0.7rem;
+  border-radius: var(--r-xl);
+  background: color-mix(in oklab, var(--background) 92%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line);
+  backdrop-filter: blur(16px);
+}
+.activity-filter select {
+  min-width: 10rem;
+  height: 2.35rem;
+}
+.activity-unread {
+  padding-inline: 0.25rem;
+}
+.activity-list {
+  display: grid;
+  gap: 1.5rem;
+}
+.activity-day h2 {
+  margin: 0 0 0.55rem 0.4rem;
+  color: var(--text-2);
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.activity-day-list {
+  border-radius: var(--r-2xl);
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+  overflow: hidden;
+}
+.activity-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 5rem;
+  padding: 0.85rem 1rem;
+  color: var(--text);
+}
+.activity-item + .activity-item {
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.activity-item:hover {
+  background: color-mix(in oklab, var(--primary) 4%, transparent);
+}
+.activity-item.is-unread {
+  background: color-mix(in oklab, var(--primary) 6%, transparent);
+}
+.activity-mark {
+  display: grid;
+  flex: none;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--info) 11%, transparent);
+  color: var(--primary-text);
+}
+.activity-mark.ok {
+  background: color-mix(in oklab, var(--ok) 12%, transparent);
+  color: var(--ok-text);
+}
+.activity-mark.warn {
+  background: color-mix(in oklab, var(--warn) 14%, transparent);
+  color: var(--warn-text);
+}
+.activity-mark.bad {
+  background: color-mix(in oklab, var(--bad) 11%, transparent);
+  color: var(--bad-text);
+}
+.activity-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 0.15rem;
+}
+.activity-title {
+  font-size: 0.92rem;
+  font-weight: 650;
+}
+.activity-body {
+  color: var(--text-2);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-line;
+}
+.activity-meta {
+  color: var(--text-2);
+  font-size: 0.7rem;
+}
+.activity-new {
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--primary-ink);
+  font-size: 0.62rem;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+.activity-arrow {
+  color: var(--text-2);
+}
+.activity-empty .empty-icon {
+  display: grid;
+  width: 3rem;
+  height: 3rem;
+  margin: 0 auto 0.8rem;
+  place-items: center;
+  border-radius: var(--r-xl);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+/* Kompakt heißt weniger Weg, nicht kleinere Schrift. */
+html[data-density='compact'] .main {
+  padding-top: 1.1rem;
+}
+html[data-density='compact'] .appbar {
+  margin-bottom: 1rem;
+}
+html[data-density='compact'] .card {
+  padding: 0.9rem;
+}
+html[data-density='compact'] .server-card {
+  padding: 0;
+}
+html[data-density='compact'] .server-card-main,
+html[data-density='compact'] .panel > .body,
+html[data-density='compact'] .setting-body {
+  padding: 0.8rem 0.9rem;
+}
+html[data-density='compact'] .panel > header,
+html[data-density='compact'] .setting-head {
+  padding: 0.7rem 0.9rem;
+}
+html[data-density='compact'] .table td {
+  padding-block: 0.42rem;
+}
+html[data-density='compact'] .side-item {
+  min-height: 2rem;
+  padding-block: 0.25rem;
+}
+
+html[data-motion='reduced'] *,
+html[data-motion='reduced'] *::before,
+html[data-motion='reduced'] *::after {
+  scroll-behavior: auto !important;
+  animation-duration: 0.001ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.001ms !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@media (max-width: 800px) {
+  .onboarding-steps {
+    grid-template-columns: 1fr 1fr;
+  }
+  .onboarding-steps li + li {
+    box-shadow: inset 1px 0 0 var(--line-soft), inset 0 1px 0 var(--line-soft);
+  }
+  .server-list .server-card-main {
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .appbar-search kbd {
+    display: none;
+  }
+  .appbar-search {
+    width: 2.25rem;
+    padding-inline: 0;
+  }
+  .appbar-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding: 0.1rem;
+  }
+  .onboarding-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .onboarding-meter {
+    width: 100%;
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .onboarding-steps {
+    grid-template-columns: 1fr;
+  }
+  .onboarding-steps li + li {
+    box-shadow: inset 0 1px 0 var(--line-soft);
+  }
+  .preference-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .preference-choice {
+    align-self: stretch;
+  }
+  .preference-choice button {
+    flex: 1;
+  }
+  .activity-tools {
+    position: static;
+  }
+  .activity-search {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .activity-count {
+    display: none;
+  }
+  .activity-item {
+    align-items: flex-start;
+    padding: 0.85rem;
+  }
+  .activity-new {
+    position: absolute;
+    top: 0.65rem;
+    right: 0.65rem;
+  }
+  .activity-arrow {
+    display: none;
+  }
+  .server-card-head {
+    align-items: flex-start;
+  }
+  .server-card-head > .pill {
+    display: none;
+  }
+  .toasts {
+    bottom: calc(5.2rem + env(safe-area-inset-bottom));
+  }
+  dialog:not(.palette) {
+    width: 100%;
+    max-width: none;
+    margin: auto 0 0;
+    border-radius: var(--r-2xl) var(--r-2xl) 0 0;
+  }
+  dialog:not(.palette) .body {
+    max-height: 68svh;
+  }
+}

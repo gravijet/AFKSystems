@@ -2445,7 +2445,11 @@ async function topups(root) {
                     tr('adm.markPaid')
                   )}</button>
                    <button class="btn btn-sm" data-cancel="${topup.id}">${escapeHtml(tr('common.cancel'))}</button>`
-                : `<span class="small muted mono">${topup.paid_at ? datetime(topup.paid_at) : ''}</span>`
+                : `${
+                    topup.status === 'paid' && topup.provider === 'stripe'
+                      ? `<button class="btn btn-sm" data-refund="${topup.id}">${escapeHtml(tr('adm.refund'))}</button> `
+                      : ''
+                  }<span class="small muted mono">${topup.paid_at ? datetime(topup.paid_at) : ''}</span>`
             }
           </td>
         </tr>`
@@ -2460,6 +2464,47 @@ async function topups(root) {
         .then(() => ok(tr('adm.saved')))
         .catch(fail);
       draw();
+    })
+  );
+  $$('[data-refund]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const topup = data.topups.find((entry) => entry.id === Number(button.dataset.refund));
+      const answer = await formDialog(
+        tr('adm.refund'),
+        [
+          {
+            key: 'amount_cent',
+            label: tr('adm.refundAmount'),
+            type: 'number',
+            value: 0,
+            min: 0,
+            max: topup.amount_cent,
+            hint: tr('adm.refundHint', { full: euro(topup.amount_cent) }),
+          },
+          {
+            key: 'reason',
+            label: tr('adm.reason'),
+            type: 'select',
+            value: 'requested_by_customer',
+            options: [
+              { value: 'requested_by_customer', label: tr('adm.refundAsked') },
+              { value: 'duplicate', label: tr('adm.refundDouble') },
+              { value: 'fraudulent', label: tr('adm.refundFraud') },
+            ],
+          },
+        ],
+        { submit: tr('adm.refund'), note: `#${topup.id} · ${topup.username} · ${euro(topup.amount_cent)}` }
+      );
+      if (!answer) return;
+      const result = await send(
+        `/admin/topups/${topup.id}/refund`,
+        { method: 'POST', body: { amount_cent: Number(answer.amount_cent) || 0, reason: answer.reason } },
+        { done: false }
+      );
+      // Die Rückbuchung der Credits kommt über den Webhook und nicht aus dieser Antwort – das
+      // steht auch so in der Meldung, sonst wartet jemand vergeblich auf eine Zahl, die sich
+      // erst in ein paar Sekunden ändert.
+      if (result) ok(tr(result.partial ? 'adm.refundPartial' : 'adm.refundDone'));
     })
   );
   $$('[data-cancel]').forEach((button) =>
