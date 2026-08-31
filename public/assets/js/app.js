@@ -381,6 +381,9 @@ export const TABS = [
   { key: 'macros', label: 'tab.macros', group: 'automation' },
   { key: 'board', label: 'tab.board', group: 'views', need: 'board' },
   { key: 'menu', label: 'tab.menu', group: 'views', need: 'menu' },
+  // Das eigene Inventar liest nur eine Bauform mit Gegenstandslesung – dieselbe Fähigkeit, die
+  // auch die Felder eines Menüs füllt. Ohne sie stünde hier ein Raster aus leeren Kästchen.
+  { key: 'inventory', label: 'tab.inventory', group: 'views', need: 'items' },
   { key: 'pov', label: 'tab.pov', group: 'views', need: 'pov' },
   { key: 'proxies', label: 'tab.proxies', group: 'manage', need: 'proxy' },
   { key: 'plan', label: 'tab.plan', group: 'manage' },

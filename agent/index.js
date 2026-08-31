@@ -9,8 +9,13 @@
 // braucht deshalb keine öffentliche Adresse, kein TLS-Zertifikat und keine Firewall-Regel für
 // eingehenden Verkehr. Nur ausgehendes HTTPS – und das kann jeder VPS ab der ersten Minute.
 //
-//     Panel  ->  spawn / stdin / kill / sync / ping
-//     Panel  <-  hello / metrics / out / err / exit / files / error / pong
+//     Panel  ->  spawn / stdin / kill / sync / ping / http
+//     Panel  <-  hello / metrics / out / err / exit / files / error / pong / httpres
+//
+// `http` ist der einzige Auftrag, der keinen Prozess betrifft: Der Client bringt seit 2.5.0 einen
+// eigenen kleinen Webserver für die texturierte Live-Ansicht mit, und der lauscht auf **diesem**
+// Localhost. Das Panel kann ihn nicht erreichen – also holt dieser Agent das Bild ab und reicht es
+// durch die bestehende Leitung zurück. Kein zweiter Port, keine Freigabe, kein Zertifikat.
 //
 // Start:  PANEL_URL=https://example.invalid NODE_TOKEN=… node index.js
 // Die Werte dürfen auch in einer `.env` neben dieser Datei stehen.
@@ -49,7 +54,8 @@ function loadEnvFile() {
 loadEnvFile();
 
 const config = {
-  version: '1.0.0',
+  // 1.1.0: holt die Minecraft-Ressourcen mit und reicht den Viewer des Clients durch (`http`).
+  version: '1.1.0',
   panel: (process.env.PANEL_URL || 'https://example.invalid').replace(/\/+$/, ''),
   token: process.env.NODE_TOKEN || '',
   dataDir: process.env.AGENT_DATA_DIR || path.join(ROOT, 'data'),
@@ -66,8 +72,13 @@ if (!config.token) {
 const paths = {
   bin: path.join(config.dataDir, 'bin'),
   users: path.join(config.dataDir, 'users'),
+  // Die Original-Client-JARs von Minecraft, je Protokollversion eine. Sie kommen vom Panel und
+  // werden von der texturierten Live-Ansicht gelesen – nie kopiert, nur gelesen.
+  resources: path.join(config.dataDir, 'mc'),
 };
-for (const dir of [config.dataDir, paths.bin, paths.users]) fs.mkdirSync(dir, { recursive: true });
+for (const dir of [config.dataDir, paths.bin, paths.users, paths.resources]) {
+  fs.mkdirSync(dir, { recursive: true });
+}
 
 const log = (...parts) => console.log(new Date().toISOString(), ...parts);
 
@@ -254,12 +265,74 @@ async function syncBinaries() {
     loaded += 1;
   }
   if (loaded) log(`${loaded} Client-Datei(en) geholt.`);
+  await syncResources(manifest.resources || []);
   return fs.readdirSync(paths.bin).filter((name) => !name.endsWith('.neu'));
+}
+
+/** Wie eine Versionsangabe aussehen darf – sie wird hier zu einem Dateinamen. */
+const VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,15}$/;
+
+/**
+ * Die Minecraft-Client-JARs abgleichen, genau wie die Bauformen: nur, was fehlt oder abweicht.
+ *
+ * Sie sind mit 20 bis 40 MB je Version die größten Dateien auf diesem Rechner, und sie ändern sich
+ * praktisch nie. Deshalb wird der Fingerabdruck erst gebildet, wenn schon die Größe passt.
+ *
+ * Ein Fehlschlag ist kein Grund, den Start abzubrechen: Ohne JAR läuft die Live-Ansicht als
+ * farbige Voxelansicht weiter, und Bots, die gar keine Ansicht gebucht haben, merken nichts davon.
+ */
+async function syncResources(wanted) {
+  const keep = new Set();
+  for (const entry of wanted) {
+    const version = String(entry?.version || '');
+    if (!VERSION.test(version)) continue;
+    keep.add(version);
+    const target = path.join(paths.resources, `${version}.jar`);
+    try {
+      if (fs.existsSync(target) && fs.statSync(target).size === entry.size) {
+        if ((await sha256(target)) === entry.sha256) continue;
+      }
+      const file = await fetch(`${config.panel}/api/node/resources/${encodeURIComponent(version)}`, {
+        headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
+        signal: AbortSignal.timeout(10 * 60_000),
+      });
+      if (!file.ok) throw new Error(`Status ${file.status}`);
+      const temp = `${target}.neu`;
+      fs.writeFileSync(temp, Buffer.from(await file.arrayBuffer()));
+      fs.renameSync(temp, target);
+      log(`Minecraft-Ressourcen für ${version} geholt.`);
+    } catch (error) {
+      log(`Ressourcen für ${version} nicht geholt: ${error.message}`);
+    }
+  }
+  // Was das Panel nicht mehr führt, gehört auch hier nicht mehr hin. Vierzig Megabyte je Version
+  // bleiben sonst für immer liegen, für eine Minecraft-Fassung, die niemand mehr spielt.
+  try {
+    for (const name of fs.readdirSync(paths.resources)) {
+      if (!name.endsWith('.jar') || keep.has(name.slice(0, -4))) continue;
+      fs.unlinkSync(path.join(paths.resources, name));
+      log(`Ressourcen ${name} entfernt – das Panel führt sie nicht mehr.`);
+    }
+  } catch {
+    /* noch kein Verzeichnis */
+  }
+}
+
+/** Welche Versionen dieser Standort texturiert zeichnen kann. */
+function resourceVersions() {
+  try {
+    return fs
+      .readdirSync(paths.resources)
+      .filter((name) => name.endsWith('.jar'))
+      .map((name) => name.slice(0, -4));
+  } catch {
+    return [];
+  }
 }
 
 // ---------------------------------------------------------------- Bots
 
-/** job-id -> { proc, userId, home } */
+/** job-id -> { proc, userId, home, povPort } */
 const jobs = new Map();
 
 /** Nur Konten und die gemerkten Bewegungspunkte reisen zwischen Panel und Standort. */
@@ -327,12 +400,29 @@ function startJob(link, message) {
     return;
   }
 
-  const proc = spawn(binary, Array.isArray(args) ? args.map(String) : [], {
+  // Der texturierte Viewer. Das Panel schickt Portnummer und Minecraft-Version; **den Pfad setzt
+  // dieser Rechner ein**, denn nur er weiß, wo seine Kopie der JAR liegt – und ob sie überhaupt
+  // schon angekommen ist. Fehlt sie, startet der Bot ohne beide Argumente: Dann bleibt die
+  // Live-Ansicht die farbige Voxelansicht, statt dass ein Viewer ohne Texturen ins Leere läuft.
+  const full = Array.isArray(args) ? args.map(String) : [];
+  let povPort = null;
+  const pov = message.pov;
+  if (pov?.port && VERSION.test(String(pov.mc || ''))) {
+    const jar = path.join(paths.resources, `${pov.mc}.jar`);
+    if (fs.existsSync(jar)) {
+      povPort = Number(pov.port);
+      full.push('--pov-web', `127.0.0.1:${povPort}`, '--pov-resources', jar);
+    } else {
+      log(`Keine Minecraft-Ressourcen für ${pov.mc} – Bot startet ohne texturierte Ansicht.`);
+    }
+  }
+
+  const proc = spawn(binary, full, {
     cwd: home,
     env: { ...process.env, ...(message.env || {}), XDG_CONFIG_HOME: home, HOME: home, TERM: 'dumb' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  jobs.set(job, { proc, userId, home });
+  jobs.set(job, { proc, userId, home, povPort });
 
   // **Je Kanal ein Decoder, kein `chunk.toString('utf8')`.**
   //
@@ -373,6 +463,45 @@ function pushAccountFiles(link) {
     if (seen.has(job.userId)) continue;
     seen.add(job.userId);
     link.send({ type: 'files', user_id: job.userId, files: readFiles(job.home) });
+  }
+}
+
+/**
+ * Eine HTTP-Anfrage an den Viewer eines Bots ausführen und die Antwort zurückschicken.
+ *
+ * Drei Sicherungen, und jede hat einen Grund:
+ *
+ *   1. **Das Ziel bestimmt der Auftrag, nicht die Nachricht.** Die Portnummer steht hier am Job –
+ *      das Panel kann also nicht irgendeinen lauschenden Dienst dieser Maschine ansprechen.
+ *   2. **Nur GET und POST**, und nur der Pfad kommt von außen. Ein vollständiges `http://…` in
+ *      der Nachricht hätte diesen Agenten zu einem offenen Proxy gemacht.
+ *   3. **Eine Obergrenze für die Antwort.** Ein Bild sind ein paar hundert Kilobyte; alles
+ *      darüber passt ohnehin nicht mehr durch die Leitung und wäre nur ein Weg, sie zu füllen.
+ */
+const HTTP_MAX_BYTES = 2 * 1024 * 1024;
+
+async function relay(link, message) {
+  const answer = (fields) => link.send({ type: 'httpres', id: message.id, ...fields });
+  const job = jobs.get(message.job);
+  if (!job?.povPort) return answer({ error: 'Für diesen Bot läuft hier keine Live-Ansicht.' });
+  const method = message.method === 'POST' ? 'POST' : 'GET';
+  const route = String(message.path || '');
+  if (!route.startsWith('/')) return answer({ error: 'Ungültiger Pfad.' });
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${job.povPort}${route}`, {
+      method,
+      signal: AbortSignal.timeout(8000),
+    });
+    const body = Buffer.from(await response.arrayBuffer());
+    if (body.length > HTTP_MAX_BYTES) return answer({ error: 'Antwort zu groß.' });
+    answer({
+      status: response.status,
+      ctype: response.headers.get('content-type') || 'application/octet-stream',
+      body: body.toString('base64'),
+    });
+  } catch (error) {
+    answer({ error: error.message });
   }
 }
 
@@ -422,6 +551,7 @@ function connect() {
       platform: `${os.type()} ${os.release()}`,
       cores: os.cpus().length || 1,
       binaries,
+      mc: resourceVersions(),
     });
     // Einmal sofort messen, damit im Panel nicht bis zum ersten Takt ein leerer Kasten steht.
     metrics().then((stats) => link.send({ type: 'metrics', stats })).catch(() => {});
@@ -460,10 +590,19 @@ function connect() {
         }
         break;
       }
+      case 'http':
+        relay(link, message);
+        break;
       case 'sync':
         try {
           const binaries = await syncBinaries();
-          link.send({ type: 'hello', version: config.version, hostname: os.hostname(), binaries });
+          link.send({
+            type: 'hello',
+            version: config.version,
+            hostname: os.hostname(),
+            binaries,
+            mc: resourceVersions(),
+          });
         } catch (error) {
           link.send({ type: 'error', error: `Abgleich fehlgeschlagen: ${error.message}` });
         }

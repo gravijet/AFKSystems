@@ -11,7 +11,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { paths } from '../config.js';
 import { db } from '../db.js';
-import { BUILDS } from '../binaries.js';
+import { BUILDS, state as clientState } from '../binaries.js';
+import * as resources from '../resources.js';
 import { wrap, notFound } from '../util.js';
 
 export const router = express.Router();
@@ -52,7 +53,14 @@ router.use((req, res, next) => {
   next();
 });
 
-/** Welche Client-Dateien es gibt und wie sie aussehen sollen. */
+/**
+ * Welche Client-Dateien es gibt und wie sie aussehen sollen.
+ *
+ * Dazu die Minecraft-Ressourcen: Die texturierte Live-Ansicht liest beim Zeichnen aus der
+ * Original-Client-JAR, und der Bot zeichnet dort, wo er läuft. Ein Standort braucht sie deshalb
+ * genauso wie die Client-Datei selbst – und holt sie sich auf demselben Weg, damit auf der anderen
+ * Maschine niemand eine Datei von Hand hinlegen muss.
+ */
 router.get(
   '/manifest',
   wrap((req, res) => {
@@ -62,7 +70,26 @@ router.get(
       if (!fs.existsSync(file)) continue;
       files.push({ name, size: fs.statSync(file).size, sha256: digest(name) });
     }
-    res.json({ node: { id: req.node.id, name: req.node.name }, files });
+    res.json({
+      node: { id: req.node.id, name: req.node.name },
+      files,
+      resources: resources
+        .list(clientState.versions)
+        .filter((entry) => entry.present)
+        .map((entry) => ({ version: entry.version, size: entry.size, sha256: entry.sha256 })),
+    });
+  })
+);
+
+/** Eine Minecraft-Client-JAR. Dieselbe Regel wie bei den Bauformen: nur, was hier auch liegt. */
+router.get(
+  '/resources/:version',
+  wrap((req, res) => {
+    const file = resources.pathFor(String(req.params.version || ''));
+    if (!file) throw notFound('Für diese Version liegt hier keine Datei.');
+    res.setHeader('Content-Type', 'application/java-archive');
+    res.setHeader('Cache-Control', 'no-store');
+    fs.createReadStream(file).pipe(res);
   })
 );
 

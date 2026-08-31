@@ -16,7 +16,9 @@ import {
 } from '../ui.js';
 import { state, appbar, refresh, draw, go } from '../app.js';
 
-const STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
+// Drei Zustände, drei Aussagen: bei uns, beim Kunden, erledigt. Ein vierter („wartet“) stand
+// früher daneben und bedeutete dasselbe wie „beantwortet“ – siehe server/tickets.js.
+const STATUS_PILL = { open: 'primary', answered: '', closed: '' };
 
 /**
  * Wie groß ein Anhang sein darf.
@@ -97,6 +99,7 @@ async function list(root) {
   const data = await api('/tickets');
   setMaxUpload(data.max_upload);
   const invite = state.meta?.discord_invite || '';
+  const supportMail = state.meta?.support_email || '';
   const personalAdmin = state.me?.role === 'admin';
   const title = personalAdmin ? tr('dash.myTickets') : tr('tk.title');
   const subtitle = personalAdmin ? tr('tk.mySub') : tr('tk.sub');
@@ -128,6 +131,16 @@ async function list(root) {
             </span>
             <span class="btn btn-sm">${escapeHtml(tr('discord.join'))}</span>
           </a>`
+        : ''
+    }
+
+    <!-- Der Weg für alles, was kein Ticket sein kann: eine Frage vor dem Konto, ein Zugang, der
+         nicht mehr geht. Ein Ticket bleibt der bessere Weg – es hat einen Verlauf und weiß, wer
+         schreibt –, aber wer gerade nicht hineinkommt, soll nicht ohne Adresse dastehen. -->
+    ${
+      supportMail
+        ? `<p class="small muted" style="margin:0 0 1rem">${escapeHtml(tr('tk.mailHint'))}
+            <a href="mailto:${escapeHtml(supportMail)}">${escapeHtml(supportMail)}</a></p>`
         : ''
     }
 
@@ -260,7 +273,7 @@ async function one(root, id, { staff, backHash }) {
 
   const statusControls = () =>
     staff
-      ? ['open', 'waiting', 'answered', 'closed']
+      ? ['open', 'answered', 'closed']
           .map(
             (entry) => `<button class="status-choice ${entry} ${
               ticket.status === entry ? 'active' : ''
@@ -317,6 +330,9 @@ async function one(root, id, { staff, backHash }) {
             <div class="status-picker" id="status">
               ${statusControls()}
             </div>
+            <!-- Was die drei Wörter heißen, steht dort, wo man sie anklickt: „offen“ und
+                 „beantwortet“ sagen von sich aus nicht, wer am Zug ist. -->
+            ${staff ? `<p class="small muted">${escapeHtml(tr('tk.statusHint'))}</p>` : ''}
             <p class="small muted" id="status-hint" ${ticket.status === 'closed' ? '' : 'hidden'}>${escapeHtml(
               tr('tk.reopenHint')
             )}</p>

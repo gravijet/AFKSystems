@@ -226,11 +226,43 @@ const LIST = [
     premium: true,
     de: {
       title: 'Live-Ansicht',
-      text: 'Sehen, was der Bot sieht: Der Client rechnet aus den geladenen Weltdaten ein Bild, das Panel zeichnet es. Je Serverplatz buchbar und in keinem Tarif enthalten – auch nicht in Ultra.',
+      text: 'Sehen, was der Bot sieht: Der Client rechnet aus den geladenen Weltdaten ein Bild – mit den echten Texturen des Spiels, wo sie vorliegen. Je Serverplatz buchbar und in keinem Tarif enthalten, auch nicht in Ultra.',
     },
     en: {
       title: 'Live view',
-      text: 'See what the bot sees: the client works a picture out from the world data it has loaded and the panel draws it. Booked per server slot and part of no plan – not even Ultra.',
+      text: 'See what the bot sees: the client works a picture out from the world data it has loaded – with the real textures of the game where they are available. Booked per server slot and part of no plan, not even Ultra.',
+    },
+  },
+  {
+    key: 'pov-control',
+    group: 'game',
+    // Steuern im Bild braucht beides: ein Bild (`pov`) und die Bewegungsbefehle dahinter. Die
+    // Fähigkeit, an der es wirklich hängt, ist die zweite – ohne sie stünde ein Bild da, in dem
+    // sich nichts anklicken ließe.
+    need: 'pov',
+    premium: true,
+    de: {
+      title: 'Im Bild steuern',
+      text: 'Laufen mit WASD, drehen mit der Maus, Schnellleiste mit 1 bis 9, Menüfelder anklicken – alles direkt in der Live-Ansicht, samt Vollbild und Bildschirmfoto.',
+    },
+    en: {
+      title: 'Steer inside the picture',
+      text: 'Walk with WASD, turn with the mouse, pick a hotbar slot with 1 to 9, click menu slots – all straight in the live view, full screen and screenshot included.',
+    },
+  },
+  {
+    key: 'inventory',
+    group: 'game',
+    need: 'items',
+    premium: true,
+    tag: 'ultra',
+    de: {
+      title: 'Inventar ansehen',
+      text: 'Rüstung, Werkbank, Tasche, Schnellleiste und Nebenhand des Bots – mit den Feldnummern, die ein Macro zum Anklicken braucht.',
+    },
+    en: {
+      title: 'See the inventory',
+      text: 'Armour, crafting grid, bag, hotbar and off hand of the bot – with the slot numbers a macro needs in order to click them.',
     },
   },
 

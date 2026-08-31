@@ -38,11 +38,11 @@ jeweiligen Anleitungen schneller (siehe [docs/README.md](README.md)).
                       │   └─ WebSocket-Verteiler                     │
                       └───┬──────────┬──────────┬───────────┬────────┘
                           │          │          │           │
-                   SQLite │   Standorte    Discord-Bot    Tebex
-                  (db.js) │   (agents.js)  (bridge.js)    (tebex.js)
+                   SQLite │   Standorte    Discord-Bot    Stripe
+                  (db.js) │   (agents.js)  (bridge.js)    (stripe.js)
                           │        │            │            │
                     data/afksystems.db          │            │
-                                   │            │            └─ Webhook /api/tebex/webhook
+                                   │            │            └─ Webhook /api/stripe/webhook
                                    │            └─ WebSocket /api/bot/stream
                                    └─ WebSocket /api/node/stream  ──► agent/index.js
                                                                        └─ ein Prozess je Bot
@@ -127,10 +127,13 @@ bewusst pipe-fähig gebaut, deshalb braucht es zwischen Panel und Client kein ei
 | POV | `pov-afk-linux` | Live-Ansicht (das Panel startet sie erst, wenn jemand zusieht) |
 | Ultra | `ultra-afk-linux` | alles; Live-Ansicht mit `:pov live` zuschaltbar |
 
+Ab Client 2.5.0 bringen die beiden POV-Bauformen zusätzlich einen **texturierten Browser-Viewer**
+mit (`--pov-web`), der aus der Original-Client-JAR von Minecraft zeichnet (`--pov-resources`).
+
 `server/binaries.js` lädt sie aus dem GitHub-Release `latest`, ruft für jede `--help` auf und merkt
 sich, **was sie wirklich kann**. Es steht nirgends im Code eine Liste von Fähigkeiten, die
 veralten könnte: fehlt etwas, ist der Knopf dafür aus. Umgekehrt gilt dasselbe – eine Option, die
-in der Hilfe steht, wird benutzt (`--pov-size`, `--pov-fps`, `--view-distance`), und eine, die
+in der Hilfe steht, wird benutzt (`--pov-size`, `--pov-fps`, `--pov-web`, `--view-distance`), und eine, die
 dort fehlt, wird nicht mitgeschickt: Eine ältere Datei bräche bei einer unbekannten Option beim
 Start ab, und dann liefe gar kein Bot mehr.
 
@@ -192,14 +195,24 @@ Drei Dinge, die keine Chatzeilen sind und deshalb einen eigenen Weg nehmen (`bot
 | --- | --- | --- |
 | **Scoreboard** | `@event board titel …` / `@event board zeile …` | Tarifmerkmal `board` |
 | **Menü** | `@event menu open …`, `@event slot …`, `@event lore …` | Tarifmerkmal `menus` |
+| **Inventar** | dieselben `@event slot`-Zeilen, aber nach `:inv` | Tarifmerkmal `menus` |
 | **Live-Ansicht** | ein Raster aus Halbblöcken hinter `ESC[H` | Zusatz `pov` |
+| **Live-Ansicht, texturiert** | fertige PNG vom HTTP-Viewer des Clients | Zusatz `pov` + Client-JAR |
 
 Scoreboard und Menü behalten ihre `§`-Farbcodes bis in den Browser – dort sehen sie aus wie im
 Spiel. Zahlenformate, Team-Präfixe und ausgeblendete Punktzahlen bleiben erhalten.
 
-Für Abfragen ohne Abschlussereignis (`:board`, `:menu`, `:pos`) gibt es `beginCapture()`: Die
-nächsten Ausgabezeilen gehören zur Abfrage und nicht in den Chat; nach zwei Sekunden Ruhe ist der
-Schnappschuss fertig.
+Für Abfragen ohne Abschlussereignis (`:board`, `:menu`, `:inv`, `:pos`) gibt es `beginCapture()`:
+Die nächsten Ausgabezeilen gehören zur Abfrage und nicht in den Chat; nach zwei Sekunden Ruhe ist
+der Schnappschuss fertig. **Welche Abfrage gerade läuft, entscheidet dabei mit, wohin ein Feld
+gehört:** `:menu` und `:inv` schreiben beide `@event slot`-Zeilen und meinen etwas anderes – einmal
+das offene Fenster des Servers, einmal das eigene Inventar.
+
+Die texturierte Live-Ansicht ist die einzige Ansicht, die **nicht** über die Ausgabe des Clients
+kommt: Seit 2.5.0 führt jeder POV-Bot einen kleinen HTTP-Viewer auf seinem Localhost, und das Panel
+holt dort Bilder, Zustand und Menüs ab und reicht sie an den Browser durch. Die Datei, aus der die
+Texturen stammen, liegt unter `data/mc/<version>.jar` und wird im Admin-Bereich eingerichtet
+(`server/resources.js`).
 
 Zur Live-Ansicht im Einzelnen: **[docs/live-ansicht.md](live-ansicht.md)**.
 
@@ -254,11 +267,15 @@ Gerechnet wird anteilig: beim Buchen der Rest der laufenden Periode, beim Abbest
 zurück. Ab der nächsten Verlängerung steckt der Zusatz im Monatspreis. Auf dem Gratis-Platz gibt
 es keine.
 
-**Aufladen** geht auf vier Wegen: Tebex (Karte, PayPal und alles Weitere), Gutschein, Überweisung
+**Aufladen** geht auf vier Wegen: Stripe (Karte, PayPal und alles Weitere), Gutschein, Überweisung
 oder PayPal von Hand (der Admin bestätigt), oder der Admin bucht direkt auf. Guthaben entsteht an
 genau einer Stelle im Code: `billing.settleTopup()`.
 
-Zu Tebex im Einzelnen: **[docs/tebex.md](tebex.md)**.
+Anders als beim vorherigen Anbieter ist Stripe **kein Verkäufer im eigenen Namen**: Verkäufer ist
+der Betreiber selbst. Preis, Beleg und Umsatzsteuer kommen deshalb aus diesem Panel – `vat.js`
+sagt für alle Zahlarten denselben Satz, `mail.js` schickt den Beleg.
+
+Zu Stripe im Einzelnen: **[docs/stripe.md](stripe.md)**.
 
 ---
 
@@ -475,4 +492,4 @@ curl -s localhost:3010/api/health
 ```
 
 Alles Einstellbare steht **nicht** in der `.env`, sondern in der Tabelle `settings` und damit im
-Admin-Bereich: SMTP, Discord, Google, Tebex, Grenzen, Rechtstexte, Inhaltsschutz.
+Admin-Bereich: SMTP, Discord, Google, Stripe, Umsatzsteuer, Grenzen, Rechtstexte, Inhaltsschutz.

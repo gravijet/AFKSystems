@@ -716,10 +716,6 @@ export function packages() {
     label: entry.label || `${(entry.cent / 100).toFixed(2)} €`,
     euro: (entry.cent / 100).toFixed(2),
     bonus: Math.max(0, Math.round(Number(entry.credits)) - Math.round(Number(entry.cent))),
-    // Nur für den Headless-Weg von Tebex: dort liegt das Paket fertig im Webstore und hat dort
-    // eine eigene Nummer. Leer heißt "gibt es dort nicht" – dann taugt das Paket nur für den
-    // Checkout-Weg, bei dem der Preis von hier kommt.
-    tebex: entry.tebex ? String(entry.tebex) : null,
   }));
 }
 
@@ -774,7 +770,7 @@ const settle = db.transaction((topupId, note = '', force = false) => {
  * Eine Aufladung als bezahlt verbuchen.
  *
  * Der Beleg per E-Mail gehört dazu und steht deshalb hier und nicht an den drei Stellen, die
- * aufladen können (Tebex-Webhook, Admin-Bestätigung, Gutschrift von Hand). Er geht nach der
+ * aufladen können (Stripe-Webhook, Admin-Bestätigung, Gutschrift von Hand). Er geht nach der
  * Transaktion raus – ein hängender Mailserver darf keine Buchung aufhalten.
  */
 export function settleTopup(topupId, note = '', { force = false } = {}) {
@@ -787,7 +783,7 @@ export function settleTopup(topupId, note = '', { force = false } = {}) {
         amount_cent: topup.amount_cent,
         balance,
       });
-      // Und über Discord, wenn ein Webhook hinterlegt ist. Zwischen dem Bezahlen bei Tebex und der
+      // Und über Discord, wenn ein Webhook hinterlegt ist. Zwischen dem Bezahlen bei Stripe und der
       // Gutschrift liegen Sekunden bis Minuten – wer in dieser Zeit nicht im Panel sitzt, erfährt
       // sonst gar nicht, dass sein Geld angekommen ist.
       notify.topupPaid(user.id, topup.credits, balance);
@@ -813,9 +809,9 @@ export const refundTopup = db.transaction((topupId, note = '') => {
   if (topup.status === 'refunded') return { topup, taken: 0, missing: 0, already: true };
   // **Nur eine bezahlte Aufladung wird zurückgenommen.** Vorher wurde der Zustand *vor* dieser
   // Prüfung auf "refunded" gesetzt – eine noch offene Aufladung war damit für immer tot, und
-  // `settleTopup` verweigerte sie später zu Recht. Das traf den echten Fall: Tebex meldet einen
-  // eröffneten Streitfall oder eine Rücklastschrift zu einem Vorgang, dessen `payment.completed`
-  // noch unterwegs ist. Das Geld kam an, die Credits nie.
+  // `settleTopup` verweigerte sie später zu Recht. Das traf den echten Fall: Stripe meldet einen
+  // eröffneten Streitfall oder eine Rücklastschrift zu einem Vorgang, dessen Zahlungsmeldung noch
+  // unterwegs ist. Das Geld kam an, die Credits nie.
   if (topup.status !== 'paid') {
     db.prepare("UPDATE topups SET status = 'cancelled' WHERE id = ? AND status = 'open'").run(topupId);
     return {

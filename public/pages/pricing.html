@@ -47,6 +47,9 @@
             <p class="lead">{{pricing.topup.lead}}</p>
           </header>
           <div class="topup-list big">{{packagesHtml}}</div>
+          <!-- Der Umsatzsteuerhinweis steht dort, wo die Beträge stehen. Was auf dem Beleg steht,
+               muss vorher schon neben dem Preis gestanden haben. -->
+          <p class="plans-note">{{vatNote}}</p>
           <p class="band-foot">
             <a class="btn btn-primary btn-lg" href="/{{lang}}/register">{{pricing.choose}}</a>
           </p>

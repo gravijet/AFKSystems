@@ -92,8 +92,8 @@ export const BUILDS = {
  * von Fähigkeiten, die veralten könnte. Bekommt der Client eine neue Option, taucht sie in seiner
  * Hilfe auf, und das Panel benutzt sie – bekommt er sie nicht, bleibt der Knopf dafür aus.
  *
- * Die vier Einträge unten kamen mit Client 2.1.0 bis 2.4.0 dazu. Sie einfach mitzuschicken wäre
- * riskant: Eine ältere Bauform, die `--pov-size` nicht kennt, bricht damit beim Start ab, und
+ * Die Einträge ab `viewdistance` kamen mit Client 2.1.0 bis 2.5.0 dazu. Sie einfach mitzuschicken
+ * wäre riskant: Eine ältere Bauform, die `--pov-size` nicht kennt, bricht damit beim Start ab, und
  * dann liefe gar kein Bot mehr.
  */
 const PROBES = {
@@ -113,6 +113,17 @@ const PROBES = {
   povsize: /--pov-size\b/,
   /** `--pov-fps <1-20>`: wie oft gezeichnet wird. */
   povfps: /--pov-fps\b/,
+  /**
+   * `--pov-web <port|ip:port>`: der eigene HTTP-Viewer des Clients (ab 2.5.0).
+   *
+   * Das ist die Live-Ansicht **mit echten Texturen**: keine Halbblöcke im Terminal, sondern ein
+   * fertiges PNG, dazu Hotbar, Menü und Inventar als Daten. Er lauscht auf 127.0.0.1 und gibt beim
+   * Start eine Adresse mit Zugriffstoken aus – das Panel liest sie mit und reicht die Anfragen
+   * seiner Kunden durch (siehe supervisor.js `webFetch`).
+   */
+  povweb: /--pov-web\b/,
+  /** `--pov-resources <client.jar>`: woher der Viewer Blockmodelle, Texturen und GUI nimmt. */
+  povresources: /--pov-resources\b/,
 };
 
 export const state = {

@@ -1,6 +1,7 @@
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
@@ -17,9 +18,12 @@ process.env.PUBLIC_URL = 'http://127.0.0.1';
 
 const { db, setSetting } = await import('../server/db.js');
 const billing = await import('../server/billing.js');
+const stripe = await import('../server/stripe.js');
+const vat = await import('../server/vat.js');
 const roles = await import('../server/roles.js');
 const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
+const resources = await import('../server/resources.js');
 const tickets = await import('../server/tickets.js');
 const { Tickets } = await import('../bot/handlers/tickets.js');
 const { Bot, simpleChatMacro, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
@@ -34,6 +38,20 @@ const linkedRoles = await import('../server/linked-roles.js');
 
 let sequence = 0;
 let serverProcess = null;
+
+/**
+ * Etwas, das die Prüfung in resources.js für eine Client-JAR hält.
+ *
+ * Eine echte wäre siebenundzwanzig Megabyte groß und gehört Mojang. Geprüft wird ohnehin nur, was
+ * hier steht: die ZIP-Kennung am Anfang und die beiden Verzeichnisse, aus denen der Viewer liest.
+ */
+const fakeClientJar = () =>
+  Buffer.concat([
+    Buffer.from('PK'),
+    Buffer.alloc(1024, 0x20),
+    Buffer.from('assets/minecraft/textures/block/stone.png'),
+    Buffer.from('assets/minecraft/models/block/stone.json'),
+  ]);
 
 function createUser(overrides = {}) {
   sequence += 1;
@@ -603,17 +621,97 @@ test('a top-up that was never paid stays open after a dispute and can still be s
   const user = createUser();
   const topup = billing.createTopup({
     userId: user.id,
-    provider: 'tebex',
+    provider: 'stripe',
     amountCent: 1000,
     credits: 1000,
   });
-  // Tebex meldet einen Streitfall, bevor "bezahlt" ankommt. Vorher wurde die Aufladung dabei auf
+  // Stripe meldet einen Streitfall, bevor "bezahlt" ankommt. Vorher wurde die Aufladung dabei auf
   // "refunded" gesetzt – und `settleTopup` verweigerte sie danach für immer. Das Geld war da, die
   // Credits kamen nie.
   billing.refundTopup(topup.id);
   assert.equal(billing.balance(user.id), 0);
   billing.settleTopup(topup.id, '', { force: true });
   assert.equal(billing.balance(user.id), 1000);
+});
+
+// ---------------------------------------------------------------- Stripe
+//
+// Der Webhook ist die einzige Stelle, an der eine Zahlung zu Guthaben wird. Was ihn schützt, ist
+// die Unterschrift – also gehört genau die geprüft, und zwar in allen vier Fällen, in denen sie
+// nicht gelten darf.
+
+test('a Stripe webhook is only accepted with a fresh, correctly signed body', () => {
+  const secret = 'whsec_test_geheimnis';
+  const body = Buffer.from(JSON.stringify({ id: 'evt_1', type: 'checkout.session.completed' }));
+  const now = 1_760_000_000_000;
+  const sign = (at, key = secret, payload = body) =>
+    crypto
+      .createHmac('sha256', key)
+      .update(`${Math.floor(at / 1000)}.`)
+      .update(payload)
+      .digest('hex');
+  const header = (at, key, payload) =>
+    `t=${Math.floor(at / 1000)},v1=${sign(at, key, payload)}`;
+
+  // Ohne hinterlegtes Geheimnis kommt gar nichts durch – auch keine echte Meldung.
+  setSetting('stripe_webhook_secret', '');
+  assert.equal(stripe.verify(body, header(now), { now }), false);
+
+  setSetting('stripe_webhook_secret', secret);
+  assert.equal(stripe.verify(body, header(now), { now }), true);
+
+  // Falsches Geheimnis, veränderter Rumpf, fehlende Unterschrift: alles drei ein Nein.
+  assert.equal(stripe.verify(body, header(now, 'whsec_falsch'), { now }), false);
+  assert.equal(stripe.verify(Buffer.from('{"id":"evt_2"}'), header(now), { now }), false);
+  assert.equal(stripe.verify(body, '', { now }), false);
+
+  // Eine mitgeschnittene, echt unterschriebene Meldung verfällt: Ohne die Altersprüfung ließe sie
+  // sich für immer wieder einspielen, und jedes Mal entstünde dasselbe Guthaben neu.
+  const old = now - (stripe.TOLERANCE_SECONDS + 60) * 1000;
+  assert.equal(stripe.verify(body, header(old), { now }), false);
+  assert.equal(stripe.verify(body, header(old), { now: old }), true);
+
+  // Beim Schlüsselwechsel schickt Stripe kurzzeitig zwei Unterschriften. Eine gültige genügt.
+  assert.equal(
+    stripe.verify(body, `t=${Math.floor(now / 1000)},v1=${sign(now, 'whsec_alt')},v1=${sign(now)}`, { now }),
+    true
+  );
+  setSetting('stripe_webhook_secret', '');
+});
+
+test('Stripe parameters are form-encoded the way Stripe expects them', () => {
+  const encoded = stripe.encode({
+    mode: 'payment',
+    metadata: { topup_id: '7' },
+    line_items: [{ quantity: 1, price_data: { unit_amount: 1000, currency: 'eur' } }],
+    // Nicht gesetzte Felder sind bei Stripe etwas anderes als leere – sie dürfen gar nicht mit.
+    cancel_url: undefined,
+  });
+  assert.equal(encoded.get('mode'), 'payment');
+  assert.equal(encoded.get('metadata[topup_id]'), '7');
+  assert.equal(encoded.get('line_items[0][price_data][unit_amount]'), '1000');
+  assert.equal(encoded.has('cancel_url'), false);
+});
+
+test('the small-business rule shows no VAT but says why', () => {
+  setSetting('vat_mode', 'small_business');
+  assert.match(vat.note('de'), /§ 6 Abs\. 1 Z 27 UStG/);
+  assert.equal(vat.view('de').shows_vat, false);
+
+  // Ein leeres Feld ist keine Angabe: dann gilt wieder die Vorgabe. Unter einem Preis darf nie
+  // gar nichts stehen – "nichts" heißt auf einer Rechnung nicht "steuerfrei", sondern "ungeklärt".
+  setSetting('vat_note_de', '   ');
+  assert.match(vat.note('de'), /Kleinunternehmerregelung/);
+
+  // Mit Stripe Tax gilt der eigene Satz nicht mehr: Dort wird die Steuer ausgewiesen, und ein
+  // stehengebliebener Kleinunternehmer-Hinweis wäre dann schlicht falsch.
+  setSetting('vat_note_de', 'Eigener Satz.');
+  setSetting('vat_mode', 'stripe_tax');
+  assert.doesNotMatch(vat.note('de'), /Kleinunternehmer|Eigener Satz/);
+  assert.equal(vat.view('de').shows_vat, true);
+
+  setSetting('vat_mode', 'small_business');
+  setSetting('vat_note_de', '');
 });
 
 test('a voucher is worth one redemption per account, and its counter never goes negative', () => {
@@ -980,6 +1078,186 @@ test('the live view is set up on the command line, but only where the client und
 });
 
 /**
+ * Der texturierte Viewer (Client 2.5.0) kommt nur, wenn wirklich alles dafür da ist.
+ *
+ * Vier Bedingungen, und jede einzelne ist ein Nein. Die vierte ist die, die im Betrieb wirklich
+ * fehlt: eine Original-Client-JAR für **diese** Protokollversion. Ohne sie startet der Viewer
+ * zwar, kann aber kein Bild rechnen – der Kunde sähe statt der bezahlten Ansicht eine
+ * Fehlermeldung, wo er vorher wenigstens die Voxelansicht hatte.
+ */
+test('the textured viewer is only started where the client, the plan and the resources allow it', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('ultra'), { mcVersion: '26.1' });
+  db.prepare("UPDATE profiles SET mc_version = '26.1' WHERE id = ?").run(profile.id);
+  const fresh = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id);
+  const bot = new Bot(
+    { emit: () => {}, macros: { onChat: () => {} }, joinCommands: () => [], clientMacros: () => [] },
+    { profile: fresh, account, user, plan: { ...billing.featuresOf(fresh), pov: 1 } }
+  );
+  const able = { pov: true, povstart: true, povsize: true, povfps: true, povweb: true, povresources: true };
+
+  // Ohne JAR: keine Frage nach einem Port, und damit kein Viewer.
+  assert.equal(resources.has('26.1'), false);
+  assert.equal(bot.wantsWebView(able), false);
+
+  const jar = fakeClientJar();
+  resources.store('26.1', jar);
+  try {
+    assert.equal(bot.wantsWebView(able), true);
+    // Eine ältere Client-Datei kennt die Optionen nicht – sie mitzuschicken bräche den Start.
+    assert.equal(bot.wantsWebView({ ...able, povweb: false }), false);
+    // Und ohne gebuchte Live-Ansicht ist der Viewer nur Rechenzeit für niemanden.
+    assert.equal(bot.wantsWebView({ ...able, pov: false }), false);
+
+    bot.webPort = 42_100;
+    const args = bot.args(able);
+    assert.deepEqual(args.slice(args.indexOf('--pov-web'), args.indexOf('--pov-web') + 2), [
+      '--pov-web',
+      '127.0.0.1:42100',
+    ]);
+    assert.equal(args[args.indexOf('--pov-resources') + 1], resources.pathFor('26.1'));
+
+    // Auf einem Standort setzt sie der Standort selbst ein: Der Pfad gilt nur auf seiner Maschine.
+    bot.remote = true;
+    const remote = bot.args(able);
+    assert.ok(!remote.includes('--pov-web'));
+    assert.ok(!remote.includes('--pov-resources'));
+  } finally {
+    resources.remove('26.1');
+  }
+});
+
+/** Was keine Client-JAR ist, kommt nicht in das Verzeichnis, aus dem der Client liest. */
+test('only a real Minecraft client JAR is accepted as resources', () => {
+  assert.equal(resources.looksLikeClientJar(Buffer.alloc(0)), false);
+  assert.equal(resources.looksLikeClientJar(Buffer.alloc(4096, 0x41)), false);
+  // Eine ZIP-Datei ohne die Verzeichnisse, aus denen gezeichnet wird – etwa die Server-JAR.
+  const server = Buffer.concat([Buffer.from('PK'), Buffer.alloc(4096, 0x20)]);
+  assert.equal(resources.looksLikeClientJar(server), false);
+  assert.equal(resources.looksLikeClientJar(fakeClientJar()), true);
+  assert.throws(() => resources.store('26.1', server), /Client-JAR/);
+  // Eine Versionsangabe wird zum Dateinamen – und darf deshalb kein Pfad sein.
+  assert.equal(resources.validVersion('../../etc/passwd'), false);
+  assert.equal(resources.validVersion('26.1'), true);
+});
+
+/**
+ * Der Zugriffstoken des Viewers verlässt das Panel nicht.
+ *
+ * Der Client schreibt die vollständige Adresse auf die Fehlerausgabe, damit ein Mensch am Terminal
+ * sie anklicken kann. Hier sitzt keiner: Die Zeile ginge über die Live-Leitung in jeden offenen
+ * Browser dieses Kontos. Mit dem Token kann man die Weltdaten eines fremden Minecraft-Servers
+ * abholen und im Spiel klicken – er gehört allein dem Panel.
+ */
+test('the viewer token is picked up but never repeated to the browser', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('ultra'));
+  const lines = [];
+  const bot = new Bot(
+    {
+      emit: (event, payload) => {
+        if (event === 'bot-line') lines.push(payload.entry);
+      },
+      macros: { onChat: () => {} },
+      joinCommands: () => [],
+      clientMacros: () => [],
+    },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+  bot.webPort = 42_101;
+  const token = 'a'.repeat(32);
+
+  bot.feed('err', Buffer.from(`[90mBrowser-POV: http://127.0.0.1:42101/?token=${token}[0m\n`, 'utf8'));
+
+  assert.equal(bot.web.token, token);
+  assert.equal(bot.web.port, 42_101);
+  assert.equal(bot.povState().web, true);
+  assert.equal(bot.povState().pending, false);
+  assert.ok(lines.length);
+  for (const entry of lines) assert.ok(!entry.text.includes(token), entry.text);
+
+  // Und der Satz, mit dem der Client erklärt, warum es keine Texturen gibt, gehört dem Kunden.
+  bot.feed('err', Buffer.from('Browser-POV startet ohne Texturen: Datei fehlt\n', 'utf8'));
+  assert.equal(bot.webNote, 'Datei fehlt');
+});
+
+/**
+ * `:menu` und `:inv` schreiben beide `@event slot`-Zeilen und meinen etwas anderes.
+ *
+ * Ohne die Unterscheidung landete das eigene Inventar in der Menüansicht und überschrieb sie –
+ * ein Menü mit sechsundvierzig Feldern, das es nie gab.
+ */
+test('the inventory lands in the inventory and not in the open menu', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('ultra'));
+  const bot = new Bot(
+    { emit: () => {}, macros: { onChat: () => {} }, joinCommands: () => [], clientMacros: () => [] },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+
+  // Ein `:menu` schreibt beides: die Übersicht als Text und die Felder als Ereignis.
+  bot.beginCapture('menu');
+  bot.onStatus('    Fenster 7  ·  27 Felder (0 bis 26)');
+  bot.onEvent('@event slot 3 1 §bTruhenfeld');
+  bot.finishCapture();
+  assert.equal(bot.views.menu.items[3].name, '§bTruhenfeld');
+  assert.equal(bot.views.menu.slots, 27);
+  assert.equal(bot.views.inv, null);
+
+  bot.beginCapture('inv');
+  bot.onEvent('@event slot 36 64 §fPflasterstein');
+  bot.onEvent('@event lore 36 §7Ein Stapel');
+  bot.finishCapture();
+  assert.equal(bot.views.inv.items[36].count, 64);
+  assert.deepEqual(bot.views.inv.items[36].lore, ['§7Ein Stapel']);
+  // Das Menü von vorhin ist unberührt geblieben.
+  assert.equal(bot.views.menu.items[3].name, '§bTruhenfeld');
+  assert.equal(bot.views.menu.items[36], undefined);
+
+  // Eine Abfrage ohne ein einziges Feld heißt "leer" und nicht "wie beim letzten Mal".
+  bot.beginCapture('inv');
+  bot.finishCapture();
+  assert.equal(bot.views.inv.empty, true);
+});
+
+/**
+ * Die Sichtweite steht nur im Aufruf, wenn sie jemand hochgestellt hat.
+ *
+ * Für einen stehenden Bot ist sie eine Zahl ohne Wirkung und für den Minecraft-Server unnötige
+ * Arbeit; für die Live-Ansicht ist sie die eine Zahl, die zählt.
+ */
+test('view distance is only sent when it was raised, and only on a paid slot', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('ultra'));
+  db.prepare('UPDATE profiles SET view_distance = 12 WHERE id = ?').run(profile.id);
+  const raised = db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id);
+  const context = { profile: raised, account, user, plan: billing.featuresOf(raised) };
+  const stub = { emit: () => {}, macros: { onChat: () => {} }, joinCommands: () => [], clientMacros: () => [] };
+
+  const bot = new Bot(stub, context);
+  const args = bot.args({ viewdistance: true });
+  assert.equal(args[args.indexOf('--view-distance') + 1], '12');
+
+  // Eine ältere Client-Datei kennt die Option nicht.
+  assert.ok(!bot.args({}).includes('--view-distance'));
+
+  // Und der Gratis-Tarif auch nicht: Chunks kosten Arbeitsspeicher auf unserer Maschine.
+  const free = new Bot(stub, { ...context, plan: { ...context.plan, premium: 0 } });
+  assert.ok(!free.args({ viewdistance: true }).includes('--view-distance'));
+
+  db.prepare('UPDATE profiles SET view_distance = 0 WHERE id = ?').run(profile.id);
+  const standard = new Bot(stub, {
+    ...context,
+    profile: db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id),
+  });
+  assert.ok(!standard.args({ viewdistance: true }).includes('--view-distance'));
+});
+
+/**
  * Der Webhook eines Kunden meldet, was er bestellt hat – und leer heißt alles.
  *
  * Die Regel steht auf beiden Seiten (server/notify.js und views/settings.js) und ist die einzige
@@ -1044,6 +1322,195 @@ test('the staff to-do list names what is waiting', () => {
 
   db.prepare('DELETE FROM tickets WHERE id = ?').run(info.lastInsertRowid);
   assert.ok(!staffTodos('de').some((row) => row.key === 'staff-tickets'));
+});
+
+/**
+ * Der Zustand eines Tickets sagt, **wer am Zug ist** – und der Ungelesen-Punkt des Teams steht
+ * nur dort, wo etwas offen ist. Beides lief auseinander: Der Punkt wurde beim Antworten gelöscht,
+ * beim Umstellen des Zustands aber nie, und so stand an beantworteten und geschlossenen Tickets
+ * weiter „Wartet“.
+ */
+test('a ticket knows who is on the clock, and nothing waits on an answered or closed one', () => {
+  const owner = createUser();
+  const staff = createUser({ role: 'admin' });
+  const row = (id) => db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+  const queue = () => tickets.openForStaff();
+
+  const before = queue();
+  const ticket = tickets.create(owner, { subject: 'Der Bot startet nicht', body: 'Er hängt.' });
+  assert.equal(row(ticket.id).status, 'open');
+  assert.equal(row(ticket.id).unread_staff, 1);
+  assert.equal(row(ticket.id).unread_user, 0);
+  assert.equal(queue(), before + 1, 'ein offenes Ticket liegt bei uns');
+
+  // Das Team antwortet: jetzt ist der Kunde dran, und in der Warteschlange steht es nicht mehr.
+  tickets.reply(ticket, staff, 'Schau mal in die Konsole.', { staff: true });
+  assert.deepEqual(
+    { status: row(ticket.id).status, staff: row(ticket.id).unread_staff, user: row(ticket.id).unread_user },
+    { status: 'answered', staff: 0, user: 1 }
+  );
+  assert.equal(queue(), before);
+
+  // Der Kunde schreibt zurück: wieder bei uns.
+  tickets.reply(row(ticket.id), owner, 'Da steht nichts.', { staff: false });
+  assert.equal(row(ticket.id).status, 'open');
+  assert.equal(row(ticket.id).unread_staff, 1);
+
+  // Von Hand auf „beantwortet“, ohne zu antworten. Auch dann wartet beim Team nichts mehr –
+  // genau daran hing das „Wartet“ an einem beantworteten Ticket.
+  tickets.setStatus(row(ticket.id), 'answered', staff.id, { staff: true });
+  assert.equal(row(ticket.id).unread_staff, 0);
+  assert.equal(queue(), before);
+
+  // Den vierten Zustand gibt es nicht mehr; wer ihn noch schickt, meint „beantwortet“.
+  assert.ok(!tickets.STATUSES.includes('waiting'));
+  tickets.setStatus(row(ticket.id), 'waiting', staff.id, { staff: true });
+  assert.equal(row(ticket.id).status, 'answered');
+
+  // Das Team schließt: für den Kunden ist das eine Neuigkeit, für uns ist es erledigt.
+  tickets.setStatus(row(ticket.id), 'closed', staff.id, { staff: true });
+  assert.deepEqual(
+    { status: row(ticket.id).status, staff: row(ticket.id).unread_staff, user: row(ticket.id).unread_user },
+    { status: 'closed', staff: 0, user: 1 }
+  );
+  assert.ok(row(ticket.id).closed_at);
+
+  // Eine Antwort des Teams macht ein geschlossenes Ticket wieder auf – mit Zeile im Verlauf und
+  // gezählt. Vorher galt beides nur für die Antwort eines Kunden.
+  tickets.reply(row(ticket.id), staff, 'Nachtrag.', { staff: true });
+  assert.equal(row(ticket.id).status, 'answered');
+  assert.equal(row(ticket.id).closed_at, null);
+  assert.equal(row(ticket.id).reopened, 1);
+  assert.match(lastSystemLine(ticket.id), /reopened/);
+
+  // Der Kunde schließt selbst: er weiß es bereits, also steht bei ihm nichts Ungelesenes.
+  tickets.setStatus(row(ticket.id), 'closed', owner.id, { staff: false });
+  assert.equal(row(ticket.id).unread_user, 0);
+
+  // Und ein Ticket, das das Team für einen Kunden schreibt, landet nicht in der eigenen
+  // Warteschlange: Der Kunde ist am Zug, nicht wir.
+  const forCustomer = tickets.create(
+    owner,
+    { subject: 'Nach dem Gespräch', body: 'Schick mir bitte den Screenshot.' },
+    { by: staff.id, source: 'staff', staffPriority: true }
+  );
+  assert.deepEqual(
+    { status: forCustomer.status, staff: forCustomer.unread_staff, user: forCustomer.unread_user },
+    { status: 'answered', staff: 0, user: 1 }
+  );
+  assert.equal(queue(), before);
+});
+
+const lastSystemLine = (ticketId) =>
+  db
+    .prepare("SELECT body FROM ticket_messages WHERE ticket_id = ? AND role = 'system' ORDER BY id DESC LIMIT 1")
+    .get(ticketId).body;
+
+/** Die Dringlichkeit setzt das Team – und was gesetzt wurde, steht im Verlauf. */
+test('an administrator changes the priority and the ticket history says so', () => {
+  const owner = createUser();
+  const staff = createUser({ role: 'admin' });
+  const ticket = tickets.create(owner, { subject: 'Proxy bitte', body: 'Für den zweiten Platz.' });
+  assert.equal(ticket.priority, 'normal');
+
+  const raised = tickets.setPriority(ticket, 'urgent', staff.id);
+  assert.equal(raised.priority, 'urgent');
+  assert.match(lastSystemLine(ticket.id), /normal to urgent/);
+
+  // Dieselbe Dringlichkeit noch einmal schreibt keine zweite Zeile.
+  const lines = db
+    .prepare("SELECT COUNT(*) AS n FROM ticket_messages WHERE ticket_id = ? AND role = 'system'")
+    .get(ticket.id).n;
+  tickets.setPriority(raised, 'urgent', staff.id);
+  assert.equal(
+    db
+      .prepare("SELECT COUNT(*) AS n FROM ticket_messages WHERE ticket_id = ? AND role = 'system'")
+      .get(ticket.id).n,
+    lines
+  );
+  assert.throws(() => tickets.setPriority(raised, 'sofort', staff.id), /Dringlichkeit/);
+});
+
+/**
+ * Ein Ticket aus dem Panel bekommt einen Kanal in Discord – auch dann, wenn der Bot in dem
+ * Moment nicht lief, in dem es entstand. Der Abgleich füllt die Lücken.
+ */
+test('the reconcile pass opens the Discord channels that are missing', async () => {
+  const list = [
+    { id: 901, status: 'open', channel_id: null, owner: { discord_id: '400000000000000001' } },
+    { id: 902, status: 'open', channel_id: 'deleted-by-hand', owner: {} },
+    { id: 903, status: 'closed', channel_id: null, owner: {} },
+    { id: 904, status: 'answered', channel_id: 'still-there', owner: {} },
+  ];
+  const opened = [];
+  const released = [];
+  const renamed = [];
+  const fake = {
+    opening: new Set(),
+    ensureChannel: Tickets.prototype.ensureChannel,
+    bot: {
+      panel: {
+        call: async (path, options) => {
+          if (path.startsWith('/tickets?')) return { tickets: list };
+          const match = /^\/tickets\/(\d+)$/.exec(path);
+          if (!match) throw new Error(`unexpected call: ${path}`);
+          if (options?.method === 'PATCH') {
+            released.push(Number(match[1]));
+            return {};
+          }
+          return { ticket: list.find((entry) => entry.id === Number(match[1])) };
+        },
+      },
+      client: {
+        channels: {
+          fetch: async (id) => (id === 'still-there' ? { id, isTextBased: () => true } : null),
+        },
+      },
+    },
+    openChannel: async (ticket) => {
+      opened.push(ticket.id);
+      return { id: `channel-${ticket.id}` };
+    },
+    archiveChannel: async () => {},
+    reopenChannel: async (_channel, id) => renamed.push(id),
+  };
+
+  const count = await Tickets.prototype.reconcileChannels.call(fake);
+  // Das offene ohne Kanal und das mit einem, den es in Discord nicht mehr gibt.
+  assert.deepEqual(opened, [901, 902]);
+  assert.equal(count, 2);
+  // Für das gelöschte wird die tote Zuordnung im Panel vorher gelöst.
+  assert.deepEqual(released, [902]);
+  // Ein geschlossenes Ticket bekommt keinen neuen Kanal, ein vorhandener wird nur eingeordnet.
+  assert.deepEqual(renamed, [904]);
+});
+
+/** Die Kontakt-Adresse: im Fuß jeder Seite – aber nur, wenn dort wirklich eine steht. */
+test('the contact address is offered in the footer, and only when it is one', async () => {
+  const landing = await import('../server/landing.js');
+  setSetting('support_email', 'support@example.invalid');
+  assert.match(landing.commonVars('de').footerSupport, /mailto:support@example\.invalid/);
+  assert.equal(landing.commonVars('de').supportMail, 'support@example.invalid');
+
+  setSetting('support_email', 'schreib uns doch einfach');
+  assert.equal(landing.commonVars('de').footerSupport, '');
+  assert.equal(landing.commonVars('en').supportMail, '');
+  setSetting('support_email', 'support@example.invalid');
+});
+
+test('a self-written legal text that still names the old payment provider is flagged', () => {
+  // Selbst geschriebene Rechtstexte werden von einer Migration nicht angefasst – wer seinen Text
+  // selbst verfasst hat, behält ihn. Dann muss aber jemand darauf hingewiesen werden: In der
+  // Datenschutzerklärung stünde sonst ein Empfänger, an den nichts mehr geht.
+  assert.ok(!staffTodos('de').some((row) => row.key === 'staff-legal-provider'));
+  setSetting('legal_privacy', 'Zahlungen laufen über Tebex (Tebex Limited).');
+  const entry = staffTodos('de').find((row) => row.key === 'staff-legal-provider');
+  assert.ok(entry, 'ein veralteter Zahlungsanbieter im Rechtstext gehört auf die Liste');
+  assert.match(entry.href, /group=legal/);
+
+  // Die Systemvorgabe nennt Stripe – ein leeres Feld darf die Warnung nicht auslösen.
+  setSetting('legal_privacy', '');
+  assert.ok(!staffTodos('de').some((row) => row.key === 'staff-legal-provider'));
 });
 
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {
@@ -1338,6 +1805,72 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   });
   assert.equal(blockedLocalBypass.response.status, 400);
   assert.equal(blockedLocalBypass.data.error, 'Unknown local command "teleport".');
+
+  // Der Verlauf zum Mitnehmen. Eine Textdatei, die man an ein Ticket hängen kann – deshalb mit
+  // Dateinamen im Kopf und nicht als JSON, das im Browser landet.
+  const exported = await fetch(`${base}/api/profiles/${profile.id}/chat.txt`, {
+    headers: { cookie: `afk_session=${USER_TOKEN}` },
+  });
+  assert.equal(exported.status, 200);
+  assert.match(exported.headers.get('content-type'), /^text\/plain/);
+  assert.match(exported.headers.get('content-disposition'), /attachment; filename\*=UTF-8''/);
+  // Und nur der eigene: Der Verlauf eines fremden Serverplatzes ist niemandes Sache.
+  const foreignExport = await fetch(`${base}/api/profiles/${profile.id}/chat.txt`, {
+    headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
+  });
+  assert.equal(foreignExport.status, 404);
+
+  // Die texturierte Live-Ansicht ist ein Zusatz. Ohne ihn gibt es sie auch nicht über den Umweg
+  // der Bild-Endpunkte – sonst wäre der bezahlte Teil des Zusatzes nur eine Schaltfläche.
+  const povGate = await api(base, `/api/profiles/${profile.id}/pov/${account.id}/state.json`, {
+    token: USER_TOKEN,
+  });
+  assert.equal(povGate.response.status, 402);
+  // Und es gibt genau die Pfade, die im Router stehen – keinen Durchreicher auf eine Adresse aus
+  // der Anfrage. Sonst wäre das hier ein offener Proxy auf den Localhost des Servers.
+  const noPassthrough = await fetch(
+    `${base}/api/profiles/${profile.id}/pov/${account.id}/assets/minecraft/textures/gui/x.png`,
+    { headers: { cookie: `afk_session=${USER_TOKEN}` } }
+  );
+  assert.equal(noPassthrough.status, 404);
+
+  // Die Minecraft-Ressourcen: hochladen, wiederfinden, wegräumen. Der Rumpf ist die Datei.
+  const uploaded = await fetch(`${base}/api/admin/resources/26.2`, {
+    method: 'POST',
+    headers: {
+      cookie: `afk_session=${ADMIN_TOKEN}`,
+      origin: base,
+      'content-type': 'application/java-archive',
+    },
+    body: fakeClientJar(),
+  });
+  assert.equal(uploaded.status, 200);
+  const clientState = await api(base, '/api/admin/client', { token: ADMIN_TOKEN });
+  assert.equal(
+    clientState.data.client.resources.find((entry) => entry.version === '26.2')?.present,
+    true
+  );
+  const rejected = await fetch(`${base}/api/admin/resources/26.1`, {
+    method: 'POST',
+    headers: {
+      cookie: `afk_session=${ADMIN_TOKEN}`,
+      origin: base,
+      'content-type': 'application/java-archive',
+    },
+    body: Buffer.alloc(4096, 0x41),
+  });
+  assert.equal(rejected.status, 400);
+  const dropped = await api(base, '/api/admin/resources/26.2', {
+    token: ADMIN_TOKEN,
+    method: 'DELETE',
+  });
+  assert.equal(dropped.response.status, 200);
+  // Ein Kunde hat mit alldem nichts zu tun.
+  const forbiddenUpload = await api(base, '/api/admin/resources/26.2', {
+    token: USER_TOKEN,
+    method: 'DELETE',
+  });
+  assert.equal(forbiddenUpload.response.status, 403);
 
   db.prepare(
     'UPDATE profile_accounts SET wanted = 1 WHERE profile_id = ? AND account_id = ?'

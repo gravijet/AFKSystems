@@ -230,7 +230,8 @@ async function overview(root) {
       ${stat(
         tr('adm.tickets'),
         data.tickets?.open ?? data.open_tickets,
-        tr('adm.unread', { n: data.tickets?.unread ?? data.unread_tickets })
+        // Nicht „ungelesen“: Ein Ticket ist nicht erledigt, weil es jemand aufgemacht hat.
+        tr('adm.ticketsWaiting', { n: data.tickets?.waiting ?? data.unread_tickets })
       )}
       ${stat(
         tr('adm.attention'),
@@ -609,7 +610,7 @@ function uptime(seconds) {
 // Der Arbeitsbildschirm des Teams: alle Tickets, nach Zustand gefiltert, das Dringendste oben.
 // Angeklickt wird daraus dasselbe Gespräch, das der Kunde sieht – nur mit den Werkzeugen dazu.
 
-const TICKET_STATUS_PILL = { open: 'primary', waiting: 'missing', answered: '', closed: '' };
+const TICKET_STATUS_PILL = { open: 'primary', answered: '', closed: '' };
 const TICKET_PRIORITY_PILL = { urgent: 'missing', high: 'primary', normal: '', low: '' };
 
 async function staffTicket(root, id) {
@@ -620,9 +621,12 @@ async function staffTicket(root, id) {
 async function staffTickets(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const status = params.get('status') || 'open';
+  const priority = params.get('priority') || 'all';
   const search = params.get('q') || '';
 
-  const data = await api(`/admin/tickets?status=${status}&q=${encodeURIComponent(search)}`);
+  const data = await api(
+    `/admin/tickets?status=${status}&priority=${priority}&q=${encodeURIComponent(search)}`
+  );
 
   root.innerHTML = `
     ${appbar(tr('adm.allTickets'), '', tr('adm.allTicketsSub'))}
@@ -635,6 +639,19 @@ async function staffTickets(root) {
               (entry) =>
                 `<option value="${entry}" ${status === entry ? 'selected' : ''}>${escapeHtml(
                   tr(`tk.status.${entry}`)
+                )}</option>`
+            )
+            .join('')}
+        </select>
+        <!-- Nach Dringlichkeit filtern konnte der Server längst; hier stand nur nie ein Feld
+             dafür, und der Wert kam nie an. -->
+        <select id="tk-priority" class="mini" style="max-width:13rem">
+          <option value="all" ${priority === 'all' ? 'selected' : ''}>${escapeHtml(tr('tk.priority'))}</option>
+          ${(data.priorities || [])
+            .map(
+              (entry) =>
+                `<option value="${entry}" ${priority === entry ? 'selected' : ''}>${escapeHtml(
+                  tr(`tk.priority.${entry}`)
                 )}</option>`
             )
             .join('')}
@@ -660,11 +677,13 @@ async function staffTickets(root) {
 
   const reload = debounce(() => {
     go(
-      `/admin/tickets?status=${$('#tk-status').value}&q=${encodeURIComponent($('#tk-q').value.trim())}`
+      `/admin/tickets?status=${$('#tk-status').value}&priority=${$('#tk-priority').value}` +
+        `&q=${encodeURIComponent($('#tk-q').value.trim())}`
     );
     draw();
   }, 300);
   $('#tk-status').addEventListener('change', reload);
+  $('#tk-priority').addEventListener('change', reload);
   $('#tk-q').addEventListener('input', reload);
 
   $('#tk-new-for').addEventListener('click', () => ticketForCustomer());
@@ -683,14 +702,18 @@ async function staffTickets(root) {
 function staffRow(ticket) {
   // Dieselbe Regel wie in der Kundenansicht: Die Benachrichtigung steht **am Ticket**. Die Zahl
   // in der Seitenleiste sagt nur, dass etwas wartet, nicht worauf.
-  const waiting = Boolean(ticket.unread_staff);
-  return `<li class="ticket-row ${waiting ? 'is-unread' : ''}" data-open="${ticket.id}">
+  //
+  // Und sie steht nur da, wo sie stimmt: „Neu“ heißt, dass wir dran sind und es noch niemand
+  // gelesen hat. An einem beantworteten oder geschlossenen Ticket hat das nichts verloren –
+  // dort stand vorher trotzdem „Wartet“, weil allein der Ungelesen-Punkt gefragt wurde.
+  const unread = Boolean(ticket.unread_staff) && ticket.status === 'open';
+  return `<li class="ticket-row ${unread ? 'is-unread' : ''}" data-open="${ticket.id}">
     <span class="ticket-dot ${escapeHtml(ticket.status)}"></span>
     <div class="grow" style="min-width:0">
       <div class="row" style="gap:.5rem">
         <span class="strong truncate">${escapeHtml(ticket.subject)}</span>
         <span class="small muted mono">#${ticket.id}</span>
-        ${waiting ? `<span class="pill unread">${icon('bell')} ${escapeHtml(tr('tk.unreadStaff'))}</span>` : ''}
+        ${unread ? `<span class="pill unread">${icon('bell')} ${escapeHtml(tr('tk.unread'))}</span>` : ''}
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
       </div>
       <div class="small muted truncate">
@@ -2598,7 +2621,7 @@ async function settings(root) {
         <div class="setting-body stack">
           ${fields.map(field).join('')}
           ${group.key === 'mail' ? mailTools() : ''}
-          ${group.key === 'payments' ? tebexTools(data) : ''}
+          ${group.key === 'payments' ? stripeTools(data) : ''}
           ${group.key === 'discord' ? discordTools(data) : ''}
           ${group.key === 'linkedroles' ? linkedRolesTools(data) : ''}
         </div>
@@ -2722,25 +2745,37 @@ async function settings(root) {
   }
 
   /**
-   * Der Selbsttest für Tebex.
+   * Der Selbsttest für Stripe.
    *
-   * Beim Einrichten ist die Frage nie "läuft der Server", sondern "nimmt Tebex meine Schlüssel an".
-   * Der Knopf beantwortet genau das – ohne dass jemand erst etwas kaufen muss.
+   * Beim Einrichten ist die Frage nie "läuft der Server", sondern "nimmt Stripe meinen Schlüssel
+   * an, und darf dieses Konto kassieren". Der Knopf beantwortet genau das – ohne dass jemand erst
+   * etwas kaufen muss.
+   *
+   * **Der Betriebsmodus steht mit dabei.** Ein Testschlüssel im Echtbetrieb (oder umgekehrt) ist
+   * die häufigste Panne beim Umschalten, und sie sieht von außen aus wie "es geht einfach nicht".
    */
-  function tebexTools(data) {
-    const state_ = data.tebex || {};
+  function stripeTools(data) {
+    const state_ = data.stripe || {};
     return `<div class="note ${state_.ready ? '' : 'warn'}" style="margin:0">
       ${icon(state_.ready ? 'check' : 'info')}
       <div class="small grow">
-        <strong>${escapeHtml(tr('adm.tebexState'))}:</strong>
+        <strong>${escapeHtml(tr('adm.stripeState'))}:</strong>
         ${escapeHtml(
-          state_.ready ? tr('adm.tebexReady') : state_.enabled ? tr('adm.tebexKeys') : tr('adm.tebexOff')
+          state_.ready ? tr('adm.stripeReady') : state_.enabled ? tr('adm.stripeKeys') : tr('adm.stripeOff')
         )}
-        · ${escapeHtml(tr('adm.tebexHook'))}:
-        ${escapeHtml(state_.webhook_ready ? tr('adm.tebexSet') : tr('adm.tebexMissing'))}
-        <div id="tebex-result" class="small muted" style="margin-top:.35rem"></div>
+        ${
+          state_.ready
+            ? ` · <span class="pill ${state_.live ? '' : 'missing'}">${escapeHtml(
+                state_.live ? tr('adm.stripeLive') : tr('adm.stripeTestMode')
+              )}</span>`
+            : ''
+        }
+        · ${escapeHtml(tr('adm.stripeHook'))}:
+        ${escapeHtml(state_.webhook_ready ? tr('adm.stripeSet') : tr('adm.stripeMissing'))}
+        <div class="small muted mono" style="margin-top:.35rem">${escapeHtml(state_.webhook_url || '')}</div>
+        <div id="stripe-result" class="small muted" style="margin-top:.35rem"></div>
       </div>
-      <button type="button" class="btn btn-sm" id="tebex-test">${escapeHtml(tr('adm.tebexTest'))}</button>
+      <button type="button" class="btn btn-sm" id="stripe-test">${escapeHtml(tr('adm.stripeTest'))}</button>
     </div>`;
   }
 
@@ -2934,7 +2969,6 @@ async function settings(root) {
           <span>${escapeHtml(tr('adm.packCent'))}</span>
           <span>${escapeHtml(tr('common.credits'))}</span>
           <span>${escapeHtml(tr('adm.packLabel'))}</span>
-          <span>${escapeHtml(tr('adm.packTebex'))}</span>
           <span></span>
         </div>
         ${packages
@@ -2946,9 +2980,6 @@ async function settings(root) {
                 value="${Number(pack.credits) || 0}" aria-label="${escapeHtml(tr('common.credits'))}">
               <input type="text" data-pack="${index}" data-key="label"
                 value="${escapeHtml(pack.label || '')}" aria-label="${escapeHtml(tr('adm.packLabel'))}">
-              <input type="text" data-pack="${index}" data-key="tebex" inputmode="numeric"
-                value="${escapeHtml(pack.tebex || '')}" placeholder="–"
-                aria-label="${escapeHtml(tr('adm.packTebex'))}">
               <button type="button" class="btn btn-ghost btn-sm btn-danger"
                 data-pack-del="${index}" title="${escapeHtml(tr('common.delete'))}">${icon('x')}</button>
             </div>`
@@ -2960,7 +2991,7 @@ async function settings(root) {
       input.addEventListener('input', () => {
         const index = Number(input.dataset.pack);
         const key = input.dataset.key;
-        packages[index][key] = key === 'label' || key === 'tebex' ? input.value : Number(input.value);
+        packages[index][key] = key === 'label' ? input.value : Number(input.value);
       })
     );
     $$('[data-pack-del]', box).forEach((button) =>
@@ -2972,7 +3003,7 @@ async function settings(root) {
   };
   paintPackages();
   $('#add-package')?.addEventListener('click', () => {
-    packages.push({ cent: 500, credits: 500, label: '5 €', tebex: '' });
+    packages.push({ cent: 500, credits: 500, label: '5 €' });
     paintPackages();
   });
 
@@ -3061,17 +3092,19 @@ async function settings(root) {
     });
   }
 
-  $('#tebex-test')?.addEventListener('click', async (event) => {
+  $('#stripe-test')?.addEventListener('click', async (event) => {
     const button = event.currentTarget;
-    const box = $('#tebex-result');
+    const box = $('#stripe-result');
     button.disabled = true;
     box.textContent = `${tr('common.loading')} …`;
     try {
-      const result = await api('/admin/tebex/test', { method: 'POST' });
+      const result = await api('/admin/stripe/test', { method: 'POST' });
       box.innerHTML = `${escapeHtml(result.message)}${
+        result.account ? ` <span class="muted">(${escapeHtml(result.account)})</span>` : ''
+      }${
         result.checkout_url
           ? ` <a href="${escapeHtml(safeLink(result.checkout_url))}" target="_blank" rel="noopener">${escapeHtml(
-              tr('adm.tebexOpen')
+              tr('adm.stripeOpen')
             )}</a>`
           : ''
       }`;
@@ -3124,6 +3157,64 @@ async function client(root) {
       )
     )}
 
+    <!-- Die Minecraft-Ressourcen. Sie kommen nicht aus dem Release des Clients und dürfen es auch
+         nicht: Es sind die Originaldateien des Spiels. Ohne sie läuft alles wie bisher, nur bleibt
+         die Live-Ansicht die farbige Voxelansicht – und genau das steht hier auch, damit niemand
+         den Fehler bei einem Kunden sucht, der für die Ansicht bezahlt hat. -->
+    <section class="panel" style="margin-bottom:1.5rem">
+      <header>
+        <h3>${escapeHtml(tr('adm.mc.title'))}</h3>
+        <span class="small muted mono">${escapeHtml(data.resources_dir || '')}</span>
+      </header>
+      <div class="body stack">
+        <p class="small muted" style="margin:0">${escapeHtml(tr('adm.mc.lead'))}</p>
+        <div class="table-wrap"><table class="table">
+          <thead><tr>
+            <th>${escapeHtml(tr('srv.version'))}</th>
+            <th>${escapeHtml(tr('common.status'))}</th>
+            <th>Byte</th><th>SHA-256</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${
+              (data.resources || []).length
+                ? ''
+                : `<tr><td colspan="5" class="muted small">${escapeHtml(tr('adm.mc.noVersions'))}</td></tr>`
+            }
+            ${(data.resources || [])
+              .map(
+                (entry) => `<tr>
+                  <td class="mono">${escapeHtml(entry.version)}</td>
+                  <td><span class="pill ${entry.present ? 'primary' : 'missing'}">${
+                    entry.present ? escapeHtml(tr('adm.mc.there')) : escapeHtml(tr('adm.mc.missing'))
+                  }</span></td>
+                  <td class="mono small muted">${entry.present ? bytes(entry.size) : '–'}</td>
+                  <td class="mono small muted truncate" style="max-width:12rem">${escapeHtml(
+                    (entry.sha256 || '–').slice(0, 16)
+                  )}</td>
+                  <td class="row" style="gap:.35rem;justify-content:flex-end">
+                    <button class="btn btn-sm" data-mc-upload="${escapeHtml(entry.version)}">${icon(
+                      'paperclip'
+                    )} ${escapeHtml(tr('adm.mc.upload'))}</button>
+                    <button class="btn btn-sm" data-mc-fetch="${escapeHtml(entry.version)}">${icon(
+                      'download'
+                    )} ${escapeHtml(tr('adm.mc.fetch'))}</button>
+                    ${
+                      entry.present
+                        ? `<button class="btn btn-ghost btn-sm btn-danger" data-mc-drop="${escapeHtml(
+                            entry.version
+                          )}" title="${escapeHtml(tr('common.delete'))}">${icon('trash')}</button>`
+                        : ''
+                    }
+                  </td>
+                </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table></div>
+        <p class="small muted" style="margin:0">${escapeHtml(tr('adm.mc.where'))}</p>
+      </div>
+    </section>
+
     ${panel(
       'data/bin',
       table(
@@ -3136,7 +3227,9 @@ async function client(root) {
           </tr>`
         )
       )
-    )}`;
+    )}
+
+    <input type="file" id="mc-file" accept=".jar,application/java-archive" hidden>`;
 
   const sync = async (force) => {
     try {
@@ -3149,6 +3242,73 @@ async function client(root) {
   };
   $('#sync').addEventListener('click', () => sync(false));
   $('#force').addEventListener('click', () => sync(true));
+
+  // ---- Minecraft-Ressourcen -------------------------------------------------------------------
+  //
+  // Der Rumpf **ist** die Datei, wie beim Ticket-Anhang. Ein Formular mit mehreren Teilen wäre für
+  // eine einzelne Datei von vierzig Megabyte nur ein zweiter Parser.
+  const picker = $('#mc-file');
+  let pending = null;
+
+  for (const button of $$('[data-mc-upload]')) {
+    button.addEventListener('click', () => {
+      pending = button.dataset.mcUpload;
+      picker.value = '';
+      picker.click();
+    });
+  }
+
+  picker.addEventListener('change', async () => {
+    const file = picker.files?.[0];
+    if (!file || !pending) return;
+    const version = pending;
+    pending = null;
+    toast(tr('adm.mc.uploading', { version }));
+    try {
+      const response = await fetch(`/api/admin/resources/${encodeURIComponent(version)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/java-archive' },
+        credentials: 'same-origin',
+        body: file,
+      });
+      const answer = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(answer.error || `${response.status}`);
+      ok(tr('adm.saved'));
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  for (const button of $$('[data-mc-fetch]')) {
+    button.addEventListener('click', async () => {
+      const version = button.dataset.mcFetch;
+      button.disabled = true;
+      toast(tr('adm.mc.fetching', { version }));
+      try {
+        await api(`/admin/resources/${encodeURIComponent(version)}/fetch`, { method: 'POST' });
+        ok(tr('adm.saved'));
+        draw();
+      } catch (error) {
+        fail(error);
+        button.disabled = false;
+      }
+    });
+  }
+
+  for (const button of $$('[data-mc-drop]')) {
+    button.addEventListener('click', async () => {
+      const version = button.dataset.mcDrop;
+      if (!(await confirmDialog(tr('adm.mc.dropAsk', { version }), { confirm: tr('common.delete') }))) return;
+      try {
+        await api(`/admin/resources/${encodeURIComponent(version)}`, { method: 'DELETE' });
+        ok(tr('adm.saved'));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
 }
 
 async function mails(root) {

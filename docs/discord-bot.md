@@ -139,7 +139,17 @@ samt Zeitpunkt des letzten Lebenszeichens.
   Anhang-Adressen laufen ab, ein Ticket soll seinen Screenshot aber behalten. Nimmt Discord eine
   Datei nicht an (ohne Boosts sind dort 10 MB Schluss), steht im Kanal ein Link ins Panel statt
   der Datei.
-* Wer im Panel ein Ticket aufmacht, bekommt trotzdem einen Kanal in Discord.
+* Wer im Panel ein Ticket aufmacht, bekommt **immer** einen Kanal in Discord. Der schnelle Weg
+  dahin ist die offene Leitung zum Panel; sie erreicht aber nur einen Bot, der gerade läuft. Beim
+  Start und danach **stündlich** geht der Bot deshalb alle laufenden Tickets durch und legt jeden
+  fehlenden Kanal nach – auch für Tickets, die entstanden sind, während er neu startete oder
+  umzog. Steht im Panel ein Kanal, den es in Discord nicht mehr gibt (jemand hat ihn von Hand
+  gelöscht), wird die Zuordnung gelöst und ein neuer angelegt, samt bisherigem Verlauf.
+* Passt der Kanal nicht in die eingestellte Kategorie – sie fasst fünfzig, oder die ID ist
+  veraltet –, entsteht er **ohne** Kategorie statt gar nicht. Wohin er gehört, rückt der nächste
+  Abgleich zurecht. Ein Ticket ohne Kanal ist schlimmer als ein Kanal an der falschen Stelle.
+* Wer im Panel zu einem Ticket **dazugeholt** wird, bekommt Zugang zum Kanal; wer herausgenommen
+  wird, verliert ihn wieder.
 * Der Bot setzt **keine Reaktionen**. Dass eine Nachricht im Panel angekommen ist, ist der
   Normalfall und braucht keine Bestätigung – ein grüner Haken unter jeder einzelnen Zeile machte
   aus einem Gespräch eine Häkchenliste. Gemeldet wird nur, was **nicht** geklappt hat, und das als
@@ -263,7 +273,8 @@ der den Befehl annehmen könnte.
 | `No bot token` | Token weder im Panel noch in der `.env` | im Panel eintragen |
 | `Unexpected server response: 404` | Reverse Proxy reicht `/api/bot/stream` als normales GET durch | mitgelieferte nginx-Konfiguration installieren; Upgrade- und Authorization-Header müssen durchgereicht werden |
 | `Missing Permissions` beim Rollenvergeben | Bot-Rolle steht zu weit unten | in Discord nach oben ziehen |
-| Ticket-Kanäle entstehen nicht | Kategorie-ID falsch oder Rechte fehlen | ID prüfen, „Kanäle verwalten“ prüfen |
+| Ticket-Kanäle entstehen nicht | Rechte fehlen (bei falscher Kategorie-ID entsteht der Kanal ohne Kategorie, siehe Protokoll) | „Kanäle verwalten“ prüfen, ID prüfen |
+| Ein Kanal entsteht erst später | der Bot lief beim Anlegen nicht – der stündliche Abgleich holt es nach | abwarten oder den Bot neu starten |
 | Nachrichten kommen leer an | Message Content Intent aus | im Developer Portal einschalten |
 | Anhänge kommen nicht in Discord an | Datei größer als Discords Grenze (ohne Boosts 10 MB) | im Kanal steht dann ein Link ins Panel – das ist so gewollt |
 | Anhänge kommen nicht im Panel an | Datei größer als 20 MB oder Adresse abgelaufen | der Bot antwortet im Kanal, welche Datei es war |

@@ -63,8 +63,8 @@ export const config = {
 
   registrationOpen: bool('REGISTRATION_OPEN', true),
 
-  // Zahlungen laufen über Tebex. Alles dafür steht in den Einstellungen im Panel (siehe
-  // settings-schema.js) und nicht hier: der Betreiber soll seinen Shop einrichten können, ohne
+  // Zahlungen laufen über Stripe. Alles dafür steht in den Einstellungen im Panel (siehe
+  // settings-schema.js) und nicht hier: der Betreiber soll seine Kasse einrichten können, ohne
   // eine Datei auf dem Server anzufassen und den Dienst neu zu starten.
   bankTransfer: {
     holder: process.env.BANK_HOLDER || '',
@@ -84,10 +84,13 @@ export const paths = {
   bin: path.join(config.dataDir, 'bin'),
   users: path.join(config.dataDir, 'users'),
   logs: path.join(config.dataDir, 'logs'),
+  // Die Original-Client-JARs von Minecraft, eine je Protokollversion. Sie kommen nicht aus dem
+  // Release des Clients und liegen deshalb nicht bei den Bauformen (siehe server/resources.js).
+  resources: path.join(config.dataDir, 'mc'),
   public: path.join(ROOT, 'public'),
 };
 
-for (const dir of [config.dataDir, paths.bin, paths.users, paths.logs]) {
+for (const dir of [config.dataDir, paths.bin, paths.users, paths.logs, paths.resources]) {
   fs.mkdirSync(dir, { recursive: true });
 }
 

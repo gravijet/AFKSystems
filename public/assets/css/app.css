@@ -2910,6 +2910,35 @@ hr.rule {
   padding: 0.6rem 1.1rem;
   box-shadow: inset 0 -1px 0 var(--line-soft);
 }
+
+/* Suchen und Filtern über dem Verlauf. Sie stehen dort, wo man sie braucht – ein Chatfenster,
+   in dem man nichts wiederfindet, ist ein Protokoll, das man einmal liest. */
+.chat-tools {
+  gap: 0.6rem;
+  padding: 0.55rem 1.1rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+}
+.chat-find {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 9rem;
+  max-width: 20rem;
+}
+.chat-find .icon {
+  position: absolute;
+  left: 0.6rem;
+  width: 0.9rem;
+  height: 0.9rem;
+  color: var(--text-2);
+  pointer-events: none;
+}
+.chat-find input {
+  height: 2rem;
+  padding: 0 0.6rem 0 1.9rem;
+  font-size: 0.8125rem;
+}
 .send-row {
   gap: 0.5rem;
   padding: 0.7rem 1.1rem;
@@ -2954,17 +2983,56 @@ hr.rule {
 
 /* ---------------------------------------------------------------- Live-Ansicht (POV)
  *
- * Das Bild kommt in seiner echten Auflösung (etwa 80x40) und wird ohne Glättung hochskaliert –
- * ein weichgezeichnetes Voxelbild sähe aus wie ein Fehler. Der Rahmen ist bewusst dunkel: was
- * darin steht, ist ein Blick in die Spielwelt und kein Bestandteil der Oberfläche. */
+ * Zwei Bilder, ein Rahmen. Der texturierte Weg liefert ein fertiges PNG aus den echten Texturen
+ * des Spiels, der Voxelweg ein Raster gefärbter Halbblöcke auf einem Canvas. Beide werden ohne
+ * Glättung hochskaliert – weichgezeichnet sähe Minecraft aus wie ein Fehler.
+ *
+ * Der Rahmen ist bewusst dunkel und trägt keine Panelfarben: Was darin steht, ist ein Blick in
+ * die Spielwelt und kein Bestandteil der Oberfläche. Alles, was **um** das Bild herum liegt –
+ * Leiste, Felder, Aufklapper –, gehört dagegen zum Panel und sieht auch so aus. */
 
-/* Die Karten wachsen nicht ins Unendliche: ein einzelner Bot auf einem breiten Bildschirm hatte
-   sonst ein Bild über die volle Panelbreite – ein hochskaliertes 80×40-Raster, das damit vor
-   allem groß war und nicht gut. Mehr als 30 rem bringt kein Detail mehr, weil keins mehr da ist. */
+/* Die Leiste über den Bildern. Sie steht nicht in einem Panel-Kasten: Sie gehört zu den Bildern
+   darunter, nicht zu einem eigenen Abschnitt. */
+.pov-bar {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.pov-bar .field {
+  gap: 0.2rem;
+  min-width: 8rem;
+}
+.pov-bar .field > span {
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.pov-bar .field select,
+.pov-bar .field input {
+  height: 2rem;
+  padding: 0 0.55rem;
+  font-size: 0.8125rem;
+}
+.pov-bar .field select {
+  padding-right: 2rem;
+}
+.pov-bar .check {
+  align-self: center;
+}
+
+/* Die Karten wachsen nicht ins Unendliche: ein einzelner Bot auf einem breiten Bildschirm hätte
+   sonst ein Bild über die volle Panelbreite. 42 rem sind die große Bildgröße (640 Punkte) mit
+   Rand – darüber wird nichts mehr schärfer, weil nichts mehr da ist. */
 .pov-grid {
   display: grid;
   gap: 1rem;
-  grid-template-columns: repeat(auto-fill, minmax(19rem, 30rem));
+  grid-template-columns: repeat(auto-fill, minmax(19rem, 42rem));
   justify-content: start;
 }
 .pov {
@@ -2975,6 +3043,19 @@ hr.rule {
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
   color: #e8ecf3;
   overflow: hidden;
+}
+/* Gesteuert wird die Ansicht, die den Fokus hat. Ohne sichtbaren Rand wäre bei zwei Bots nicht
+   zu erkennen, welcher gerade auf die Tastatur hört – und man liefe mit dem falschen los. */
+.pov:focus {
+  outline: none;
+}
+.pov:focus-visible,
+.pov:focus-within {
+  box-shadow: inset 0 0 0 2px var(--primary), 0 0 0 3px color-mix(in oklab, var(--primary) 25%, transparent);
+}
+.pov.no-control:focus-visible,
+.pov.no-control:focus-within {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.09);
 }
 .pov > header {
   display: flex;
@@ -3000,11 +3081,19 @@ hr.rule {
   place-items: center;
   min-height: 9rem;
   padding: 0.5rem;
+  cursor: crosshair;
+  /* Beim Ziehen wird der Blick gedreht und nichts markiert – sonst hätte man nach der ersten
+     Drehung den halben Kopf der Karte blau hinterlegt. */
+  user-select: none;
 }
-.pov-canvas {
+.pov.no-control .pov-stage {
+  cursor: default;
+}
+.pov-canvas,
+.pov-frame {
   display: block;
   width: 100%;
-  max-height: 17rem;
+  max-height: 22rem;
   height: auto;
   /* Das Seitenverhältnis kommt aus dem Bild selbst; `contain` hält es, auch wenn die Höhe
      begrenzt ist – gestreckt sähe die Welt schief aus. */
@@ -3015,18 +3104,251 @@ hr.rule {
   opacity: 0;
   transition: opacity 0.2s ease;
 }
-.pov.has-frame .pov-canvas {
+/* Nur eines von beiden liegt im Raster: Welcher Weg gilt, entscheidet sich am laufenden Bot,
+   und der andere soll dabei keinen Platz belegen. */
+.pov-frame {
+  grid-area: 1 / 1;
+}
+.pov-canvas {
+  grid-area: 1 / 1;
+}
+.pov.is-textured .pov-canvas,
+.pov:not(.is-textured) .pov-frame {
+  display: none;
+}
+.pov.has-frame .pov-canvas,
+.pov.has-frame .pov-frame {
   opacity: 1;
 }
+
+/* Das Fadenkreuz. Zwei Striche, keine Textur: Es sitzt genau in der Mitte des Bildes und sagt,
+   wohin `:use` und `:swing` zeigen. `mix-blend-mode` hält es auf hellem wie dunklem Grund
+   sichtbar, ohne einen Kasten darum zu brauchen. */
+.pov-cross {
+  position: absolute;
+  width: 1.1rem;
+  height: 1.1rem;
+  pointer-events: none;
+  opacity: 0;
+  mix-blend-mode: difference;
+  background:
+    linear-gradient(#fff, #fff) center / 100% 2px no-repeat,
+    linear-gradient(#fff, #fff) center / 2px 100% no-repeat;
+}
+.pov.has-frame:not(.has-menu) .pov-cross {
+  opacity: 0.9;
+}
+.pov.no-control .pov-cross {
+  opacity: 0;
+}
+
+/* Schleichen und Sprinten stehen als kleine Marke im Bild, solange sie an sind – im Spiel sieht
+   man es an der Haltung, hier gäbe es sonst keinen Hinweis darauf, was gerade gilt. */
+.pov-badges {
+  position: absolute;
+  left: 0.9rem;
+  top: 0.9rem;
+  display: flex;
+  gap: 0.35rem;
+  pointer-events: none;
+}
+.pov-badge {
+  display: none;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  color: #fff;
+  font-size: 0.6875rem;
+  font-weight: 600;
+}
+.pov-badge[data-on] {
+  display: block;
+}
+
+/* Foto und Vollbild. Sie liegen im Bild, weil sie zum Bild gehören – und blenden sich weg,
+   solange niemand mit der Maus in der Nähe ist. */
+.pov-tools {
+  position: absolute;
+  right: 0.9rem;
+  top: 0.9rem;
+  display: flex;
+  gap: 0.35rem;
+  /* Über dem Menü-Overlay: Vollbild und Bildschirmfoto sollen auch dann noch gehen, wenn der
+     Server gerade ein Fenster offen hat – ein Bildschirmfoto davon ist oft genau das, was jemand
+     an ein Ticket hängen will. */
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.pov:hover .pov-tools,
+.pov:focus-within .pov-tools {
+  opacity: 1;
+}
+.pov-tool {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, 0.55);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  color: #fff;
+  cursor: pointer;
+}
+.pov-tool:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+/* Der Satz, solange kein Bild da ist – und der Satz des Clients, wenn eines da ist und trotzdem
+   etwas nicht stimmt ("Position noch unbekannt"). Deshalb `:empty` als Bedingung und nicht
+   "ein Bild ist da": Ein Bild von vorhin mit einer Erklärung darüber ist mehr wert als beides
+   einzeln. */
 .pov-hint {
   position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
   margin: 0;
-  color: rgba(232, 236, 243, 0.55);
+  max-width: min(24rem, calc(100% - 2rem));
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--r-md);
+  color: rgba(232, 236, 243, 0.72);
   font-size: 0.8125rem;
   text-align: center;
 }
+/* Steht schon ein Bild da, gehört der Satz an den Rand und nicht mitten hinein – er erklärt dann
+   etwas zum Bild und verdeckt es nicht. */
 .pov.has-frame .pov-hint {
+  top: auto;
+  bottom: 1rem;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+}
+.pov-hint:empty {
   display: none;
+}
+
+/* Die Schnellleiste unter dem Bild. Neun Felder derselben Bauart wie im Menü – das ausgewählte
+   trägt den Rahmen, den es im Spiel auch trägt. */
+.pov-hotbar {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 2px;
+  padding: 0.4rem;
+  max-width: 24rem;
+  margin: 0 auto 0.35rem;
+}
+.slot[data-active] {
+  box-shadow: inset 0 0 0 2px #fff, inset 1px 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* Das offene Menü liegt über dem Bild, so wie im Spiel: Die Welt bleibt sichtbar, wird aber
+   abgedunkelt. Ein Klick daneben schließt es. */
+.pov-menu {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.62);
+  overflow: auto;
+}
+.pov-menu-card {
+  width: min(24rem, 100%);
+  border-radius: var(--r-lg);
+  background: rgba(16, 16, 20, 0.97);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1), 0 12px 32px rgba(0, 0, 0, 0.5);
+  font-family: var(--mono);
+}
+.pov-menu-card > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.4rem 0.5rem 0.4rem 0.75rem;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.08);
+  font-size: 0.8125rem;
+  font-weight: 700;
+}
+.pov-menu-card > header .btn {
+  color: #cfd3dc;
+}
+.pov-menu-card .menu-grid {
+  margin: 0 auto;
+}
+/* Die Trennung zwischen dem Fenster des Servers und dem eigenen Inventar. Im Spiel ist es eine
+   Lücke im Holz; hier eine Zeile, die sagt, was darunter kommt. */
+.menu-split {
+  padding: 0.35rem 0.75rem 0;
+  color: #8b8fa3;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+/* Die Schnellleiste sitzt im Spiel etwas abgesetzt unter der Tasche. */
+.menu-grid.hotline {
+  padding-top: 0.25rem;
+}
+.menu-grid.craft {
+  grid-template-columns: repeat(2, 1fr);
+  max-width: 5.5rem;
+  padding: 0;
+}
+.menu-grid.tall {
+  grid-template-columns: 1fr;
+  max-width: 2.75rem;
+  padding: 0;
+}
+
+/* Vollbild: Das Bild bekommt den ganzen Schirm, alles andere ordnet sich unter. */
+.pov:fullscreen {
+  border-radius: 0;
+  justify-content: center;
+  background: #000;
+}
+.pov:fullscreen .pov-canvas,
+.pov:fullscreen .pov-frame {
+  max-height: calc(100vh - 8rem);
+}
+.pov:fullscreen .pov-stage {
+  padding: 1.5rem;
+}
+
+/* Die Tastenbelegung. Zwei Spalten, Taste links, was sie tut rechts – wie eine Legende und nicht
+   wie ein Fließtext, in dem man die Taste erst suchen muss. */
+.pov-keys {
+  margin-top: 1.25rem;
+}
+.keymap {
+  display: grid;
+  gap: 0.35rem 1.5rem;
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+  margin-top: 0.6rem;
+}
+.keyrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  font-size: 0.8125rem;
+}
+.keyrow kbd {
+  flex: none;
+  min-width: 5.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  text-align: center;
+}
+.keyrow span {
+  color: var(--text-2);
 }
 
 /* ---------------------------------------------------------------- Anzeigetafel, Liste, Menü */
@@ -3147,6 +3469,12 @@ hr.rule {
   background: rgba(255, 255, 255, 0.22);
   z-index: 3;
 }
+/* Nicht jedes Feld lässt sich anklicken: Im Inventar sind Rüstung, Werkbank und Tasche nur zu
+   sehen. Sie behalten den Aufklapper und die helle Fläche beim Überfahren – aber keinen Zeiger,
+   der etwas verspricht, das nicht passiert. */
+.slot:not(button) {
+  cursor: default;
+}
 .slot.has-item {
   background: rgba(255, 255, 255, 0.11);
   color: #e6e6ea;
@@ -3154,6 +3482,14 @@ hr.rule {
 .slot-item {
   font-size: 0.95rem;
   line-height: 1;
+}
+/* Das echte Bild eines Gegenstands, aus der Original-JAR. Es ist 16 × 16 Punkte groß und wird
+   ohne Glättung vergrößert – genau wie im Spiel, wo dieselbe Datei genauso hochskaliert wird. */
+.slot-art {
+  width: 78%;
+  height: 78%;
+  object-fit: contain;
+  image-rendering: pixelated;
 }
 .slot-count {
   position: absolute;
@@ -3213,6 +3549,41 @@ hr.rule {
 /* Eine Menütafel ist schmaler als eine Anzeigetafel – neun Felder brauchen keine 17 rem. */
 .menu-card {
   align-self: start;
+}
+
+/* ---------------------------------------------------------------- Inventar
+ *
+ * Dieselben Felder wie im Menü, nur in der Anordnung des Spiels: Rüstung und Werkbank oben,
+ * darunter die Tasche, ganz unten die Schnellleiste. Die Feldnummern stehen in den leeren
+ * Feldern – wer ein Macro mit `:click` schreibt, braucht genau sie. */
+.inv-card {
+  align-self: start;
+  padding-bottom: 0.35rem;
+}
+.inv-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 0.75rem 0.75rem 0;
+}
+.inv-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+.inv-label {
+  display: block;
+  padding: 0.5rem 0.75rem 0;
+  color: #8b8fa3;
+  font-size: 0.6875rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  text-shadow: none;
+}
+.inv-top .inv-label {
+  padding: 0;
 }
 
 /* ---------------------------------------------------------------- Zusätze */
@@ -3405,10 +3776,10 @@ hr.rule {
 }
 .pack-row {
   display: grid;
-  grid-template-columns: 1fr 1fr 1.2fr 0.9fr auto;
+  grid-template-columns: 1fr 1fr 1.4fr auto;
   gap: 0.5rem;
   align-items: center;
-  min-width: 32rem;
+  min-width: 26rem;
 }
 .pack-row.pack-head {
   color: var(--text-2);
@@ -3673,9 +4044,6 @@ hr.rule {
 }
 .ticket-dot.answered {
   background: var(--ok);
-}
-.ticket-dot.waiting {
-  background: var(--warn);
 }
 .ticket-dot.closed {
   background: var(--line);

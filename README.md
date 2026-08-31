@@ -98,10 +98,14 @@ journalctl -u afksystems -f
 * Reicht es nicht, wird der Platz **stillgelegt**: Bots gehen aus, gelöscht wird nichts, ins Minus
   geht es nie. Nach dem Aufladen genügt „Fortsetzen“.
 * Tarifwechsel und Löschen schreiben den ungenutzten Rest des Monats anteilig gut.
-* Aufladen: **Tebex** (Karte, PayPal und alles Weitere, samt Umsatzsteuer), Gutschein,
+* Aufladen: **Stripe** (Karte, PayPal, Apple/Google Pay und alles Weitere), Gutschein,
   Überweisung/PayPal von Hand (Admin bestätigt), oder der Admin bucht direkt auf. Guthaben
   entsteht an genau einer Stelle im Code – dem geprüften Webhook. Einrichtung:
-  **[docs/tebex.md](docs/tebex.md)**.
+  **[docs/stripe.md](docs/stripe.md)**.
+* Stripe ist **kein Verkäufer im eigenen Namen**: Verkäufer bleibt der Betreiber. Preis, Beleg und
+  Umsatzsteuer kommen deshalb aus dem Panel. Vorgabe ist die **Kleinunternehmerregelung** – keine
+  Umsatzsteuer aufgeschlagen, keine ausgewiesen, dafür der Grund als Satz unter jedem Preis, an der
+  Kasse und auf dem Beleg. Umstellbar unter Administration → Einstellungen → Umsatzsteuer.
 
 Die Tarife stehen in der Tabelle `plans` und sind im Admin-Bereich vollständig änderbar – Name,
 Beschreibungstext, Preis, Anzahl Bots, Chatverlauf, Macros, Premium-Client, Proxys,
@@ -234,20 +238,35 @@ einer Woche nicht mehr gelesen.
 ## Live-Ansicht
 
 Sehen, was der Bot sieht. Minecraft überträgt keine fertigen Bilder – der Client rechnet sie aus
-den geladenen Chunk-Paletten, Blockänderungen und Entities selbst aus und schreibt sie als Raster
-aus Halbblöcken (`▀`) mit je einer Vorder- und einer Hintergrundfarbe: **ein Zeichen sind zwei
-Bildpunkte**. Das Panel zerlegt jede Zeichenzeile in ihre zwei Bildzeilen aus Farbläufen und
-zeichnet sie im Browser auf ein Canvas, ohne Glättung hochskaliert.
+den geladenen Chunk-Paletten, Blockänderungen und Entities selbst aus. Seit Client 2.5.0 auf zwei
+Wegen, und beide stehen nebeneinander:
+
+* **Texturiert.** Der Client führt je Bot einen kleinen HTTP-Viewer auf seinem Localhost
+  (`--pov-web`) und zeichnet daraus fertige PNG-Bilder mit den **echten Blockmodellen und Texturen
+  des Spiels**, dazu Hotbar, Inventar und das offene Menü als Daten. Das Panel reicht die Anfragen
+  seiner Kunden durch – der Viewer ist aus dem Netz nicht erreichbar, und sein Zugriffstoken
+  verlässt das Panel nie.
+* **Voxel.** Dasselbe Bild als Raster aus Halbblöcken (`▀`) mit je einer Vorder- und einer
+  Hintergrundfarbe: **ein Zeichen sind zwei Bildpunkte**. Das Panel zerlegt jede Zeichenzeile in
+  ihre zwei Bildzeilen aus Farbläufen und zeichnet sie auf ein Canvas. Fest 160 × 80, höchstens
+  fünf Bilder je Sekunde.
+
+Der texturierte Weg braucht die **Original-Client-JAR von Minecraft** je Protokollversion. Die
+liefern wir nicht mit und dürfen es nicht; sie liegt unter `data/mc/<version>.jar` und wird im
+Panel eingerichtet (**Administration → Client → Minecraft-Ressourcen**, hochladen oder von Mojang
+holen). Fehlt sie, bleibt es bei der Voxelansicht – kaputt ist dabei nichts.
+
+Gesteuert wird in beiden Fällen **im Bild**: WASD zum Laufen, Maus zum Drehen, `1`–`9` für die
+Schnellleiste, Klick auf ein Menüfeld. Dahinter stecken dieselben örtlichen Befehle wie im Reiter
+„Bewegung“.
 
 Gebucht wird sie als Zusatz je Serverplatz (`pov`), in keinem Tarif enthalten – auch nicht in
-Ultra. Die Auflösung ist fest die größte, die der Client kann (160 × 80), und lässt sich nicht
-einstellen. Höchstens fünf Bilder je Sekunde gehen an den Browser; beim Verlassen des Reiters und
-spätestens zwanzig Sekunden nach der letzten geschlossenen Verbindung hört sie von selbst auf –
-eine laufende Ansicht kostet deutlich mehr als ein stiller Bot.
+Ultra. Im Voxelbetrieb hört sie beim Verlassen des Reiters und spätestens zwanzig Sekunden nach der
+letzten geschlossenen Verbindung von selbst auf; texturiert erledigt sich das von selbst, weil dort
+nur gerechnet wird, was ein Browser auch abholt.
 
-**Ein Hinweis zum Client:** Auf normal erzeugten Welten brechen `pov-afk-linux` und
-`ultra-afk-linux` derzeit kurz nach dem Beitritt mit einem Fehler in `src/pov.rs` ab. Das steckt
-im Client und nicht hier; Einzelheiten in [docs/live-ansicht.md](docs/live-ansicht.md).
+Wie weit die Welt reicht, entscheidet die **Sichtweite** (`--view-distance`, je Serverplatz
+einstellbar): Was der Server nie geschickt hat, kann der Client nicht zeichnen.
 
 Einzelheiten: **[docs/live-ansicht.md](docs/live-ansicht.md)**.
 
@@ -267,7 +286,22 @@ Text**, sonst nichts – die Kategorie davor („Allgemeine Frage“, „Missbra
 Pflichtfeld, das nichts entschieden hat. **Screenshots und Dateien bis 20 MB** hängen an der
 Nachricht, im Panel wie im Discord-Kanal und in beide Richtungen abgeglichen. Mehrere Kunden dürfen
 an einem Ticket hängen; das Team kann jemanden dazuholen. Läuft der Bot, gibt es dasselbe Ticket in
-Discord.
+Discord – und zwar immer: Was die Meldung an den Bot verpasst, legt sein stündlicher Abgleich nach.
+
+Ein Ticket hat **drei Zustände, und jeder sagt, wer am Zug ist**: *offen* liegt bei uns,
+*beantwortet* beim Kunden, *geschlossen* bei niemandem. Die Warteschlange des Teams sind genau die
+offenen – nicht die ungelesenen: Ein Ticket ist nicht erledigt, weil es jemand aufgemacht hat.
+Davon getrennt steht der Punkt „Neu“ an der Zeile; er sagt, dass etwas Ungelesenes dasteht, und
+verschwindet beim Lesen. (Einen vierten Zustand *wartet* gab es einmal. Er hieß im Panel „Wartet
+auf dich“ und war damit *beantwortet* unter anderem Namen – zwei Wörter für eine Sache, von denen
+irgendwann eines falsch dasteht.) Die **Dringlichkeit** setzt allein das Team; was gesetzt wurde,
+steht als Zeile im Verlauf und damit auch im Discord-Kanal.
+
+Neben dem Ticket gibt es eine **Kontakt-Adresse** (Administration → Einstellungen → Betrieb). Sie
+steht im Fuß jeder öffentlichen Seite, über den eigenen Tickets und als Antwortadresse in jeder
+Nachricht, die das Panel verschickt. Ein Ticket bleibt der bessere Weg – es hat einen Verlauf und
+weiß, um welchen Serverplatz es geht –, aber wer kein Konto hat oder nicht mehr hineinkommt, kann
+keines aufmachen.
 
 ## Aufbau
 
@@ -280,7 +314,9 @@ server/
   mslogin.js      Microsoft-Gerätecode        macros.js     Macros, Spam, Anti-AFK
   nodes.js        Standorte                   agents.js     die Leitung zu den Standorten
   metrics.js      CPU, Speicher, Platte aus /proc
-  tebex.js        Bezahlen                    protect.js    Inhaltsschutz auf der Serverseite
+  resources.js    die Original-Client-JARs von Minecraft – Texturen für die Live-Ansicht
+  stripe.js       Bezahlen, Webhook           vat.js        Umsatzsteuer auf Preis und Beleg
+  protect.js      Inhaltsschutz serverseitig  legal.js      Datenschutz, AGB, Steuerhinweis
   features.js     die Funktionsliste der öffentlichen Seiten, gefiltert nach dem echten Client
   settings-schema.js  Beschreibung jeder Einstellung: Gruppe, Beschriftung, Erklärung, Art
   pages.js        Vorlagen                    landing.js    das Bewegliche der öffentlichen Seiten
@@ -301,10 +337,11 @@ public/
   assets/js/chatlog.js  Chatzeilen zusammenlegen, §-Farben zerlegen – ebenfalls von beiden
   assets/js/shield.js   Inhaltsschutz im Browser
   assets/js/views/      Übersicht, Konten, Server, Guthaben, Tickets, Proxys, Admin …
-docs/             Aufbau, Standorte, Tebex, Live-Ansicht, Schutz, Discord-Bot, Google
+docs/             Aufbau, Standorte, Stripe, Live-Ansicht, Schutz, Discord-Bot, Google
 scripts/
   build-movement.sh   baut die Bewegungs-Bauform (liegt nicht im Release)
-data/                 Datenbank, Client-Dateien, Konten je Nutzer, Logs  (nicht im Repo)
+data/                 Datenbank, Client-Dateien, Minecraft-JARs (mc/), Konten je Nutzer, Logs
+                      (nicht im Repo)
 ```
 
 ## Inhaltsschutz
@@ -327,7 +364,7 @@ Was daran wirklich geht und was nicht, steht ehrlich in **[docs/schutz.md](docs/
 ## Dokumentation
 
 Alles Weitere in **[docs/](docs/README.md)**: [wie alles funktioniert](docs/aufbau.md),
-[Standorte](docs/standorte.md), [Tebex](docs/tebex.md), [Live-Ansicht](docs/live-ansicht.md),
+[Standorte](docs/standorte.md), [Stripe](docs/stripe.md), [Live-Ansicht](docs/live-ansicht.md),
 [Inhaltsschutz](docs/schutz.md), [Discord-Bot](docs/discord-bot.md),
 [Google-Anmeldung](docs/google-anmeldung.md), [Umzug auf einen anderen Server](docs/umzug.md).
 
@@ -344,15 +381,16 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | Serverplätze | `GET/POST /profiles`, `GET/PATCH/DELETE /profiles/:id`, `POST /profiles/:id/plan`, `/resume`, `/node` |
 | Zusätze | `GET/POST /profiles/:id/addons`, `DELETE /profiles/:id/addons/:addonId` |
 | Bots | `POST /profiles/:id/start`, `/stop`, `/restart` |
-| Chat | `GET/POST /profiles/:id/chat`, `GET /profiles/:id/views`, `…/spam` |
-| Im Spiel | `POST /profiles/:id/command` (`go`, `look`, `home`, `board`, `menu`, `click`, `sneak`, …) |
+| Chat | `GET/POST /profiles/:id/chat`, `GET /profiles/:id/chat.txt` (Verlauf als Datei), `GET /profiles/:id/views`, `…/spam` |
+| Im Spiel | `POST /profiles/:id/command` (`go`, `look`, `home`, `board`, `menu`, `inv`, `click`, `sneak`, …) |
+| Live-Ansicht | `GET /profiles/:id/pov/:accountId/frame.png`, `/state.json`, `/item.png`, `POST …/click`, `/close`, `/hotbar` – die Brücke zum Viewer des Clients |
 | Automatik | `…/macros` (GET/POST/PATCH/DELETE, dazu `/test`) |
 | Guthaben | `GET /billing`, `POST /billing/voucher`, `POST /billing/topup` |
 | Support | `GET/POST /tickets`, `GET /tickets/:id`, `/messages`, `POST /tickets/:id/reply`, `/status`, `/typing` |
 | Anhänge | `POST /tickets/files` (Rumpf = die Datei), `GET /tickets/files/:id` |
 | Sonstiges | `GET /announcements`, `GET /nodes` |
-| Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/mails`, `/audit`, `/ledger` |
+| Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/resources/:version` (POST = Rumpf ist die JAR, `/fetch`, DELETE), `/mails`, `/audit`, `/ledger` |
 | Bot | `/bot/config`, `/bot/tickets`, `/bot/users/:discordId`, `/bot/roles`, `/bot/events`, `WS /bot/stream` |
-| Standorte | `GET /node/manifest`, `GET /node/binaries/:name`, `WS /node/stream` – alle mit dem Token des Standorts |
-| Tebex | `POST /tebex/webhook` – mit `X-Signature` geprüft, die einzige Stelle, an der Guthaben entsteht |
+| Standorte | `GET /node/manifest`, `GET /node/binaries/:name`, `GET /node/resources/:version`, `WS /node/stream` – alle mit dem Token des Standorts |
+| Stripe | `POST /stripe/webhook` – mit `Stripe-Signature` geprüft, die einzige Stelle, an der Guthaben entsteht |
 | Live | `GET /api/ws` – WebSocket mit Chatzeilen, Zustandswechseln, Ansichten, Tickets, Guthaben |

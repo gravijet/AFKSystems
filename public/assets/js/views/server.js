@@ -10,6 +10,8 @@ import {
 } from '../ui.js';
 import { mergeLines, stripFormatting } from '../chatlog.js';
 import { state, appbar, refresh, draw, profileById, tabsFor, linesOf } from '../app.js';
+import { noAccounts, accountPicker, commandRunner, anyOnline, itemSlot } from './parts.js';
+import { tabPov, tabInventory } from './live.js';
 
 export async function render(root, route) {
   if (route.name === 'servers') return renderList(root);
@@ -250,6 +252,7 @@ async function renderProfile(root, route) {
     movement: tabMovement,
     board: tabBoard,
     menu: tabMenu,
+    inventory: tabInventory,
     pov: tabPov,
     macros: tabMacros,
     proxies: tabProxies,
@@ -301,10 +304,27 @@ async function tabConnect(root, profile) {
           <div class="row">
             <label class="check small" title="${escapeHtml(tr('ch.autoscrollHint'))}">
               <input type="checkbox" id="autoscroll" checked> ${escapeHtml(tr('ch.autoscroll'))}</label>
+            <a class="btn btn-ghost btn-sm" id="export" download
+               href="/api/profiles/${profile.id}/chat.txt"
+               title="${escapeHtml(tr('ch.export'))}"
+               aria-label="${escapeHtml(tr('ch.export'))}">${icon('download')}</a>
             <button class="btn btn-ghost btn-sm" id="clear" title="${escapeHtml(tr('ch.clear'))}">${icon('trash')}</button>
           </div>
         </header>
         <div class="body" style="padding:0;display:flex;flex-direction:column;min-height:0">
+          <!-- Suchen und Filtern gehören über den Verlauf und nicht in ein Menü: Ein Chatfenster,
+               in dem man nichts wiederfindet, ist ein Protokoll, das man einmal liest. -->
+          <div class="row wrap chat-tools">
+            <span class="chat-find">
+              ${icon('search')}
+              <input type="search" id="find" autocomplete="off"
+                placeholder="${escapeHtml(tr('ch.find'))}" aria-label="${escapeHtml(tr('ch.find'))}">
+            </span>
+            <label class="check small" title="${escapeHtml(tr('ch.allHint'))}">
+              <input type="checkbox" id="show-all"> ${escapeHtml(tr('ch.all'))}</label>
+            <span class="grow"></span>
+            <span class="small muted" id="chat-count"></span>
+          </div>
           ${
             members.length > 1
               ? `<div class="row wrap recv-row">
@@ -461,6 +481,9 @@ async function tabConnect(root, profile) {
 
   const nameOf = (id) => members.find((member) => member.account_id === id)?.name || '?';
 
+  /** Der Suchbegriff, kleingeschrieben. Leer heißt: nicht gesucht, alles steht da. */
+  let needle = '';
+
   const paintChat = () => {
     const raw = [];
     for (const member of members) {
@@ -474,14 +497,30 @@ async function tabConnect(root, profile) {
     // Was hier steht, ist der Chat des Servers und was der Bot selbst hineingeschrieben hat –
     // sonst nichts. Zustandsmeldungen des Clients ("Gehe 3.0 Blöcke vorwärts") und örtliche
     // Befehle stehen nicht drin: sie sind kein Chat, und dazwischen war der Chat nicht zu lesen.
-    const lines = mergeLines(raw).filter(
+    //
+    // "Alles zeigen" nimmt sie dazu. Das ist keine zweite Ansicht, sondern die Antwort auf die
+    // eine Frage, für die der Chat allein nicht reicht: warum der Bot plötzlich weg war.
+    const everything = $('#show-all')?.checked;
+    let lines = mergeLines(raw).filter(
       (entry) =>
-        entry.type === 'chat' || (entry.type === 'sent' && !String(entry.text || '').startsWith(':'))
+        entry.type === 'chat' ||
+        (entry.type === 'sent' && !String(entry.text || '').startsWith(':')) ||
+        (everything && entry.type !== 'sent')
     );
+    const total = lines.length;
+    if (needle) {
+      lines = lines.filter((entry) => stripFormatting(entry.text || '').toLowerCase().includes(needle));
+    }
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
 
     box.innerHTML = lines.slice(-500).map(chatLine).join('');
-    if (autoscroll.checked || atBottom) box.scrollTop = box.scrollHeight;
+    const counter = $('#chat-count');
+    if (counter) {
+      counter.textContent = needle ? tr('ch.hits', { n: lines.length, total }) : '';
+    }
+    // Beim Suchen nicht nach unten springen: Wer nach oben gescrollt hat, um einen Treffer zu
+    // lesen, will nicht bei jedem getippten Buchstaben ans Ende geworfen werden.
+    if (!needle && (autoscroll.checked || atBottom)) box.scrollTop = box.scrollHeight;
   };
 
   function chatLine(entry) {
@@ -541,6 +580,18 @@ async function tabConnect(root, profile) {
   );
   $('#clear').addEventListener('click', () => {
     for (const member of members) state.lines.set(`${profile.id}:${member.account_id}`, []);
+    paintChat();
+  });
+  $('#find').addEventListener(
+    'input',
+    debounce((event) => {
+      needle = String(event.target.value || '').trim().toLowerCase();
+      paintChat();
+    }, 150)
+  );
+  $('#show-all').addEventListener('change', () => {
+    // Der Download folgt der Wahl: Wer alles sieht, will auch alles in der Datei.
+    $('#export').href = `/api/profiles/${profile.id}/chat.txt${$('#show-all').checked ? '?all=1' : ''}`;
     paintChat();
   });
 
@@ -1071,11 +1122,6 @@ async function tabBoard(root, profile) {
   };
 }
 
-/** Ist auf diesem Platz gerade wenigstens ein Bot im Spiel? */
-function anyOnline(profile, members) {
-  return members.some((member) => state.bots.get(`${profile.id}:${member.account_id}`)?.online);
-}
-
 /** Eine Anzeigetafel, wie Minecraft sie zeichnet: Titel oben, Zeile links, Punktzahl rechts. */
 function boardCard(member, view) {
   if (view.empty) {
@@ -1102,213 +1148,6 @@ function boardCard(member, view) {
   </article>`;
 }
 
-// ---------------------------------------------------------------- Live-Ansicht (POV)
-//
-// Der Client rechnet aus den geladenen Chunks, Blockänderungen und Entities ein Bild und schickt
-// es als Raster gefärbter Halbblöcke. Minecraft überträgt keine fertigen Bildschirmbilder – was
-// hier steht, ist also wirklich das, was der Bot an seiner Position sieht, und kein Bildabgriff.
-//
-// Das Zerlegen macht der Server (supervisor.js); hier kommen fertige Bildzeilen aus Farbläufen an:
-// [["4182d2", 160], ["3a7ac4", 12], …] – eine je Bildzeile, ein Lauf je Farbe. Gezeichnet wird in
-// der Auflösung des Bildes und dann ohne Glättung hochskaliert. Ein Raster aus zwölftausend
-// <span> je Bild wäre bei fünf Bildern in der Sekunde nichts, was ein Browser gern tut.
-
-async function tabPov(root, profile) {
-  const members = profile.accounts;
-  if (!members.length) return noAccounts(root, profile);
-
-  root.innerHTML = `
-    <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
-      <div style="max-width:44rem;min-width:0">
-        <h2 style="font-size:1.25rem;margin:0 0 .35rem">${escapeHtml(tr('pov.title'))}</h2>
-        <p class="small muted" style="margin:0">${escapeHtml(tr('pov.lead'))}</p>
-      </div>
-    </div>
-    ${accountPicker(members)}
-    <div class="row wrap" style="margin-bottom:1rem">
-      <button class="btn btn-primary btn-sm" id="pov-live">${icon('play')} ${escapeHtml(tr('pov.start'))}</button>
-      <button class="btn btn-sm" id="pov-frame">${icon('eye')} ${escapeHtml(tr('pov.frame'))}</button>
-      <button class="btn btn-sm" id="pov-stop">${icon('stop')} ${escapeHtml(tr('pov.stop'))}</button>
-    </div>
-    <div class="pov-grid" id="pov-views"></div>
-    <p class="small muted" style="margin-top:1rem">${escapeHtml(tr('pov.note'))}</p>`;
-
-  const run = commandRunner(profile);
-  const canvases = new Map();
-
-  $('#pov-live').addEventListener('click', () => start());
-  $('#pov-frame').addEventListener('click', () => run('pov', 'frame'));
-  $('#pov-stop').addEventListener('click', () => {
-    run('pov', 'stop');
-    for (const member of members) {
-      canvases.get(member.account_id)?.classList.remove('has-frame');
-      hint(member.account_id, 'stopped');
-    }
-  });
-
-  // Wer den Reiter verlässt, will nicht, dass der Client weiterrechnet. Ein laufendes Bild kostet
-  // auf der Maschine deutlich mehr als ein stiller Bot. `keepalive` ist der Unterschied zwischen
-  // "beim Reiterwechsel" und "auch beim Schließen des Tabs": eine gewöhnliche Anfrage bricht der
-  // Browser dabei ab. Ein hart geschlossenes Fenster fängt zusätzlich der Server ab, sobald die
-  // letzte Verbindung dieses Kontos weg ist.
-  //
-  // Beide Anmeldungen werden **gemeinsam** wieder abgemeldet. Mit `{ once: true }` allein blieb
-  // die zweite hängen: Wer den Reiter über die Adresse verließ, hatte `hashchange` verbraucht und
-  // `pagehide` für immer stehen – und beim Schließen des Fensters ging noch Jahre später ein
-  // "Ansicht stoppen" für einen Serverplatz hinaus, den niemand mehr offen hatte.
-  let left = false;
-  const stopOnLeave = () => {
-    if (left) return;
-    left = true;
-    window.removeEventListener('hashchange', stopOnLeave);
-    window.removeEventListener('pagehide', stopOnLeave);
-    api(`/profiles/${profile.id}/command`, {
-      method: 'POST',
-      keepalive: true,
-      body: { verb: 'pov', arg: 'stop', accounts: members.map((member) => member.account_id) },
-    }).catch(() => {});
-  };
-  window.addEventListener('hashchange', stopOnLeave);
-  window.addEventListener('pagehide', stopOnLeave);
-
-  function shell(member) {
-    return `<article class="pov" data-account="${member.account_id}">
-      <header>
-        <span class="truncate">${escapeHtml(member.name)}</span>
-        <span class="small muted pov-status"></span>
-      </header>
-      <div class="pov-stage">
-        <canvas class="pov-canvas" width="640" height="320"></canvas>
-        <p class="pov-hint"></p>
-      </div>
-    </article>`;
-  }
-
-  $('#pov-views').innerHTML = members.map(shell).join('');
-  for (const node of $$('.pov')) canvases.set(Number(node.dataset.account), node);
-
-  /**
-   * Der Satz unter der Fläche, solange dort noch kein Bild steht.
-   *
-   * Vier verschiedene Lagen, vier verschiedene Sätze. Vorher stand über allen dasselbe „Warte auf
-   * das erste Bild“ – auch dann, wenn gar niemand ein Bild bestellt hatte. Wer die Ansicht nie
-   * gestartet hatte (und bei `ultra-afk-linux` startet sie nicht von selbst), wartete damit auf
-   * etwas, das nie kommen konnte, und der Reiter sah aus wie ein Fehler.
-   */
-  function hint(accountId, force = null) {
-    const card = canvases.get(accountId);
-    if (!card) return;
-    const bot = state.bots.get(`${profile.id}:${accountId}`);
-    // Steht ein Bild auf der Fläche, ist jeder Satz darüber zu viel. Das entscheidet die Fläche
-    // selbst und nicht der Zustand: Ein Bild kommt über den Live-Kanal, ein Zustandswechsel ist
-    // dafür nicht nötig und käme auch nicht.
-    const painted = card.classList.contains('has-frame');
-    const key = force
-      ? { stopped: 'pov.stopped' }[force]
-      : !bot?.online
-        ? 'pov.offline'
-        : painted
-          ? null
-          : bot.pov?.on
-            ? 'pov.waiting'
-            : 'pov.idle';
-    const node = card.querySelector('.pov-hint');
-    if (node) node.textContent = key ? tr(key) : '';
-  }
-
-  /** Die Ansicht auf allen ausgewählten Konten anfordern. */
-  async function start() {
-    for (const member of members) hint(member.account_id);
-    const ok = await run('pov', 'live');
-    if (ok) for (const member of members) hint(member.account_id);
-    return ok;
-  }
-
-  /** Ein Bild zeichnen: erst in seiner eigenen Auflösung, dann ohne Glättung hochskaliert. */
-  function paint(accountId, view) {
-    const card = canvases.get(accountId);
-    if (!card || !view || view.empty || !view.rows?.length) return;
-    const cols = view.width;
-    const rows = view.rows.length;
-    if (!cols || !rows) return;
-
-    const buffer = document.createElement('canvas');
-    buffer.width = cols;
-    buffer.height = rows;
-    const source = buffer.getContext('2d');
-    const image = source.createImageData(cols, rows);
-    const pixels = image.data;
-
-    for (let y = 0; y < rows; y++) {
-      let at = y * cols * 4;
-      const end = at + cols * 4;
-      for (const [color, count] of view.rows[y]) {
-        // "4182d2" -> 0x4182d2. Eine Zahl statt dreier Teilzeichenketten je Lauf: bei fünf Bildern
-        // in der Sekunde und ein paar tausend Läufen je Bild ist das der Unterschied zwischen
-        // "fällt nicht auf" und "der Browser hat zu tun".
-        const rgb = parseInt(color, 16);
-        const red = (rgb >> 16) & 255;
-        const green = (rgb >> 8) & 255;
-        const blue = rgb & 255;
-        for (let i = 0; i < count && at < end; i++) {
-          pixels[at] = red;
-          pixels[at + 1] = green;
-          pixels[at + 2] = blue;
-          pixels[at + 3] = 255;
-          at += 4;
-        }
-      }
-    }
-    source.putImageData(image, 0, 0);
-
-    const canvas = card.querySelector('.pov-canvas');
-    // Vier Bildpunkte je Bildpunkt des Clients reichen: Das Bild ist ein Raster, mehr Pixel machen
-    // daraus keine schärfere Welt, sondern nur eine größere Fläche. Die Anzeigegröße bestimmt
-    // ohnehin das CSS – hier steht nur, wie fein gezeichnet wird.
-    canvas.width = Math.min(640, cols * 4);
-    canvas.height = Math.round((canvas.width * rows) / cols);
-    const target = canvas.getContext('2d');
-    target.imageSmoothingEnabled = false;
-    target.drawImage(buffer, 0, 0, canvas.width, canvas.height);
-
-    card.classList.add('has-frame');
-    card.querySelector('.pov-status').textContent = view.status || '';
-  }
-
-  for (const member of members) {
-    const bot = state.bots.get(`${profile.id}:${member.account_id}`);
-    if (bot?.views?.pov) paint(member.account_id, bot.views.pov);
-    hint(member.account_id);
-  }
-
-  // **Beim Öffnen von selbst starten.** Genau wie die Anzeigetafel einen Reiter weiter: Wer diesen
-  // Reiter anklickt, will sehen, was der Bot sieht – und nicht erst einen zweiten Knopf suchen.
-  //
-  // Das war der Grund, warum die Live-Ansicht nie zu sehen war. `ultra-afk-linux` (die Bauform für
-  // jeden Premium-Tarif mit gebuchter Live-Ansicht) zeichnet erst auf `:pov live`, und das schickte
-  // das Panel nur, wenn jemand den Knopf fand. Bis dahin stand dort „Warte auf das erste Bild“ –
-  // ein Satz über etwas, das gar nicht unterwegs war.
-  //
-  // Beendet wird beim Verlassen des Reiters (siehe `stopOnLeave`), damit kein Client für einen
-  // geschlossenen Browser weiterrechnet.
-  if (anyOnline(profile, members)) start();
-
-  state.onLive = (event) => {
-    const [profileId, accountId] = String(event.key || '').split(':').map(Number);
-    if (profileId !== profile.id) return;
-    // Ein Zustandswechsel sagt, ob der Bot noch im Spiel ist und ob die Ansicht schon läuft.
-    if (event.type === 'state') return hint(accountId);
-    if (event.type !== 'view' || event.kind !== 'pov') return;
-    if (event.view?.empty) {
-      canvases.get(accountId)?.classList.remove('has-frame');
-      hint(accountId);
-      return;
-    }
-    paint(accountId, event.view);
-    hint(accountId);
-  };
-}
-
 // ---------------------------------------------------------------- Menüs
 
 async function tabMenu(root, profile) {
@@ -1326,15 +1165,62 @@ async function tabMenu(root, profile) {
 
   const run = commandRunner(profile);
   const inspected = new Set();
-  $('#get-menu').addEventListener('click', () => run('menu'));
+  $('#get-menu').addEventListener('click', () => {
+    run('menu');
+    pullLive();
+  });
   $('#close-menu').addEventListener('click', () => run('close'));
+
+  /**
+   * Wo der texturierte Viewer läuft, kommt das Menü von dort.
+   *
+   * Es ist dieselbe Sache in besser: Der Viewer meldet jedes Feld mit Nummer, Anzahl, Name und
+   * Beschreibungstext – und mit einer Kennung, zu der es ein Bild gibt. Der Weg über `:menu`
+   * bleibt daneben stehen und gilt für alle anderen; er liefert dieselben Felder, nur ohne Bild.
+   */
+  const live = new Map();
+  let timer = null;
+
+  async function pullLive() {
+    clearTimeout(timer);
+    if (state.route.tab !== 'menu' || state.route.id !== profile.id) return;
+    let any = false;
+    for (const member of members) {
+      const bot = state.bots.get(`${profile.id}:${member.account_id}`);
+      if (!bot?.online || !bot?.pov?.web) continue;
+      any = true;
+      try {
+        const response = await api(`/profiles/${profile.id}/pov/${member.account_id}/state.json`, {
+          raw: true,
+        });
+        if (response.ok) live.set(member.account_id, (await response.json()).menu || null);
+      } catch {
+        /* der Bot ist gerade gegangen – dann bleibt der letzte Stand stehen */
+      }
+    }
+    if (!any) return;
+    paint();
+    timer = setTimeout(pullLive, 1500);
+  }
 
   const paint = () => {
     const cards = [];
     for (const member of members) {
       const bot = state.bots.get(`${profile.id}:${member.account_id}`);
       if (!bot) continue;
-      const view = bot.views?.menu || (bot.menu ? { empty: false, ...bot.menu } : null);
+      const fresh = live.get(member.account_id);
+      const view = fresh
+        ? fresh.open
+          ? {
+              empty: false,
+              title: fresh.title,
+              slots: fresh.slots,
+              // Der Viewer schickt eine Liste, der Textweg ein Verzeichnis nach Feldnummer. Hier
+              // wird daraus dasselbe, damit die Karte darunter nur eine Form kennen muss.
+              items: Object.fromEntries((fresh.items || []).map((item, index) => [index, item]).filter(([, item]) => item)),
+            }
+          : { empty: true }
+        : bot.views?.menu || (bot.menu ? { empty: false, ...bot.menu } : null);
       if (view) cards.push(menuCard(member, view));
     }
     $('#views').innerHTML =
@@ -1358,40 +1244,19 @@ async function tabMenu(root, profile) {
     return `<article class="board menu-card">
       <header>${view.title ? mcText(view.title) : escapeHtml(tr('vw.menu'))}</header>
       <div class="menu-grid">
-        ${Array.from({ length: slots }, (_, index) => slotButton(member, index, items[index])).join('')}
+        ${Array.from({ length: slots }, (_, index) =>
+          itemSlot({
+            item: items[index] || null,
+            index,
+            accountId: member.account_id,
+            profileId: profile.id,
+          })
+        ).join('')}
       </div>
       <footer>${escapeHtml(member.name)} · ${escapeHtml(tr('vw.slots', { n: slots }))} · ${escapeHtml(
         tr('vw.clickSlot')
       )}</footer>
     </article>`;
-  }
-
-  /**
-   * Ein Feld des Rasters.
-   *
-   * Liegt etwas darin, steht der Gegenstand im Feld und der Name samt Beschreibungstext im
-   * Aufklapper darüber – mit den Farben, die der Server dafür geschickt hat. Ein Titel-Attribut
-   * täte es nicht: der Browser wirft die Farbcodes weg und zeigt "§a" als Text.
-   */
-  function slotButton(member, index, item) {
-    const count = Number(item?.count) || 0;
-    return `<button class="slot ${item ? 'has-item' : ''}" data-slot="${index}"
-      data-account="${member.account_id}" data-inspect="${item ? '1' : '0'}"
-      aria-label="${escapeHtml(`${tr('srv.slot')} ${index}`)}">
-      ${
-        item
-          ? `<span class="slot-item">${escapeHtml(itemGlyph(item))}</span>
-             ${count > 1 ? `<span class="slot-count">${count}</span>` : ''}
-             <span class="slot-tip">
-               <span class="slot-tip-name">${mcText(item.name || item.id || '')}</span>
-               ${(item.lore || [])
-                 .map((line) => `<span class="slot-tip-lore">${mcText(line)}</span>`)
-                 .join('')}
-               ${item.id ? `<span class="slot-tip-id">${escapeHtml(item.id)}</span>` : ''}
-             </span>`
-          : `<span class="slot-index">${index}</span>`
-      }
-    </button>`;
   }
 
   function bindSlots() {
@@ -1442,7 +1307,11 @@ async function tabMenu(root, profile) {
   paint();
   // Wie bei der Anzeigetafel: ohne laufenden Bot gibt es nichts abzufragen, und die Absage
   // darauf wäre eine Fehlermeldung ohne Anlass.
-  if (anyOnline(profile, members)) run('menu');
+  if (anyOnline(profile, members)) {
+    run('menu');
+    pullLive();
+  }
+  window.addEventListener('hashchange', () => clearTimeout(timer), { once: true });
 
   state.onLive = (event) => {
     if ((event.type === 'view' || event.type === 'state') && event.key.startsWith(`${profile.id}:`)) paint();
@@ -2247,6 +2116,13 @@ async function tabSettings(root, profile) {
           <div class="field"><label for="on_cooldown">${escapeHtml(tr('srv.onCooldown'))}</label>
             <input id="on_cooldown" type="number" min="1" max="3600" value="${profile.on_cooldown || 5}">
             <span class="hint">${escapeHtml(tr('srv.onCooldownHint'))}</span></div>
+          <!-- Sichtweite. Für einen Bot, der nur dastehen soll, ist sie eine Zahl ohne Wirkung;
+               für die Live-Ansicht ist sie die eine Zahl, die zählt. Deshalb steht der Grund
+               daneben und nicht nur die Einheit. -->
+          <div class="field"><label for="view_distance">${escapeHtml(tr('srv.viewDistance'))}</label>
+            <input id="view_distance" type="number" min="0" max="32" value="${profile.view_distance || 0}"
+              ${plan.premium ? '' : 'disabled'}>
+            <span class="hint">${escapeHtml(tr('srv.viewDistanceHint'))}</span></div>
         </div>
       </section>
 
@@ -2296,6 +2172,7 @@ async function tabSettings(root, profile) {
     if (plan.premium) {
       body.antiafk_sec = Number($('#antiafk_sec').value);
       body.sneak = $('#sneak').checked;
+      body.view_distance = Number($('#view_distance').value);
     }
 
     try {
@@ -2316,90 +2193,6 @@ async function tabSettings(root, profile) {
     location.hash = '#/servers';
     draw();
   });
-}
-
-// ---------------------------------------------------------------- Gemeinsames
-
-/**
- * Ein Zeichen für einen Gegenstand.
- *
- * Texturen aus dem Spiel liegen hier nicht und dürften auch nicht mitgeliefert werden. Statt eines
- * grauen Kastens für alles bekommt jede große Gruppe ein Zeichen, das man auf einen Blick
- * auseinanderhält; alles Übrige die ersten zwei Buchstaben seines Namens. Das reicht, um ein
- * Menü wiederzuerkennen – der genaue Name steht ohnehin im Aufklapper.
- */
-const ITEM_GLYPHS = [
-  [/(sword|blade)/, '🗡'],
-  [/(pickaxe|axe|shovel|hoe)/, '⛏'],
-  [/(helmet|chestplate|leggings|boots|armor)/, '🛡'],
-  [/(bow|arrow|crossbow)/, '🏹'],
-  [/potion/, '🧪'],
-  [/(apple|bread|carrot|potato|beef|porkchop|chicken|fish|cookie|cake|stew|soup|melon)/, '🍖'],
-  [/(diamond|emerald|amethyst)/, '💎'],
-  [/(gold|golden)/, '🥇'],
-  [/(iron|copper|netherite)/, '⚙'],
-  [/(chest|barrel|shulker)/, '📦'],
-  [/(book|paper|map)/, '📕'],
-  [/(_head|skull|player_head)/, '🙂'],
-  [/(torch|lantern|campfire|fire)/, '🔥'],
-  [/(water|bucket)/, '🪣'],
-  [/(pane|glass)/, '🔲'],
-  [/(seeds|sapling|flower|leaves|grass)/, '🌱'],
-  [/(coin|nugget|ingot)/, '🪙'],
-  [/(door|gate|button|lever)/, '🚪'],
-  [/(ender|eye|pearl)/, '🔮'],
-  [/(banner|shield)/, '🚩'],
-];
-
-function itemGlyph(item) {
-  const id = String(item?.id || '').toLowerCase();
-  for (const [pattern, glyph] of ITEM_GLYPHS) {
-    if (pattern.test(id)) return glyph;
-  }
-  const words = (id.split(':').pop() || '').split('_').filter(Boolean);
-  if (words.length) return words[0].slice(0, 2).toUpperCase();
-  // Ohne Kennung bleibt der sichtbare Name – ohne Farbcodes, sonst stünde "§a" im Feld.
-  const plain = stripFormatting(item?.name || '').trim();
-  return plain ? plain.slice(0, 2).toUpperCase() : '•';
-}
-
-function noAccounts(root, profile) {
-  root.innerHTML = `<div class="empty"><h3>${escapeHtml(tr('srv.noAccounts'))}</h3>
-    <a class="btn btn-primary" href="#/servers/${profile.id}/connect">${escapeHtml(tr('tab.connect'))}</a></div>`;
-}
-
-function accountPicker(members) {
-  return `<div class="row wrap" style="margin-bottom:1rem">
-    ${members
-      .map(
-        (member) => `<label class="check small"><input type="checkbox" data-target="${member.account_id}" checked>
-          ${escapeHtml(member.name)}</label>`
-      )
-      .join('')}
-  </div>`;
-}
-
-/** Einen örtlichen Befehl an die ausgewählten Konten schicken. */
-function commandRunner(profile) {
-  return async (verb, arg = '') => {
-    const accounts = $$('[data-target]:checked').map((box) => Number(box.dataset.target));
-    if (!accounts.length) {
-      toast(tr('srv.noAccounts'));
-      return false;
-    }
-    try {
-      const result = await api(`/profiles/${profile.id}/command`, {
-        method: 'POST',
-        body: { verb, arg, accounts },
-      });
-      const failures = result.results.filter((entry) => !entry.ok);
-      if (failures.length === result.results.length) toast(failures[0].error, 'bad');
-      return failures.length !== result.results.length;
-    } catch (error) {
-      fail(error);
-      return false;
-    }
-  };
 }
 
 /** Schalter, die sofort speichern – mit Tastatur bedienbar. */

@@ -267,7 +267,14 @@ router.get(
   })
 );
 
-/** Offene Tickets mit Discord-Kanal – der Bot räumt damit beim Start auf. */
+/**
+ * Tickets für den Abgleich des Bots – `?open=0` nimmt die geschlossenen dazu (fürs Archiv).
+ *
+ * Sortiert wird **erst nach Zustand**, dann nach Nummer: Was noch läuft, steht vorn und fällt
+ * damit nie aus der Grenze heraus. Vorher entschied allein die Nummer, und ein altes offenes
+ * Ticket rutschte hinter dreihundert geschlossene – der Bot bekam es nicht mehr zu sehen und
+ * legte den fehlenden Kanal deshalb nie an.
+ */
 router.get(
   '/tickets',
   wrap((req, res) => {
@@ -275,7 +282,7 @@ router.get(
       .prepare(
         `SELECT * FROM tickets
           WHERE ${req.query.open === '0' ? '1 = 1' : "status != 'closed'"}
-          ORDER BY id DESC LIMIT 200`
+          ORDER BY (status = 'closed'), id DESC LIMIT 500`
       )
       .all();
     res.json({ tickets: rows.map(ticketView) });
@@ -452,7 +459,9 @@ router.post(
         en: 'You may not close this ticket.',
       });
     }
-    const updated = tickets.setStatus(ticket, status, by?.id ?? null);
+    // Im Ticket-Kanal drücken beide auf denselben Knopf. Ob das Team schließt oder der Kunde
+    // selbst, entscheidet deshalb die Rolle des Discord-Kontos und nicht die Oberfläche.
+    const updated = tickets.setStatus(ticket, status, by?.id ?? null, { staff: by?.role === 'admin' });
     if (status === 'closed') tickets.notifyParticipants(updated, 'ticket_closed', {}, by?.id ?? null);
     audit(by?.id ?? null, 'ticket-status-discord', { id: ticket.id, status });
     res.json({ ticket: ticketView(updated) });

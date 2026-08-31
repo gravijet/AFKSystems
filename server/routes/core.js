@@ -17,7 +17,8 @@ import { features } from '../features.js';
 import { actionsFor, eventsFor } from '../macros.js';
 import { supervisor } from '../supervisor.js';
 import * as billing from '../billing.js';
-import * as tebex from '../tebex.js';
+import * as stripe from '../stripe.js';
+import * as vat from '../vat.js';
 import { setLangCookie, t } from '../pages.js';
 import { bridge } from '../bridge.js';
 import { wrap, requireInt, bad, notFound, forbidden, token, HttpError, langOf, safeUrl } from '../util.js';
@@ -76,12 +77,14 @@ router.get(
       low_balance: Number(getSetting('low_balance')),
       signup_bonus: Number(getSetting('signup_bonus')),
       support_hours: String(getSetting('support_hours') || ''),
+      support_email: String(getSetting('support_email') || ''),
       payment: {
-        tebex: tebex.configured(),
+        stripe: stripe.configured(),
         transfer: Boolean(config.bankTransfer.iban),
         paypal: Boolean(config.bankTransfer.paypal),
         voucher: true,
       },
+      vat: vat.view(lang),
       user: req.user ? auth.publicUser(req.user) : null,
     });
   })
@@ -944,7 +947,8 @@ router.post(
     if (wanted !== 'closed') {
       throw bad('Diesen Zustand darfst du nicht setzen.', { en: 'You cannot set that status.' });
     }
-    const updated = tickets.setStatus(ticket, wanted, req.user.id);
+    // `staff: false` – hier ist auch ein Administrator Kunde (siehe tickets.js).
+    const updated = tickets.setStatus(ticket, wanted, req.user.id, { staff: false });
     tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
     res.json({ ticket: ticketView(updated) });
   })
@@ -956,7 +960,7 @@ router.post(
   auth.requireUser,
   wrap((req, res) => {
     const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
-    const updated = tickets.setStatus(ticket, 'closed', req.user.id);
+    const updated = tickets.setStatus(ticket, 'closed', req.user.id, { staff: false });
     tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
     res.json({ ticket: ticketView(updated) });
   })

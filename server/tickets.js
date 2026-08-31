@@ -18,6 +18,32 @@
 //     umgekehrt – der Abgleich läuft über bridge.js.
 //   * An jede Nachricht dürfen **Dateien** (attachments.js): Screenshots und Anhänge bis 20 MB,
 //     im Panel wie im Discord-Kanal, in beide Richtungen.
+//
+// ---------------------------------------------------------------- Wer ist dran?
+//
+// Ein Ticket hat **zwei** Angaben, die oft verwechselt wurden, und genau daraus kam der Unsinn,
+// dass an einem beantworteten oder geschlossenen Ticket „Wartet“ stand:
+//
+//   `status`        Bei wem der Vorgang liegt. `open` = bei uns, `answered` = beim Kunden,
+//                   `closed` = bei niemandem mehr. Das ist die einzige Wahrheit darüber, ob noch
+//                   jemand etwas tun muss – die Warteschlange des Teams sind die offenen Tickets.
+//   `unread_*`      Ob für diese Seite etwas **Ungelesenes** dasteht. Das ist ein Punkt an der
+//                   Zeile, kein Zustand: gesetzt wird er nur, wenn die andere Seite schreibt,
+//                   gelöscht, sobald man das Ticket aufmacht.
+//
+// Einen vierten Zustand `waiting` gab es früher; er hieß im Panel „Wartet auf dich“ und war
+// damit dasselbe wie `answered`, nur mit anderem Namen. Zwei Wörter für einen Zustand heißt:
+// beide stehen irgendwann falsch da. Bestehende Tickets sind auf `answered` umgestellt
+// (Migration 014), und wer den alten Namen noch schickt – ein alter Bot etwa –, bekommt ihn
+// stillschweigend darauf abgebildet.
+//
+// Daraus folgt der Rest von selbst:
+//
+//   * Der Kunde schreibt  → `open`, und beim Team steht ein ungelesener Punkt.
+//   * Das Team antwortet  → `answered`, ungelesen beim Kunden, beim Team nichts mehr.
+//   * Zustand von Hand    → das Team hat entschieden; ungelesen ist danach beim Team nichts.
+//   * Geschlossen         → für das Team ist nichts mehr offen. Schließt das Team, ist das für
+//                           den Kunden eine Neuigkeit; schließt er selbst, weiß er es schon.
 
 import { db, audit } from './db.js';
 import { config } from './config.js';
@@ -28,8 +54,12 @@ import * as mail from './mail.js';
 import * as notify from './notify.js';
 import { bridge } from './bridge.js';
 
-export const STATUSES = ['open', 'waiting', 'answered', 'closed'];
+export const STATUSES = ['open', 'answered', 'closed'];
 export const PRIORITIES = ['low', 'normal', 'high', 'urgent'];
+
+/** Alte Namen, die es nicht mehr gibt – siehe oben. */
+const RENAMED = { waiting: 'answered' };
+export const normalizeStatus = (status) => RENAMED[status] || String(status || '');
 
 const ticketRow = db.prepare('SELECT * FROM tickets WHERE id = ?');
 export const byId = (id) => ticketRow.get(id);
@@ -81,9 +111,17 @@ export function getForParticipant(id, user) {
   return ticket;
 }
 
+/**
+ * Jemanden dazuholen – oder wieder herausnehmen.
+ *
+ * Der Discord-Kanal gehört zum Ticket und nicht daneben: Wer hier dazukommt, bekommt dort Zugang,
+ * und wer herausgenommen wird, verliert ihn. Vorher stand der Zusatz nur im Panel, und der
+ * Dazugeholte sah im Discord-Kanal desselben Vorgangs nichts – bei einem Ticket, das dort läuft,
+ * heißt das: Er war dabei und wusste es nicht.
+ */
 export function addUser(ticket, userId, by) {
   if (ticket.user_id === userId) return participants(ticket.id);
-  const user = db.prepare('SELECT id, username FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT id, username, discord_id FROM users WHERE id = ?').get(userId);
   if (!user) throw notFound('Diesen Nutzer gibt es nicht.', { en: 'No such user.' });
   db.prepare(
     `INSERT INTO ticket_users (ticket_id, user_id, added_by, created_at) VALUES (?, ?, ?, ?)
@@ -91,6 +129,9 @@ export function addUser(ticket, userId, by) {
   ).run(ticket.id, userId, by, Date.now());
   system(ticket, `${user.username} was added to the ticket.`);
   audit(by, 'ticket-add-user', { ticket: ticket.id, user: userId });
+  if (user.discord_id) {
+    bridge.emit('ticket.access', { ticket_id: ticket.id, discord_id: user.discord_id, allow: true });
+  }
   return participants(ticket.id);
 }
 
@@ -98,10 +139,13 @@ export function removeUser(ticket, userId, by) {
   if (ticket.user_id === userId) {
     throw bad('Der Ersteller lässt sich nicht entfernen.', { en: 'The author cannot be removed.' });
   }
-  const user = db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT username, discord_id FROM users WHERE id = ?').get(userId);
   db.prepare('DELETE FROM ticket_users WHERE ticket_id = ? AND user_id = ?').run(ticket.id, userId);
   if (user) system(ticket, `${user.username} was removed from the ticket.`);
   audit(by, 'ticket-remove-user', { ticket: ticket.id, user: userId });
+  if (user?.discord_id) {
+    bridge.emit('ticket.access', { ticket_id: ticket.id, discord_id: user.discord_id, allow: false });
+  }
   return participants(ticket.id);
 }
 
@@ -141,7 +185,7 @@ export function listAll({ status = null, priority = null, search = '' } = {}) {
   // (`?status=a&status=b` gibt Express als Array heraus). Ein Array bindet SQLite nicht, und die
   // ganze Ticketübersicht antwortete mit einem Serverfehler. Geprüft wird gegen die Liste der
   // Zustände, die es wirklich gibt; alles andere heißt schlicht "kein Filter".
-  const wantedStatus = STATUSES.includes(status) ? status : null;
+  const wantedStatus = STATUSES.includes(normalizeStatus(status)) ? normalizeStatus(status) : null;
   const wantedPriority = PRIORITIES.includes(priority) ? priority : null;
   if (wantedStatus) {
     where.push('t.status = ?');
@@ -164,7 +208,9 @@ export function listAll({ status = null, priority = null, search = '' } = {}) {
          FROM tickets t JOIN users u ON u.id = t.user_id
          LEFT JOIN users a ON a.id = t.assigned_to
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-        ORDER BY t.status = 'closed',
+        -- Zuerst, was bei uns liegt: ein offenes Ticket ist Arbeit, ein beantwortetes wartet auf
+        -- den Kunden und ein geschlossenes auf niemanden.
+        ORDER BY CASE t.status WHEN 'open' THEN 0 WHEN 'answered' THEN 1 ELSE 2 END,
                  CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END,
                  t.updated_at DESC
         LIMIT 300`
@@ -172,13 +218,21 @@ export function listAll({ status = null, priority = null, search = '' } = {}) {
     .all(...values);
 }
 
+/**
+ * Die Zahlen für den Admin-Bereich.
+ *
+ * `open` ist alles, was noch läuft (offen **und** beantwortet); `waiting` ist davon der Teil, der
+ * bei uns liegt. Vorher zählte die zweite Zahl ungelesene Tickets – dann verschwand sie, sobald
+ * jemand ein Ticket nur aufgemacht hatte, obwohl die Antwort weiter ausstand.
+ */
 export const counts = () =>
   db
     .prepare(
       `SELECT
-         COUNT(*) FILTER (WHERE status != 'closed')                     AS open,
-         COUNT(*) FILTER (WHERE unread_staff = 1 AND status != 'closed') AS unread,
-         COUNT(*) FILTER (WHERE priority IN ('high','urgent') AND status != 'closed') AS urgent
+         COUNT(*) FILTER (WHERE status != 'closed')                       AS open,
+         COUNT(*) FILTER (WHERE status = 'open')                          AS waiting,
+         COUNT(*) FILTER (WHERE unread_staff = 1 AND status = 'open')     AS unread,
+         COUNT(*) FILTER (WHERE priority IN ('high','urgent') AND status = 'open') AS urgent
        FROM tickets`
     )
     .get();
@@ -238,18 +292,26 @@ export const create = db.transaction((owner, { subject, body, priority, files: f
       : ['low', 'normal'];
   const boost = allowed.includes(wanted) ? wanted : 'normal';
   const now = Date.now();
+  // Angehängte Dateien gehören an die erste Nachricht. Gibt es keinen Text, entsteht sie trotzdem –
+  // sonst hinge der Screenshot an nichts und stünde nirgends im Verlauf.
+  const chosen = Array.isArray(fileIds) ? fileIds : [];
+
+  // Wer schreibt, bestimmt, bei wem das Ticket liegt. Der Kunde macht eines auf: dann sind wir
+  // dran, und beim Team steht es ungelesen. Macht das Team eines für einen Kunden auf, ist es
+  // nicht seine eigene Warteschlange – es weiß ja, dass es das Ticket gerade geschrieben hat.
+  // Steht dabei schon eine Nachricht, ist der Kunde am Zug; ohne Text ist es eine Notiz, die das
+  // Team selbst abarbeitet.
+  const staffCreated = by !== owner.id;
+  const status = staffCreated && (text || chosen.length) ? 'answered' : 'open';
 
   const info = db
     .prepare(
       `INSERT INTO tickets (user_id, subject, category, status, priority, source, unread_staff,
                             unread_user, created_at, updated_at)
-       VALUES (?, ?, 'general', 'open', ?, ?, 1, ?, ?, ?)`
+       VALUES (?, ?, 'general', ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(owner.id, title, boost, source, by === owner.id ? 0 : 1, now, now);
+    .run(owner.id, title, status, boost, source, staffCreated ? 0 : 1, staffCreated ? 1 : 0, now, now);
   const id = info.lastInsertRowid;
-  // Angehängte Dateien gehören an die erste Nachricht. Gibt es keinen Text, entsteht sie trotzdem –
-  // sonst hinge der Screenshot an nichts und stünde nirgends im Verlauf.
-  const chosen = Array.isArray(fileIds) ? fileIds : [];
   let messageId = null;
   if (text || chosen.length) {
     messageId = db
@@ -267,9 +329,12 @@ export const create = db.transaction((owner, { subject, body, priority, files: f
 /**
  * Eine Antwort anhängen. `internal` sieht nur das Team.
  *
- * Ist das Ticket geschlossen und antwortet ein Kunde, geht es wieder auf. Vorher stand hier ein
+ * Ist das Ticket geschlossen und schreibt jemand hinein, geht es wieder auf. Vorher stand hier ein
  * "Bitte ein neues aufmachen" – das kostet den Verlauf und macht aus einer Rückfrage ein zweites
- * Ticket, das niemand mit dem ersten in Verbindung bringt.
+ * Ticket, das niemand mit dem ersten in Verbindung bringt. Das galt bislang nur für den Kunden:
+ * Schrieb das **Team** in ein geschlossenes Ticket, ging es genauso wieder auf – aber ohne die
+ * Zeile im Verlauf und ohne Zählung, sodass hinterher niemand sah, warum ein geschlossener
+ * Vorgang wieder offen war.
  */
 export const reply = db.transaction((ticket, user, body, {
   internal = false,
@@ -306,14 +371,18 @@ export const reply = db.transaction((ticket, user, body, {
   });
 
   if (internal) {
+    // Eine interne Notiz ist kein Zug im Gespräch: Sie ändert weder, bei wem das Ticket liegt,
+    // noch steht sie dem Kunden als ungelesen im Weg.
     db.prepare('UPDATE tickets SET updated_at = ? WHERE id = ?').run(now, ticket.id);
   } else if (isStaff) {
     db.prepare(
-      "UPDATE tickets SET status = 'answered', unread_user = 1, unread_staff = 0, closed_at = NULL, updated_at = ? WHERE id = ?"
-    ).run(now, ticket.id);
+      `UPDATE tickets SET status = 'answered', unread_user = 1, unread_staff = 0, closed_at = NULL,
+              updated_at = ?, reopened = reopened + ? WHERE id = ?`
+    ).run(now, reopened ? 1 : 0, ticket.id);
   } else {
     db.prepare(
-      "UPDATE tickets SET status = 'open', unread_staff = 1, unread_user = 0, closed_at = NULL, updated_at = ?, reopened = reopened + ? WHERE id = ?"
+      `UPDATE tickets SET status = 'open', unread_staff = 1, unread_user = 0, closed_at = NULL,
+              updated_at = ?, reopened = reopened + ? WHERE id = ?`
     ).run(now, reopened ? 1 : 0, ticket.id);
   }
   if (reopened) {
@@ -342,18 +411,51 @@ export const reply = db.transaction((ticket, user, body, {
   return fresh;
 });
 
-export function setStatus(ticket, status, by) {
-  if (!STATUSES.includes(status)) throw bad('Unbekannter Zustand.', { en: 'Unknown status.' });
-  db.prepare('UPDATE tickets SET status = ?, closed_at = ?, updated_at = ? WHERE id = ?').run(
-    status,
-    status === 'closed' ? Date.now() : null,
-    Date.now(),
-    ticket.id
-  );
-  audit(by, 'ticket-status', { id: ticket.id, status });
+/**
+ * Den Zustand von Hand setzen.
+ *
+ * `staff` sagt, wer das tut – nicht die Rolle des Kontos, sondern die Oberfläche: Ein Admin, der
+ * unter „Support“ sein eigenes Ticket schließt, ist hier Kunde.
+ *
+ * **Ungelesen beim Team ist danach nichts.** Ein Zustandswechsel ist eine Entscheidung; wer sie
+ * trifft, hat das Ticket vor sich. Genau daran hing der Fehler, dass an einem beantworteten oder
+ * geschlossenen Ticket weiter „Wartet“ stand: Der Punkt wurde beim Antworten gelöscht, beim
+ * Umstellen des Zustands aber nie.
+ *
+ * Beim Schließen kommt es darauf an, wer schließt. Das Team schließt: für den Kunden ist das eine
+ * Neuigkeit, er bekommt Post und den Punkt. Der Kunde schließt selbst: dann weiß er es bereits.
+ */
+export function setStatus(ticket, status, by, { staff = true } = {}) {
+  const wanted = normalizeStatus(status);
+  if (!STATUSES.includes(wanted)) throw bad('Unbekannter Zustand.', { en: 'Unknown status.' });
+  const now = Date.now();
+  const closed = wanted === 'closed';
+  db.prepare(
+    `UPDATE tickets SET status = ?, closed_at = ?, unread_staff = 0,
+            unread_user = COALESCE(?, unread_user), updated_at = ? WHERE id = ?`
+  ).run(wanted, closed ? now : null, closed ? (staff ? 1 : 0) : null, now, ticket.id);
+  audit(by, 'ticket-status', { id: ticket.id, status: wanted });
   const fresh = ticketRow.get(ticket.id);
-  bridge.emit('ticket.status', { ticket_id: ticket.id, status, by });
+  bridge.emit('ticket.status', { ticket_id: ticket.id, status: wanted, by });
   return fresh;
+}
+
+/**
+ * Die Dringlichkeit ändern – das darf nur das Team.
+ *
+ * Sie steht als Zeile im Verlauf und nicht bloß im Protokoll: Wer ein Ticket später aufmacht,
+ * soll sehen, dass es jemand hochgestuft hat, statt sich zu fragen, warum es plötzlich oben
+ * steht. Über dieselbe Zeile erfährt es auch der Discord-Kanal.
+ */
+export function setPriority(ticket, priority, by) {
+  if (!PRIORITIES.includes(priority)) {
+    throw bad('Unbekannte Dringlichkeit.', { en: 'Unknown priority.' });
+  }
+  if (ticket.priority === priority) return ticketRow.get(ticket.id);
+  db.prepare('UPDATE tickets SET priority = ? WHERE id = ?').run(priority, ticket.id);
+  system(ticket, `Priority changed from ${ticket.priority} to ${priority}.`);
+  audit(by, 'ticket-priority', { id: ticket.id, priority });
+  return ticketRow.get(ticket.id);
 }
 
 export function markRead(ticket, user, { staff = user.role === 'admin' } = {}) {
@@ -373,8 +475,15 @@ export const unreadFor = (user) =>
     )
     .get(user.id, user.id).n;
 
+/**
+ * Wie viele Tickets bei **uns** liegen – die Zahl an der Seitenleiste des Teams.
+ *
+ * Das sind die offenen, nicht die ungelesenen. Ein Ticket, das jemand aufgemacht und wieder
+ * zugeklappt hat, ohne zu antworten, ist nicht erledigt; die Zahl darf davon nicht kleiner
+ * werden. Und ein beantwortetes oder geschlossenes Ticket taucht hier gar nicht erst auf.
+ */
 export const openForStaff = () =>
-  db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE unread_staff = 1 AND status != 'closed'").get().n;
+  db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE status = 'open'").get().n;
 
 /** Den Discord-Kanal merken, den der Bot für dieses Ticket angelegt hat. */
 export function setChannel(ticketId, channelId) {

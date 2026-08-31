@@ -22,12 +22,24 @@ export const GROUPS = [
     key: 'payments',
     icon: 'wallet',
     de: {
-      title: 'Bezahlen mit Tebex',
-      text: `Tebex wickelt Karte, PayPal und die übrigen Zahlarten ab und kümmert sich um die Umsatzsteuer – AFKSystems fasst nie Geld an. Guthaben entsteht ausschließlich über den Webhook: trage im Tebex-Panel unter Developers → Webhooks diese Adresse ein: ${config.publicUrl}/api/tebex/webhook`,
+      title: 'Bezahlen mit Stripe',
+      text: `Stripe wickelt Karte, PayPal, Apple/Google Pay und die übrigen Zahlarten ab; welche davon erscheinen, entscheidest du im Stripe-Dashboard. Verkäufer bleibt AFKSystems – Preis, Beleg und Umsatzsteuer kommen aus diesem Panel und nicht von Stripe. Guthaben entsteht ausschließlich über den Webhook: trage bei Stripe unter Entwickler → Webhooks diese Adresse ein: ${config.publicUrl}/api/stripe/webhook`,
     },
     en: {
-      title: 'Paying with Tebex',
-      text: `Tebex handles cards, PayPal and the rest, and takes care of VAT – AFKSystems never touches the money. Credits are only ever created by the webhook: in the Tebex panel under Developers → Webhooks, add this address: ${config.publicUrl}/api/tebex/webhook`,
+      title: 'Paying with Stripe',
+      text: `Stripe handles cards, PayPal, Apple/Google Pay and the rest; which of them show up is your choice in the Stripe dashboard. AFKSystems stays the seller – price, receipt and VAT come from this panel, not from Stripe. Credits are only ever created by the webhook: in Stripe under Developers → Webhooks, add this address: ${config.publicUrl}/api/stripe/webhook`,
+    },
+  },
+  {
+    key: 'vat',
+    icon: 'wallet',
+    de: {
+      title: 'Umsatzsteuer',
+      text: 'Was unter jedem Preis, an der Kasse und auf jedem Beleg steht. Vorgabe ist die Kleinunternehmerregelung: keine Umsatzsteuer auf den Verkauf, keine auf der Rechnung – dafür der Grund als Satz darunter. Das gilt für alle Zahlarten, nicht nur für Stripe, und ersetzt keine Steuerberatung.',
+    },
+    en: {
+      title: 'VAT',
+      text: 'What is printed under every price, at checkout and on every receipt. The default is the small-business scheme: no VAT on the sale, none on the invoice – the reason is stated instead. This applies to every payment method, not just Stripe, and is no substitute for tax advice.',
     },
   },
   {
@@ -177,85 +189,94 @@ export const SETTINGS = [
     en: { label: 'Top-up packages', help: 'Amount in cents, for that many credits. Anything above the amount is a bonus and is shown as one on the pricing page.' },
   },
 
-  // ---------------------------------------------------------------- Bezahlen (Tebex)
+  // ---------------------------------------------------------------- Bezahlen (Stripe)
   {
-    key: 'tebex_enabled',
+    key: 'stripe_enabled',
     group: 'payments',
     type: 'switch',
     de: {
-      label: 'Bezahlen mit Tebex',
+      label: 'Bezahlen mit Stripe',
       help: 'Aus heißt: im Panel steht die Zahlart nicht zur Auswahl. Gutschein, Überweisung und Aufbuchen durch den Admin bleiben davon unberührt.',
     },
     en: {
-      label: 'Paying with Tebex',
+      label: 'Paying with Stripe',
       help: 'Off means the method is not offered in the panel. Vouchers, bank transfer and admin top-ups are unaffected.',
     },
   },
   {
-    key: 'tebex_mode',
+    key: 'stripe_secret_key',
     group: 'payments',
+    type: 'password',
+    secret: true,
+    de: {
+      label: 'Geheimer Schlüssel',
+      help: 'Steht im Stripe-Dashboard unter Entwickler → API-Schlüssel und beginnt mit sk_live_ (Echtbetrieb) oder sk_test_ (Testmodus). Er darf nirgends sonst stehen – wer ihn hat, kann in deinem Namen kassieren.',
+    },
+    en: {
+      label: 'Secret key',
+      help: 'Found in the Stripe dashboard under Developers → API keys; starts with sk_live_ (live) or sk_test_ (test mode). It must live nowhere else – whoever has it can take payments in your name.',
+    },
+  },
+  {
+    key: 'stripe_webhook_secret',
+    group: 'payments',
+    type: 'password',
+    secret: true,
+    de: {
+      label: 'Signaturgeheimnis des Webhooks',
+      help: 'Steht bei Stripe neben dem Endpunkt und beginnt mit whsec_. Ohne dieses Geheimnis nimmt AFKSystems keine einzige Zahlungsmeldung an – auch keine echte. Test und Echtbetrieb haben verschiedene: nach dem Umschalten hier das passende eintragen.',
+    },
+    en: {
+      label: 'Webhook signing secret',
+      help: 'Shown next to the endpoint in Stripe; starts with whsec_. Without it AFKSystems accepts no payment notification at all – not even a real one. Test and live mode have different ones: after switching, store the matching one here.',
+    },
+  },
+
+  // ---------------------------------------------------------------- Umsatzsteuer
+  {
+    key: 'vat_mode',
+    group: 'vat',
     type: 'select',
     options: [
-      { value: 'checkout', de: 'Checkout-API (Preise kommen von hier)', en: 'Checkout API (prices come from here)' },
-      { value: 'headless', de: 'Headless-API (Pakete liegen im Tebex-Store)', en: 'Headless API (packages live in the Tebex store)' },
+      {
+        value: 'small_business',
+        de: 'Kleinunternehmerregelung – keine Umsatzsteuer ausweisen',
+        en: 'Small-business scheme – do not show VAT',
+      },
+      {
+        value: 'stripe_tax',
+        de: 'Stripe Tax – Umsatzsteuer berechnen und ausweisen',
+        en: 'Stripe Tax – calculate and show VAT',
+      },
     ],
     de: {
-      label: 'Weg',
-      help: 'Checkout-API: der Warenkorb wird hier gebaut, die Aufladepakete dieses Panels bestimmen Namen und Preis – Tebex muss sie für dein Konto freischalten. Headless-API: die Pakete liegen fertig im Tebex-Webstore, hier steht je Aufladepaket nur noch die Paket-ID. Der Headless-Weg braucht keine Freischaltung.',
+      label: 'Wie mit der Umsatzsteuer verfahren wird',
+      help: 'Kleinunternehmerregelung: Der Preis ist der Endpreis, es wird keine Umsatzsteuer aufgeschlagen und keine ausgewiesen – auf Kasse und Beleg steht stattdessen der Satz unten. Stripe Tax: Stripe ermittelt die Umsatzsteuer, der Preis im Panel gilt dann als Bruttopreis. Stripe Tax ist ein kostenpflichtiges Zusatzprodukt und muss im Stripe-Dashboard eingeschaltet sein; ohne das lehnt Stripe den Bezahlvorgang ab.',
     },
     en: {
-      label: 'Method',
-      help: 'Checkout API: the basket is built here and this panel\'s top-up packages set name and price – Tebex has to enable it for your account. Headless API: the packages live in the Tebex webstore and each top-up package only carries its package id. The headless route needs no approval.',
+      label: 'How VAT is handled',
+      help: 'Small-business scheme: the price is the final price, no VAT is added or shown – checkout and receipt carry the sentence below instead. Stripe Tax: Stripe works out the VAT and the panel price counts as the gross amount. Stripe Tax is a paid add-on and has to be switched on in the Stripe dashboard; without it Stripe refuses the checkout.',
     },
   },
   {
-    key: 'tebex_project_id',
-    group: 'payments',
+    key: 'vat_note_de',
+    group: 'vat',
     type: 'text',
-    de: { label: 'Projekt-ID (Checkout)', help: 'Steht in creator.tebex.io unter Developers → API Keys. Nur für den Checkout-Weg.' },
-    en: { label: 'Project ID (checkout)', help: 'Found at creator.tebex.io under Developers → API Keys. Checkout route only.' },
-  },
-  {
-    key: 'tebex_private_key',
-    group: 'payments',
-    type: 'password',
-    secret: true,
     de: {
-      label: 'Privater Schlüssel (Checkout)',
-      help: 'Derselbe Ort wie die Projekt-ID. Er darf nirgends sonst stehen – wer ihn hat, kann in deinem Namen kassieren.',
+      label: 'Hinweis unter dem Preis (deutsch)',
+      help: 'Gilt nur bei der Kleinunternehmerregelung und steht dann auf Preisseite, Kasse und Beleg. Die Vorgabe nennt die österreichische Fassung; in Deutschland wäre es § 19 UStG.',
     },
     en: {
-      label: 'Private key (checkout)',
-      help: 'Same place as the project ID. It must live nowhere else – whoever has it can take payments in your name.',
+      label: 'Note under the price (German)',
+      help: 'Used with the small-business scheme only; it then appears on the pricing page, at checkout and on the receipt. The default cites the Austrian rule; in Germany it would be § 19 UStG.',
     },
   },
   {
-    key: 'tebex_store_token',
-    group: 'payments',
+    key: 'vat_note_en',
+    group: 'vat',
     type: 'text',
-    de: { label: 'Store-Token (Headless)', help: 'Der öffentliche Token des Webstores. Nur für den Headless-Weg.' },
-    en: { label: 'Store token (headless)', help: 'The public token of the webstore. Headless route only.' },
-  },
-  {
-    key: 'tebex_webhook_secret',
-    group: 'payments',
-    type: 'password',
-    secret: true,
-    de: {
-      label: 'Webhook-Geheimnis',
-      help: 'Steht im Tebex-Panel neben dem Endpunkt. Ohne dieses Geheimnis nimmt AFKSystems keine einzige Zahlungsmeldung an – auch keine echte.',
-    },
-    en: {
-      label: 'Webhook secret',
-      help: 'Shown next to the endpoint in the Tebex panel. Without it AFKSystems accepts no payment notification at all – not even a real one.',
-    },
-  },
-  {
-    key: 'tebex_store_url',
-    group: 'payments',
-    type: 'text',
-    de: { label: 'Adresse des Stores', help: 'Optional. Steht im Panel als Link neben der Zahlart.' },
-    en: { label: 'Store address', help: 'Optional. Shown next to the payment method as a link.' },
+    de: { label: 'Hinweis unter dem Preis (englisch)', help: 'Dasselbe für die englische Fassung der Seiten.' },
+    en: { label: 'Note under the price (English)', help: 'The same for the English version of the pages.' },
   },
 
   // ---------------------------------------------------------------- Registrierung
@@ -658,6 +679,21 @@ export const SETTINGS = [
     type: 'text',
     de: { label: 'Support-Zeiten', help: 'Steht über dem Ticket-Formular. Leer heißt: es steht nichts da.', placeholder: 'Mo–Fr 10–20 Uhr' },
     en: { label: 'Support hours', help: 'Shown above the ticket form. Empty means nothing is shown.', placeholder: 'Mon–Fri 10:00–20:00' },
+  },
+  {
+    key: 'support_email',
+    group: 'ops',
+    type: 'text',
+    de: {
+      label: 'Kontakt-E-Mail',
+      help: 'Steht im Fuß jeder öffentlichen Seite und über den eigenen Tickets, und jede Nachricht von hier trägt sie als Antwortadresse. Für alle, die kein Ticket schreiben können – kein Konto, kein Zugang. Leer heißt: sie steht nirgends.',
+      placeholder: 'user@example.invalid',
+    },
+    en: {
+      label: 'Contact email',
+      help: 'Shown in the footer of every public page and above the customer\'s own tickets, and every message from here carries it as its reply address. For everyone who cannot write a ticket – no account, no way in. Empty means it is shown nowhere.',
+      placeholder: 'user@example.invalid',
+    },
   },
 
   // ---------------------------------------------------------------- Recht

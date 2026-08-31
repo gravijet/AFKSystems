@@ -205,6 +205,9 @@ class Bot {
     this.panel.on('ticket.status', (event) =>
       this.tickets.onPanelStatus(event).catch((error) => console.warn('[tickets]', error.message))
     );
+    this.panel.on('ticket.access', (event) =>
+      this.tickets.onPanelAccess(event).catch((error) => console.warn('[tickets]', error.message))
+    );
     this.panel.on('roles.changed', (event) =>
       this.roles.syncOne(event.discord_id).catch(() => {})
     );
@@ -291,6 +294,13 @@ class Bot {
     setInterval(() => this.roles.syncAll().catch(() => {}), 60 * 60 * 1000).unref();
     // Geschlossene Kanäle bleiben eine Woche als Archiv sichtbar und werden danach entfernt.
     setInterval(() => this.tickets.cleanupArchived().catch((error) => console.warn('[tickets]', error.message)), 60 * 60 * 1000).unref();
+    // Und stündlich derselbe Abgleich wie beim Start: Ein Ticket ohne Kanal bekommt einen. Die
+    // Meldung über die offene Leitung ist der schnelle Weg, aber sie erreicht nur einen Bot, der
+    // gerade läuft – dies hier ist der, der nichts vergisst.
+    setInterval(
+      () => this.tickets.reconcileChannels().catch((error) => console.warn('[tickets]', error.message)),
+      60 * 60 * 1000
+    ).unref();
     await this.tickets.cleanupArchived().catch((error) => console.warn('[tickets]', error.message));
     const beat = () =>
       this.panel
