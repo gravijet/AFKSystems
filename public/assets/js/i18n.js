@@ -1091,6 +1091,25 @@ export const S = {
   'adm.stopBots': { en: 'Stop all their bots', de: 'Alle Bots stoppen' },
   'adm.logoutUser': { en: 'Sign out everywhere', de: 'Überall abmelden' },
   'adm.newUser': { en: 'New user', de: 'Neuer Nutzer' },
+  // Auswahl und Massenaktionen in den Listen.
+  'adm.bulk.all': { en: 'Select all shown', de: 'Alle angezeigten auswählen' },
+  'adm.bulk.hint': {
+    en: 'Tick rows to act on several at once.',
+    de: 'Zeilen anhaken, um mehrere auf einmal zu bearbeiten.',
+  },
+  'adm.bulk.selected': { en: '{n} selected', de: '{n} ausgewählt' },
+  'adm.bulk.clear': { en: 'Clear selection', de: 'Auswahl aufheben' },
+  'adm.bulk.ask': { en: '{what} for {n} accounts?', de: '{what} für {n} Konten?' },
+  'adm.bulk.done': { en: '{done} done.', de: '{done} erledigt.' },
+  'adm.bulk.doneSome': {
+    en: '{done} done, {skipped} skipped.',
+    de: '{done} erledigt, {skipped} übersprungen.',
+  },
+  'adm.export': { en: 'CSV', de: 'CSV' },
+  'adm.exportHint': {
+    en: 'Download this list as a spreadsheet file',
+    de: 'Diese Liste als Tabellendatei herunterladen',
+  },
   'adm.saved': { en: 'Saved.', de: 'Gespeichert.' },
   'adm.usersLine': { en: '+{new} in 30 days · {active} active today', de: '+{new} in 30 Tagen · {active} heute aktiv' },
   'adm.ticketsWaiting': { en: '{n} waiting for us', de: '{n} warten auf uns' },
