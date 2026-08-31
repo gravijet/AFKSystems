@@ -178,6 +178,7 @@ export async function render(root, route) {
     audit,
     security,
     ops,
+    templates,
   };
   try {
     await views[tab](body);
@@ -2697,6 +2698,13 @@ async function announcements(root) {
       }
     </div>`;
 
+  // Die Rundmail steht bei den Ankündigungen, weil beides dieselbe Frage beantwortet: „Wie sage
+  // ich es allen?“ Der Unterschied ist nur, ob die Nachricht auch im Panel stehen bleibt.
+  const mailBox = document.createElement('div');
+  mailBox.style.marginTop = '1.5rem';
+  root.append(mailBox);
+  await broadcastPanel(mailBox);
+
   const fields = (entry = {}) => [
     { key: 'title_de', label: 'Titel (DE)', value: entry.title_de || '', required: true },
     { key: 'title_en', label: 'Titel (EN)', value: entry.title_en || '' },
@@ -4073,4 +4081,159 @@ function interval(ms) {
   if (ms >= 3_600_000) return tr('ops.hours', { n: Math.round(ms / 3_600_000) });
   if (ms >= 60_000) return tr('ops.minutes', { n: Math.round(ms / 60_000) });
   return tr('ops.seconds', { n: Math.round(ms / 1000) });
+}
+
+// ---------------------------------------------------------------- Textbausteine
+//
+// Support besteht zu einem guten Teil aus denselben vier Sätzen. Wer sie jedes Mal neu tippt,
+// tippt sie jedes Mal ein bisschen anders – mal freundlich, mal knapp, je nach Tageszeit. Ein
+// Baustein ist deshalb nicht nur schneller, er ist auch der Grund, warum zwei Kunden dieselbe
+// Antwort bekommen.
+//
+// Der Zähler daneben ist die einzige ehrliche Auskunft darüber, welcher Baustein seinen Platz
+// verdient: Einer, den in einem halben Jahr niemand benutzt hat, ist kein Baustein, sondern eine
+// Zeile, die beim Suchen im Weg steht.
+
+const TEMPLATE_FIELDS = [
+  { key: 'title_de', label: 'tmpl.titleDe', required: true },
+  { key: 'title_en', label: 'tmpl.titleEn' },
+  { key: 'body_de', label: 'tmpl.bodyDe', type: 'textarea', required: true },
+  { key: 'body_en', label: 'tmpl.bodyEn', type: 'textarea' },
+  { key: 'category', label: 'tk.category' },
+  { key: 'sort', label: 'common.order', type: 'number' },
+];
+
+async function templates(root) {
+  const data = await api('/admin/ticket-templates');
+
+  root.innerHTML = `
+    <div class="row wrap spread" style="margin-bottom:1rem;gap:1rem">
+      <p class="small muted" style="margin:0;max-width:46rem">${escapeHtml(tr('tmpl.lead'))}</p>
+      <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('common.create'))}</button>
+    </div>
+
+    ${panel(
+      `${data.templates.length} ${tr('adm.templates')}`,
+      table(
+        [tr('common.name'), tr('tmpl.category'), tr('tmpl.uses'), ''],
+        data.templates.map(
+          (entry) => `<tr>
+            <td><span class="strong">${escapeHtml(bilingual(entry, 'title'))}</span>
+              <div class="small muted truncate" style="max-width:38rem">${escapeHtml(
+                bilingual(entry, 'body').replace(/\s+/g, ' ')
+              )}</div></td>
+            <td class="small muted">${escapeHtml(entry.category)}</td>
+            <td class="mono small muted">${entry.uses}</td>
+            <td style="text-align:right;white-space:nowrap">
+              <button class="btn btn-sm" data-edit="${entry.id}">${escapeHtml(tr('common.edit'))}</button>
+              <button class="btn btn-ghost btn-sm btn-danger" data-del="${entry.id}">${icon('trash')}</button>
+            </td>
+          </tr>`
+        )
+      )
+    )}`;
+
+  const form = async (entry = {}) => {
+    const answer = await formDialog(
+      entry.id ? tr('common.edit') : tr('common.create'),
+      TEMPLATE_FIELDS.map((field) => ({
+        key: field.key,
+        label: tr(field.label),
+        type: field.type,
+        required: field.required,
+        value: entry[field.key] ?? (field.key === 'category' ? 'general' : ''),
+        hint: field.key === 'body_de' ? tr('tmpl.placeholders') : '',
+      })),
+      { submit: tr('common.save') }
+    );
+    if (!answer) return;
+    const path = entry.id ? `/admin/ticket-templates/${entry.id}` : '/admin/ticket-templates';
+    if (await send(path, { method: entry.id ? 'PATCH' : 'POST', body: numbers(answer) })) draw();
+  };
+
+  $('#new').addEventListener('click', () => form());
+  $$('[data-edit]').forEach((button) =>
+    button.addEventListener('click', () =>
+      form(data.templates.find((entry) => entry.id === Number(button.dataset.edit)))
+    )
+  );
+  $$('[data-del]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('common.delete'), { confirm: tr('common.delete') }))) return;
+      if (await send(`/admin/ticket-templates/${button.dataset.del}`, { method: 'DELETE' })) draw();
+    })
+  );
+}
+
+/**
+ * Eine Rundmail an einen ausgewählten Kreis.
+ *
+ * Eine Nachricht an **alle** ist selten die gemeinte. Wer nicht auswählen kann, schreibt entweder
+ * allen – und wird zu der Nachricht, die man ungelesen wegklickt – oder niemandem. Neben jedem
+ * Kreis steht deshalb die Zahl der Empfänger, bevor irgendetwas hinausgeht.
+ */
+async function broadcastPanel(root) {
+  const data = await api('/admin/broadcast');
+  root.innerHTML = panel(
+    tr('bc.title'),
+    `<div class="body stack">
+      <p class="small muted">${escapeHtml(tr('bc.lead'))}</p>
+      <div class="field">
+        <label for="bc-segment">${escapeHtml(tr('bc.segment'))}</label>
+        <select id="bc-segment">
+          ${data.segments
+            .map(
+              (segment) =>
+                `<option value="${escapeHtml(segment.key)}">${escapeHtml(segment.label)} · ${segment.count}</option>`
+            )
+            .join('')}
+        </select>
+      </div>
+      <div class="row wrap">
+        <button class="btn btn-sm" id="bc-test" ${data.configured ? '' : 'disabled'}>
+          ${escapeHtml(tr('adm.announceTest'))}</button>
+        <button class="btn btn-sm btn-primary" id="bc-send" ${data.configured ? '' : 'disabled'}>
+          ${icon('send')} ${escapeHtml(tr('bc.send'))}</button>
+      </div>
+      ${data.configured ? '' : `<p class="small muted">${escapeHtml(tr('adm.noMail'))}</p>`}
+    </div>`
+  );
+
+  const compose = async () => {
+    const answer = await formDialog(
+      tr('bc.title'),
+      [
+        { key: 'title_de', label: tr('tmpl.titleDe'), required: true },
+        { key: 'body_de', label: tr('tmpl.bodyDe'), type: 'textarea', required: true },
+        { key: 'title_en', label: tr('tmpl.titleEn') },
+        { key: 'body_en', label: tr('tmpl.bodyEn'), type: 'textarea' },
+        { key: 'link', label: tr('adm.announceLink'), placeholder: 'https://' },
+      ],
+      { submit: tr('common.next'), note: tr('bc.bothLangs') }
+    );
+    return answer;
+  };
+
+  $('#bc-test').addEventListener('click', async () => {
+    const answer = await compose();
+    if (!answer) return;
+    const result = await send('/admin/broadcast', { method: 'POST', body: { ...answer, test: true } }, { done: false });
+    if (result) ok(tr('bc.tested'));
+  });
+
+  $('#bc-send').addEventListener('click', async () => {
+    const segment = $('#bc-segment');
+    const label = segment.options[segment.selectedIndex].textContent;
+    const answer = await compose();
+    if (!answer) return;
+    // Erst schreiben, dann fragen: Die Rückfrage nennt den Kreis und die Zahl, und sie kommt an
+    // der Stelle, an der man sie ernst nimmt – kurz vorm Abschicken.
+    if (!(await confirmDialog(tr('bc.ask', { who: label.trim() }), { confirm: tr('bc.send') }))) return;
+    const result = await send(
+      '/admin/broadcast',
+      { method: 'POST', body: { ...answer, segment: segment.value } },
+      { done: false }
+    );
+    if (result) ok(tr('bc.done', { sent: result.sent, skipped: result.skipped }));
+  });
 }

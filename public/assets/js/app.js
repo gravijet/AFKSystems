@@ -5,6 +5,12 @@
 // einfacher zu verstehen als jede feinere Aktualisierung, und schnell genug.
 
 import { api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, safeLink, $, fail, toast } from './ui.js';
+import {
+  applyPreferences,
+  isFavoriteServer,
+  rememberRoute,
+  startHash,
+} from './preferences.js';
 
 // Relativ zur eigenen Adresse: unter /assets/v/<version>/js/app.js kommt so von selbst die Adresse
 // mit demselben Fingerabdruck heraus. Siehe assetVersion in server/config.js.
@@ -33,6 +39,7 @@ const ROUTES = [
   { path: /^\/servers\/(\d+)(?:\/([a-z]+))?$/, name: 'server' },
   { path: /^\/proxies$/, name: 'proxies' },
   { path: /^\/credits$/, name: 'credits' },
+  { path: /^\/activity$/, name: 'activity' },
   { path: /^\/tickets(?:\/(\d+))?$/, name: 'tickets' },
   { path: /^\/settings$/, name: 'settings' },
   { path: /^\/admin(?:\/([a-z-]+))?(?:\/(\d+))?$/, name: 'admin' },
@@ -243,6 +250,7 @@ export const NAV_PRIMARY = [
 
 export const NAV_ACCOUNT = [
   { hash: '#/credits', key: 'dash.credits', icon: 'wallet' },
+  { hash: '#/activity', key: 'dash.activity', icon: 'bell' },
   { hash: '#/tickets', key: 'dash.tickets', icon: 'ticket' },
   { hash: '#/proxies', key: 'dash.proxies', icon: 'globe' },
   { hash: '#/settings', key: 'dash.settings', icon: 'settings' },
@@ -268,6 +276,7 @@ export const ADMIN_GROUPS = [
       { key: 'overview', label: 'adm.overview', icon: 'chart' },
       { key: 'ops', label: 'adm.ops', icon: 'activity' },
       { key: 'tickets', label: 'adm.allTickets', icon: 'ticket' },
+      { key: 'templates', label: 'adm.templates', icon: 'message' },
       { key: 'users', label: 'adm.users', icon: 'users' },
       { key: 'servers', label: 'adm.servers', icon: 'server' },
       { key: 'accounts', label: 'adm.accounts', icon: 'users' },
@@ -417,11 +426,13 @@ function navItem({ href, label, iconName, active, badge = 0, tone = '' }) {
 /** Ein Serverplatz in der Liste – Zustandspunkt, Name, wie viele Bots davon laufen. */
 function serverItem(profile, active) {
   const tone = profile.suspended ? 'warn' : profile.online ? 'ok' : profile.total ? 'idle' : 'empty';
+  const favorite = isFavoriteServer(state.me?.id, profile.id);
   return `<a class="side-item side-server ${active ? 'active' : ''}"
     href="#/servers/${profile.id}/connect" title="${escapeHtml(profile.name)}"
     data-find="${escapeHtml(profile.name.toLowerCase())}">
     <span class="side-item-icon"><span class="side-dot ${tone}"></span></span>
     <span class="side-item-label">${escapeHtml(profile.name)}</span>
+    ${favorite ? `<span class="side-favorite" aria-label="${escapeHtml(tr('srv.favorite'))}">${icon('star')}</span>` : ''}
     <span class="side-count">${profile.online}/${profile.total}</span>
   </a>`;
 }
@@ -513,7 +524,11 @@ export function drawSide() {
   const scroller = $('#side-scroll');
   if (scroller) rememberSideScroll(scroller.scrollTop);
 
-  const servers = state.profiles
+  const servers = [...state.profiles]
+    .sort(
+      (a, b) =>
+        Number(isFavoriteServer(state.me?.id, b.id)) - Number(isFavoriteServer(state.me?.id, a.id))
+    )
     .map((profile) => {
       const active = route.name === 'server' && route.id === profile.id;
       return serverItem(profile, active) + (active ? serverTabs(profile, route.tab) : '');
@@ -580,7 +595,12 @@ export function drawSide() {
             label: navLabel(item),
             iconName: item.icon,
             active: routeMatches(item.hash),
-            badge: item.hash === '#/tickets' ? unread : 0,
+            badge:
+              item.hash === '#/tickets'
+                ? unread
+                : item.hash === '#/activity'
+                  ? state.stats?.notifications_unread || 0
+                  : 0,
           })
         ).join('')}
       </nav>
@@ -807,10 +827,31 @@ document.addEventListener('keydown', (event) => {
     showPalette();
     return;
   }
+  const active = document.activeElement;
+  const typing = active && (active.isContentEditable || /^(input|textarea|select)$/i.test(active.tagName));
+  if (!typing && event.key === '?') {
+    event.preventDefault();
+    showShortcuts();
+    return;
+  }
+  if (!typing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    if (event.key.toLowerCase() === 'g') {
+      armJumpKeys();
+      return;
+    }
+    if (jumpKeysArmed) {
+      const target = { o: '#/', s: '#/servers', a: '#/accounts', t: '#/tickets' }[event.key.toLowerCase()];
+      clearJumpKeys();
+      if (target) {
+        event.preventDefault();
+        go(target);
+        return;
+      }
+    }
+  }
   // "/" springt ins Suchfeld der Seitenleiste – aber nur, wenn gerade nicht ohnehin getippt wird.
   if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
-  const active = document.activeElement;
-  if (active && (active.isContentEditable || /^(input|textarea|select)$/i.test(active.tagName))) return;
+  if (typing) return;
   const field = $('#side-filter');
   if (!field) return;
   event.preventDefault();
@@ -821,8 +862,58 @@ document.addEventListener('keydown', (event) => {
 widePanel.addEventListener('change', () => toggleSide(false));
 toggleSide(false);
 
+let jumpKeysArmed = false;
+let jumpKeysTimer = null;
+function clearJumpKeys() {
+  jumpKeysArmed = false;
+  clearTimeout(jumpKeysTimer);
+}
+function armJumpKeys() {
+  jumpKeysArmed = true;
+  clearTimeout(jumpKeysTimer);
+  jumpKeysTimer = setTimeout(clearJumpKeys, 1200);
+}
+
+/** Alle Tastaturwege, in derselben gestalteten Dialogform wie der Rest des Panels. */
+export function showShortcuts() {
+  if (document.querySelector('dialog.shortcuts')) return;
+  const dialog = document.createElement('dialog');
+  dialog.className = 'shortcuts';
+  const row = (keys, text) => `<li><span>${escapeHtml(text)}</span><span class="shortcut-keys">${keys
+    .map((key) => `<kbd>${escapeHtml(key)}</kbd>`)
+    .join('')}</span></li>`;
+  dialog.innerHTML = `
+    <header><div class="row">${icon('keyboard')}<h3>${escapeHtml(tr('keys.title'))}</h3></div>
+      <button class="btn btn-ghost btn-sm" data-close aria-label="${escapeHtml(tr('common.close'))}">${icon('x')}</button></header>
+    <div class="body">
+      <ul class="shortcut-list">
+        ${row([navigator.platform?.includes('Mac') ? '⌘' : 'Ctrl', 'K'], tr('keys.search'))}
+        ${row(['/'], tr('keys.sidebar'))}
+        ${row(['G', 'O'], tr('keys.overview'))}
+        ${row(['G', 'S'], tr('keys.servers'))}
+        ${row(['G', 'A'], tr('keys.accounts'))}
+        ${row(['G', 'T'], tr('keys.support'))}
+        ${row(['?'], tr('keys.help'))}
+      </ul>
+    </div>`;
+  document.body.append(dialog);
+  const close = () => dialog.close();
+  dialog.querySelector('[data-close]').addEventListener('click', close);
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) close();
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.showModal();
+}
+
+document.addEventListener('click', (event) => {
+  if (event.target.closest('[data-open-palette]')) showPalette();
+  if (event.target.closest('[data-show-shortcuts]')) showShortcuts();
+});
+
 /** Kopfzeile einer Ansicht – enthält auf dem Handy den Knopf für die Seitenleiste. */
 export function appbar(title, actionsHtml = '', subtitle = '') {
+  const unread = state.stats?.notifications_unread || 0;
   return `<div class="appbar">
     <div class="row" style="min-width:0">
       <button class="btn btn-ghost btn-sm side-toggle" data-open-side type="button" aria-label="${escapeHtml(
@@ -833,7 +924,14 @@ export function appbar(title, actionsHtml = '', subtitle = '') {
         ${subtitle ? `<p class="small muted truncate">${subtitle}</p>` : ''}
       </div>
     </div>
-    <div class="row wrap appbar-actions">${actionsHtml}</div>
+    <div class="row wrap appbar-actions">
+      <button class="btn btn-ghost btn-sm appbar-search" data-open-palette type="button"
+        title="${escapeHtml(tr('pal.placeholder'))}">${icon('search')}<kbd>${escapeHtml(tr('pal.shortcut'))}</kbd></button>
+      <a class="btn btn-ghost btn-sm appbar-bell" href="#/activity"
+        aria-label="${escapeHtml(tr('dash.activity'))}" title="${escapeHtml(tr('dash.activity'))}">
+        ${icon('bell')}${unread ? `<span>${unread > 99 ? '99+' : unread}</span>` : ''}</a>
+      ${actionsHtml}
+    </div>
   </div>`;
 }
 
@@ -846,6 +944,7 @@ const VIEWS = {
   server: () => import('./views/server.js'),
   proxies: () => import('./views/proxies.js'),
   credits: () => import('./views/billing.js'),
+  activity: () => import('./views/activity.js'),
   tickets: () => import('./views/tickets.js'),
   settings: () => import('./views/settings.js'),
   admin: () => import('./views/admin.js'),
@@ -879,6 +978,7 @@ export async function draw() {
   }
   drawing = true;
   state.route = parseRoute();
+  rememberRoute(state.me?.id, location.hash || '#/');
   state.onLive = null;
   drawSide();
   try {
@@ -1046,6 +1146,8 @@ async function boot() {
   try {
     state.meta = await api('/meta');
     await refresh();
+    applyPreferences(state.me?.id);
+    if (!location.hash) history.replaceState(null, '', startHash(state.me?.id, state.profiles));
     connect();
     await draw();
   } catch (error) {

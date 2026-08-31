@@ -1982,6 +1982,56 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   });
   assert.equal(csvUnknown.status, 404);
 
+  // Textbausteine: aus der Erstbefüllung kommen welche mit, und der Zähler daneben ist die
+  // einzige ehrliche Auskunft darüber, welcher davon seinen Platz verdient.
+  const templates = await api(base, '/api/admin/ticket-templates', { token: ADMIN_TOKEN });
+  assert.equal(templates.response.status, 200);
+  assert.ok(templates.data.templates.length >= 4);
+  const first = templates.data.templates[0];
+  assert.match(first.body_de, /\{name\}/);
+  await api(base, `/api/admin/ticket-templates/${first.id}/used`, { token: ADMIN_TOKEN, method: 'POST' });
+  assert.equal(
+    db.prepare('SELECT uses FROM ticket_templates WHERE id = ?').get(first.id).uses,
+    1
+  );
+  const ownTemplate = await api(base, '/api/admin/ticket-templates', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { title_de: 'Eigener Baustein', body_de: 'Hallo {name}, alles klar.' },
+  });
+  assert.equal(ownTemplate.response.status, 200);
+  // Fehlt die englische Fassung, gilt die deutsche für beide – besser ein fremder Satz als keiner.
+  assert.equal(ownTemplate.data.template.body_en, 'Hallo {name}, alles klar.');
+  const templateAsUser = await api(base, '/api/admin/ticket-templates', { token: USER_TOKEN });
+  assert.equal(templateAsUser.response.status, 403);
+
+  // Rundmail: Jeder Empfängerkreis kommt mit seiner Zahl, bevor irgendetwas hinausgeht.
+  const broadcast = await api(base, '/api/admin/broadcast', { token: ADMIN_TOKEN });
+  assert.equal(broadcast.response.status, 200);
+  const groups = Object.fromEntries(broadcast.data.segments.map((entry) => [entry.key, entry.count]));
+  const confirmed = db
+    .prepare('SELECT COUNT(*) AS n FROM users WHERE blocked = 0 AND email_verified = 1')
+    .get().n;
+  assert.equal(groups.all, confirmed);
+  assert.ok(groups.all >= groups.paying);
+  // Gesperrte und unbestätigte Adressen sind überall ausgenommen – außer im Kreis, der sie meint.
+  // richUser und nicht poorUser: Der ist ein paar Zeilen weiter oben gesperrt worden und zählt
+  // deshalb ohnehin nirgends mit – die Prüfung hätte nichts geprüft.
+  db.prepare('UPDATE users SET email_verified = 0 WHERE id = ?').run(richUser.id);
+  const afterUnverify = await api(base, '/api/admin/broadcast', { token: ADMIN_TOKEN });
+  const after = Object.fromEntries(afterUnverify.data.segments.map((entry) => [entry.key, entry.count]));
+  assert.equal(after.all, groups.all - 1);
+  assert.equal(after.unverified, groups.unverified + 1);
+  db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(richUser.id);
+
+  const badSegment = await api(base, '/api/admin/broadcast', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { title_de: 'Hallo', body_de: 'Text', segment: 'alle-mit-einem-a' },
+  });
+  // Ohne SMTP kommt die Absage schon vorher – beides ist eine Absage und kein Versand.
+  assert.ok(badSegment.response.status === 400);
+
   // Passwort-Raten: Zehn Fehlversuche von derselben Adresse, dann macht die Tür nicht mehr auf –
   // und zwar bevor überhaupt ein Passwort geprüft wird.
   db.prepare('DELETE FROM login_attempts').run();

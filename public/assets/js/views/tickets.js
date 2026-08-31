@@ -313,7 +313,9 @@ async function one(root, id, { staff, backHash }) {
               )}">${icon('plus')} ${escapeHtml(tr('tk.files'))}</button>
               ${
                 staff
-                  ? `<button class="btn btn-sm" id="internal" title="${escapeHtml(tr('tk.internalHint'))}">
+                  ? `<button class="btn btn-sm" id="templates" title="${escapeHtml(tr('tmpl.insertHint'))}">
+                      ${icon('message')} ${escapeHtml(tr('tmpl.insert'))}</button>
+                     <button class="btn btn-sm" id="internal" title="${escapeHtml(tr('tk.internalHint'))}">
                       ${icon('shield')} ${escapeHtml(tr('tk.internalNote'))}</button>`
                   : ''
               }
@@ -584,6 +586,63 @@ async function one(root, id, { staff, backHash }) {
 
   $('#send').addEventListener('click', () => send(false));
   $('#internal')?.addEventListener('click', () => send(true));
+
+  /**
+   * Einen Textbaustein einfügen.
+   *
+   * Eingefügt wird an der Stelle, an der der Zeiger steht, und nicht anstelle des Geschriebenen:
+   * Wer schon zwei Sätze getippt hat und dann einen Baustein holt, will beides – sonst wäre der
+   * Knopf ein Papierkorb mit Umweg.
+   *
+   * Die Platzhalter setzt der Browser ein, weil Kunde und Ticket hier ohnehin auf dem Bildschirm
+   * stehen. Ein Baustein bleibt damit ein Text und wird nie zu einer Vorlage, die der Server
+   * rendern muss.
+   */
+  $('#templates')?.addEventListener('click', async () => {
+    let list = [];
+    try {
+      list = (await api('/admin/ticket-templates')).templates;
+    } catch (error) {
+      return fail(error);
+    }
+    if (!list.length) {
+      toast(tr('tmpl.none'), '');
+      return;
+    }
+    const answer = await formDialog(
+      tr('tmpl.insert'),
+      [
+        {
+          key: 'id',
+          label: tr('adm.templates'),
+          type: 'select',
+          value: String(list[0].id),
+          options: list.map((entry) => ({
+            value: String(entry.id),
+            label: `${(state.me?.language === 'en' ? entry.title_en : entry.title_de) || entry.title_de}${
+              entry.category && entry.category !== 'general' ? ` · ${entry.category}` : ''
+            }`,
+          })),
+        },
+      ],
+      { submit: tr('tmpl.insert'), note: tr('tmpl.insertHint') }
+    );
+    if (!answer) return;
+    const chosen = list.find((entry) => String(entry.id) === String(answer.id));
+    if (!chosen) return;
+    const text = (state.me?.language === 'en' ? chosen.body_en : chosen.body_de) || chosen.body_de;
+    const filled = text
+      .replaceAll('{name}', data.user?.username || '')
+      .replaceAll('{ticket}', `#${ticket.id}`)
+      .replaceAll('{subject}', ticket.subject || '');
+    const at = input.selectionStart ?? input.value.length;
+    const before = input.value.slice(0, at);
+    const after = input.value.slice(input.selectionEnd ?? at);
+    input.value = `${before}${before && !before.endsWith('\n') ? '\n' : ''}${filled}${after}`;
+    input.focus();
+    input.selectionStart = input.selectionEnd = input.value.length - after.length;
+    api(`/admin/ticket-templates/${chosen.id}/used`, { method: 'POST' }).catch(() => {});
+  });
 
   // Enter schickt ab, Shift+Enter macht eine neue Zeile – wie in jedem Chat.
   input.addEventListener('keydown', (event) => {

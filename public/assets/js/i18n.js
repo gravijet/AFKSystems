@@ -57,6 +57,8 @@ export const S = {
   'common.search': { en: 'Search', de: 'Suchen' },
   'common.all': { en: 'All', de: 'Alle' },
   'common.never': { en: 'never', de: 'nie' },
+  'common.next': { en: 'Next', de: 'Weiter' },
+  'common.order': { en: 'Order', de: 'Reihenfolge' },
   'common.days': { en: 'days', de: 'Tage' },
   'common.appearance': { en: 'Appearance', de: 'Aussehen' },
   'common.light': { en: 'Light', de: 'Hell' },
@@ -1503,10 +1505,43 @@ export const S = {
     de: 'Ein eigener Discord-Kanal, in den eine Nachricht kommt, wenn ein Bot rausfliegt oder das Guthaben knapp wird.',
   },
   'set.appearance': { en: 'Appearance and language', de: 'Aussehen und Sprache' },
+  'set.accountSub': {
+    en: 'Your identity and the language used across the account.',
+    de: 'Deine Identität und die Sprache, die im ganzen Konto gilt.',
+  },
+  'set.experience': { en: 'Panel on this device', de: 'Panel auf diesem Gerät' },
+  'set.experienceSub': {
+    en: 'Make the workspace fit this screen. These choices stay on this device.',
+    de: 'Passe den Arbeitsbereich an diesen Bildschirm an. Diese Auswahl bleibt auf diesem Gerät.',
+  },
+  'set.theme': { en: 'Colour scheme', de: 'Farbschema' },
+  'set.density': { en: 'Spacing', de: 'Abstände' },
+  'set.density.comfortable': { en: 'Comfortable', de: 'Bequem' },
+  'set.density.compact': { en: 'Compact', de: 'Kompakt' },
+  'set.motion': { en: 'Motion', de: 'Bewegung' },
+  'set.motion.system': { en: 'Match system', de: 'Wie das System' },
+  'set.motion.reduced': { en: 'Reduced', de: 'Reduziert' },
+  'set.startPage': { en: 'When opening the panel', de: 'Beim Öffnen des Panels' },
+  'set.start.overview': { en: 'Show the overview', de: 'Übersicht zeigen' },
+  'set.start.last': { en: 'Continue where I left off', de: 'Dort weitermachen, wo ich war' },
+  'set.shortcuts': { en: 'View keyboard shortcuts', de: 'Tastaturkürzel ansehen' },
+  'set.deviceSaved': { en: 'Saved on this device.', de: 'Auf diesem Gerät gespeichert.' },
   'set.dangerZone': { en: 'Account', de: 'Konto' },
   'set.thisDevice': { en: 'this device', de: 'dieses Gerät' },
   'set.welcome': { en: 'Welcome! Your account is ready.', de: 'Willkommen! Dein Konto steht.' },
   'set.linkOk': { en: 'Account linked.', de: 'Konto verknüpft.' },
+
+  // ---------------------------------------------------------------- Persönliche Serveransicht
+  'srv.favorite': { en: 'Favourite server', de: 'Favorisierter Server' },
+  'srv.favoriteAdd': { en: 'Add to favourites', de: 'Zu Favoriten hinzufügen' },
+  'srv.favoriteRemove': { en: 'Remove from favourites', de: 'Aus Favoriten entfernen' },
+  'srv.search': { en: 'Search servers', de: 'Server durchsuchen' },
+  'srv.filter.all': { en: 'All servers', de: 'Alle Server' },
+  'srv.filter.online': { en: 'Running', de: 'Läuft' },
+  'srv.filter.attention': { en: 'Needs attention', de: 'Braucht Hilfe' },
+  'srv.view.cards': { en: 'Card view', de: 'Kartenansicht' },
+  'srv.view.list': { en: 'List view', de: 'Listenansicht' },
+  'srv.noMatches': { en: 'No server matches these filters.', de: 'Kein Server passt zu diesen Filtern.' },
 
   // ---------------------------------------------------------------- Tickets (neu)
   'tk.reopen': { en: 'Reopen', de: 'Wieder öffnen' },
@@ -1575,6 +1610,44 @@ export const S = {
   'bill.covered': { en: 'covered', de: 'gedeckt' },
 
   // ---------------------------------------------------------------- Admin (neu)
+  // ---------------------------------------------------------------- Textbausteine und Rundmail
+  'adm.templates': { en: 'Canned replies', de: 'Textbausteine' },
+  'tmpl.lead': {
+    en: 'The four sentences a support desk writes every day. Written once, they read the same for every customer.',
+    de: 'Die vier Sätze, die ein Support jeden Tag schreibt. Einmal geschrieben, lesen sie sich für jeden Kunden gleich.',
+  },
+  'tmpl.titleDe': { en: 'Subject (German)', de: 'Titel (deutsch)' },
+  'tmpl.titleEn': { en: 'Subject (English)', de: 'Titel (englisch)' },
+  'tmpl.bodyDe': { en: 'Text (German)', de: 'Text (deutsch)' },
+  'tmpl.bodyEn': { en: 'Text (English)', de: 'Text (englisch)' },
+  'tmpl.uses': { en: 'Used', de: 'Benutzt' },
+  'tmpl.category': { en: 'Area', de: 'Bereich' },
+  'tmpl.placeholders': {
+    en: '{name}, {ticket} and {subject} are filled in when the text is inserted.',
+    de: '{name}, {ticket} und {subject} werden beim Einfügen ersetzt.',
+  },
+  'tmpl.insert': { en: 'Canned reply', de: 'Textbaustein' },
+  'tmpl.insertHint': {
+    en: 'Inserted where the cursor is – what you already wrote stays.',
+    de: 'Wird dort eingefügt, wo der Zeiger steht – Geschriebenes bleibt stehen.',
+  },
+  'tmpl.none': { en: 'No canned replies yet.', de: 'Noch keine Textbausteine.' },
+
+  'bc.title': { en: 'Round mail', de: 'Rundmail' },
+  'bc.lead': {
+    en: 'One message to a chosen group. Whoever unsubscribed from announcements does not get it – that is the point, not a limitation.',
+    de: 'Eine Nachricht an einen ausgewählten Kreis. Wer Ankündigungen abbestellt hat, bekommt sie nicht – das ist der Sinn und keine Einschränkung.',
+  },
+  'bc.segment': { en: 'Recipients', de: 'Empfängerkreis' },
+  'bc.send': { en: 'Send', de: 'Verschicken' },
+  'bc.bothLangs': {
+    en: 'Everyone gets it in their own language. Leave the English fields empty to use the German text for both.',
+    de: 'Jeder bekommt sie in seiner Sprache. Bleiben die englischen Felder leer, gilt der deutsche Text für beide.',
+  },
+  'bc.ask': { en: 'Send to: {who}?', de: 'An {who} verschicken?' },
+  'bc.done': { en: 'Sent {sent}, skipped {skipped}.', de: '{sent} verschickt, {skipped} übersprungen.' },
+  'bc.tested': { en: 'Test message is on its way to you.', de: 'Die Probe ist zu dir unterwegs.' },
+
   // ---------------------------------------------------------------- Betrieb
   'adm.ops': { en: 'Operations', de: 'Betrieb' },
   'ops.running': { en: 'Bots running', de: 'Laufende Bots' },
@@ -1752,6 +1825,11 @@ export const S = {
   'adm.announceTest': { en: 'Send to me only', de: 'Nur an mich' },
   'adm.announceSent': { en: 'Sent to {n} people.', de: 'An {n} Personen verschickt.' },
   'adm.announceAgain': { en: 'Already sent – send again?', de: 'Schon verschickt – noch einmal?' },
+  'adm.announceLink': { en: 'Link (optional)', de: 'Link (optional)' },
+  'adm.noMail': {
+    en: 'No SMTP server is set up – nothing can go out.',
+    de: 'Es ist kein SMTP-Server hinterlegt – es kann nichts hinausgehen.',
+  },
   'adm.cpu': { en: 'CPU', de: 'CPU' },
   'adm.ram': { en: 'Memory', de: 'Arbeitsspeicher' },
   'adm.disk': { en: 'Disk', de: 'Festplatte' },
