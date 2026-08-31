@@ -266,6 +266,7 @@ export const ADMIN_GROUPS = [
     label: 'adm.group.work',
     items: [
       { key: 'overview', label: 'adm.overview', icon: 'chart' },
+      { key: 'ops', label: 'adm.ops', icon: 'activity' },
       { key: 'tickets', label: 'adm.allTickets', icon: 'ticket' },
       { key: 'users', label: 'adm.users', icon: 'users' },
       { key: 'servers', label: 'adm.servers', icon: 'server' },
