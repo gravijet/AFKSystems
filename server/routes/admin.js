@@ -18,6 +18,7 @@ import * as nodes from '../nodes.js';
 import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
 import * as stripe from '../stripe.js';
+import * as exportCsv from '../export.js';
 import { supervisor } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
 import { planView, ticketView } from './core.js';
@@ -745,6 +746,98 @@ admin.patch(
     }
     if (discordRolesChanged) roles.changed(id);
     res.json({ user: userRow(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
+  })
+);
+
+/**
+ * Dasselbe für viele auf einmal.
+ *
+ * Der Anlass ist immer derselbe: Eine Filterung hat eine Gruppe hervorgebracht – alle
+ * unbestätigten Konten, alle, die seit einem Jahr nicht da waren, die vier aus derselben
+ * Betrugsmasche – und mit dieser Gruppe soll etwas geschehen. Dreißigmal dieselbe Seite öffnen
+ * ist dabei nicht nur mühsam, es ist auch fehleranfällig: Man verzählt sich, überspringt einen,
+ * erwischt einen zu viel.
+ *
+ * Drei Regeln machen das ungefährlich:
+ *
+ *   1. **Wer nicht darf, wird übersprungen, nicht abgebrochen.** Eine Massenaktion, die beim
+ *      zwölften Konto mit einem Fehler stehenbleibt, hinterlässt elf geänderte und neunzehn
+ *      offene – und niemand weiß hinterher, welche. Hier wird jeder Fall einzeln entschieden und
+ *      am Ende ehrlich aufgezählt, was nicht ging.
+ *   2. **Sich selbst kann man nicht sperren.** Der letzte Administrator, der sich selbst
+ *      aussperrt, ist kein hypothetischer Fall.
+ *   3. **Ins Minus geht nichts.** Dieselbe Grenze wie bei der einzelnen Buchung darüber.
+ */
+const BULK_ACTIONS = new Set(['block', 'unblock', 'logout', 'verify-mail', 'stop-bots', 'credits']);
+
+admin.post(
+  '/users/bulk',
+  wrap((req, res) => {
+    const body = req.body || {};
+    const action = String(body.action || '');
+    if (!BULK_ACTIONS.has(action)) throw bad('Unbekannte Aktion.', { en: 'Unknown action.' });
+    const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).map((value) => Number(value)))]
+      .filter((value) => Number.isInteger(value) && value > 0)
+      .slice(0, 500);
+    if (!ids.length) throw bad('Niemand ausgewählt.', { en: 'Nobody selected.' });
+
+    const delta = action === 'credits' ? Math.trunc(Number(body.credits_delta)) : 0;
+    if (action === 'credits' && (!Number.isFinite(delta) || delta === 0)) {
+      throw bad('Betrag fehlt.', { en: 'Amount missing.' });
+    }
+    const note = String(body.note || `durch ${req.user.username}`).slice(0, 200);
+
+    const done = [];
+    const skipped = [];
+    for (const id of ids) {
+      const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+      if (!user) {
+        skipped.push({ id, reason: 'gone' });
+        continue;
+      }
+      if (id === req.user.id && (action === 'block' || action === 'logout')) {
+        skipped.push({ id, reason: 'self', username: user.username });
+        continue;
+      }
+      if (action === 'credits' && delta < 0 && user.credits + delta < 0) {
+        skipped.push({ id, reason: 'negative', username: user.username });
+        continue;
+      }
+      switch (action) {
+        case 'block':
+        case 'unblock': {
+          const blocked = action === 'block';
+          db.prepare('UPDATE users SET blocked = ? WHERE id = ?').run(blocked ? 1 : 0, id);
+          if (blocked) {
+            supervisor.stopUser(id, 'Konto wurde gesperrt.');
+            db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+          }
+          roles.changed(id);
+          break;
+        }
+        case 'logout':
+          db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
+          break;
+        case 'verify-mail':
+          db.prepare('UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?').run(id);
+          break;
+        case 'stop-bots':
+          supervisor.stopUser(id, `Von ${req.user.username} gestoppt.`);
+          break;
+        case 'credits':
+          billing.move(id, delta, 'admin', note);
+          break;
+      }
+      done.push(id);
+    }
+
+    audit(req.user.id, 'admin-bulk', {
+      action,
+      done: done.length,
+      skipped: skipped.length,
+      ...(action === 'credits' ? { delta } : {}),
+    });
+    res.json({ done: done.length, skipped });
   })
 );
 
@@ -2078,6 +2171,35 @@ admin.get(
         langOf(req)
       ),
     });
+  })
+);
+
+// ---------------------------------------------------------------- Ausfuhr
+
+/**
+ * Eine Tabelle als CSV-Datei.
+ *
+ * Was drinsteht und warum es so aussieht, steht in server/export.js. Hier steht nur, wer darf und
+ * wie die Datei zum Browser kommt: als Anhang mit sprechendem Namen, nicht im Fenster.
+ *
+ * Der Aufruf geht bewusst über einen gewöhnlichen Verweis und nicht über `fetch`: Ein Browser
+ * kann einen Anhang speichern, ein Skript müsste ihn erst zu einem Blob machen, um dann einen
+ * Verweis zu erfinden, den es selbst anklickt. Deshalb ist das hier ein GET ohne Umschweife – und
+ * deshalb steht die Ausfuhr auch im Protokoll: Wer alle Mailadressen mitnimmt, soll eine Spur
+ * hinterlassen.
+ */
+admin.get(
+  '/export/:kind',
+  wrap((req, res) => {
+    const kind = String(req.params.kind || '').replace(/\.csv$/, '');
+    const file = exportCsv.build(kind);
+    if (!file) throw notFound('Diese Liste gibt es nicht.', { en: 'No such list.' });
+    audit(req.user.id, 'admin-export', { kind, rows: file.rows }, req.ip);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
+    // Eine Liste aller Kunden gehört in keinen Zwischenspeicher, weder im Browser noch davor.
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(file.body);
   })
 );
 

@@ -1813,6 +1813,72 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const searchAsUser = await api(base, '/api/admin/search?q=SuspendMe', { token: USER_TOKEN });
   assert.equal(searchAsUser.response.status, 403);
 
+  // Massenaktionen: was nicht geht, wird übersprungen und aufgezählt – nicht abgebrochen. Sonst
+  // bliebe die halbe Auswahl geändert und niemand wüsste welche Hälfte.
+  const poorUser = createUser({ credits: 0 });
+  const richUser = createUser({ credits: 500 });
+  const bulkCredits = await api(base, '/api/admin/users/bulk', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { action: 'credits', ids: [richUser.id, poorUser.id], credits_delta: -200, note: 'Rückbuchung' },
+  });
+  assert.equal(bulkCredits.response.status, 200);
+  assert.equal(bulkCredits.data.done, 1);
+  assert.deepEqual(bulkCredits.data.skipped.map((entry) => entry.reason), ['negative']);
+  assert.equal(db.prepare('SELECT credits FROM users WHERE id = ?').get(richUser.id).credits, 300);
+  assert.equal(db.prepare('SELECT credits FROM users WHERE id = ?').get(poorUser.id).credits, 0);
+
+  // Sich selbst sperrt niemand aus – auch nicht versehentlich als Teil einer Auswahl.
+  const bulkBlock = await api(base, '/api/admin/users/bulk', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { action: 'block', ids: [admin.id, poorUser.id] },
+  });
+  assert.equal(bulkBlock.data.done, 1);
+  assert.deepEqual(bulkBlock.data.skipped.map((entry) => entry.reason), ['self']);
+  assert.equal(db.prepare('SELECT blocked FROM users WHERE id = ?').get(admin.id).blocked, 0);
+  assert.equal(db.prepare('SELECT blocked FROM users WHERE id = ?').get(poorUser.id).blocked, 1);
+
+  const bulkUnknown = await api(base, '/api/admin/users/bulk', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { action: 'delete-everything', ids: [poorUser.id] },
+  });
+  assert.equal(bulkUnknown.response.status, 400);
+
+  // Ausfuhr: eine Datei zum Mitnehmen, mit Kopfzeile, als Anhang und ohne Zwischenspeicher.
+  const csvResponse = await fetch(`${base}/api/admin/export/users`, {
+    headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
+  });
+  assert.equal(csvResponse.status, 200);
+  assert.match(csvResponse.headers.get('content-type'), /text\/csv/);
+  assert.match(csvResponse.headers.get('content-disposition'), /attachment; filename="[\w-]+-users-\d{4}-\d{2}-\d{2}\.csv"/);
+  assert.equal(csvResponse.headers.get('cache-control'), 'no-store');
+  // Als Bytes gelesen, nicht als Text: `text()` schluckt die BOM nach Vorschrift, und genau die
+  // ist hier der Unterschied zwischen "Serverplätze" und "Serverplätze" in Excel.
+  const csvBytes = Buffer.from(await csvResponse.arrayBuffer());
+  assert.deepEqual([...csvBytes.subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+  const csv = csvBytes.toString('utf8').slice(1);
+  assert.match(csv.split('\r\n')[0], /^id,username,email,role,credits/);
+  assert.ok(csv.includes(user.email));
+
+  // Ein Feld, das mit = anfängt, ist für Excel eine Formel. Es kommt entschärft heraus – sonst
+  // wäre eine Notiz im Buchungsprotokoll ein Angriff auf den, der die Datei öffnet.
+  billing.move(richUser.id, 5, 'admin', '=1+1');
+  const ledgerCsv = await (
+    await fetch(`${base}/api/admin/export/ledger`, { headers: { cookie: `afk_session=${ADMIN_TOKEN}` } })
+  ).text();
+  assert.ok(ledgerCsv.includes("'=1+1"));
+
+  const csvAsUser = await fetch(`${base}/api/admin/export/users`, {
+    headers: { cookie: `afk_session=${USER_TOKEN}` },
+  });
+  assert.equal(csvAsUser.status, 403);
+  const csvUnknown = await fetch(`${base}/api/admin/export/passwords`, {
+    headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
+  });
+  assert.equal(csvUnknown.status, 404);
+
   const premium = billing.planBySlug('premium');
   const premiumFeatures = premium.features_de;
   const savedPlan = await api(base, `/api/admin/plans/${premium.id}`, {

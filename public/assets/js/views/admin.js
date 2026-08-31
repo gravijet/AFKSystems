@@ -53,7 +53,13 @@ function bindRows(selector, open, root = document) {
   for (const row of $$(selector, root)) {
     if (!row.hasAttribute('role')) row.setAttribute('role', 'button');
     if (!row.hasAttribute('tabindex')) row.setAttribute('tabindex', '0');
-    row.addEventListener('click', () => open(row));
+    row.addEventListener('click', (event) => {
+      // Ein Bedienelement **in** der Zeile hat seine eigene Bedeutung. Seit die Nutzerliste
+      // Häkchen zum Auswählen hat, wäre das sonst: anhaken und dabei die Zeile verlassen – die
+      // Auswahl wäre weg, bevor man sie benutzen kann.
+      if (event.target.closest('input, button, a, label, select, textarea')) return;
+      open(row);
+    });
     row.addEventListener('keydown', (event) => {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       // Nur die Zeile selbst: Ein Knopf **in** der Zeile hat seine eigene Bedeutung, und die soll
@@ -184,8 +190,15 @@ const stat = (label, value, sub = '') =>
   `<div class="stat"><div class="k">${escapeHtml(label)}</div><div class="v">${value}</div>
    <div class="s">${escapeHtml(sub)}</div></div>`;
 
+/**
+ * Eine Tabelle. Überschriften sind Text und werden entschärft – außer, es steht ausdrücklich
+ * `{ html: … }` da: Seit die Nutzerliste ein Kästchen zum Auswählen in der Kopfzeile hat, gibt es
+ * eine Überschrift, die keine Beschriftung ist, sondern ein Bedienelement.
+ */
 const table = (heads, rows) => `<div class="table-wrap"><table class="table">
-  <thead><tr>${heads.map((head) => `<th>${escapeHtml(head)}</th>`).join('')}</tr></thead>
+  <thead><tr>${heads
+    .map((head) => `<th>${typeof head === 'string' ? escapeHtml(head) : head.html}</th>`)
+    .join('')}</tr></thead>
   <tbody>${
     rows.join('') ||
     `<tr><td colspan="${heads.length}" class="small muted" style="padding:1.5rem;text-align:center">${escapeHtml(
@@ -197,6 +210,97 @@ const panel = (title, inner, actions = '') => `<section class="panel" style="mar
   <header><h3>${escapeHtml(title)}</h3><div class="row">${actions}</div></header>
   <div class="body" style="padding:0">${inner}</div>
 </section>`;
+
+/**
+ * Der Knopf, der eine Liste als CSV-Datei herunterlädt.
+ *
+ * Ein gewöhnlicher Verweis, kein `fetch`: Ein Anhang ist genau das, was ein Browser von sich aus
+ * kann. Der Umweg über ein Skript müsste die Antwort erst zu einem Blob machen, daraus eine
+ * Adresse erfinden und die dann selbst anklicken – dieselbe Datei, dreimal so viel Code, und ohne
+ * den Fortschrittsbalken, den der Browser bei großen Listen ohnehin schon zeigt.
+ */
+const exportButton = (kind) =>
+  `<a class="btn btn-sm" href="/api/admin/export/${kind}" download
+      title="${escapeHtml(tr('adm.exportHint'))}">${icon('download')} ${escapeHtml(tr('adm.export'))}</a>`;
+
+/**
+ * Die Leiste für Massenaktionen.
+ *
+ * Sie steht immer an derselben Stelle über der Liste und ist leer, solange nichts ausgewählt ist –
+ * eine Leiste, die erst erscheint, schiebt beim ersten Häkchen die halbe Seite nach unten, und
+ * dann trifft der zweite Klick eine andere Zeile als gemeint.
+ */
+const BULK_BUTTONS = [
+  ['credits', 'adm.addCredits', 'wallet', ''],
+  ['verify-mail', 'adm.verifyMail', 'check', ''],
+  ['logout', 'adm.logoutUser', 'key', ''],
+  ['stop-bots', 'adm.stopBots', 'stop', ''],
+  ['unblock', 'adm.unblock', 'unlock', ''],
+  ['block', 'adm.block', 'lock', 'btn-danger'],
+];
+
+const bulkBar = () => `<div class="bulk" id="bulk" data-empty="true">
+  <span class="small" id="bulk-count"></span>
+  <div class="row wrap grow" id="bulk-actions">
+    ${BULK_BUTTONS.map(
+      ([action, label, symbol, klass]) =>
+        `<button class="btn btn-sm ${klass}" data-bulk="${action}">${icon(symbol)} ${escapeHtml(tr(label))}</button>`
+    ).join('')}
+  </div>
+  <button class="btn btn-ghost btn-sm" id="bulk-clear">${escapeHtml(tr('adm.bulk.clear'))}</button>
+</div>`;
+
+/**
+ * Die Auswahl einer Liste bedienen: Häkchen, „alle“, Zähler, und die Aktionen selbst.
+ *
+ * `run` bekommt die Kennungen und den Namen der Aktion und entscheidet, was daraus wird – so
+ * kennt dieser Baustein weder Nutzer noch Serverplätze, sondern nur Zeilen mit Häkchen.
+ */
+function bindBulk(run) {
+  const bar = $('#bulk');
+  if (!bar) return;
+  const boxes = () => $$('.pick');
+  const chosen = () => boxes().filter((box) => box.checked).map((box) => Number(box.dataset.id));
+
+  const update = () => {
+    const count = chosen().length;
+    bar.dataset.empty = String(count === 0);
+    $('#bulk-count').textContent = count ? tr('adm.bulk.selected', { n: count }) : tr('adm.bulk.hint');
+    const all = $('#pick-all');
+    if (all) {
+      all.checked = count > 0 && count === boxes().length;
+      // Teilweise ausgewählt ist ein eigener Zustand und nicht "aus": Das Kästchen zeigt einen
+      // Strich statt eines Hakens, und ein Klick darauf wählt dann alles.
+      all.indeterminate = count > 0 && count < boxes().length;
+    }
+  };
+
+  for (const box of boxes()) box.addEventListener('change', update);
+  $('#pick-all')?.addEventListener('change', (event) => {
+    for (const box of boxes()) box.checked = event.target.checked;
+    update();
+  });
+  $('#bulk-clear').addEventListener('click', () => {
+    for (const box of boxes()) box.checked = false;
+    update();
+  });
+  for (const button of $$('[data-bulk]')) {
+    button.addEventListener('click', async () => {
+      const ids = chosen();
+      if (!ids.length) return;
+      await run(button.dataset.bulk, ids);
+    });
+  }
+  update();
+}
+
+/** Was aus einer Massenaktion wurde – und was nicht. Beides in einem Satz. */
+function bulkReport(answer) {
+  if (!answer) return;
+  const skipped = answer.skipped?.length || 0;
+  if (skipped) toast(tr('adm.bulk.doneSome', { done: answer.done, skipped }), answer.done ? '' : 'bad');
+  else ok(tr('adm.bulk.done', { done: answer.done }));
+}
 
 /** Zahlen aus einem Dialog kommen als Text zurück – hier wieder zu Zahlen machen. */
 function numbers(answer, extra = []) {
@@ -666,7 +770,10 @@ async function staffTickets(root) {
         <input id="tk-q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
           value="${escapeHtml(search)}" style="max-width:16rem">
       </div>
-      <button class="btn btn-sm" id="tk-new-for">${icon('users')} ${escapeHtml(tr('tk.newFor'))}</button>
+      <div class="row wrap">
+        ${exportButton('tickets')}
+        <button class="btn btn-sm" id="tk-new-for">${icon('users')} ${escapeHtml(tr('tk.newFor'))}</button>
+      </div>
     </div>
 
     <section class="panel">
@@ -814,15 +921,30 @@ async function users(root) {
           .join('')}
       </select>
       <div class="grow"></div>
+      ${exportButton('users')}
       <button class="btn btn-primary btn-sm" id="new">${icon('plus')} ${escapeHtml(tr('adm.newUser'))}</button>
     </div>
+
+    ${bulkBar()}
 
     ${panel(
       `${data.users.length} ${tr('adm.users')}`,
       table(
-        ['#', tr('auth.register.username'), tr('auth.register.email'), tr('common.credits'), tr('bill.monthly'), tr('adm.profiles'), tr('adm.bots'), ''],
+        [
+          { html: `<input type="checkbox" id="pick-all" aria-label="${escapeHtml(tr('adm.bulk.all'))}">` },
+          '#',
+          tr('auth.register.username'),
+          tr('auth.register.email'),
+          tr('common.credits'),
+          tr('bill.monthly'),
+          tr('adm.profiles'),
+          tr('adm.bots'),
+          '',
+        ],
         data.users.map(
           (user) => `<tr data-user="${user.id}" style="cursor:pointer">
+            <td><input type="checkbox" class="pick" data-id="${user.id}"
+              aria-label="${escapeHtml(user.username)}"></td>
             <td class="mono small muted">${user.id}</td>
             <td><span class="row" style="gap:.4rem">${escapeHtml(user.username)}
               ${user.role === 'admin' ? `<span class="pill primary">admin</span>` : ''}
@@ -847,6 +969,38 @@ async function users(root) {
   $('#search').addEventListener('input', search);
   $('#filter').addEventListener('change', search);
   bindRows('[data-user]', (row) => go(`/admin/users/${row.dataset.user}`));
+
+  bindBulk(async (action, ids) => {
+    const body = { action, ids };
+    if (action === 'credits') {
+      const answer = await formDialog(
+        tr('adm.addCredits'),
+        [
+          { key: 'credits_delta', label: tr('common.credits'), type: 'number', value: 100, required: true },
+          { key: 'note', label: tr('adm.reason'), value: '' },
+        ],
+        { submit: tr('common.save'), note: tr('adm.bulk.selected', { n: ids.length }) }
+      );
+      if (!answer) return;
+      body.credits_delta = Number(answer.credits_delta);
+      body.note = answer.note;
+    } else {
+      // Alles andere trifft fremde Konten sofort und sichtbar – einmal nachfragen, mit der Zahl
+      // dabei. „Sperren“ für dreißig Leute ist etwas anderes als für einen.
+      const label = tr(BULK_BUTTONS.find(([key]) => key === action)[1]);
+      const confirmed = await confirmDialog(tr('adm.bulk.ask', { what: label, n: ids.length }), {
+        confirm: label,
+        danger: action === 'block',
+      });
+      if (!confirmed) return;
+    }
+    try {
+      bulkReport(await api('/admin/users/bulk', { method: 'POST', body }));
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
 
   $('#new').addEventListener('click', async () => {
     const answer = await formDialog(
@@ -1270,7 +1424,8 @@ async function servers(root) {
           </td>
         </tr>`
       )
-    )
+    ),
+    exportButton('profiles')
   );
 
   bindRows('[data-open]', (row) => go(`/admin/servers/${row.dataset.open}`));
@@ -2227,7 +2382,8 @@ async function topups(root) {
           </td>
         </tr>`
       )
-    )
+    ),
+    exportButton('topups')
   );
 
   $$('[data-settle]').forEach((button) =>
@@ -3426,7 +3582,8 @@ async function ledger(root) {
           <td class="mono small muted">${credits(row.balance)}</td>
         </tr>`
       )
-    )
+    ),
+    exportButton('ledger')
   );
 }
 
@@ -3457,6 +3614,8 @@ async function audit(root) {
       </select>
       <input id="q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
         value="${escapeHtml(query)}" style="max-width:16rem">
+      <div class="grow"></div>
+      ${exportButton('audit')}
     </div>
 
     <section class="panel">
