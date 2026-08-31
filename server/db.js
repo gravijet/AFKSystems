@@ -909,6 +909,34 @@ const migrations = [
       }
     },
   },
+
+  {
+    // Anmeldeversuche und Adresssperren. Beides gehört in die Datenbank und nicht in den
+    // Speicher: Ein Angriff, der einen Neustart überdauert, soll auch im Protokoll überdauern.
+    name: '016-anmeldeversuche-und-adresssperren',
+    sql: `
+      CREATE TABLE login_attempts (
+        id         INTEGER PRIMARY KEY,
+        ip         TEXT NOT NULL DEFAULT '',
+        identifier TEXT NOT NULL DEFAULT '',   -- was eingetippt wurde: Mail oder Benutzername
+        ok         INTEGER NOT NULL DEFAULT 0,
+        reason     TEXT,                       -- wrong | blocked | throttled
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX login_attempts_time ON login_attempts(created_at DESC);
+      CREATE INDEX login_attempts_ip ON login_attempts(ip, created_at DESC);
+      CREATE INDEX login_attempts_who ON login_attempts(identifier, created_at DESC);
+
+      CREATE TABLE ip_blocks (
+        id         INTEGER PRIMARY KEY,
+        value      TEXT NOT NULL UNIQUE,       -- 1.2.3.4 oder 1.2.3.0/24 oder 2001:db8::/32
+        reason     TEXT,
+        created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER                     -- NULL = ohne Frist
+      );
+    `,
+  },
 ];
 
 /**

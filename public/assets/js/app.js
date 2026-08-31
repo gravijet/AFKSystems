@@ -299,6 +299,7 @@ export const ADMIN_GROUPS = [
     label: 'adm.group.logs',
     items: [
       { key: 'system', label: 'adm.system', icon: 'cpu' },
+      { key: 'security', label: 'adm.security', icon: 'lock' },
       { key: 'mails', label: 'adm.mails', icon: 'mail' },
       { key: 'audit', label: 'adm.audit', icon: 'terminal' },
     ],

@@ -19,6 +19,7 @@ import { supervisor } from '../supervisor.js';
 import * as billing from '../billing.js';
 import * as stripe from '../stripe.js';
 import * as vat from '../vat.js';
+import * as security from '../security.js';
 import { setLangCookie, t } from '../pages.js';
 import { bridge } from '../bridge.js';
 import { wrap, requireInt, bad, notFound, forbidden, token, HttpError, langOf, safeUrl } from '../util.js';
@@ -173,7 +174,34 @@ router.post(
 router.post(
   '/auth/login',
   wrap((req, res) => {
-    const user = auth.login(req.body || {});
+    const identifier = String(req.body?.login || '').trim();
+    // Zuerst nachsehen, ob hier gerade jemand Passwörter durchprobiert. Die Prüfung steht **vor**
+    // auth.login, denn eine Passwortprüfung ist absichtlich teuer – wer gebremst wird, soll diese
+    // Rechenzeit gar nicht erst bekommen.
+    const wait = security.tooMany(req.ip, identifier);
+    if (wait) {
+      security.record({ ip: req.ip, identifier, ok: false, reason: 'throttled' });
+      throw new HttpError(
+        429,
+        'Zu viele Fehlversuche. Bitte in einer Viertelstunde noch einmal versuchen.',
+        { en: 'Too many failed attempts. Please try again in fifteen minutes.' }
+      );
+    }
+    let user;
+    try {
+      user = auth.login(req.body || {});
+    } catch (error) {
+      // Ein Fehlversuch wird aufgeschrieben, bevor er weitergereicht wird: Sonst stünde im
+      // Protokoll nur, was geklappt hat – und das ist genau die Hälfte, die niemanden warnt.
+      security.record({
+        ip: req.ip,
+        identifier,
+        ok: false,
+        reason: error?.status === 403 ? 'blocked' : 'wrong',
+      });
+      throw error;
+    }
+    security.record({ ip: req.ip, identifier, ok: true });
     // Vor dem Anlegen der Sitzung: danach wäre jedes Gerät bekannt (siehe auth.noticeNewDevice).
     auth.noticeNewDevice(user, req);
     auth.createSession(res, user, req);
