@@ -17,7 +17,7 @@ import {
   safeLink, lang, tr, $, $$, ok, fail, toast, confirmDialog, formDialog, copy, debounce,
 } from '../ui.js';
 import { mergeLines } from '../chatlog.js';
-import { state, appbar, draw, go, ADMIN_GROUPS } from '../app.js';
+import { state, appbar, draw, go, showPalette, ADMIN_GROUPS } from '../app.js';
 import * as chart from '../charts.js';
 
 const ADMIN_ITEMS = ADMIN_GROUPS.flatMap((group) => group.items);
@@ -139,9 +139,16 @@ export async function render(root, route) {
   const entry = ADMIN_ITEMS.find((item) => item.key === requested);
   const tab = entry ? entry.key : 'overview';
 
+  // Die Sprungmarke steht in jeder Admin-Kopfzeile und nicht nur auf einer Tastenkombination:
+  // Ein Kürzel, das niemand sieht, kennt auch niemand.
+  const searchButton = `<button class="btn btn-sm" id="admin-search" title="${escapeHtml(tr('pal.shortcut'))}">
+    ${icon('search')} ${escapeHtml(tr('pal.title'))}</button>`;
+
   root.innerHTML = `
-    ${appbar(tr(entry?.label || 'adm.overview'), '', tr('adm.title'))}
+    ${appbar(tr(entry?.label || 'adm.overview'), searchButton, tr('adm.title'))}
     <div id="admin-body"><div class="empty"><h3>${escapeHtml(tr('common.loading'))}</h3></div></div>`;
+
+  $('#admin-search').addEventListener('click', () => showPalette());
 
   const body = $('#admin-body');
   const views = {

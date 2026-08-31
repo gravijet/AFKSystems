@@ -1785,6 +1785,34 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(userInfo.response.status, 200);
   assert.deepEqual(userInfo.data.tickets.map((entry) => entry.id), [openTicket.id]);
 
+  // Die Suche über alles: ein Anhaltspunkt, Treffer aus mehreren Tabellen, und jeder bringt den
+  // Weg zu sich selbst mit. Ein Kunde darf sie nicht einmal ansehen – sie zeigt fremde Mailadressen.
+  const searchByMail = await api(base, `/api/admin/search?q=${encodeURIComponent(user.email)}`, {
+    token: ADMIN_TOKEN,
+  });
+  assert.equal(searchByMail.response.status, 200);
+  const foundUser = searchByMail.data.groups.find((group) => group.kind === 'users');
+  assert.deepEqual(foundUser.hits.map((hit) => hit.id), [user.id]);
+  assert.equal(foundUser.hits[0].route, `/admin/users/${user.id}`);
+
+  const searchByName = await api(base, '/api/admin/search?q=SuspendMe', { token: ADMIN_TOKEN });
+  const foundAccount = searchByName.data.groups.find((group) => group.kind === 'accounts');
+  // Ein Account hat keine eigene Seite – der Treffer führt dorthin, wo er wirklich steht.
+  assert.equal(foundAccount.hits[0].route, `/admin/users/${user.id}`);
+
+  // Eine bloße Nummer findet die Sache mit dieser Nummer – auch wenn sie nur ein Zeichen lang
+  // ist. Ticket 7 heißt wirklich 7, und wer das eintippt, meint nichts anderes.
+  const searchByTicketId = await api(base, `/api/admin/search?q=${openTicket.id}`, { token: ADMIN_TOKEN });
+  const foundTicket = searchByTicketId.data.groups.find((group) => group.kind === 'tickets');
+  assert.equal(foundTicket.hits[0].id, openTicket.id);
+
+  // Ein einzelner Buchstabe ist dagegen keine Suche, sondern eine Anfrage über die halbe Datenbank.
+  const searchTooShort = await api(base, '/api/admin/search?q=a', { token: ADMIN_TOKEN });
+  assert.deepEqual(searchTooShort.data.groups, []);
+
+  const searchAsUser = await api(base, '/api/admin/search?q=SuspendMe', { token: USER_TOKEN });
+  assert.equal(searchAsUser.response.status, 403);
+
   const premium = billing.planBySlug('premium');
   const premiumFeatures = premium.features_de;
   const savedPlan = await api(base, `/api/admin/plans/${premium.id}`, {

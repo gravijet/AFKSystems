@@ -235,13 +235,13 @@ function setLive(online) {
 //     über der Ansicht.
 
 /** Die feste Navigation. Zwei Bündel, getrennt durch eine Linie, ohne Überschriften. */
-const NAV_PRIMARY = [
+export const NAV_PRIMARY = [
   { hash: '#/', key: 'dash.overview', icon: 'chart' },
   { hash: '#/servers', key: 'dash.servers', icon: 'server' },
   { hash: '#/accounts', key: 'dash.accounts', icon: 'users' },
 ];
 
-const NAV_ACCOUNT = [
+export const NAV_ACCOUNT = [
   { hash: '#/credits', key: 'dash.credits', icon: 'wallet' },
   { hash: '#/tickets', key: 'dash.tickets', icon: 'ticket' },
   { hash: '#/proxies', key: 'dash.proxies', icon: 'globe' },
@@ -784,8 +784,27 @@ document.addEventListener('click', (event) => {
   else if (event.target.closest('.side-close')) toggleSide(false);
   else if (event.target.closest('.side a')) toggleSide(false);
 });
+/**
+ * Die Sprungmarke aufmachen – Strg+K, oder ⌘K auf dem Mac.
+ *
+ * Sie kommt erst beim ersten Aufruf über die Leitung: Wer sie nie benutzt, lädt sie auch nicht.
+ * Und sie wird **spät** geholt, weil sie ihrerseits aus dieser Datei liest – zwei Module, die sich
+ * beim Laden gegenseitig brauchen, sind ein Kreis, zwei die sich beim Aufruf brauchen nicht.
+ */
+export async function showPalette(initial = '') {
+  const palette = await import('./palette.js');
+  palette.openPalette(initial);
+}
+
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && $('#side').classList.contains('open')) return toggleSide(false);
+  if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 'k' || event.key === 'K')) {
+    // Strg+K ist im Browser die Adresszeile. Hier ist es die Suche über alles, und das ist an
+    // dieser Stelle die naheliegendere Bedeutung: Wer im Panel tippt, sucht im Panel.
+    event.preventDefault();
+    showPalette();
+    return;
+  }
   // "/" springt ins Suchfeld der Seitenleiste – aber nur, wenn gerade nicht ohnehin getippt wird.
   if (event.key !== '/' || event.ctrlKey || event.metaKey || event.altKey) return;
   const active = document.activeElement;
