@@ -15,6 +15,7 @@ import path from 'node:path';
 import nodemailer from 'nodemailer';
 import { db, getSetting } from './db.js';
 import { config, ROOT } from './config.js';
+import * as vat from './vat.js';
 import { safeUrl } from './util.js';
 
 /** Ist der Versand eingerichtet? */
@@ -145,6 +146,19 @@ function sender() {
 }
 
 /**
+ * Wohin eine **Antwort** auf unsere Post geht.
+ *
+ * Auf "Antworten" zu drücken ist das Erste, was jemand tut, der etwas fragen will – und die
+ * Absenderadresse ist bei den meisten Einrichtungen ein Postfach, das niemand liest. Steht eine
+ * Kontakt-Adresse in den Einstellungen, geht die Antwort dorthin. Ohne Eintrag bleibt es beim
+ * Absender: Lieber keine Antwortadresse als eine, die ins Nichts zeigt.
+ */
+function replyTo() {
+  const address = String(getSetting('support_email') || '').trim();
+  return /^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(address) ? address : undefined;
+}
+
+/**
  * Eine Nachricht verschicken. Wirft nie – der Aufruf steht meistens mitten in einer
  * Registrierung oder einer Verlängerung, und die soll nicht an einem stummen Mailserver scheitern.
  *
@@ -161,6 +175,7 @@ export async function send({ to, subject, text, html, kind = 'mail', userId = nu
   try {
     await transport().sendMail({
       from: sender(),
+      replyTo: replyTo(),
       to,
       subject,
       text,
@@ -406,23 +421,34 @@ const T = {
     },
   },
 
+  // Diese Nachricht ist der **Beleg** über die Aufladung – deshalb steht darin, was auf einen
+  // Beleg gehört: Leistung, Betrag und wie es um die Umsatzsteuer steht. Der Satz dazu kommt aus
+  // `vat.js` und ist derselbe wie auf der Preisseite und an der Kasse. Bei der
+  // Kleinunternehmerregelung wird ausdrücklich **keine** Steuer ausgewiesen: Wer sie irrtümlich
+  // ausweist, schuldet sie allein aufgrund der Rechnung.
   topup: {
     category: 'billing',
     de: {
-      subject: (v) => `${config.brand}: ${v.credits} Credits gutgeschrieben`,
+      subject: (v) => `${config.brand}: Beleg über ${money(v.amount_cent, 'de')}`,
       title: () => 'Guthaben ist da',
       lines: (v) => [
         `Deine Aufladung über ${money(v.amount_cent, 'de')} ist angekommen.`,
-        `Gutgeschrieben: <b>${v.credits} Credits</b>. Neuer Stand: <b>${v.balance} Credits</b> (${money(v.balance, 'de')}).`,
+        `Leistung: <b>${v.credits} Credits</b> Guthaben bei ${config.brand}.`,
+        `Gesamtbetrag: <b>${money(v.amount_cent, 'de')}</b>`,
+        vat.note('de'),
+        `Neuer Stand: <b>${v.balance} Credits</b> (${money(v.balance, 'de')}).`,
       ],
       action: (v) => ({ url: `${v.base}/app#/credits`, label: 'Guthaben ansehen' }),
     },
     en: {
-      subject: (v) => `${config.brand}: ${v.credits} credits added`,
+      subject: (v) => `${config.brand}: receipt for ${money(v.amount_cent, 'en')}`,
       title: () => 'Your credits arrived',
       lines: (v) => [
         `Your top-up of ${money(v.amount_cent, 'en')} came through.`,
-        `Added: <b>${v.credits} credits</b>. New balance: <b>${v.balance} credits</b> (${money(v.balance, 'en')}).`,
+        `Item: <b>${v.credits} credits</b> of ${config.brand} balance.`,
+        `Total: <b>${money(v.amount_cent, 'en')}</b>`,
+        vat.note('en'),
+        `New balance: <b>${v.balance} credits</b> (${money(v.balance, 'en')}).`,
       ],
       action: (v) => ({ url: `${v.base}/app#/credits`, label: 'View credits' }),
     },

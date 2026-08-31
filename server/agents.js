@@ -8,8 +8,14 @@
 // eine einzige Portfreigabe auskommt – der Rechner baut eine WebSocket-Verbindung nach draußen
 // auf und hält sie offen. Alles Weitere läuft darüber:
 //
-//     Panel  ->  spawn / stdin / kill / sync        (was der Standort tun soll)
-//     Panel  <-  hello / metrics / out / err / exit / files
+//     Panel  ->  spawn / stdin / kill / sync / http  (was der Standort tun soll)
+//     Panel  <-  hello / metrics / out / err / exit / files / httpres
+//
+// `http`/`httpres` ist der jüngste Zuwachs und der einzige, der nicht mit einem Prozess zu tun
+// hat: Der texturierte Viewer des Clients (ab 2.5.0) lauscht auf dem **Localhost des Standorts**
+// und ist von hier aus nicht erreichbar. Damit ein Kunde sein Bild trotzdem sieht, reist die
+// HTTP-Anfrage durch dieselbe Leitung, über die schon Chat und Tastendrücke gehen. Ein zweiter
+// Kanal wäre eine zweite Portfreigabe – und die zu vermeiden ist der ganze Sinn dieser Bauart.
 //
 // Die Ausgabe eines entfernten Bots sieht im Panel exakt so aus wie die eines örtlichen: dafür
 // gibt es `RemoteProcess`, das sich nach außen verhält wie ein Kindprozess von `child_process`.
@@ -44,7 +50,17 @@ class NodeLink {
     this.name = node.name;
     this.socket = socket;
     this.jobs = new Map();
-    this.info = { version: null, hostname: '', platform: '', cores: 0, binaries: [] };
+    /** Laufende HTTP-Anfragen an den Viewer eines Bots: id -> { resolve, reject, timer }. */
+    this.calls = new Map();
+    this.nextCall = 1;
+    this.info = {
+      version: null,
+      hostname: '',
+      platform: '',
+      cores: 0,
+      binaries: [],
+      mc: [],
+    };
     this.metrics = null;
     this.seenAt = Date.now();
 
@@ -90,6 +106,9 @@ class NodeLink {
           platform: message.platform || '',
           cores: Number(message.cores) || 0,
           binaries: Array.isArray(message.binaries) ? message.binaries : [],
+          // Welche Minecraft-Versionen dieser Standort texturiert zeichnen kann. Ohne die JAR
+          // bekommt ein Bot dort keinen `--pov-web`-Viewer, egal was im Panel gebucht ist.
+          mc: Array.isArray(message.mc) ? message.mc : [],
         };
         db.prepare('UPDATE nodes SET agent_version = ?, last_seen = ? WHERE id = ?').run(
           this.info.version,
@@ -152,6 +171,23 @@ class NodeLink {
         break;
       }
 
+      case 'httpres': {
+        const call = this.calls.get(message.id);
+        if (!call) break;
+        this.calls.delete(message.id);
+        clearTimeout(call.timer);
+        if (message.error) {
+          call.reject(new Error(message.error));
+          break;
+        }
+        call.resolve({
+          status: Number(message.status) || 502,
+          type: String(message.ctype || 'application/octet-stream'),
+          body: Buffer.from(String(message.body || ''), 'base64'),
+        });
+        break;
+      }
+
       case 'pong':
         break;
 
@@ -167,6 +203,14 @@ class NodeLink {
       job.emit('exit', null, 'LINK');
     }
     this.jobs.clear();
+    // Offene Anfragen kommen jetzt nicht mehr zurück. Sie abzuweisen ist die einzige ehrliche
+    // Antwort – ohne das hinge jede von ihnen bis zu ihrem Zeitlimit, und mit ihr die Anfrage
+    // eines Kunden, der nur ein Bild sehen wollte.
+    for (const [, call] of this.calls) {
+      clearTimeout(call.timer);
+      call.reject(new Error('Die Verbindung zum Standort ist abgerissen.'));
+    }
+    this.calls.clear();
     events.emit('node-offline', { nodeId: this.nodeId });
   }
 }
@@ -250,7 +294,7 @@ export function jobCount(nodeId) {
  * gemerkten Bewegungspunkte. Sie reisen mit, weil der Client sie zum Anmelden braucht und der
  * andere Rechner keine Datenbank hat.
  */
-export function spawn(nodeId, { file, args, userId, env = {} }) {
+export function spawn(nodeId, { file, args, userId, env = {}, pov = null }) {
   const link = linkOf(nodeId);
   if (!link) {
     const node = db.prepare('SELECT name FROM nodes WHERE id = ?').get(nodeId);
@@ -267,8 +311,40 @@ export function spawn(nodeId, { file, args, userId, env = {} }) {
     env,
     user_id: userId,
     files: readUserFiles(userId),
+    // `{ port, mc }`, wenn der texturierte Viewer laufen soll. Die zwei Argumente dafür setzt der
+    // Standort selbst ein: Der Pfad zur Minecraft-JAR gilt nur auf seiner Maschine, und ob sie
+    // dort überhaupt liegt, weiß auch nur er.
+    pov,
   });
   return proc;
+}
+
+/**
+ * Eine HTTP-Anfrage an den Viewer eines entfernten Bots.
+ *
+ * Der Standort führt sie gegen seinen eigenen Localhost aus und schickt die Antwort zurück. Mehr
+ * als das darf er nicht: `job` sagt, um welchen Bot es geht, und damit auch, welcher Port gemeint
+ * ist – eine Portnummer aus dem Panel entgegenzunehmen hieße, dem Panel jeden lauschenden Dienst
+ * auf dem anderen Rechner zu öffnen.
+ */
+export function request(nodeId, job, { method = 'GET', path, timeout = 8000 } = {}) {
+  const link = linkOf(nodeId);
+  if (!link) throw new Error('Der Standort ist gerade nicht erreichbar.');
+  if (!job || !link.jobs.has(job)) throw new Error('Dieser Bot läuft auf dem Standort nicht mehr.');
+  const id = link.nextCall++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      link.calls.delete(id);
+      reject(new Error('Der Standort hat nicht rechtzeitig geantwortet.'));
+    }, timeout);
+    timer.unref?.();
+    link.calls.set(id, { resolve, reject, timer });
+    if (!link.send({ type: 'http', id, job, method, path })) {
+      link.calls.delete(id);
+      clearTimeout(timer);
+      reject(new Error('Der Standort ist gerade nicht erreichbar.'));
+    }
+  });
 }
 
 /** Allen Standorten sagen, dass es neue Client-Dateien gibt. */

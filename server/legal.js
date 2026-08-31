@@ -3,11 +3,29 @@
 // Datenflüsse, die dieses Projekt tatsächlich hat; eine erfundene Firma oder Anschrift gehört
 // ausdrücklich nicht hier hinein.
 
-export const PRIVACY_DE = `Stand: 16. August 2026
+/**
+ * Der Umsatzsteuerhinweis unter jedem Preis und auf jedem Beleg.
+ *
+ * Vorgabe ist die **österreichische Kleinunternehmerregelung**, weil AFKSystems dort betrieben
+ * wird: Solange die Umsatzgrenze nicht überschritten ist, wird auf den Verkauf keine
+ * Umsatzsteuer aufgeschlagen und auf der Rechnung auch keine ausgewiesen – wohl aber der Grund
+ * dafür genannt. Wer als Kleinunternehmer trotzdem Umsatzsteuer ausweist, schuldet sie allein
+ * aufgrund der Rechnung; deshalb steht hier ein Hinweis und keine Steuerzeile.
+ *
+ * Beides ist im Admin-Bereich unter *Umsatzsteuer* überschreibbar – wer das Panel anderswo
+ * betreibt, trägt seinen eigenen Satz ein (in Deutschland etwa § 19 UStG). Die Regel selbst,
+ * ob überhaupt Umsatzsteuer anfällt, entscheidet die Einstellung `vat_mode` (siehe vat.js).
+ */
+export const VAT_NOTE_DE =
+  'Umsatzsteuerfrei aufgrund der Kleinunternehmerregelung gemäß § 6 Abs. 1 Z 27 UStG.';
+export const VAT_NOTE_EN =
+  'Exempt from VAT under the Austrian small-business scheme (§ 6 (1) 27 UStG).';
+
+export const PRIVACY_DE = `Stand: 31. August 2026
 
 ## 1. Verantwortlicher und Kontakt
 
-AFKSystems ist der Verantwortliche für die Verarbeitung personenbezogener Daten in diesem Dienst. AFKSystems wird außerhalb Deutschlands betrieben. Datenschutzanfragen können über ein Support-Ticket im Panel oder über den auf der Website verlinkten AFKSystems-Discord gestellt werden. Eine Anfrage zu Betroffenenrechten ist kostenlos; zur Vermeidung einer Herausgabe an Unbefugte kann ein Nachweis der Kontoinhaberschaft verlangt werden.
+AFKSystems ist der Verantwortliche für die Verarbeitung personenbezogener Daten in diesem Dienst. AFKSystems wird außerhalb Deutschlands betrieben. Datenschutzanfragen können über ein Support-Ticket im Panel, per E-Mail an support@afksystems.de oder über den auf der Website verlinkten AFKSystems-Discord gestellt werden. Eine Anfrage zu Betroffenenrechten ist kostenlos; zur Vermeidung einer Herausgabe an Unbefugte kann ein Nachweis der Kontoinhaberschaft verlangt werden.
 
 ## 2. Welche Daten verarbeitet werden
 
@@ -16,7 +34,7 @@ AFKSystems ist der Verantwortliche für die Verarbeitung personenbezogener Daten
 - Verknüpfte Dienste: bei freiwilliger Nutzung die von Discord oder Google übermittelte Konto-ID, Name, E-Mail-Adresse, Profilbild und Status der Discord-Mitgliedschaft. AFKSystems erhält dabei niemals das Passwort des jeweiligen Anbieters.
 - Minecraft-Betriebsdaten: Kontoname und UUID, Zielserver, Version, Bot-Einstellungen, Befehle, Makros, Verbindungszustände und technische Protokolle. Für Microsoft-Konten wird die von Microsoft bereitgestellte Geräteanmeldung verwendet; Zugangsdaten werden nicht im Browser abgefragt.
 - Kommunikationsdaten: Ticketinhalte, Beteiligte, Status, Discord-Zuordnung, Chat- und Supportnachrichten sowie vom Dienst versandte E-Mails.
-- Abrechnungsdaten: Guthabenbewegungen, gebuchte Tarife und Zusätze, Zahlungsbetrag, Zahlungsart, Referenz und Status. Zahlungen laufen über Tebex (Tebex Limited) als Verkäufer im eigenen Namen; Kartendaten, Rechnungsanschrift und Umsatzsteuer werden dort verarbeitet und AFKSystems nicht mitgeteilt. Zurück kommt nur, dass eine Zahlung erfolgreich war, in welcher Höhe und zu welcher Aufladung sie gehört.
+- Abrechnungsdaten: Guthabenbewegungen, gebuchte Tarife und Zusätze, Zahlungsbetrag, Zahlungsart, Referenz und Status. Kartenzahlungen und die übrigen elektronischen Zahlarten werden von Stripe (Stripe Payments Europe, Limited) als Zahlungsdienstleister abgewickelt. Kartennummern und Sicherheitsmerkmale werden ausschließlich bei Stripe eingegeben und verarbeitet; AFKSystems erhält sie nicht. An AFKSystems zurück gemeldet werden die Kennung des Zahlungsvorgangs, der Betrag, die Währung, der Zahlungsstatus, die E-Mail-Adresse des Zahlenden und die Zuordnung zur jeweiligen Aufladung. Verkäufer der Leistung ist AFKSystems selbst und nicht Stripe.
 - Sicherheits- und Betriebsdaten: Audit-Ereignisse, Fehlermeldungen, Missbrauchsindikatoren sowie Server- und Prozessmetriken.
 
 ## 3. Zwecke und Rechtsgrundlagen
@@ -25,7 +43,7 @@ Die Daten werden verarbeitet, um das Konto und die gebuchten Bot-Dienste bereitz
 
 ## 4. Empfänger und externe Dienste
 
-Daten erhalten nur Personen und Dienstleister, die sie für Betrieb, Hosting, Support oder Abrechnung benötigen. Je nach freiwillig genutzter Funktion werden Daten an Discord, Google, Microsoft oder Tebex übermittelt. Beim Verbinden eines Bots sieht der gewählte Minecraft-Server technisch notwendige Angaben wie Minecraft-Name, UUID, Verbindungs-IP und die gesendeten Spielaktionen. E-Mail-Anbieter verarbeiten Absender, Empfänger und Nachrichteninhalt. Eine Weitergabe zu Werbezwecken oder ein Verkauf personenbezogener Daten findet nicht statt.
+Daten erhalten nur Personen und Dienstleister, die sie für Betrieb, Hosting, Support oder Abrechnung benötigen. Je nach freiwillig genutzter Funktion werden Daten an Discord, Google, Microsoft oder Stripe übermittelt. Beim Verbinden eines Bots sieht der gewählte Minecraft-Server technisch notwendige Angaben wie Minecraft-Name, UUID, Verbindungs-IP und die gesendeten Spielaktionen. E-Mail-Anbieter verarbeiten Absender, Empfänger und Nachrichteninhalt. Eine Weitergabe zu Werbezwecken oder ein Verkauf personenbezogener Daten findet nicht statt.
 
 Diese Anbieter können Daten in Ländern außerhalb des Wohnsitzlandes oder außerhalb der EU/des EWR verarbeiten. In diesem Fall richtet sich die Übermittlung nach den anwendbaren gesetzlichen Voraussetzungen und den Schutzmechanismen des jeweiligen Anbieters. Die Datenschutzbestimmungen des gewählten Drittanbieters gelten zusätzlich.
 
@@ -49,11 +67,11 @@ AFKSystems verwendet unter anderem verschlüsselte HTTPS-Verbindungen, gehashte 
 
 Diese Erklärung wird angepasst, wenn sich Funktionen, Anbieter oder rechtliche Anforderungen ändern. Die jeweils aktuelle Fassung und ihr Stand werden auf dieser Seite veröffentlicht.`;
 
-export const PRIVACY_EN = `Last updated: 16 August 2026
+export const PRIVACY_EN = `Last updated: 31 August 2026
 
 ## 1. Controller and contact
 
-AFKSystems is the controller for personal data processed by this service. AFKSystems is operated outside Germany. Privacy requests may be submitted through a support ticket in the panel or through the AFKSystems Discord linked on the website. Exercising a data protection right is free of charge; proof of account ownership may be requested to prevent disclosure to an unauthorised person.
+AFKSystems is the controller for personal data processed by this service. AFKSystems is operated outside Germany. Privacy requests may be submitted through a support ticket in the panel, by email to support@afksystems.de, or through the AFKSystems Discord linked on the website. Exercising a data protection right is free of charge; proof of account ownership may be requested to prevent disclosure to an unauthorised person.
 
 ## 2. Data we process
 
@@ -62,7 +80,7 @@ AFKSystems is the controller for personal data processed by this service. AFKSys
 - Linked services: when used voluntarily, the account ID, name, email address, avatar and Discord membership status supplied by Discord or Google. AFKSystems never receives the password used with those providers.
 - Minecraft operations: account name and UUID, destination server, version, bot settings, commands, macros, connection states and technical logs. Microsoft accounts use Microsoft's device sign-in flow; credentials are not requested in the browser.
 - Communications: ticket contents, participants, status, Discord mapping, chat and support messages, and emails sent by the service.
-- Billing data: credit movements, plans and add-ons, payment amount, method, reference and status. Payments run through Tebex (Tebex Limited) as merchant of record; card details, billing address and VAT are handled there and are not disclosed to AFKSystems. All that comes back is that a payment succeeded, for how much, and which top-up it belongs to.
+- Billing data: credit movements, plans and add-ons, payment amount, method, reference and status. Card payments and the other electronic payment methods are processed by Stripe (Stripe Payments Europe, Limited) as payment service provider. Card numbers and security details are entered and processed at Stripe only; AFKSystems does not receive them. What is reported back to AFKSystems is the payment identifier, amount, currency, payment status, the payer's email address and which top-up it belongs to. AFKSystems, not Stripe, is the seller of the service.
 - Security and operations: audit events, errors, abuse signals, and server or process metrics.
 
 ## 3. Purposes and legal bases
@@ -71,7 +89,7 @@ Data is processed to provide accounts and booked bot services, handle payments a
 
 ## 4. Recipients and external services
 
-Data is available only to people and providers that need it for operation, hosting, support or billing. Depending on features chosen voluntarily, data is sent to Discord, Google, Microsoft or Tebex. When a bot connects, the selected Minecraft server necessarily receives information such as Minecraft name, UUID, connection IP address and game actions sent. Email providers process sender, recipient and message contents. Personal data is not sold or disclosed for advertising.
+Data is available only to people and providers that need it for operation, hosting, support or billing. Depending on features chosen voluntarily, data is sent to Discord, Google, Microsoft or Stripe. When a bot connects, the selected Minecraft server necessarily receives information such as Minecraft name, UUID, connection IP address and game actions sent. Email providers process sender, recipient and message contents. Personal data is not sold or disclosed for advertising.
 
 Those providers may process information outside the user's country or outside the EU/EEA. Such transfers are made in accordance with applicable legal requirements and the safeguards offered by the provider. The privacy terms of a selected third-party service also apply.
 
@@ -95,11 +113,11 @@ AFKSystems uses measures including encrypted HTTPS connections, hashed passwords
 
 This notice is updated when functions, providers or legal requirements change. The current version and its date are published on this page.`;
 
-export const TERMS_DE = `Stand: 16. August 2026
+export const TERMS_DE = `Stand: 31. August 2026
 
 ## 1. Geltung und Vertragspartner
 
-Diese Nutzungsbedingungen gelten für Konten und Leistungen von AFKSystems. AFKSystems wird außerhalb Deutschlands betrieben und ist über Support-Tickets im Panel sowie über den auf der Website verlinkten Discord erreichbar. Mit der Registrierung werden diese Bedingungen und die Datenschutzerklärung akzeptiert. Zwingende gesetzliche Rechte, insbesondere Verbraucherrechte, bleiben unberührt.
+Diese Nutzungsbedingungen gelten für Konten und Leistungen von AFKSystems. AFKSystems wird außerhalb Deutschlands betrieben und ist über Support-Tickets im Panel, per E-Mail an support@afksystems.de sowie über den auf der Website verlinkten Discord erreichbar. Mit der Registrierung werden diese Bedingungen und die Datenschutzerklärung akzeptiert. Zwingende gesetzliche Rechte, insbesondere Verbraucherrechte, bleiben unberührt.
 
 ## 2. Leistung
 
@@ -123,6 +141,8 @@ Sperren, Stummschaltungen oder sonstige Maßnahmen eines Minecraft-Servers liege
 
 Ein Credit entspricht einem Cent. Aufladungen erhöhen das Guthaben; Credits sind kein Bankguthaben, werden nicht verzinst und sind grundsätzlich nur innerhalb von AFKSystems nutzbar. Eine Auszahlung erfolgt nur, soweit zwingendes Recht, ein wirksamer Widerruf oder eine ausdrücklich bestätigte Erstattung dies verlangt.
 
+Alle angegebenen Preise sind Endpreise in Euro. Vertragspartner für jede Aufladung ist AFKSystems; Kartenzahlungen und die übrigen elektronischen Zahlarten werden lediglich technisch über den Zahlungsdienstleister Stripe abgewickelt. Ob Umsatzsteuer anfällt, richtet sich nach dem Recht am Sitz des Betreibers. Solange die Kleinunternehmerregelung angewendet wird, enthalten die Preise keine Umsatzsteuer, es wird keine ausgewiesen, und der Beleg nennt den Grund dafür; ein Vorsteuerabzug aus solchen Belegen ist nicht möglich. Wird die Umsatzsteuer berechnet, ist sie im angegebenen Preis enthalten und wird beim Bezahlen und auf dem Beleg gesondert ausgewiesen. Über jede verbuchte Aufladung wird ein Beleg per E-Mail zugestellt, sofern eine Zustellung möglich ist.
+
 Bezahlte Serverplätze laufen jeweils 30 Tage. Sie verlängern sich aus vorhandenem Guthaben, solange die Verlängerung aktiviert ist. Es gibt keine automatische Belastung einer Karte allein durch diese Verlängerung. Reicht das Guthaben nicht, wird der Platz angehalten, ohne ein negatives Guthaben zu erzeugen. Der Nutzer kann die Verlängerung vor Ablauf deaktivieren. Preise und Leistungsumfang werden vor einer Buchung angezeigt.
 
 ## 6. Widerruf und Erstattungen
@@ -145,11 +165,11 @@ AFKSystems haftet uneingeschränkt, soweit dies gesetzlich zwingend ist, insbeso
 
 Es gilt das Recht am Sitz des Betreibers, ohne Verbrauchern den zwingenden Schutz ihres gewöhnlichen Aufenthaltsortes zu entziehen. Zuständigkeit und Streitbeilegung richten sich nach zwingendem Recht. AFKSystems darf diese Bedingungen aus sachlichem Grund für die Zukunft ändern, etwa wegen neuer Funktionen, Sicherheitsanforderungen oder Rechtsänderungen. Wesentliche Änderungen werden in geeigneter Form angekündigt. Ist eine Bestimmung unwirksam, bleiben die übrigen Bestimmungen wirksam.`;
 
-export const TERMS_EN = `Last updated: 16 August 2026
+export const TERMS_EN = `Last updated: 31 August 2026
 
 ## 1. Scope and contracting party
 
-These terms apply to AFKSystems accounts and services. AFKSystems is operated outside Germany and can be reached through support tickets in the panel or through the Discord linked on the website. Registration accepts these terms and the privacy notice. Mandatory legal rights, including consumer rights, remain unaffected.
+These terms apply to AFKSystems accounts and services. AFKSystems is operated outside Germany and can be reached through support tickets in the panel, by email to support@afksystems.de, or through the Discord linked on the website. Registration accepts these terms and the privacy notice. Mandatory legal rights, including consumer rights, remain unaffected.
 
 ## 2. Service
 
@@ -172,6 +192,8 @@ Bans, mutes and other measures imposed by a Minecraft server are between the use
 ## 5. Prices, credits and renewal
 
 One credit equals one cent. Top-ups increase the credit balance; credits are not bank deposits, earn no interest and are generally usable only within AFKSystems. Cash redemption is available only where mandatory law, a valid withdrawal or an expressly approved refund requires it.
+
+All prices shown are final prices in euro. The contracting party for every top-up is AFKSystems; card payments and the other electronic payment methods are merely processed technically by the payment service provider Stripe. Whether VAT applies is governed by the law of the operator's place of establishment. While the small-business scheme is applied, prices contain no VAT, none is shown, and the receipt states the reason; no input tax may be deducted from such receipts. Where VAT is charged, it is included in the price shown and is stated separately at checkout and on the receipt. A receipt for every settled top-up is sent by email where delivery is possible.
 
 Paid server slots run for 30 days. They renew from an available credit balance while renewal is enabled. Renewal alone does not automatically charge a card. If the balance is insufficient, the slot is paused without creating a negative balance. Renewal may be disabled before expiry. Prices and scope are shown before booking.
 

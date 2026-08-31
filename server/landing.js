@@ -9,6 +9,7 @@ import { config } from './config.js';
 import { formatEuro, safeUrl } from './util.js';
 import * as binaries from './binaries.js';
 import * as billing from './billing.js';
+import * as vat from './vat.js';
 import { features } from './features.js';
 import { t } from '../public/assets/js/i18n.js';
 import { PRIVACY_DE, PRIVACY_EN, TERMS_DE, TERMS_EN } from './legal.js';
@@ -329,11 +330,37 @@ export function pricingVars(lang) {
     packagesHtml: packagesHtml(lang),
     freeSlots: String(billing.freeSlots()),
     rulesNote: rulesNote(lang),
+    // Was zur Umsatzsteuer unter den Preisen steht – derselbe Satz wie an der Kasse und auf dem
+    // Beleg. `escape`, weil Platzhalter roh eingesetzt werden und der Satz aus den Einstellungen
+    // kommt (siehe pages.js).
+    vatNote: escape(vat.note(lang)),
+  };
+}
+
+/**
+ * Die Kontakt-Adresse im Fuß jeder Seite.
+ *
+ * Sie steht dort für alle, die gerade **kein** Ticket schreiben können: wer noch kein Konto hat,
+ * wer nicht mehr hineinkommt, wer vor der Anmeldung etwas fragen will. Ein Ticket bleibt der
+ * bessere Weg – es hat einen Verlauf und weiß, um welchen Serverplatz es geht –, aber eine Seite,
+ * die als einzigen Kontakt „mach ein Ticket auf“ anbietet, hilft genau denen nicht, die gerade
+ * keins aufmachen können. Ohne Eintrag in den Einstellungen fällt die Zeile weg.
+ */
+function supportVars() {
+  const address = String(getSetting('support_email') || '').trim();
+  // Eine Adresse, sonst nichts: Was kein `@` hat oder Leerzeichen enthält, ist keine – und geht
+  // hier roh in ein `href`.
+  const valid = /^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(address);
+  return {
+    supportMail: valid ? escape(address) : '',
+    footerSupport: valid
+      ? `<li><a href="mailto:${escape(address)}">${escape(address)}</a></li>`
+      : '',
   };
 }
 
 /** Platzhalter, die jede Seite bekommt (Kopfleiste, Fuß). */
-export const commonVars = (lang) => discordVars(lang);
+export const commonVars = (lang) => ({ ...discordVars(lang), ...supportVars() });
 
 const LEGAL_DEFAULTS = {
   privacy: { de: PRIVACY_DE, en: PRIVACY_EN },

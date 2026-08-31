@@ -43,18 +43,37 @@ const uploadLimit = (guild) => UPLOAD_LIMIT[guild?.premiumTier || 0] ?? UPLOAD_L
 const humanSize = (bytes) =>
   bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 
+// Was der Zustand im Kanal heißt. „open“ liegt beim Team, „answered“ beim Kunden – ein vierter
+// Zustand („waiting“) bedeutete dasselbe wie „answered“ und ist weg (siehe server/tickets.js).
 const STATUS_LABEL = {
   open: 'open',
-  waiting: 'waiting',
   answered: 'answered',
   closed: 'closed',
 };
+
+/**
+ * Wie viele Kanäle ein Abgleich höchstens nachlegt.
+ *
+ * Discord begrenzt das Anlegen von Kanälen streng, und discord.js **wartet**, statt abzubrechen.
+ * Wer nach dem ersten Botstart fünfzig offene Tickets hat, hätte damit die Warteschlange des Bots
+ * für alles andere blockiert – keine gespiegelten Nachrichten, keine Rollen. Der Rest kommt beim
+ * nächsten Durchlauf; dass etwas übrig blieb, steht im Protokoll und nicht bloß im Nichts.
+ */
+const RECONCILE_LIMIT = 5;
 
 export class Tickets {
   constructor(bot) {
     this.bot = bot;
     /** Nachrichten, die der Bot selbst geschrieben hat – damit sie nicht zurück ins Panel laufen. */
     this.mine = new Set();
+    /**
+     * Tickets, für die gerade ein Kanal entsteht.
+     *
+     * Ein Ticket kann von zwei Seiten gleichzeitig hier ankommen: als Meldung über die offene
+     * Leitung und aus dem Abgleich, der die Lücken füllt. Ohne diese Sperre entstünden dann zwei
+     * Kanäle für denselben Vorgang, und im Panel stünde nur einer davon.
+     */
+    this.opening = new Set();
   }
 
   /**
@@ -204,8 +223,56 @@ export class Tickets {
     );
   }
 
-  /** Einen Kanal für ein Ticket anlegen und im Panel vermerken. */
+  /**
+   * Dafür sorgen, dass ein Ticket einen Kanal **hat** – und ihn anlegen, wenn nicht.
+   *
+   * Das ist der Weg für alles, was nicht gerade eben entstanden ist: die Meldung aus dem Panel
+   * und der Abgleich beim Start. Vorher hing ein Kanal allein an der Meldung über die offene
+   * Leitung. Lief der Bot in dem Moment nicht – Neustart, Umzug, ein Panel, das gerade neu
+   * gestartet war –, bekam dieses Ticket nie einen Kanal, und niemand hat es je gemerkt.
+   *
+   * Steht im Panel ein Kanal, den es in Discord nicht mehr gibt (von Hand gelöscht), wird die
+   * Zuordnung gelöst und ein neuer angelegt: Sonst schreibt der Bot bis in alle Ewigkeit gegen
+   * eine Kanal-ID, die niemand mehr sieht.
+   */
+  async ensureChannel(ticketId) {
+    const id = Number(ticketId);
+    if (this.opening.has(id)) return null;
+    const full = await this.bot.panel.call(`/tickets/${id}`).catch(() => null);
+    const ticket = full?.ticket;
+    // Ein geschlossenes Ticket bekommt keinen Kanal mehr. Sein alter ist entweder im Archiv oder
+    // nach sieben Tagen weg – ihn dafür neu anzulegen wäre ein Kanal für einen erledigten Vorgang.
+    if (!ticket || ticket.status === 'closed') return null;
+    if (ticket.channel_id) {
+      const existing = await this.bot.client.channels.fetch(ticket.channel_id).catch(() => null);
+      if (existing?.isTextBased()) return existing;
+      await this.bot.panel
+        .call(`/tickets/${id}`, { method: 'PATCH', body: { channel_id: null } })
+        .catch(() => {});
+      console.warn(`[tickets] channel of #${id} is gone in Discord – opening a new one`);
+    }
+    return this.openChannel(ticket, ticket.owner?.discord_id || null);
+  }
+
+  /**
+   * Einen Kanal für ein Ticket anlegen und im Panel vermerken.
+   *
+   * Der Riegel davor ist kein Beiwerk: Dasselbe Ticket kommt von zwei Seiten hierher – als
+   * Meldung über die offene Leitung und aus dem Abgleich. Ohne ihn stünden für einen Vorgang
+   * zwei Kanäle in Discord, und das Panel kennte nur den zuletzt eingetragenen.
+   */
   async openChannel(ticket, discordId = null, { ping = false } = {}) {
+    if (this.opening.has(Number(ticket.id))) return null;
+    this.opening.add(Number(ticket.id));
+    try {
+      return await this.createChannel(ticket, discordId, { ping });
+    } finally {
+      this.opening.delete(Number(ticket.id));
+    }
+  }
+
+  /** Die eigentliche Arbeit – aufgerufen wird `openChannel`, nie das hier. */
+  async createChannel(ticket, discordId, { ping }) {
     const guild = await this.bot.guild();
     if (!guild) return null;
     const parent = this.config.ticket_category || null;
@@ -240,19 +307,28 @@ export class Tickets {
       });
     }
 
-    let channel;
-    try {
-      channel = await guild.channels.create({
-        name: `ticket-${ticket.id}`,
-        type: ChannelType.GuildText,
-        parent,
-        topic: `${ticket.subject} · ${ticket.owner?.username || ''} · ${ticket.url}`,
-        permissionOverwrites: overwrites,
-      });
-    } catch (error) {
-      console.warn('[tickets] could not create channel:', error.message);
+    const options = {
+      name: `ticket-${ticket.id}`,
+      type: ChannelType.GuildText,
+      topic: `${ticket.subject} · ${ticket.owner?.username || ''} · ${ticket.url}`,
+      permissionOverwrites: overwrites,
+    };
+    let channel = await guild.channels.create({ ...options, parent }).catch((error) => {
+      console.warn(`[tickets] could not create the channel for #${ticket.id} in the category: ${error.message}`);
       return null;
+    });
+    // Eine Kategorie fasst fünfzig Kanäle, und eine ID aus den Einstellungen kann veraltet sein
+    // oder zu einem anderen Server gehören. Beides darf ein Ticket nicht kosten: Lieber steht der
+    // Kanal an der falschen Stelle in der Liste, als dass es ihn gar nicht gibt. Wohin er gehört,
+    // rückt der nächste Abgleich zurecht, sobald die Kategorie wieder Platz hat.
+    if (!channel && parent) {
+      channel = await guild.channels.create(options).catch((error) => {
+        console.warn(`[tickets] could not create a channel for #${ticket.id}: ${error.message}`);
+        return null;
+      });
+      if (channel) console.warn(`[tickets] #${ticket.id} opened outside the ticket category`);
     }
+    if (!channel) return null;
 
     await this.bot.panel
       .call(`/tickets/${ticket.id}`, { method: 'PATCH', body: { channel_id: channel.id } })
@@ -428,13 +504,16 @@ export class Tickets {
 
   // ------------------------------------------------------------ Panel → Discord
 
-  /** Im Panel ist ein Ticket entstanden. */
+  /**
+   * Im Panel ist ein Ticket entstanden.
+   *
+   * Ein Ticket aus Discord bringt seinen Kanal schon mit (`onCreate` legt ihn an, bevor diese
+   * Meldung ankommt) – hier entstünde sonst ein zweiter. Bleibt er dort aus, etwa weil Discord
+   * gerade nicht mitspielte, holt ihn der Abgleich nach.
+   */
   async onPanelCreated(event) {
-    if (event.source === 'discord') return; // den Kanal gibt es schon
-    const full = await this.bot.panel.call(`/tickets/${event.ticket_id}`).catch(() => null);
-    if (!full?.ticket || full.ticket.channel_id) return;
-    const discordId = full.ticket.owner?.discord_id || null;
-    await this.openChannel(full.ticket, discordId);
+    if (event.source === 'discord') return;
+    await this.ensureChannel(event.ticket_id);
   }
 
   /** Im Panel wurde geschrieben. */
@@ -459,6 +538,27 @@ export class Tickets {
     if (event.status && event.status !== 'closed') await this.reopenChannel(channel, event.ticket_id);
     if (event.reopened) {
       await channel.send({ content: 'The ticket was reopened by a new reply.' });
+    }
+  }
+
+  /**
+   * Im Panel wurde jemand zum Ticket dazugeholt oder herausgenommen.
+   *
+   * Der Kanal ist Teil des Tickets, also folgt er der Liste der Beteiligten. Ohne das steht
+   * jemand im Panel als Beteiligter und sieht den Kanal nicht, in dem das Gespräch läuft.
+   */
+  async onPanelAccess(event) {
+    if (!event.discord_id) return;
+    const channel = await this.channelOf(event.ticket_id);
+    if (!channel) return;
+    if (event.allow) {
+      await channel.permissionOverwrites
+        .edit(event.discord_id, { ViewChannel: true, SendMessages: true }, 'Added to the ticket')
+        .catch((error) => console.warn(`[tickets] could not grant access to #${event.ticket_id}: ${error.message}`));
+    } else {
+      await channel.permissionOverwrites
+        .delete(event.discord_id, 'Removed from the ticket')
+        .catch((error) => console.warn(`[tickets] could not revoke access to #${event.ticket_id}: ${error.message}`));
     }
   }
 
@@ -513,18 +613,45 @@ export class Tickets {
   }
 
   /**
-   * Alte Kanäle haben bereits einen Verlauf; sie brauchen keinen zweiten Kanal. Beim Start
-   * werden deshalb nur Name und Kategorie an den gespeicherten Ticketstatus angepasst.
+   * Der Abgleich: Jedes laufende Ticket hat einen Kanal, und jeder Kanal steht, wo er hingehört.
+   *
+   * Beides gehört zusammen, denn beides ist dieselbe Frage – **stimmt Discord noch mit dem
+   * Panel überein?** Bisher passte der Abgleich nur Namen und Kategorie an. Ein Ticket ohne Kanal
+   * ging leer aus, und einen Kanal bekam es einzig in dem Moment, in dem es entstand: über die
+   * offene Leitung zum Panel. War der Bot da nicht verbunden – Neustart, Umzug, ein Panel, das
+   * gerade hochkam –, blieb dieses Ticket für immer ohne Kanal. Genau das passiert hier nicht
+   * mehr: Was fehlt, wird nachgelegt, beim Start und danach jede Stunde.
    */
   async reconcileChannels() {
     const result = await this.bot.panel.call('/tickets?open=0').catch(() => null);
+    const missing = [];
     for (const ticket of result?.tickets || []) {
-      if (!ticket.channel_id) continue;
+      if (!ticket.channel_id) {
+        if (ticket.status !== 'closed') missing.push(ticket);
+        continue;
+      }
       const channel = await this.bot.client.channels.fetch(ticket.channel_id).catch(() => null);
-      if (!channel?.isTextBased()) continue;
+      if (!channel?.isTextBased()) {
+        // Im Panel steht ein Kanal, den es nicht mehr gibt. Für ein laufendes Ticket ist das eine
+        // Lücke wie jede andere – `ensureChannel` löst die Zuordnung und legt einen neuen an.
+        if (ticket.status !== 'closed') missing.push(ticket);
+        continue;
+      }
       if (ticket.status === 'closed') await this.archiveChannel(channel, ticket.id);
       else await this.reopenChannel(channel, ticket.id);
     }
+
+    if (!missing.length) return 0;
+    const now = missing.slice(0, RECONCILE_LIMIT);
+    console.log(`[tickets] ${missing.length} ticket(s) without a channel – opening ${now.length}`);
+    if (missing.length > now.length) {
+      console.log(`[tickets] ${missing.length - now.length} left for the next round`);
+    }
+    let opened = 0;
+    for (const ticket of now) {
+      if (await this.ensureChannel(ticket.id)) opened += 1;
+    }
+    return opened;
   }
 
   /** Entfernt Team-/Mod-Rechte aus bestehenden Kanälen, ohne Kundenzugänge anzutasten. */

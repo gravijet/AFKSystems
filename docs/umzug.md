@@ -56,9 +56,10 @@ Ziel und Benutzer lassen sich über `ZIEL_HOST` und `ZIEL_USER` setzen.
 | `data/tickets/` | die Anhänge; die Datenbank enthält nur die Verweise |
 | `data/users/` | Kontodateien |
 | `data/bin/` | die Client-Binärdateien (~60 MB); sonst startet kein Bot, bis sie neu geladen sind |
+| `data/mc/` | die Minecraft-Client-JARs (~25 MB je Version); ohne sie zeigt die Live-Ansicht Voxel statt Texturen, bis sie wieder da sind |
 | `.env`, `bot/.env` | stehen nicht im Repository |
 
-Zugangsdaten für Discord, SMTP und Tebex stehen **in der Datenbank**, nicht in einer Datei – die
+Zugangsdaten für Discord, SMTP und Stripe stehen **in der Datenbank**, nicht in einer Datei – die
 kommen also mit dem Abzug mit.
 
 ### 3. DNS umstellen

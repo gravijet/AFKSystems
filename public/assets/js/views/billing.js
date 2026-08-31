@@ -1,7 +1,7 @@
 // Guthaben: Stand, Serverplätze, Aufladen, Gutschein einlösen, Kontoauszug.
 
 import {
-  api, icon, escapeHtml, credits, euro, datetime, date, safeLink, tr, $, $$, ok, fail, copy, formDialog,
+  api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, copy, formDialog,
 } from '../ui.js';
 import { appbar, refresh, draw } from '../app.js';
 import * as chart from '../charts.js';
@@ -106,20 +106,13 @@ export async function render(root) {
       </div>
       <div class="row wrap topup-foot">
         <button class="btn btn-sm" id="voucher">${icon('ticket')} ${escapeHtml(tr('bill.voucher'))}</button>
-        ${
-          data.methods.tebex
-            ? `<span class="small muted">${escapeHtml(tr('bill.card'))}${
-                data.tebex_store
-                  ? ` · <a href="${escapeHtml(safeLink(data.tebex_store))}" target="_blank" rel="noopener">${escapeHtml(
-                      tr('bill.store')
-                    )}</a>`
-                  : ''
-              }</span>`
-            : ''
-        }
+        ${data.methods.stripe ? `<span class="small muted">${escapeHtml(tr('bill.card'))}</span>` : ''}
         ${data.methods.transfer ? `<span class="small muted">${escapeHtml(tr('bill.transfer'))}</span>` : ''}
         ${data.methods.paypal ? `<span class="small muted">${escapeHtml(tr('bill.paypal'))}</span>` : ''}
       </div>
+      <!-- Der Umsatzsteuerhinweis gehört unter die Beträge und nicht erst auf den Beleg: Wer auf
+           einen Preis klickt, soll vorher gelesen haben, was ihn davon erwartet. -->
+      <p class="small muted" style="margin:.75rem 0 0">${escapeHtml(data.vat?.note || '')}</p>
     </section>
 
     ${
@@ -330,7 +323,7 @@ async function startTopup(data, index) {
   // gar nichts tut, und in der Konsole ein Fehler, den er nicht sieht.
   if (!data.packages.length) return fail(new Error(tr('bill.noPackages')));
   const methods = [];
-  if (data.methods.tebex) methods.push({ value: 'tebex', label: tr('bill.card') });
+  if (data.methods.stripe) methods.push({ value: 'stripe', label: tr('bill.card') });
   if (data.methods.transfer) methods.push({ value: 'transfer', label: tr('bill.transfer') });
   if (data.methods.paypal) methods.push({ value: 'paypal', label: tr('bill.paypal') });
   if (!methods.length) return fail(new Error(tr('pricing.onRequest')));
@@ -356,6 +349,8 @@ async function startTopup(data, index) {
         value: methods[0].value,
         options: methods,
       },
+      // Die Umsatzsteuer gehört vor den Klick und nicht erst auf den Beleg.
+      ...(data.vat?.note ? [{ type: 'note', label: data.vat.note }] : []),
     ],
     { submit: tr('bill.topUp'), note: `${pack.label} · ${pack.credits} ${tr('common.credits')}` }
   );

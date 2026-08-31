@@ -24,7 +24,7 @@ import * as attachments from './attachments.js';
 import { bridge } from './bridge.js';
 import { router as coreRouter } from './routes/core.js';
 import { router as profilesRouter } from './routes/profiles.js';
-import { router as billingRouter, tebexWebhook } from './routes/billing.js';
+import { router as billingRouter, stripeWebhook } from './routes/billing.js';
 import { admin as adminRouter } from './routes/admin.js';
 import { router as botRouter, tryBotSecret } from './routes/bot.js';
 import { router as nodeRouter, nodeByToken } from './routes/node.js';
@@ -107,18 +107,18 @@ function trustedOrigin(req) {
   return Boolean(origin && allowedOrigins(req).has(origin));
 }
 
-// Der Tebex-Webhook braucht den **rohen** Rumpf für die Unterschrift – deshalb steht er vor dem
+// Der Stripe-Webhook braucht den **rohen** Rumpf für die Unterschrift – deshalb steht er vor dem
 // JSON-Parser. Aus wieder eingesetztem JSON käme ein anderer Hash heraus, und keine echte
 // Zahlungsmeldung käme je durch.
-app.post('/api/tebex/webhook', express.raw({ type: '*/*', limit: '1mb' }), tebexWebhook);
+app.post('/api/stripe/webhook', express.raw({ type: '*/*', limit: '1mb' }), stripeWebhook);
 
 /**
  * Schreibende API-Aufrufe nur aus dieser Website.
  *
- * Diese Bereiche gehören nicht dazu: Der Discord-Bot, die Standorte und Tebex sprechen Dienst zu
+ * Diese Bereiche gehören nicht dazu: Der Discord-Bot, die Standorte und Stripe sprechen Dienst zu
  * Dienst, tragen keinen Browser-Origin und weisen sich mit eigenem Token bzw. Unterschrift aus.
  */
-const SERVICE_API = /^\/(bot|node|tebex)(\/|$)/;
+const SERVICE_API = /^\/(bot|node|stripe)(\/|$)/;
 
 /**
  * Browser dürfen schreibende API-Anfragen nur aus derselben Website schicken.
@@ -460,7 +460,10 @@ app.use((req, res) => {
     .status(404)
     .type('html')
     .send(
+      // Auch die Fehlerseite hat Kopf und Fuß, und beide brauchen ihre Platzhalter: ohne sie
+      // stand auf der 404-Seite als einziger Seite der Website wörtlich `{{footerDiscord}}`.
       pages.render('404', lang, {
+        ...landing.commonVars(lang),
         robotsTag: NOINDEX,
         title: `${pages.t('error.404.title', lang)} – ${config.brand}`,
       })
@@ -477,7 +480,13 @@ app.use((error, req, res, _next) => {
     return res
       .status(status)
       .type('html')
-      .send(pages.render('404', lang, { robotsTag: NOINDEX, title: `${config.brand}` }));
+      .send(
+        pages.render('404', lang, {
+          ...landing.commonVars(lang),
+          robotsTag: NOINDEX,
+          title: `${config.brand}`,
+        })
+      );
   }
   // Fehlermeldungen kommen in der Sprache der **Anfrage** zurück – das Frontend zeigt sie roh an.
   //
@@ -502,8 +511,15 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 /** Eigener Server für die Bot-Leitung: andere Anmeldung, andere Nachrichten. */
 const botSockets = new WebSocketServer({ noServer: true });
-/** Und einer für die Standorte. Sie melden sich mit dem Token ihres Eintrags an. */
-const nodeSockets = new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024 });
+/**
+ * Und einer für die Standorte. Sie melden sich mit dem Token ihres Eintrags an.
+ *
+ * Sechs Megabyte, nicht vier: Seit der texturierten Live-Ansicht reisen auch Bilder durch diese
+ * Leitung. Der Standort deckelt eine Antwort bei zwei Megabyte, und Base64 macht daraus ein
+ * Drittel mehr – dazwischen muss Luft bleiben, sonst wirft ausgerechnet das größte Bild die
+ * ganze Verbindung ab und mit ihr jeden Bot auf dieser Maschine.
+ */
+const nodeSockets = new WebSocketServer({ noServer: true, maxPayload: 6 * 1024 * 1024 });
 
 /** user_id -> Menge offener Verbindungen. */
 const sockets = new Map();

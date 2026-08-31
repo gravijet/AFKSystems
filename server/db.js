@@ -8,7 +8,7 @@
 
 import Database from 'better-sqlite3';
 import { paths } from './config.js';
-import { PRIVACY_DE, PRIVACY_EN, TERMS_DE, TERMS_EN } from './legal.js';
+import { PRIVACY_DE, PRIVACY_EN, TERMS_DE, TERMS_EN, VAT_NOTE_DE, VAT_NOTE_EN } from './legal.js';
 
 export const db = new Database(paths.db);
 db.pragma('journal_mode = WAL');
@@ -821,6 +821,94 @@ const migrations = [
       ).run();
     },
   },
+  {
+    // **Von Tebex auf Stripe.**
+    //
+    // Der Unterschied ist nicht nur ein anderer Anbieter: Tebex war Verkäufer im eigenen Namen und
+    // hat die Umsatzsteuer erledigt, Stripe ist bloß der Zahlungsdienstleister. Verkäufer ist ab
+    // jetzt der Betreiber selbst – also gehören Preisangabe, Beleg und Umsatzsteuer ins Panel.
+    // Deshalb kommen mit dem Anbieter auch die Einstellungen `vat_*` dazu (siehe vat.js).
+    //
+    // Die alten `tebex_*`-Zeilen werden gelöscht: Ein privater Schlüssel, der nichts mehr
+    // aufschließt, gehört nicht in einer Datenbank aufbewahrt. **Bezahlte Aufladungen bleiben
+    // unangetastet** – `topups.provider = 'tebex'` ist der wahre Vorgang von damals, und
+    // Buchhaltung schreibt man nicht um.
+    name: '013-stripe-statt-tebex',
+    run() {
+      for (const key of [
+        'tebex_enabled',
+        'tebex_mode',
+        'tebex_project_id',
+        'tebex_private_key',
+        'tebex_store_token',
+        'tebex_webhook_secret',
+        'tebex_store_url',
+      ]) {
+        db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+      }
+
+      // Die Paket-ID aus dem Tebex-Webstore hat keine Entsprechung mehr: Bei Stripe kommen Name
+      // und Preis aus diesem Panel. Der Rest der Pakete bleibt, wie er ist.
+      const row = db.prepare("SELECT value FROM settings WHERE key = 'packages'").get();
+      if (!row) return;
+      try {
+        const list = JSON.parse(row.value);
+        if (!Array.isArray(list)) return;
+        const cleaned = list.map(({ tebex, ...rest }) => rest);
+        db.prepare("UPDATE settings SET value = ? WHERE key = 'packages'").run(JSON.stringify(cleaned));
+      } catch {
+        // Kaputtes JSON: lieber weg damit, dann greifen die Vorgabewerte.
+        db.prepare("DELETE FROM settings WHERE key = 'packages'").run();
+      }
+    },
+  },
+  {
+    // Ein Ticket hatte vier Zustände, von denen zwei dasselbe bedeuteten: `waiting` hieß im Panel
+    // „Wartet auf dich“ und war damit `answered` unter anderem Namen. Gesetzt hat ihn nie ein
+    // Vorgang, nur ein Mensch von Hand – dafür stand an beantworteten und geschlossenen Tickets
+    // weiter „Wartet“, weil der Ungelesen-Punkt des Teams beim Umstellen des Zustands nie
+    // gelöscht wurde. Beides wird hier begradigt (siehe tickets.js).
+    name: '014-ticket-zustaende-eindeutig',
+    run() {
+      db.prepare("UPDATE tickets SET status = 'answered' WHERE status = 'waiting'").run();
+      // Was beantwortet oder geschlossen ist, liegt nicht mehr beim Team.
+      db.prepare(
+        "UPDATE tickets SET unread_staff = 0 WHERE unread_staff = 1 AND status IN ('answered', 'closed')"
+      ).run();
+    },
+  },
+
+  {
+    // Client 2.5.0: die Live-Ansicht bekommt echte Texturen, und die Sichtweite wird einstellbar.
+    //
+    // Beides hängt zusammen. Der Client meldet dem Server von jeher eine Sichtweite von 2 Chunks –
+    // für einen Bot, der nur dastehen soll, ist das genau richtig und spart auf beiden Seiten
+    // Arbeit. Für ein Bild ist es zu wenig: Was der Server nie geschickt hat, kann der Client
+    // nicht zeichnen, und die Welt endet drei Schritte vor dem Bot. Ab hier lässt sich die Zahl
+    // je Serverplatz hochstellen; 0 heißt weiterhin "was der Client für richtig hält".
+    name: '015-texturierte-live-ansicht-und-sichtweite',
+    sql: `
+      ALTER TABLE profiles ADD COLUMN view_distance INTEGER NOT NULL DEFAULT 0;
+    `,
+    run() {
+      // Der Beschreibungstext des Zusatzes stammt aus Migration 009 und beschreibt nur noch die
+      // halbe Sache. Überschrieben wird er nur, wenn er **beide** Male noch der von damals ist –
+      // wer ihn selbst umgeschrieben hat, behält seinen Text (dieselbe Regel wie in 004).
+      const old = {
+        de: 'Sehen, was der Bot sieht – der Client rechnet das Bild aus den geladenen Weltdaten und das Panel zeichnet es. Je Serverplatz buchbar, in keinem Tarif enthalten.',
+        en: 'See what the bot sees – the client works the picture out from loaded world data and the panel draws it. Booked per server slot, part of no plan.',
+      };
+      const row = db.prepare("SELECT text_de, text_en FROM addons WHERE key = 'pov'").get();
+      if (row && row.text_de === old.de && row.text_en === old.en) {
+        db.prepare(
+          `UPDATE addons SET
+             text_de = 'Sehen, was der Bot sieht: das Bild aus den geladenen Weltdaten, mit den echten Texturen des Spiels, dazu Hotbar, Inventar und Menüs zum Anklicken. Je Serverplatz buchbar, in keinem Tarif enthalten.',
+             text_en = 'See what the bot sees: the picture from loaded world data, with the real textures of the game, plus hotbar, inventory and clickable menus. Booked per server slot, part of no plan.'
+           WHERE key = 'pov'`
+        ).run();
+      }
+    },
+  },
 ];
 
 /**
@@ -1086,15 +1174,17 @@ const defaults = {
     { cent: 5000, credits: 5600, label: '50 €' },
   ],
 
-  // Bezahlen läuft über Tebex. Alles hier, damit der Betreiber seinen Shop einrichten kann, ohne
+  // Bezahlen läuft über Stripe. Alles hier, damit der Betreiber die Kasse einrichten kann, ohne
   // eine Datei auf dem Server anzufassen. Ohne Schlüssel bleibt die Zahlart einfach aus.
-  tebex_enabled: 0,
-  tebex_mode: 'checkout', // checkout | headless
-  tebex_project_id: '',
-  tebex_private_key: '',
-  tebex_store_token: '',
-  tebex_webhook_secret: '',
-  tebex_store_url: '',
+  stripe_enabled: 0,
+  stripe_secret_key: '', // sk_live_… oder sk_test_…
+  stripe_webhook_secret: '', // whsec_… – ohne dieses Geheimnis wird keine Zahlung angenommen
+
+  // Umsatzsteuer. Vorgabe ist die Kleinunternehmerregelung: keine Umsatzsteuer auf den Verkauf,
+  // keine auf der Rechnung, dafür der Grund als Satz darunter (siehe vat.js und legal.js).
+  vat_mode: 'small_business', // small_business | stripe_tax
+  vat_note_de: VAT_NOTE_DE,
+  vat_note_en: VAT_NOTE_EN,
 
   // Registrierung und Post
   registration_open: 1,
@@ -1172,6 +1262,11 @@ const defaults = {
   maintenance_text: '',
   max_bots_per_user: 25,
   support_hours: '',
+  // Die Adresse, unter der man den Support **ohne** Konto erreicht: im Fuß jeder öffentlichen
+  // Seite, im Support-Bildschirm und als Antwortadresse jeder Nachricht, die von hier hinausgeht.
+  // Ein Ticket bleibt der bessere Weg (Verlauf, Zuordnung, Anhänge) – aber wer sein Passwort
+  // verloren hat oder gar kein Konto anlegen konnte, hat sonst gar keinen.
+  support_email: 'support@afksystems.de',
 };
 
 

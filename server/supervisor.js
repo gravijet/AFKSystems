@@ -17,6 +17,7 @@ import { config, paths, userDir } from './config.js';
 import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
 import * as agents from './agents.js';
+import * as resources from './resources.js';
 import { featuresOf, isActive, gateCaps, freeAccess } from './billing.js';
 import { HttpError, codeUrl, MS_LINK } from './util.js';
 import { stripFormatting } from '../public/assets/js/chatlog.js';
@@ -135,6 +136,49 @@ export const POV_SIZE = { width: 160, height: 80 };
  * einer Doppelarbeit: Die Auflösung bleibt die volle, nur wird sie nicht dreimal umsonst gerechnet.
  */
 export const POV_FPS = 5;
+
+// ---------------------------------------------------------------- Live-Ansicht (texturiert)
+//
+// Client 2.5.0 kann dasselbe Bild noch einmal ganz anders: `--pov-web <port>` startet im Client
+// einen kleinen HTTP-Server, der fertige PNG-Bilder aus echten Blockmodellen und Texturen liefert,
+// dazu Hotbar, Inventar und das offene Menü als JSON. Die Halbblöcke oben bleiben – sie sind das,
+// was ohne Original-JAR übrig ist, und ein zugesagtes Format, das nichts kostet.
+//
+// Drei Dinge unterscheiden den Viewer vom ANSI-Strom, und alle drei sind Vorteile:
+//
+//   * **Er wird gezogen, nicht geschoben.** Der Client rechnet ein Bild, wenn jemand eines abholt.
+//     Ein Browser, der nicht fragt, kostet nichts – die Bremse `POV_MIN_GAP_MS` oben gibt es hier
+//     gar nicht erst zu bauen.
+//   * **Er hat einen Zugriffstoken.** Der Client würfelt ihn beim Start und schreibt die fertige
+//     Adresse einmal auf die Fehlerausgabe. Von dort liest ihn dieses Panel – und nur dieses.
+//   * **Er lauscht auf 127.0.0.1.** Aus dem Netz ist er nicht erreichbar, auch nicht auf einem
+//     Standort. Was der Kunde im Browser sieht, geht deshalb durch das Panel (siehe `webFetch`).
+//
+// Der Port kommt aus einem festen Bereich, damit man ihn in einer Firewall wiedererkennt. Jeder
+// laufende Bot bekommt eine eigene Nummer, auch auf verschiedenen Maschinen: Zwei Bots mit
+// derselben Nummer auf demselben Standort könnten sich sonst gegenseitig den Port wegnehmen, und
+// die Nummer global eindeutig zu vergeben kostet nichts.
+const WEB_PORT_MIN = 42100;
+const WEB_PORT_MAX = 42999;
+const usedWebPorts = new Set();
+
+function takeWebPort() {
+  for (let port = WEB_PORT_MIN; port <= WEB_PORT_MAX; port++) {
+    if (usedWebPorts.has(port)) continue;
+    usedWebPorts.add(port);
+    return port;
+  }
+  // Neunhundert gleichzeitige Bots mit Live-Ansicht sind weit jenseits von `MAX_BOTS_TOTAL`.
+  // Trotzdem: kein Port heißt keine texturierte Ansicht, nicht "kein Bot".
+  return null;
+}
+
+/** Was der Client beim Start über seinen Viewer sagt. */
+const WEB_READY = /^Browser-POV:\s*(https?:\/\/\S+)$/;
+const WEB_WARN = /^Browser-POV startet ohne Texturen:\s*(.+)$/;
+
+/** So lange darf eine Anfrage an den Viewer dauern. Ein Bild rechnet er in Millisekunden. */
+const WEB_TIMEOUT_MS = 8000;
 
 /** Die Kopfzeile eines Bildes. Davor stehen je nach Lage `ESC[2J` und `ESC[H`. */
 const POV_HEAD = /^(?:\x1b\[[0-9;?]*[A-Za-z])*POV\s+x=/;
@@ -448,7 +492,7 @@ class Bot extends EventEmitter {
     // Anzeigetafel und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
     // dem Client; gesammelt werden sie nur, wenn das Panel gerade danach gefragt hat (siehe
     // `capture`). Ohne das stünden dreizehn Zeilen Seitenleiste zwischen den Chatnachrichten.
-    this.views = { board: null, menu: null, position: null, movement: null, pov: null };
+    this.views = { board: null, menu: null, inv: null, position: null, movement: null, pov: null };
     this.capture = null;
     // Live-Ansicht: `povWanted` ist der Schalter (`:pov live`), `povRows` das Bild, das gerade
     // Zeile für Zeile hereinkommt. Solange niemand die Ansicht angefordert hat, kostet die
@@ -460,6 +504,12 @@ class Bot extends EventEmitter {
     this.povSkip = false;
     this.povStatus = '';
     this.povSentAt = 0;
+    // Der texturierte Viewer des Clients: `webPort` ist die Nummer, die wir vergeben haben,
+    // `web` steht erst, wenn der Client seine Adresse samt Token gemeldet hat. `webNote` ist der
+    // Satz, mit dem er erklärt, warum es keine Texturen gibt – der gehört dem Kunden.
+    this.webPort = null;
+    this.web = null;
+    this.webNote = '';
     this.stopping = false;
     this.timers = new Set();
     this.buffers = { out: '', err: '' };
@@ -503,6 +553,21 @@ class Bot extends EventEmitter {
 
   // ------------------------------------------------------------ Start / Stopp
 
+  /**
+   * Soll dieser Bot den texturierten Viewer mitbringen?
+   *
+   * Vier Bedingungen, und jede einzelne ist ein Nein: Die Live-Ansicht muss gebucht sein (`pov`
+   * kommt schon durch `gateCaps` gefiltert), die Bauform muss beide Optionen kennen (also
+   * mindestens Client 2.5.0), und für die Protokollversion dieses Serverplatzes muss eine
+   * Original-JAR bereitliegen. Fehlt eines davon, startet der Bot ohne `--pov-web` und die
+   * Live-Ansicht bleibt die farbige Voxelansicht.
+   */
+  wantsWebView(caps) {
+    return Boolean(
+      caps.pov && caps.povweb && caps.povresources && resources.has(this.profile.mc_version)
+    );
+  }
+
   args(caps) {
     const profile = this.profile;
     const target = profile.port ? `${profile.host}:${profile.port}` : profile.host;
@@ -538,6 +603,16 @@ class Bot extends EventEmitter {
     }
     if (caps.sneak && this.plan.premium && profile.sneak) args.push('--sneak');
 
+    // **Sichtweite.** Sie sagt dem Server, wie viele Chunks er schicken soll. Ein AFK-Bot braucht
+    // davon nichts – deshalb steht der Client auf 2, und deshalb ist das hier auch die Vorgabe.
+    // Für die Live-Ansicht ist sie dagegen die eine Zahl, die zählt: Was nicht geladen ist, kann
+    // der Client nicht zeichnen, und in 2 Chunks endet die Welt drei Schritte vor dem Bot. Sie
+    // kostet Arbeitsspeicher auf der Maschine und Datenverkehr vom Minecraft-Server, also gibt es
+    // sie ab einem bezahlten Platz und nur, wenn jemand sie ausdrücklich hochstellt.
+    if (caps.viewdistance && this.plan.premium && profile.view_distance > 0) {
+      args.push('--view-distance', String(Math.min(32, Math.max(2, profile.view_distance))));
+    }
+
     // ---- Live-Ansicht ---------------------------------------------------------------------
     //
     // Die Einstellungen der Ansicht gehören auf die Kommandozeile und nicht in einen Befehl
@@ -555,6 +630,21 @@ class Bot extends EventEmitter {
       if (caps.povstart) args.push('--pov', 'aus');
       if (caps.povsize) args.push('--pov-size', `${POV_SIZE.width}x${POV_SIZE.height}`);
       if (caps.povfps) args.push('--pov-fps', String(POV_FPS));
+
+      // Der texturierte Viewer. Er kommt **zusätzlich** zu den Zeilen oben, nicht statt ihrer:
+      // Fehlt die Original-JAR, bleibt die Voxelansicht, und dafür müssen die Einstellungen
+      // dieser Ansicht schon in der Befehlszeile stehen.
+      //
+      // Auf einem Standort hängt die Datei nicht hier, sondern dort – deshalb setzt sie dort auch
+      // der Standort selbst ein (siehe agent/index.js). Das Panel schickt nur die Nummer und die
+      // Version; welchen Pfad seine JAR hat, weiß nur die andere Maschine.
+      if (this.webPort && !this.remote) {
+        const jar = resources.pathFor(profile.mc_version);
+        if (jar) {
+          args.push('--pov-web', `127.0.0.1:${this.webPort}`);
+          args.push('--pov-resources', jar);
+        }
+      }
     }
 
     // Befehle, die schon der Client selbst takten kann (Beitritt + Wiederholung). Alles, was
@@ -613,6 +703,14 @@ class Bot extends EventEmitter {
     this.build = build;
     // `this.caps` erst nach `this.build` lesen – es hängt an der Bauform, die gerade gewählt wurde.
     const caps = this.caps;
+
+    // **Wohin, bevor womit.** Der Standort steht schon vor den Argumenten fest, denn er entscheidet
+    // mit: Der Pfad zur Minecraft-JAR gilt nur auf der Maschine, auf der der Bot wirklich läuft.
+    const node = this.node();
+    this.nodeId = node?.id || null;
+    this.remote = node?.kind === 'agent';
+    this.webPort = this.wantsWebView(caps) ? takeWebPort() : null;
+
     const args = this.args(caps);
     this.usesEvents = Boolean(caps.events);
     const home = userDir(this.userId);
@@ -631,13 +729,22 @@ class Bot extends EventEmitter {
     // Örtlich oder auf einem Standort? Beides sieht von hier aus gleich aus: `agents.spawn`
     // liefert ein Objekt mit stdout/stderr/stdin/kill, genau wie `child_process.spawn`. Nur so
     // bleibt der ganze Rest dieser Klasse frei von der Frage, wo der Prozess wirklich liegt.
-    const node = this.node();
-    this.nodeId = node?.id || null;
-    this.remote = node?.kind === 'agent';
     if (this.remote) {
       try {
-        this.proc = agents.spawn(node.id, { file, args, userId: this.userId });
+        this.proc = agents.spawn(node.id, {
+          file,
+          args,
+          userId: this.userId,
+          // Die zwei Argumente für den texturierten Viewer setzt der Standort selbst ein – er
+          // allein weiß, ob und wo seine Kopie der Minecraft-JAR liegt.
+          pov: this.webPort ? { port: this.webPort, mc: this.profile.mc_version } : null,
+        });
       } catch (error) {
+        // Hier endet der Start, bevor es einen Prozess gibt – `cleanup()` läuft also nie, und die
+        // Portnummer bliebe für immer vergeben. Ein Standort, der eine Stunde lang nicht erreichbar
+        // ist, hätte den ganzen Bereich aufgebraucht, ohne dass ein einziger Bot lief.
+        if (this.webPort) usedWebPorts.delete(this.webPort);
+        this.webPort = null;
         this.setState('error', error.message);
         this.lastError = error.message;
         throw new HttpError(503, error.message, {
@@ -746,7 +853,7 @@ class Bot extends EventEmitter {
     this.startedAt = null;
     this.auth = null;
     this.menu = null;
-    this.views = { board: null, menu: null, position: null, movement: null, pov: null };
+    this.views = { board: null, menu: null, inv: null, position: null, movement: null, pov: null };
     this.povWanted = false;
     this.povRows = null;
     this.povSkip = false;
@@ -754,6 +861,12 @@ class Bot extends EventEmitter {
     // Auch der Zeitstempel: Er beantwortet in `snapshot()` die Frage "ist schon ein Bild
     // angekommen?", und für einen beendeten Prozess lautet die Antwort nein.
     this.povSentAt = 0;
+    // Der Viewer ist mit seinem Prozess gegangen. Die Portnummer zurück in den Topf – sonst wäre
+    // der Bereich nach ein paar hundert Starts leer, obwohl kein einziger Bot mehr läuft.
+    if (this.webPort) usedWebPorts.delete(this.webPort);
+    this.webPort = null;
+    this.web = null;
+    this.webNote = '';
     if (this.capture) {
       clearTimeout(this.capture.timer);
       this.capture = null;
@@ -945,11 +1058,16 @@ class Bot extends EventEmitter {
         });
         break;
       }
+      // **Wohin ein Feld gehört, entscheidet die laufende Abfrage.** `:menu` und `:inv` schreiben
+      // beide `@event slot`-Zeilen, und beide meinen etwas anderes: einmal das offene Fenster des
+      // Servers, einmal das eigene Inventar. Ohne diese Unterscheidung landete das Inventar in der
+      // Menüansicht und überschrieb sie – ein Menü mit sechsundvierzig Feldern, das es nie gab.
       case 'slot': {
         const slot = /^(\d+)\s+(\d+)\s+([\s\S]*)$/.exec(event.text || '');
         if (!slot) break;
+        const kind = this.capture?.kind === 'inv' ? 'inv' : 'menu';
         const index = Number(slot[1]);
-        const current = this.views.menu && !this.views.menu.empty ? this.views.menu : {};
+        const current = this.views[kind] && !this.views[kind].empty ? this.views[kind] : {};
         const items = { ...(current.items || {}) };
         items[index] = {
           ...(items[index] || {}),
@@ -957,26 +1075,31 @@ class Bot extends EventEmitter {
           name: slot[3],
           lore: [],
         };
-        this.views.menu = {
-          empty: false,
-          title: current.title || this.menu?.title || '',
-          slots: current.slots || this.menu?.slots || 0,
-          items,
-          at: Date.now(),
-        };
-        this.emitView('menu');
+        this.views[kind] =
+          kind === 'inv'
+            ? { empty: false, items, at: Date.now() }
+            : {
+                empty: false,
+                title: current.title || this.menu?.title || '',
+                slots: current.slots || this.menu?.slots || 0,
+                items,
+                at: Date.now(),
+              };
+        this.emitView(kind);
         break;
       }
       case 'lore': {
         const lore = /^(\d+)\s+([\s\S]*)$/.exec(event.text || '');
-        if (!lore || !this.views.menu || this.views.menu.empty) break;
+        if (!lore) break;
+        const kind = this.capture?.kind === 'inv' ? 'inv' : 'menu';
+        if (!this.views[kind] || this.views[kind].empty) break;
         const index = Number(lore[1]);
-        const items = { ...(this.views.menu.items || {}) };
+        const items = { ...(this.views[kind].items || {}) };
         const item = items[index];
         if (!item) break;
         items[index] = { ...item, lore: [...(item.lore || []), lore[2]] };
-        this.views.menu = { ...this.views.menu, items, at: Date.now() };
-        this.emitView('menu');
+        this.views[kind] = { ...this.views[kind], items, at: Date.now() };
+        this.emitView(kind);
         break;
       }
       case 'board': {
@@ -1012,6 +1135,22 @@ class Bot extends EventEmitter {
   }
 
   onStatus(line) {
+    // **Vor allem anderen: die Adresse des texturierten Viewers.**
+    //
+    // Sie steht genau einmal da, gleich beim Start, und enthält den Zugriffstoken dieses Laufs.
+    // Danach ist sie unwiederbringlich – der Client würfelt ihn beim nächsten Start neu. Sie steht
+    // deshalb vor der Abfrage-Sammlung: Käme sie zufällig in ein `:board`, verschwände sie darin.
+    if (this.webPort) {
+      const ready = WEB_READY.exec(line);
+      if (ready) return this.setWeb(ready[1]);
+      const warned = WEB_WARN.exec(line);
+      if (warned) {
+        this.webNote = warned[1];
+        this.push('status', line);
+        return;
+      }
+    }
+
     // Läuft gerade eine Abfrage (`:board`, `:menu`), gehört die Zeile dorthin und nicht
     // in die Ausgabe – sonst stünde die halbe Seitenleiste als Fließtext im Protokoll.
     if (this.capture && Date.now() < this.capture.until) {
@@ -1135,6 +1274,9 @@ class Bot extends EventEmitter {
         at: Date.now(),
       };
     }
+    // Dasselbe fürs Inventar: Was der Bot weggelegt hat, ist weg, und ein Feld, über das nichts
+    // mehr gemeldet wird, ist leer – nicht "so wie beim letzten Mal".
+    if (kind === 'inv') this.views.inv = { empty: false, items: {}, at: Date.now() };
     this.capture = { kind, lines: [], until: Date.now() + 2000, timer: null };
     this.capture.timer = setTimeout(() => this.finishCapture(), 2000);
     this.capture.timer.unref?.();
@@ -1145,6 +1287,16 @@ class Bot extends EventEmitter {
     if (!capture) return;
     clearTimeout(capture.timer);
     this.capture = null;
+    // Das Inventar steht schon vollständig da: Es kam als `@event slot`, also mit Farbcodes und
+    // ohne Umweg über den Fließtext. Die Textzeilen daneben sind dieselbe Auskunft für ein
+    // Terminal – sie noch einmal zu zerlegen brächte nichts als eine zweite Fehlerquelle.
+    if (capture.kind === 'inv') {
+      if (!this.views.inv || !Object.keys(this.views.inv.items || {}).length) {
+        this.views.inv = { empty: true, items: {}, at: Date.now() };
+      }
+      this.emitView('inv');
+      return;
+    }
     const view = parseView(capture.kind, capture.lines);
     if (capture.kind === 'menu' && !view.empty) {
       const structured = this.views.menu && !this.views.menu.empty ? this.views.menu : null;
@@ -1286,7 +1438,7 @@ class Bot extends EventEmitter {
       throw new HttpError(409, message[0], { en: message[1] });
     }
     // Abfragen, deren Antwort als Ansicht gehört und nicht als Textzeilen.
-    if (verb === 'board' || verb === 'menu') this.beginCapture(verb);
+    if (verb === 'board' || verb === 'menu' || verb === 'inv') this.beginCapture(verb);
     if (verb === 'pos' || verb === 'position') this.beginCapture('position');
     // `:home` und `:route` ohne Argument sind Abfragen und keine Befehle – ihre Antwort gehört in
     // den Reiter, in dem gefragt wurde, und nicht zwischen die Chatnachrichten.
@@ -1368,6 +1520,96 @@ class Bot extends EventEmitter {
     return true;
   }
 
+  // ------------------------------------------------------------ Der Viewer des Clients
+
+  /**
+   * Die Adresse des Viewers merken – und den Token dabei **nicht** weitererzählen.
+   *
+   * Der Client schreibt die vollständige Adresse auf die Fehlerausgabe, damit ein Mensch am
+   * Terminal sie anklicken kann. Hier sitzt kein Mensch am Terminal: Die Zeile ginge über die
+   * Live-Leitung in jeden offenen Browser dieses Kontos und stünde im Protokoll. Der Token gehört
+   * aber allein dem Panel – er ist der Schlüssel zu einem Dienst, der die Weltdaten eines fremden
+   * Minecraft-Servers ausliefert und Klicks im Spiel annimmt. Was der Kunde stattdessen sieht, ist
+   * der Satz darunter: dass die Ansicht mit Texturen bereitsteht.
+   */
+  setWeb(rawUrl) {
+    let url;
+    try {
+      url = new URL(rawUrl);
+    } catch {
+      return;
+    }
+    const token = url.searchParams.get('token');
+    if (!token) return;
+    this.web = {
+      port: Number(url.port) || this.webPort,
+      token,
+      since: Date.now(),
+    };
+    this.push('status', 'Live-Ansicht mit Texturen bereit.');
+    this.supervisor.emit('bot-state', { userId: this.userId, key: this.key, state: this.snapshot() });
+  }
+
+  /**
+   * Eine Anfrage an den Viewer dieses Bots stellen.
+   *
+   * Örtlich ist das ein gewöhnliches `fetch` auf 127.0.0.1; auf einem Standort geht dieselbe
+   * Anfrage über die bestehende Leitung dorthin (siehe agents.js). Beide Wege geben dasselbe
+   * zurück – Status, Inhaltstyp und Bytes –, damit der Endpunkt im Panel nicht wissen muss, auf
+   * welcher Maschine das Bild gerechnet wurde.
+   */
+  async webFetch(target, { method = 'GET' } = {}) {
+    if (!this.web) {
+      throw new HttpError(409, 'Für diesen Bot läuft keine texturierte Live-Ansicht.', {
+        en: 'No textured live view is running for this bot.',
+      });
+    }
+    const route = target.startsWith('/') ? target : `/${target}`;
+    const path = `${route}${route.includes('?') ? '&' : '?'}token=${encodeURIComponent(this.web.token)}`;
+
+    if (this.remote) {
+      return agents.request(this.nodeId, this.proc?.job, { method, path, timeout: WEB_TIMEOUT_MS });
+    }
+    const response = await fetch(`http://127.0.0.1:${this.web.port}${path}`, {
+      method,
+      signal: AbortSignal.timeout(WEB_TIMEOUT_MS),
+    });
+    return {
+      status: response.status,
+      type: response.headers.get('content-type') || 'application/octet-stream',
+      body: Buffer.from(await response.arrayBuffer()),
+    };
+  }
+
+  /**
+   * Was die Live-Ansicht dieses Bots gerade kann und tut.
+   *
+   * `on` heißt "das Panel hört zu", `frames` heißt "es ist auch schon etwas angekommen". Die
+   * Oberfläche kann damit "noch nicht gestartet" von "gestartet, wartet auf das erste Bild"
+   * unterscheiden – vorher stand beides unter demselben Satz, und wer nie auf "Live starten"
+   * gedrückt hatte, wartete auf ein Bild, das niemand bestellt hatte.
+   *
+   * `web` ist die zweite Frage: Läuft für diesen Bot der texturierte Viewer? Nur dann holt der
+   * Browser Bilder ab, statt auf Halbblockzeilen zu warten. `pending` heißt: bestellt, aber der
+   * Client hat seine Adresse noch nicht gemeldet – das dauert einen Wimpernschlag und ist der
+   * Unterschied zwischen "gleich" und "gibt es hier nicht".
+   *
+   * Steht **an beiden Stellen**, an denen ein Browser einen Bot kennenlernt: im Zustandswechsel
+   * über die Live-Leitung und in der Kontenliste eines Serverplatzes. Ohne das Zweite wüsste die
+   * Oberfläche nach jedem Neuladen nicht, welcher Weg gilt, bis sich der Zustand zufällig ändert.
+   */
+  povState() {
+    return {
+      on: this.povWanted,
+      frames: Boolean(this.povSentAt),
+      fps: POV_FPS,
+      ...POV_SIZE,
+      web: Boolean(this.web),
+      pending: Boolean(this.webPort && !this.web),
+      note: this.webNote,
+    };
+  }
+
   snapshot() {
     return {
       key: this.key,
@@ -1387,14 +1629,11 @@ class Bot extends EventEmitter {
       views: {
         board: this.views.board,
         menu: this.views.menu,
+        inv: this.views.inv,
         position: this.views.position,
         movement: this.views.movement,
       },
-      // `on` heißt "das Panel hört zu", `frames` heißt "es ist auch schon etwas angekommen".
-      // Die Oberfläche kann damit "noch nicht gestartet" von "gestartet, wartet auf das erste
-      // Bild" unterscheiden – vorher stand beides unter demselben Satz, und wer nie auf "Live
-      // starten" gedrückt hatte, wartete auf ein Bild, das niemand bestellt hatte.
-      pov: { on: this.povWanted, frames: Boolean(this.povSentAt), fps: POV_FPS, ...POV_SIZE },
+      pov: this.povState(),
       uptime: this.startedAt ? Date.now() - this.startedAt : 0,
       // Nur gesetzt, wenn der Client gerade auf eine neue Microsoft-Anmeldung wartet.
       auth: this.state === 'auth' ? this.auth : null,

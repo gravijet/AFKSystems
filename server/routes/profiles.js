@@ -11,7 +11,7 @@ import * as billing from '../billing.js';
 import * as nodes from '../nodes.js';
 import * as roles from '../roles.js';
 import { planView, addonView } from './core.js';
-import { mergeLines } from '../../public/assets/js/chatlog.js';
+import { mergeLines, stripFormatting } from '../../public/assets/js/chatlog.js';
 import { wrap, requireString, requireInt, bad, notFound, parseAddress, slugify, HttpError, langOf } from '../util.js';
 
 export const router = express.Router();
@@ -71,6 +71,9 @@ function membersOf(profile) {
       uptime_sec: row.uptime_sec || 0,
       last_error: live ? live.lastError : row.bot_error,
       menu: live ? live.menu : null,
+      // Ohne diese Zeile wüsste die Live-Ansicht nach jedem Neuladen nicht, welcher Weg gilt:
+      // `refresh()` im Browser ersetzt den gemerkten Bot-Zustand durch genau diese Zeile.
+      pov: live ? live.povState() : null,
       head: `https://minotar.net/helm/${encodeURIComponent(row.uuid || row.name)}/64.png`,
     };
   });
@@ -99,6 +102,8 @@ function profileView(profile, lang = 'en') {
     fake_host: profile.fake_host || '',
     antiafk_sec: profile.antiafk_sec,
     sneak: Boolean(profile.sneak),
+    // 0 heißt "was der Client für richtig hält" – 2 Chunks, in den POV-Bauformen 6.
+    view_distance: profile.view_distance || 0,
     on_cooldown: profile.on_cooldown,
     anti_afk: JSON.parse(profile.anti_afk || '{}'),
     color: profile.color,
@@ -431,6 +436,24 @@ router.patch(
         });
       }
       put('sneak', body.sneak ? 1 : 0);
+    }
+    if (body.view_distance !== undefined) {
+      const chunks = requireInt(body.view_distance, 'Sichtweite', { max: 32 });
+      if (chunks > 0) {
+        if (!plan.premium) {
+          throw new HttpError(402, 'Die Sichtweite lässt sich ab einem bezahlten Serverplatz einstellen.', {
+            en: 'View distance is adjustable from a paid server slot on.',
+          });
+        }
+        // Der Client selbst nimmt 2 bis 32. Alles darunter wäre keine Sichtweite mehr, sondern
+        // ein Bot, der die eigene Position nicht mehr geladen bekommt.
+        if (chunks < 2) {
+          throw bad('Die Sichtweite geht von 2 bis 32 Chunks (0 = Vorgabe des Clients).', {
+            en: 'View distance runs from 2 to 32 chunks (0 = the client’s default).',
+          });
+        }
+      }
+      put('view_distance', chunks);
     }
     if (body.on_cooldown !== undefined) {
       put('on_cooldown', requireInt(body.on_cooldown, 'Sperrzeit', { min: 1, max: 3600 }));
@@ -803,6 +826,46 @@ router.get(
 );
 
 /**
+ * Der Chatverlauf zum Mitnehmen – eine Textdatei, wie man sie einem Serverteam schickt.
+ *
+ * Im Panel steht der Verlauf mit Farben, zusammengelegt und gefiltert; das ist zum Lesen richtig
+ * und zum Weitergeben unbrauchbar. Hier kommt er, wie er war: eine Zeile je Nachricht, Zeitstempel
+ * vorn, Farbcodes heraus. Wer belegen will, dass ein Bot um 03:14 nichts geschrieben hat, hat
+ * damit etwas in der Hand, das sich anhängen lässt.
+ *
+ * Zustandsmeldungen kommen mit, wenn man sie will (`?all=1`) – beim Suchen nach "warum war der Bot
+ * plötzlich weg" ist genau das die Antwort, und dann ist die Datei ohne sie wertlos.
+ */
+router.get(
+  '/:id/chat.txt',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const all = req.query.all === '1';
+    const lines = [];
+    for (const member of membersOf(profile)) {
+      for (const entry of supervisor.historyOf(profile.id, member.account_id)) {
+        if (!all && entry.type !== 'chat' && entry.type !== 'sent') continue;
+        lines.push({ ...entry, account: member.name });
+      }
+    }
+    lines.sort((a, b) => a.t - b.t);
+    const body = lines
+      .map((entry) => {
+        const when = new Date(entry.t).toISOString().replace('T', ' ').slice(0, 19);
+        const who = entry.type === 'sent' ? `> ${entry.account}` : entry.type === 'chat' ? '' : `[${entry.type}]`;
+        return `${when}  ${who ? `${who}  ` : ''}${stripFormatting(entry.text)}`;
+      })
+      .join('\n');
+
+    const name = `${profile.slug || 'chat'}-${new Date().toISOString().slice(0, 10)}.txt`;
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(`${body}\n`);
+  })
+);
+
+/**
  * Anzeigetafel und Menü der Bots dieses Platzes.
  *
  * Sie stehen nicht im Chat, weil sie kein Chat sind: dreizehn Zeilen Seitenleiste zwischen den
@@ -813,7 +876,7 @@ router.get(
   '/:id/views',
   wrap((req, res) => {
     const profile = ownedProfile(req);
-    const kinds = ['board', 'menu', 'position'];
+    const kinds = ['board', 'menu', 'inv', 'position'];
     const wanted = kinds.includes(String(req.query.kind)) ? [String(req.query.kind)] : kinds;
     const out = [];
     for (const member of membersOf(profile)) {
@@ -947,6 +1010,147 @@ const runLocal = wrap((req, res) => {
 router.post('/:id/command', runLocal);
 // Alter Name, damit offene Tabs und Lesezeichen weiter funktionieren.
 router.post('/:id/move', runLocal);
+
+// ---------------------------------------------------------------- Die texturierte Live-Ansicht
+//
+// Seit Client 2.5.0 bringt jeder POV-Bot seinen eigenen kleinen Webserver mit: fertige PNG-Bilder
+// aus echten Blockmodellen, dazu Hotbar, Inventar und das offene Menü als Daten. Er lauscht auf
+// dem Localhost der Maschine, auf der der Bot läuft, und ist mit einem Zufallstoken geschützt.
+//
+// Diese Endpunkte sind die Brücke dorthin. Sie sind bewusst dünn – sie prüfen, wem der Bot gehört,
+// und reichen durch. Was sie **nicht** tun, ist ebenso wichtig:
+//
+//   * Sie geben den Token nie heraus. Er bleibt im Panel (siehe supervisor.js `setWeb`).
+//   * Sie nehmen keine Adresse entgegen, nur einen festen Satz Pfade. Sonst wäre das hier ein
+//     offener Proxy auf den Localhost des Servers – für jeden angemeldeten Kunden.
+//   * Sie geben den Inhaltstyp der Antwort nicht weiter, sondern setzen ihn selbst. Was aus einer
+//     fremden Weltdatei kommt, soll im Browser ein Bild sein und nichts anderes.
+
+/** Der Bot hinter `:accountId`, samt Prüfung, dass seine Live-Ansicht überhaupt läuft. */
+function povBot(req) {
+  const profile = ownedProfile(req);
+  const account = ownedAccount(req, req.params.accountId);
+  if (!capsOf(profile).pov) {
+    throw new HttpError(402, 'Die Live-Ansicht ist für diesen Serverplatz nicht gebucht.', {
+      en: 'The live view is not booked for this server slot.',
+    });
+  }
+  const bot = supervisor.get(profile.id, account.id);
+  if (!bot?.running) {
+    throw new HttpError(409, 'Der Bot läuft gerade nicht.', { en: 'That bot is not running.' });
+  }
+  return bot;
+}
+
+/** Bild, Daten oder Text – mehr Sorten kennt der Viewer nicht, und mehr lassen wir nicht durch. */
+function sendUpstream(res, answer, { cache = 'no-store' } = {}) {
+  const raw = String(answer.type || '');
+  const type = raw.startsWith('image/png')
+    ? 'image/png'
+    : raw.startsWith('application/json')
+      ? 'application/json; charset=utf-8'
+      : 'text/plain; charset=utf-8';
+  res.status(answer.status);
+  res.setHeader('Content-Type', type);
+  // Lange liegen bleiben darf nur eine Antwort, die auch eine ist. Ein "keine Ressourcen geladen"
+  // einen Tag im Browser zu behalten hieße: Wer die Datei danach hinlegt, sieht sie trotzdem nicht.
+  res.setHeader('Cache-Control', answer.status === 200 ? cache : 'no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Ein PNG aus einer fremden Welt bleibt ein PNG. Die Regel kostet nichts und nimmt der Frage,
+  // ob jemand hier je etwas Ausführbares hindurchbekommt, die Grundlage.
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.send(answer.body);
+}
+
+/**
+ * Eine Anfrage an den Viewer weiterreichen. Geht sie schief, ist das kein Serverfehler: Der Bot
+ * ist gerade gegangen, der Standort antwortet nicht, das Bild ist noch nicht zu rechnen. Alles
+ * davon ist ein 503 mit dem Satz, den der Client oder die Leitung dazu gesagt hat.
+ */
+async function through(req, res, target, options = {}) {
+  const bot = povBot(req);
+  let answer;
+  try {
+    answer = await bot.webFetch(target, { method: options.method || 'GET' });
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    throw new HttpError(503, `Die Live-Ansicht antwortet nicht: ${error.message}`, {
+      en: `The live view is not answering: ${error.message}`,
+    });
+  }
+  sendUpstream(res, answer, options);
+}
+
+/** Wie groß ein Bild sein darf. Der Client deckelt selbst bei 640×360; hier steht dieselbe Zahl. */
+const clampFrame = (raw, min, max, fallback) => {
+  const value = Number(raw);
+  return Number.isFinite(value) ? Math.min(max, Math.max(min, Math.round(value))) : fallback;
+};
+
+router.get(
+  '/:id/pov/:accountId/frame.png',
+  wrap(async (req, res) => {
+    const width = clampFrame(req.query.w, 160, 640, 426);
+    const height = clampFrame(req.query.h, 90, 360, 240);
+    await through(req, res, `/api/frame.png?w=${width}&h=${height}`);
+  })
+);
+
+router.get(
+  '/:id/pov/:accountId/state.json',
+  wrap(async (req, res) => {
+    await through(req, res, '/api/state.json');
+  })
+);
+
+// Das Bild eines Gegenstands ändert sich innerhalb einer Minecraft-Version nie. Es einen Tag im
+// Browser liegen zu lassen ist der Unterschied zwischen "ein Menü öffnet sich" und
+// "vierundfünfzig Anfragen, jedes Mal wenn es sich öffnet".
+const IMMUTABLE = 'private, max-age=86400';
+
+router.get(
+  '/:id/pov/:accountId/item.png',
+  wrap(async (req, res) => {
+    const id = requireInt(req.query.id ?? 0, 'Gegenstand', { min: 0, max: 100_000 });
+    await through(req, res, `/api/item.png?id=${id}`, { cache: IMMUTABLE });
+  })
+);
+
+// Die GUI-Texturen des Spiels (Truhenfenster, Schnellleiste, Auswahlrahmen) reicht das Panel
+// **nicht** durch, obwohl der Viewer sie anbietet. Sie hätten genau einen Zweck: eine nachgebaute
+// Minecraft-Oberfläche im Panel. Die Felder des Panels sind für denselben Zweck gemacht, sehen im
+// hellen wie im dunklen Schema richtig aus und tragen den Aufklapper mit Name und Lore – und ein
+// Durchreicher, den nichts benutzt, ist nur eine Fläche mehr, auf die jemand zielen kann.
+// Die Bilder der Gegenstände oben sind die Ausnahme: Sie sind der Inhalt und nicht der Rahmen.
+
+/** Ein Feld im offenen Menü anklicken – links, rechts oder mit Shift. */
+router.post(
+  '/:id/pov/:accountId/click',
+  wrap(async (req, res) => {
+    notLocked(ownedProfile(req));
+    const slot = requireInt(req.body?.slot, 'Feld', { min: 0, max: 200 });
+    const action = ['left', 'right', 'shift'].includes(req.body?.action) ? req.body.action : 'left';
+    await through(req, res, `/api/click?slot=${slot}&action=${action}`, { method: 'POST' });
+  })
+);
+
+router.post(
+  '/:id/pov/:accountId/close',
+  wrap(async (req, res) => {
+    notLocked(ownedProfile(req));
+    await through(req, res, '/api/close', { method: 'POST' });
+  })
+);
+
+/** Das Schnellleistenfeld wechseln. Der Client schickt dafür dasselbe Paket wie das Mausrad. */
+router.post(
+  '/:id/pov/:accountId/hotbar',
+  wrap(async (req, res) => {
+    notLocked(ownedProfile(req));
+    const slot = requireInt(req.body?.slot, 'Feld', { min: 0, max: 8 });
+    await through(req, res, `/api/hotbar?slot=${slot}`, { method: 'POST' });
+  })
+);
 
 // ---------------------------------------------------------------- Macros
 

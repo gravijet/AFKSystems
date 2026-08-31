@@ -229,8 +229,8 @@ export function todosFor(user, lang = 'en') {
     }
   }
 
-  // Eine offene Überweisung wartet auf den Kunden – bei Tebex wartet sie auf niemanden, dort
-  // führt der Weg über die Bezahlseite und die Aufladung verfällt von selbst.
+  // Eine offene Überweisung wartet auf den Kunden – bei Stripe wartet sie auf niemanden, dort
+  // führt der Weg über die Bezahlseite, und läuft die ab, räumt der Webhook die Aufladung weg.
   for (const topup of db
     .prepare(
       `SELECT * FROM topups
@@ -351,13 +351,15 @@ export function staffTodos(lang = 'en') {
   const now = Date.now();
 
   // ------------------------------------------------------------ Support
-  const waiting = db
-    .prepare("SELECT COUNT(*) AS n FROM tickets WHERE unread_staff = 1 AND status != 'closed'")
-    .get().n;
+  //
+  // Gezählt wird der Zustand, nicht der Ungelesen-Punkt: Ein Ticket, das jemand aufgemacht und
+  // wieder zugeklappt hat, ohne zu antworten, verschwand vorher aus dieser Liste, obwohl die
+  // Antwort weiter ausstand. Beantwortete und geschlossene Tickets stehen hier gar nicht erst.
+  const waiting = db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE status = 'open'").get().n;
   if (waiting) {
     const urgent = db
       .prepare(
-        "SELECT COUNT(*) AS n FROM tickets WHERE unread_staff = 1 AND status != 'closed' AND priority IN ('high','urgent')"
+        "SELECT COUNT(*) AS n FROM tickets WHERE status = 'open' AND priority IN ('high','urgent')"
       )
       .get().n;
     add({
@@ -371,8 +373,8 @@ export function staffTodos(lang = 'en') {
           ? `${urgent} of them are marked high or urgent.`
           : `${urgent} davon stehen auf hoch oder dringend.`
         : en
-          ? 'Nobody from the team has replied to them yet.'
-          : 'Aus dem Team hat darauf noch niemand geantwortet.',
+          ? 'They are with us: the customer wrote last.'
+          : 'Sie liegen bei uns: zuletzt hat der Kunde geschrieben.',
       href: '#/admin/tickets',
       label: en ? 'Open tickets' : 'Tickets öffnen',
     });
@@ -380,9 +382,7 @@ export function staffTodos(lang = 'en') {
 
   // Ein Ticket, das seit Tagen offensteht, ist etwas anderes als eines von heute Morgen.
   const stale = db
-    .prepare(
-      "SELECT COUNT(*) AS n FROM tickets WHERE status != 'closed' AND unread_staff = 1 AND updated_at < ?"
-    )
+    .prepare("SELECT COUNT(*) AS n FROM tickets WHERE status = 'open' AND updated_at < ?")
     .get(now - 3 * 86_400_000).n;
   if (stale) {
     add({
@@ -546,6 +546,29 @@ export function staffTodos(lang = 'en') {
         : 'Ohne Server-ID startet kein Gratis-Serverplatz – die Mitgliedschaft lässt sich nicht prüfen.',
       href: '#/admin/settings',
       label: en ? 'Settings' : 'Einstellungen',
+    });
+  }
+
+  // Ein selbst geschriebener Rechtstext, der noch den alten Zahlungsanbieter nennt, ist keine
+  // Formsache: In der Datenschutzerklärung steht dann ein Empfänger, an den nichts mehr geht, und
+  // der wirkliche fehlt. Überschrieben wird hier trotzdem nichts – wer seinen Text selbst
+  // geschrieben hat, soll ihn auch selbst ändern. Die Systemvorgabe ist längst umgestellt und
+  // fällt deshalb nicht in diese Prüfung.
+  const staleLegal = ['legal_privacy', 'legal_privacy_en', 'legal_terms', 'legal_terms_en'].filter(
+    (key) => /tebex/i.test(String(getSetting(key) || ''))
+  );
+  if (staleLegal.length) {
+    add({
+      key: 'staff-legal-provider',
+      kind: 'warn',
+      title: en
+        ? 'The legal texts still name the old payment provider'
+        : 'Die Rechtstexte nennen noch den alten Zahlungsanbieter',
+      text: en
+        ? 'Payments run through Stripe, and AFKSystems is the seller now. Privacy notice and terms have to say so.'
+        : 'Bezahlt wird über Stripe, und Verkäufer ist jetzt AFKSystems selbst. Datenschutz und Bedingungen müssen das sagen.',
+      href: '#/admin/settings?group=legal',
+      label: en ? 'Legal texts' : 'Rechtstexte',
     });
   }
 

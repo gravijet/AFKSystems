@@ -64,8 +64,9 @@ Bots auf seiner Maschine und gehen über die Adresse des Proxys hinaus.
    ┌──────────────────────┐                    ┌─────────────────────────┐
    │  Datenbank           │                    │  agent/index.js         │
    │  Weboberfläche       │  ◀── WebSocket ──▶ │  data/bin/  (Clients)   │
-   │  Supervisor          │      (ausgehend    │  data/users/ (Konten)   │
-   │                      │       vom Standort)│  ein Prozess je Bot     │
+   │  Supervisor          │      (ausgehend    │  data/mc/   (Texturen)  │
+   │                      │       vom Standort)│  data/users/ (Konten)   │
+   │                      │                    │  ein Prozess je Bot     │
    └──────────────────────┘                    └─────────────────────────┘
 ```
 
@@ -81,15 +82,32 @@ HTTPS, mehr nicht – das kann jeder VPS ab der ersten Minute.
 | Panel → Standort | `spawn` | starte diesen Client mit diesen Argumenten |
 | Panel → Standort | `stdin` | schick diese Zeile an den Bot (Chat, Befehl) |
 | Panel → Standort | `kill` | beende den Bot |
-| Panel → Standort | `sync` | hol dir die Client-Dateien neu |
+| Panel → Standort | `sync` | hol dir die Client-Dateien und Ressourcen neu |
+| Panel → Standort | `http` | frag den Live-Viewer dieses Bots und schick mir die Antwort |
 | Standort → Panel | `hello` | wer ich bin, welche Version, was ich da habe |
 | Standort → Panel | `metrics` | CPU, Speicher, Platte, laufende Bots (alle 15 s) |
 | Standort → Panel | `out` / `err` | was der Bot ausgibt – Chat und Zustand |
 | Standort → Panel | `exit` | der Bot ist beendet, mit Grund |
 | Standort → Panel | `files` | geänderte Kontodateien (aufgefrischte Microsoft-Token) |
+| Standort → Panel | `httpres` | die Antwort des Live-Viewers – Status, Inhaltstyp, Bytes |
 
 **Die Client-Dateien holt sich der Standort vom Panel**, nicht von GitHub. Damit liegt dort nie eine
 andere Fassung als im Panel, und auf dem neuen Rechner braucht es keinen GitHub-Zugang.
+
+**Die Minecraft-Ressourcen ebenso.** Die texturierte Live-Ansicht liest beim Zeichnen aus der
+Original-Client-JAR von Minecraft, und gezeichnet wird dort, wo der Bot läuft – die Datei muss also
+auf dieser Maschine liegen. Sie steht deshalb im selben Manifest und wird genauso abgeglichen: nur
+was fehlt oder abweicht, und was das Panel nicht mehr führt, räumt der Standort wieder weg. Von
+Hand ist dort nichts zu tun (eingerichtet wird sie einmal im Panel, siehe
+[live-ansicht.md](live-ansicht.md)). Ohne sie startet ein Bot dort ohne `--pov-web` und die
+Live-Ansicht bleibt die farbige Voxelansicht.
+
+**Der Live-Viewer lauscht auf dem Localhost des Standorts** und ist von außen nicht erreichbar –
+auch nicht vom Panel. Damit ein Kunde sein Bild trotzdem sieht, reist die HTTP-Anfrage durch diese
+Verbindung: Das Panel schickt `http` mit Auftragsnummer und Pfad, der Standort führt sie gegen
+seinen eigenen Localhost aus und schickt die Antwort als `httpres` zurück. Welcher Port gemeint
+ist, steht am Auftrag und nicht in der Nachricht – sonst wäre der Agent ein offener Proxy auf jeden
+lauschenden Dienst seiner Maschine.
 
 **Die Microsoft-Anmeldungen reisen mit.** Beim Start eines Bots schickt das Panel die Kontodatei
 mit; wenn der Client den Token auffrischt, kommt sie zurück und wird im Panel gespeichert. Ohne
@@ -503,6 +521,8 @@ Für den Kunden heißt das: kurzer Aussetzer, keine Handarbeit.
 | Konto muss ständig neu verbunden werden | die Kontodatei kommt nicht zurück | Rechte auf `/opt/afksystems/data/users` prüfen (muss dem Panel-Benutzer gehören) |
 | Standort steht nicht zur Auswahl | Zugang auf *Nur Administratoren*, Standort voll oder nicht verbunden | **Administration → Standorte** ansehen |
 | Auslastungsbalken bleiben leer | noch keine Meldung eingetroffen | 15 Sekunden warten; sonst Leitung prüfen |
+| Live-Ansicht dort ohne Texturen | die Minecraft-JAR ist noch nicht angekommen | `ls -la /opt/afksystems-agent/data/mc`, dann **Administration → Client → Abgleichen** |
+| *"Die Live-Ansicht antwortet nicht"* | der Bot ist gerade gegangen oder die Leitung stockt | Bot-Zustand ansehen; die Ansicht kommt von selbst wieder |
 | Bot bleibt auf *verbinde* stehen (Proxy) | Proxy antwortet nicht | `curl --socks5 …` vom Panel-Server aus |
 | *"SOCKS5: Verbindung abgelehnt"* | Firewall oder falsche `client pass`-Regel | `ufw status`, `journalctl -u danted -n 50` |
 | Es kommt die **alte** IP zurück | `external:` zeigt auf die falsche Adresse | `/etc/danted.conf` prüfen, `systemctl restart danted` |
@@ -514,8 +534,8 @@ Für den Kunden heißt das: kurzer Aussetzer, keine Handarbeit.
 systemctl status afksystems-agent --no-pager
 journalctl -u afksystems-agent -n 100 --no-pager
 
-# Welche Client-Dateien liegen dort?
-ls -la /opt/afksystems-agent/data/bin
+# Welche Client-Dateien und Minecraft-Ressourcen liegen dort?
+ls -la /opt/afksystems-agent/data/bin /opt/afksystems-agent/data/mc
 
 # Laufen dort wirklich Bots?
 pgrep -a -u afkagent -f afk-linux

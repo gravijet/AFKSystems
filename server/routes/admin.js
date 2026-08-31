@@ -8,6 +8,7 @@ import { db, setSetting, allSettings, audit, settingDefaults } from '../db.js';
 import * as auth from '../auth.js';
 import * as billing from '../billing.js';
 import * as binaries from '../binaries.js';
+import * as resources from '../resources.js';
 import * as mail from '../mail.js';
 import * as oauth from '../oauth.js';
 import * as tickets from '../tickets.js';
@@ -16,7 +17,7 @@ import * as linkedRoles from '../linked-roles.js';
 import * as nodes from '../nodes.js';
 import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
-import * as tebex from '../tebex.js';
+import * as stripe from '../stripe.js';
 import { supervisor } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
 import { planView, ticketView } from './core.js';
@@ -264,6 +265,11 @@ function clientState() {
     builds: binaries.state.builds,
     files: binaries.files(),
     dir: paths.bin,
+    // Die Minecraft-Ressourcen gehören dazu, auch wenn sie nicht aus dem Release kommen: Ohne sie
+    // gibt es die texturierte Live-Ansicht nicht, und der einzige Ort, an dem das auffällt, wäre
+    // sonst ein Kunde, der einen Zusatz bezahlt hat und ein Voxelbild bekommt.
+    resources: resources.list(binaries.state.versions),
+    resources_dir: paths.resources,
   };
 }
 
@@ -1041,14 +1047,12 @@ admin.patch(
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
     const body = req.body || {};
     if (body.status !== undefined) {
-      const updated = tickets.setStatus(ticket, body.status, req.user.id);
-      if (body.status === 'closed') tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
+      const updated = tickets.setStatus(ticket, body.status, req.user.id, { staff: true });
+      if (updated.status === 'closed') tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
     }
-    if (body.priority !== undefined) {
-      if (!tickets.PRIORITIES.includes(body.priority)) throw bad('Unbekannte Dringlichkeit.');
-      db.prepare('UPDATE tickets SET priority = ? WHERE id = ?').run(body.priority, ticket.id);
-      audit(req.user.id, 'ticket-priority', { id: ticket.id, priority: body.priority }, req.ip);
-    }
+    // Die Dringlichkeit setzt ausschließlich das Team – ein Kunde hätte sonst nach kurzer Zeit
+    // jedes seiner Tickets auf „dringend“. Was gesetzt wurde, steht im Verlauf (siehe tickets.js).
+    if (body.priority !== undefined) tickets.setPriority(ticket, body.priority, req.user.id);
     if (body.subject !== undefined) {
       db.prepare('UPDATE tickets SET subject = ? WHERE id = ?').run(
         requireString(body.subject, 'Betreff', { max: 120 }),
@@ -1236,7 +1240,7 @@ admin.get(
       mail_categories: mail.categoriesFor(langOf(req)),
       oauth: oauth.state(),
       bot: botState(),
-      tebex: tebex.status(),
+      stripe: stripe.status(),
       // Was der Editor für die Linked Roles braucht: die Quellen, die Vergleichsarten und das,
       // was gerade gilt (auch wenn noch nie etwas gespeichert wurde – dann sind es die Vorgaben).
       linked_roles: {
@@ -1277,9 +1281,6 @@ admin.patch(
             cent: requireInt(pack.cent, 'Betrag', { min: 100, max: 1_000_000 }),
             credits: requireInt(pack.credits, 'Credits', { min: 1, max: 1_000_000 }),
             label: String(pack.label || `${(pack.cent / 100).toFixed(2)} €`).slice(0, 40),
-            // Die Nummer, unter der dasselbe Paket im Tebex-Webstore liegt. Leer heißt: gibt es
-            // dort nicht – dann taugt das Paket nur für den Checkout-Weg.
-            tebex: String(pack.tebex || '').trim().slice(0, 40),
           }))
         );
       } else if (entry.type === 'select') {
@@ -1442,18 +1443,18 @@ admin.get(
 );
 
 /**
- * Tebex prüfen, ohne dass Geld fließt.
+ * Stripe prüfen, ohne dass Geld fließt.
  *
- * Beantwortet die Frage, an der beim Einrichten fast alles hängt: Nimmt Tebex die Zugangsdaten an,
- * und ist die Checkout-API für dieses Projekt freigeschaltet? Dafür wird ein Warenkorb über einen
- * Cent angelegt und liegengelassen. Was hier **nicht** geprüft werden kann, ist der Weg des Geldes
- * zurück – dafür gibt es "Send Test" im Tebex-Panel und den einen echten kleinen Kauf.
+ * Beantwortet die zwei Fragen, an denen beim Einrichten alles hängt: Nimmt Stripe den Schlüssel
+ * an, darf dieses Konto überhaupt kassieren – und kommt eine Bezahlseite zustande? Was hier
+ * **nicht** geprüft werden kann, ist der Weg des Geldes zurück; dafür gibt es "Send test webhook"
+ * bei Stripe und den einen echten kleinen Kauf.
  */
 admin.post(
-  '/tebex/test',
+  '/stripe/test',
   wrap(async (req, res) => {
-    const result = await tebex.selfTest({ lang: langOf(req) });
-    audit(req.user.id, 'tebex-test', { ok: result.ok, mode: result.mode }, req.ip);
+    const result = await stripe.selfTest({ lang: langOf(req) });
+    audit(req.user.id, 'stripe-test', { ok: result.ok, live: result.live }, req.ip);
     res.json(result);
   })
 );
@@ -1470,6 +1471,63 @@ admin.post(
     // nächsten Stundentakt noch die alte Fassung – und ein Bot dort andere Fähigkeiten als hier.
     agents.syncAll();
     audit(req.user.id, 'client-sync', { tag: binaries.state.tag });
+    res.json({ client: clientState() });
+  })
+);
+
+// ---------------------------------------------------------------- Minecraft-Ressourcen
+//
+// Eine Original-Client-JAR je Protokollversion. Warum sie hier landen und nicht im Release des
+// Clients, steht in server/resources.js: Der Viewer liest beim Zeichnen aus ihnen, wir verteilen
+// sie nicht weiter, und der Betreiber legt sie deshalb selbst hin.
+
+admin.post(
+  '/resources/:version',
+  express.raw({ type: '*/*', limit: resources.MAX_BYTES }),
+  wrap((req, res) => {
+    const version = String(req.params.version || '');
+    if (!Buffer.isBuffer(req.body) || !req.body.length) {
+      throw bad('Es ist keine Datei angekommen.', { en: 'No file arrived.' });
+    }
+    let entry;
+    try {
+      entry = resources.store(version, req.body);
+    } catch (error) {
+      throw bad(error.message, { en: error.message });
+    }
+    // Die Standorte holen sich dieselbe Datei – sonst zeichnete die Ansicht nur hier texturiert.
+    agents.syncAll();
+    audit(req.user.id, 'resource-upload', { version, size: entry.size }, req.ip);
+    res.json({ resource: entry, client: clientState() });
+  })
+);
+
+/** Dieselbe Datei, aber von Mojang geholt – für Versionen, die dort öffentlich stehen. */
+admin.post(
+  '/resources/:version/fetch',
+  wrap(async (req, res) => {
+    const version = String(req.params.version || '');
+    let entry;
+    try {
+      entry = await resources.fetchFromMojang(version);
+    } catch (error) {
+      throw bad(error.message, { en: error.message });
+    }
+    agents.syncAll();
+    audit(req.user.id, 'resource-fetch', { version, size: entry.size }, req.ip);
+    res.json({ resource: entry, client: clientState() });
+  })
+);
+
+admin.delete(
+  '/resources/:version',
+  wrap((req, res) => {
+    const version = String(req.params.version || '');
+    if (!resources.remove(version)) {
+      throw notFound('Für diese Version liegt hier keine Datei.', { en: 'No file here for that version.' });
+    }
+    agents.syncAll();
+    audit(req.user.id, 'resource-delete', { version }, req.ip);
     res.json({ client: clientState() });
   })
 );

@@ -1,12 +1,16 @@
 // Guthaben aufladen und einsehen.
 //
 // Bezahlt wird nie direkt für einen Bot, sondern immer nur Guthaben – ein Credit ist ein Cent.
-// Wie das Geld hereinkommt, hängt davon ab, was eingerichtet ist: **Tebex** (Karte, PayPal und
-// alles Weitere, samt Umsatzsteuer), Überweisung/PayPal von Hand (der Admin bestätigt den
-// Eingang), Gutschein – oder der Admin bucht direkt auf.
+// Wie das Geld hereinkommt, hängt davon ab, was eingerichtet ist: **Stripe** (Karte, PayPal und
+// alles Weitere), Überweisung/PayPal von Hand (der Admin bestätigt den Eingang), Gutschein – oder
+// der Admin bucht direkt auf.
+//
+// Verkäufer ist bei jedem dieser Wege AFKSystems selbst: Preis, Beleg und Umsatzsteuer kommen aus
+// diesem Panel und nicht vom Zahlungsdienst. Was zur Umsatzsteuer auf Kasse und Beleg steht, sagt
+// `vat.js` – und zwar für alle Zahlarten derselbe Satz.
 //
 // Guthaben entsteht an genau einer Stelle: `billing.settleTopup`. Weder die Rückkehr des Browsers
-// von der Bezahlseite noch ein Klick im Panel bucht etwas – nur der geprüfte Webhook von Tebex,
+// von der Bezahlseite noch ein Klick im Panel bucht etwas – nur der geprüfte Webhook von Stripe,
 // die Bestätigung eines Admins oder ein eingelöster Gutschein.
 
 import express from 'express';
@@ -14,7 +18,8 @@ import { config } from '../config.js';
 import { db, getSetting } from '../db.js';
 import { requireUser } from '../auth.js';
 import * as billing from '../billing.js';
-import * as tebex from '../tebex.js';
+import * as stripe from '../stripe.js';
+import * as vat from '../vat.js';
 import * as notify from '../notify.js';
 import { planView } from './core.js';
 import { wrap, requireInt, bad, notFound, token, formatCredits, langOf } from '../util.js';
@@ -79,12 +84,14 @@ router.get(
         .map((row) => ({ label: row.name, credits: row.price_credits })),
       topups: db.prepare('SELECT * FROM topups WHERE user_id = ? ORDER BY id DESC LIMIT 20').all(user.id),
       methods: {
-        tebex: tebex.configured(),
+        stripe: stripe.configured(),
         transfer: Boolean(config.bankTransfer.iban),
         paypal: Boolean(config.bankTransfer.paypal),
         voucher: true,
       },
-      tebex_store: tebex.status().store,
+      // Der Umsatzsteuerhinweis gehört neben die Preise und nicht nur auf den Beleg: Was beim
+      // Bezahlen steht, muss vorher schon dagestanden haben.
+      vat: vat.view(lang),
       bank: config.bankTransfer.iban
         ? {
             holder: config.bankTransfer.holder,
@@ -109,7 +116,7 @@ router.post(
 /**
  * Aufladung anstoßen.
  *
- * Bei Tebex kommt eine Bezahladresse zurück, sonst eine Zahlungsanweisung mit Verwendungszweck.
+ * Bei Stripe kommt eine Bezahladresse zurück, sonst eine Zahlungsanweisung mit Verwendungszweck.
  * In beiden Fällen entsteht hier eine **offene** Aufladung – gebucht wird sie erst, wenn das Geld
  * wirklich da ist.
  */
@@ -123,9 +130,9 @@ router.post(
     if (!list.length) {
       throw bad('Es sind keine Aufladepakete eingerichtet.', { en: 'No top-up packages are set up.' });
     }
-    // Jede Aufladung legt eine Zeile im Kontoauszug an und – bei Tebex – einen Warenkorb bei
-    // einem fremden Dienst. Ohne Grenze ist dieser Endpunkt ein Knopf, mit dem sich beides ohne
-    // Anmeldung bei Tebex und ohne einen Cent beliebig oft auslösen lässt.
+    // Jede Aufladung legt eine Zeile im Kontoauszug an und – bei Stripe – eine Kasse bei einem
+    // fremden Dienst. Ohne Grenze ist dieser Endpunkt ein Knopf, mit dem sich beides ohne einen
+    // Cent beliebig oft auslösen lässt.
     const open = db
       .prepare("SELECT COUNT(*) AS n FROM topups WHERE user_id = ? AND status = 'open'")
       .get(req.user.id).n;
@@ -136,17 +143,17 @@ router.post(
     }
     const index = requireInt(req.body?.package ?? 0, 'Paket', { min: 0, max: list.length - 1 });
     const chosen = list[index];
-    const provider = String(req.body?.provider || (tebex.configured() ? 'tebex' : 'transfer'));
+    const provider = String(req.body?.provider || (stripe.configured() ? 'stripe' : 'transfer'));
 
-    if (provider === 'tebex') {
+    if (provider === 'stripe') {
       const topup = billing.createTopup({
         userId: req.user.id,
-        provider: 'tebex',
+        provider: 'stripe',
         amountCent: chosen.cent,
         credits: chosen.credits,
       });
       try {
-        const checkout = await tebex.createCheckout({
+        const checkout = await stripe.createCheckout({
           user: req.user,
           pack: chosen,
           topup,
@@ -195,38 +202,147 @@ router.post(
 router.delete(
   '/billing/topup/:id',
   requireUser,
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = requireInt(req.params.id, 'Aufladung');
     const topup = db.prepare('SELECT * FROM topups WHERE id = ? AND user_id = ?').get(id, req.user.id);
     if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
-    // Eine Tebex-Aufladung zieht niemand hier zurück: Die Bezahlseite bleibt offen, und ein
-    // Zurückziehen im Panel würde nur die Zeile verstecken, auf die der Webhook später zeigt.
-    // Wer dort nicht bezahlt, dessen Aufladung bleibt einfach offen und stört niemanden.
-    if (topup.provider === 'tebex') {
-      throw bad('Eine Zahlung über Tebex wird auf der Bezahlseite abgebrochen, nicht hier.', {
-        en: 'A Tebex payment is cancelled on the payment page, not here.',
-      });
+
+    // Eine Stripe-Aufladung wird **zuerst bei Stripe geschlossen** und dann hier. Sonst bliebe die
+    // Bezahlseite offen, und zehn Minuten später käme Geld zu einer Aufladung herein, die im Panel
+    // längst als zurückgezogen gilt – `settleTopup` verweigert die dann zu Recht, und das Geld
+    // stünde ohne Credits da. Stripe lehnt das Schließen ab, sobald bezahlt wurde: genau die
+    // Antwort, die wir hier hören wollen, und dann bleibt die Aufladung offen.
+    if (topup.provider === 'stripe' && topup.status === 'open' && topup.external_id && stripe.keyed()) {
+      try {
+        await stripe.expireCheckout(topup.external_id);
+      } catch (error) {
+        throw bad(
+          `Diese Zahlung lässt sich nicht mehr zurückziehen: ${error.message}`,
+          { en: `This payment can no longer be withdrawn: ${error.message}` }
+        );
+      }
     }
     billing.cancelTopup(id);
     res.json({ ok: true });
   })
 );
 
-// ---------------------------------------------------------------- Tebex-Webhook
+// ---------------------------------------------------------------- Stripe-Webhook
 //
-// Die einzige Stelle, an der eine Zahlung zu Guthaben wird. Sie ist deshalb dreifach abgesichert:
+// Die einzige Stelle, an der eine Zahlung zu Guthaben wird. Sie ist deshalb vierfach abgesichert:
 //
-//   1. **Unterschrift.** Ohne hinterlegtes Webhook-Geheimnis wird gar nichts angenommen.
-//   2. **Betrag.** Der Webhook enthält den Warenkorb *zum Zeitpunkt der Zahlung* – wir vergleichen
-//      ihn mit dem, was die Aufladung kosten sollte, und buchen sonst nicht.
-//   3. **Einmaligkeit.** `settleTopup` bucht eine bereits bezahlte Aufladung nicht ein zweites Mal.
+//   1. **Unterschrift und Alter.** Ohne hinterlegtes Signaturgeheimnis wird gar nichts angenommen,
+//      und eine mitgeschnittene, echt unterschriebene Meldung verfällt nach fünf Minuten.
+//   2. **Betriebsart.** Eine Meldung aus dem Testmodus darf auf einem Konto im Echtbetrieb kein
+//      Guthaben erzeugen – und umgekehrt. Testzahlungen kosten nichts; Credits daraus wären
+//      Geld aus dem Nichts.
+//   3. **Betrag und Währung.** Verglichen wird mit dem, was die Aufladung kosten sollte. Was nicht
+//      zusammenpasst, wird nicht gebucht, sondern gemeldet.
+//   4. **Einmaligkeit.** `settleTopup` bucht eine bereits bezahlte Aufladung nicht ein zweites Mal.
+//      Stripe wiederholt Meldungen ausdrücklich, bis eine 2xx-Antwort kommt.
 
-export const tebexWebhook = wrap(async (req, res) => {
+/**
+ * Die Aufladung zu einer Meldung finden.
+ *
+ * Zwei Wege, weil nicht jede Meldung dasselbe weiß: Eine bezahlte Kasse trägt die Nummer der
+ * Aufladung in `metadata`, ein Streitfall kennt dagegen nur die Zahlung darunter. Deren Nummer
+ * steht seit dem Verbuchen in `external_id` – siehe `settleFrom` weiter unten.
+ */
+function topupFor(payment) {
+  if (payment.topupId) {
+    const row = db
+      .prepare("SELECT * FROM topups WHERE id = ? AND provider = 'stripe'")
+      .get(payment.topupId);
+    if (row) return row;
+  }
+  if (payment.paymentIntent) {
+    return (
+      db
+        .prepare("SELECT * FROM topups WHERE external_id = ? AND provider = 'stripe'")
+        .get(payment.paymentIntent) || null
+    );
+  }
+  return null;
+}
+
+/**
+ * Eine bezahlte Kasse verbuchen – oder begründet nicht verbuchen.
+ *
+ * Gibt zurück, was im Log stehen soll; gebucht wird nur, wenn Konto, Betrag und Währung zu der
+ * Aufladung passen, die wir selbst angelegt haben.
+ */
+function settleFrom(payment) {
+  const topup = topupFor(payment);
+  if (!topup) {
+    console.warn(`[stripe] Zahlung ${payment.paymentIntent || payment.session} ohne zugehörige Aufladung.`);
+    return;
+  }
+
+  // Die Aufladung muss zu dem Konto gehören, das in der Kasse steht. `metadata` reist über Stripe
+  // und kommt so zurück, wie wir sie hingeschickt haben – passt sie trotzdem nicht zusammen, ist
+  // das kein Zahlungsvorgang, den wir zuordnen können.
+  if (payment.userId && payment.userId !== topup.user_id) {
+    console.warn(
+      `[stripe] Zahlung ${payment.paymentIntent}: Aufladung #${topup.id} gehört Konto ` +
+        `${topup.user_id}, in der Kasse steht ${payment.userId}. Nicht gebucht.`
+    );
+    notify.staff({
+      title: 'Stripe: Konto passt nicht',
+      description:
+        `Zahlung \`${payment.paymentIntent}\` nennt Konto ${payment.userId}, Aufladung ` +
+        `#${topup.id} gehört Konto ${topup.user_id}. **Nicht gebucht.**`,
+    });
+    return;
+  }
+
+  // Bezahlt wird in Euro. Steht dort etwas anderes – weil jemand die Währung im Stripe-Konto
+  // umgestellt hat –, stimmt der Vergleich nicht mehr; dann lieber nicht buchen und hinsehen lassen.
+  if (payment.amountCent !== topup.amount_cent || (payment.currency && payment.currency !== 'EUR')) {
+    console.warn(
+      `[stripe] Betrag passt nicht: erwartet ${topup.amount_cent} Cent EUR, ` +
+        `bezahlt ${payment.amountCent} ${payment.currency || '?'} (${payment.paymentIntent}).`
+    );
+    notify.staff({
+      title: 'Stripe: Betrag passt nicht',
+      description:
+        `Zahlung \`${payment.paymentIntent}\` zu Aufladung #${topup.id}: erwartet ` +
+        `${(topup.amount_cent / 100).toFixed(2)} € EUR, bezahlt ` +
+        `${(payment.amountCent / 100).toFixed(2)} ${payment.currency || '?'}. **Nicht gebucht.**`,
+    });
+    return;
+  }
+
+  // Ab hier steht in `external_id` die **Zahlung** und nicht mehr die Kasse: Eine Erstattung oder
+  // ein Streitfall meldet später nur diese Nummer, und ohne sie fände `topupFor` die Aufladung
+  // nicht wieder.
+  const reference = payment.paymentIntent || payment.session;
+  if (reference) db.prepare('UPDATE topups SET external_id = ? WHERE id = ?').run(reference, topup.id);
+  try {
+    billing.settleTopup(topup.id, `Stripe ${reference || ''}`.trim());
+  } catch (error) {
+    console.error('[stripe] Buchung fehlgeschlagen:', error.message);
+  }
+}
+
+/** Geld zurück: Erstattung oder verlorener Streitfall. Höchstens so viel, wie noch da ist. */
+function revokeFrom(payment, topup, reason) {
+  const result = billing.refundTopup(topup.id, `Stripe ${reason} ${payment.paymentIntent || ''}`.trim());
+  notify.staff({
+    title: `Stripe: ${reason}`,
+    description:
+      `Aufladung #${topup.id}: ${result.taken} Credits abgezogen` +
+      (result.missing ? `, ${result.missing} Credits waren schon ausgegeben.` : '.'),
+  });
+}
+
+export const stripeWebhook = wrap(async (req, res) => {
   const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.from(String(req.body || ''));
 
-  if (!tebex.verify(raw, req.headers['x-signature'])) {
+  if (!stripe.verify(raw, req.headers['stripe-signature'])) {
     // Kein Hinweis darauf, *was* nicht stimmte: wer hier herumprobiert, soll nichts lernen.
-    if (!tebex.webhookReady()) console.warn('[tebex] Webhook abgelehnt: tebex_webhook_secret fehlt.');
+    if (!stripe.webhookReady()) {
+      console.warn('[stripe] Webhook abgelehnt: stripe_webhook_secret fehlt.');
+    }
     return res.status(401).json({ error: 'Signatur stimmt nicht.' });
   }
 
@@ -237,101 +353,113 @@ export const tebexWebhook = wrap(async (req, res) => {
     return res.status(400).json({ error: 'Kein gültiges JSON.' });
   }
 
-  // Beim Einrichten schickt Tebex einmal eine Prüfnachricht. Sie will ihre eigene ID zurück –
-  // erst danach schickt Tebex überhaupt echte Meldungen an diese Adresse.
-  if (event.type === 'validation.webhook') {
-    console.log('[tebex] Webhook bestätigt.');
-    return res.json({ id: event.id });
+  // Test und Echtbetrieb haben bei Stripe getrennte Schlüssel, Endpunkte und Geheimnisse – aber
+  // dasselbe Panel dahinter. Wer beim Umschalten das falsche Geheimnis stehen lässt, hätte sonst
+  // einen Endpunkt, der kostenlose Testzahlungen mit echten Credits belohnt.
+  if (!stripe.livemodeMatches(event)) {
+    console.warn(
+      `[stripe] ${event.type} verworfen: Meldung ist ${event.livemode ? 'aus dem Echtbetrieb' : 'aus dem Testmodus'}, ` +
+        `der hinterlegte Schlüssel ${stripe.live() ? 'nicht' : 'aber echt'}.`
+    );
+    return res.json({ received: true, ignored: 'livemode' });
   }
 
-  const payment = tebex.readPayment(event);
+  const payment = stripe.readEvent(event);
 
-  if (event.type === 'payment.completed') {
-    const topup = payment.topupId
-      ? db.prepare("SELECT * FROM topups WHERE id = ? AND provider = 'tebex'").get(payment.topupId)
-      : null;
-    if (!topup) {
-      console.warn(`[tebex] Zahlung ${payment.transaction} ohne zugehörige Aufladung.`);
+  switch (payment.type) {
+    // Die Kasse ist durch. Bei Karte und Wallets ist damit auch bezahlt; bei Zahlarten mit
+    // Verzögerung (Lastschrift, manche Überweisungsverfahren) steht hier `unpaid`, und das Geld
+    // kommt erst mit `async_payment_succeeded`. Dann bleibt die Aufladung offen – zu Recht.
+    case 'checkout.session.completed':
+      if (payment.paymentStatus === 'paid') settleFrom(payment);
+      else console.log(`[stripe] Kasse ${payment.session} abgeschlossen, Zahlung noch unterwegs.`);
+      return res.json({ received: true });
+
+    case 'checkout.session.async_payment_succeeded':
+      settleFrom(payment);
+      return res.json({ received: true });
+
+    // Die verzögerte Zahlung ist geplatzt. Die Aufladung ist damit erledigt und nicht etwa offen:
+    // Wer es noch einmal versuchen will, lädt neu auf.
+    case 'checkout.session.async_payment_failed': {
+      const failed = topupFor(payment);
+      if (failed) {
+        billing.cancelTopup(failed.id);
+        notify.staff({
+          title: 'Stripe: Zahlung fehlgeschlagen',
+          description: `Aufladung #${failed.id} über ${(failed.amount_cent / 100).toFixed(2)} € wurde nicht bezahlt.`,
+        });
+      }
       return res.json({ received: true });
     }
-    // Die Aufladung muss zu dem Konto gehören, das im Warenkorb steht. `custom` reist über Tebex
-    // und kommt aus einem Warenkorb, den im Headless-Weg der Browser des Kunden mit anlegt –
-    // deshalb wird beides verglichen, statt der Nummer der Aufladung allein zu glauben. Passt es
-    // nicht zusammen, ist das kein Zahlungsvorgang, den wir zuordnen können.
-    if (payment.userId && payment.userId !== topup.user_id) {
-      console.warn(
-        `[tebex] Zahlung ${payment.transaction}: Aufladung #${topup.id} gehört Konto ` +
-          `${topup.user_id}, im Warenkorb steht ${payment.userId}. Nicht gebucht.`
-      );
+
+    // Die Bezahlseite ist abgelaufen (Vorgabe: nach 24 Stunden). Ohne diesen Zweig blieben offene
+    // Aufladungen für immer in der Liste des Kunden stehen und liefen irgendwann gegen die Grenze
+    // von zehn offenen Vorgängen.
+    case 'checkout.session.expired': {
+      const stale = topupFor(payment);
+      if (stale) billing.cancelTopup(stale.id);
+      return res.json({ received: true });
+    }
+
+    // Erstattung. **Nur die vollständige** nimmt automatisch Credits zurück: Bei einer Teil-
+    // erstattung ist die Frage, wie viele Credits das sind, keine Rechenaufgabe, sondern eine
+    // Entscheidung – die trifft ein Mensch.
+    case 'charge.refunded': {
+      const topup = topupFor(payment);
+      if (!topup) {
+        notify.staff({
+          title: 'Stripe: Erstattung',
+          description: `Zahlung \`${payment.paymentIntent || 'unbekannt'}\` – keine Aufladung dazu gefunden.`,
+        });
+      } else if (payment.amountRefunded >= payment.amountCent) {
+        revokeFrom(payment, topup, 'Erstattung');
+      } else {
+        notify.staff({
+          title: 'Stripe: Teilerstattung',
+          description:
+            `Aufladung #${topup.id}: ${(payment.amountRefunded / 100).toFixed(2)} € von ` +
+            `${(payment.amountCent / 100).toFixed(2)} € erstattet. **Nichts zurückgebucht** – ` +
+            'das entscheidet der Betreiber.',
+        });
+      }
+      return res.json({ received: true });
+    }
+
+    // Ein eröffneter Streitfall nimmt noch nichts zurück – aber er gehört auf den Tisch, und zwar
+    // mit der Aufladung, um die es geht.
+    case 'charge.dispute.created': {
+      const topup = topupFor(payment);
       notify.staff({
-        title: 'Tebex: Konto passt nicht',
-        description:
-          `Zahlung \`${payment.transaction}\` nennt Konto ${payment.userId}, Aufladung ` +
-          `#${topup.id} gehört Konto ${topup.user_id}. **Nicht gebucht.**`,
+        title: 'Stripe: Streitfall eröffnet',
+        description: topup
+          ? `Aufladung #${topup.id} über ${(topup.amount_cent / 100).toFixed(2)} € ` +
+            `(Zahlung \`${payment.paymentIntent || 'unbekannt'}\`). Noch nichts zurückgebucht – ` +
+            'das entscheidet der Ausgang.'
+          : `Zahlung \`${payment.paymentIntent || 'unbekannt'}\` – keine Aufladung dazu gefunden.`,
       });
       return res.json({ received: true });
     }
-    // Bezahlt wurde in der Währung des Tebex-Stores. Steht dort etwas anderes als Euro, stimmt
-    // der Vergleich nicht mehr – dann lieber nicht buchen und den Betreiber hinsehen lassen.
-    const mismatch =
-      payment.amountCent !== topup.amount_cent || (payment.currency && payment.currency !== 'EUR');
-    if (mismatch) {
-      console.warn(
-        `[tebex] Betrag passt nicht: erwartet ${topup.amount_cent} Cent EUR, ` +
-          `bezahlt ${payment.amountCent} ${payment.currency || '?'} (${payment.transaction}).`
-      );
-      notify.staff({
-        title: 'Tebex: Betrag passt nicht',
-        description:
-          `Zahlung \`${payment.transaction}\` zu Aufladung #${topup.id}: erwartet ` +
-          `${(topup.amount_cent / 100).toFixed(2)} € EUR, bezahlt ` +
-          `${(payment.amountCent / 100).toFixed(2)} ${payment.currency || '?'}. **Nicht gebucht.**`,
-      });
+
+    // Entschieden. Verloren heißt: Das Geld ist weg, also auch die Credits. Gewonnen heißt:
+    // nichts zu tun, aber sagen sollte man es.
+    case 'charge.dispute.closed': {
+      const topup = topupFor(payment);
+      if (topup && payment.disputeStatus === 'lost') revokeFrom(payment, topup, 'Streitfall verloren');
+      else {
+        notify.staff({
+          title: `Stripe: Streitfall ${payment.disputeStatus || 'geschlossen'}`,
+          description: topup
+            ? `Aufladung #${topup.id} – nichts zurückgebucht.`
+            : `Zahlung \`${payment.paymentIntent || 'unbekannt'}\` – keine Aufladung dazu gefunden.`,
+        });
+      }
       return res.json({ received: true });
     }
-    db.prepare('UPDATE topups SET external_id = ? WHERE id = ?').run(payment.transaction, topup.id);
-    try {
-      billing.settleTopup(topup.id, `Tebex ${payment.transaction}`);
-    } catch (error) {
-      console.error('[tebex] Buchung fehlgeschlagen:', error.message);
-    }
-    return res.json({ received: true });
+
+    default:
+      // Stripe schickt gern mehr, als hier abonniert ist. Eine 2xx-Antwort heißt "angekommen"
+      // und nicht "verstanden" – sonst wiederholt Stripe die Meldung tagelang.
+      return res.json({ received: true });
   }
-
-  // Rückerstattung, Rücklastschrift, verlorener Streitfall: das Geld ist wieder weg, also auch
-  // die Credits. Höchstens so viele, wie noch da sind – ins Minus geht es hier nie.
-  if (['payment.refunded', 'payment.dispute.lost', 'payment.dispute.opened'].includes(event.type)) {
-    const revoke = event.type !== 'payment.dispute.opened';
-    const topup = payment.topupId
-      ? db.prepare("SELECT * FROM topups WHERE id = ? AND provider = 'tebex'").get(payment.topupId)
-      : null;
-    if (!topup) {
-      notify.staff({
-        title: `Tebex: ${event.type}`,
-        description: `Zahlung \`${payment.transaction || 'unbekannt'}\` – keine Aufladung dazu gefunden.`,
-      });
-    } else if (revoke) {
-      const result = billing.refundTopup(topup.id, `Tebex ${event.type} ${payment.transaction || ''}`.trim());
-      notify.staff({
-        title: `Tebex: ${event.type}`,
-        description:
-          `Aufladung #${topup.id}: ${result.taken} Credits abgezogen` +
-          (result.missing ? `, ${result.missing} Credits waren schon ausgegeben.` : '.'),
-      });
-    } else {
-      // Ein eröffneter Streitfall nimmt noch nichts zurück – aber er gehört auf den Tisch, und
-      // zwar mit der Aufladung, um die es geht. Vorher stand hier "keine Aufladung dazu gefunden",
-      // obwohl sie gefunden wurde: eine Meldung, die genau das Gegenteil dessen sagte, was war.
-      notify.staff({
-        title: `Tebex: ${event.type}`,
-        description:
-          `Aufladung #${topup.id} über ${(topup.amount_cent / 100).toFixed(2)} € ` +
-          `(Zahlung \`${payment.transaction || 'unbekannt'}\`). Noch nichts zurückgebucht – ` +
-          'das entscheidet der Ausgang des Streitfalls.',
-      });
-    }
-    return res.json({ received: true });
-  }
-
-  res.json({ received: true });
 });
