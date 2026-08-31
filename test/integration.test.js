@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import Database from 'better-sqlite3';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'afksystems-test-'));
@@ -22,6 +23,7 @@ const stripe = await import('../server/stripe.js');
 const vat = await import('../server/vat.js');
 const roles = await import('../server/roles.js');
 const security = await import('../server/security.js');
+const backup = await import('../server/backup.js');
 const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const resources = await import('../server/resources.js');
@@ -1585,6 +1587,33 @@ test('failed sign-ins are counted per address and per account, and success does 
   assert.equal(security.tooMany('192.0.2.250', 'ziel@example.test').scope, 'account');
   assert.equal(security.tooMany('192.0.2.250', 'jemand-anderes@example.test'), null);
   db.prepare('DELETE FROM login_attempts').run();
+});
+
+test('a backup is a complete, openable database and the oldest ones make room', () => {
+  const made = backup.create();
+  assert.match(made.name, /-\d{4}-\d{2}-\d{2}-\d{4}\.db$/);
+  assert.ok(made.size > 0);
+
+  // Der Sinn der Sache: Die Datei lässt sich öffnen und enthält, was die Datenbank enthält – und
+  // zwar den Stand von **jetzt**, nicht den vom letzten Checkpoint des Schreibprotokolls.
+  const marker = `sicherung-${Date.now()}@example.test`;
+  createUser({ email: marker });
+  const second = backup.create();
+  const copy = new Database(path.join(TEST_DIR, 'backups', second.name), { readonly: true });
+  assert.equal(copy.prepare('SELECT COUNT(*) AS n FROM users WHERE email = ?').get(marker).n, 1);
+  assert.equal(copy.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+  copy.close();
+
+  // Zwei Sicherungen in derselben Minute sind kein Fehlerfall, sondern zweimal geklickt.
+  assert.notEqual(made.name, second.name);
+
+  setSetting('backup_keep', '1');
+  backup.create();
+  assert.equal(backup.list().length, 1, 'ältere werden weggeräumt, sobald eine neue da ist');
+  setSetting('backup_keep', '14');
+
+  assert.equal(backup.fileFor('../../etc/passwd'), null);
+  assert.equal(backup.fileFor('irgendwas.db'), null);
 });
 
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {

@@ -30,6 +30,7 @@ import { router as botRouter, tryBotSecret } from './routes/bot.js';
 import { router as nodeRouter, nodeByToken } from './routes/node.js';
 import * as agents from './agents.js';
 import * as security from './security.js';
+import * as backup from './backup.js';
 import { HttpError, langOf } from './util.js';
 
 const app = express();
@@ -929,6 +930,10 @@ setInterval(
   guarded('aufraeumen', () => {
     auth.cleanupSessions();
     security.cleanup();
+    // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
+    // fällt an der jüngsten Datei – ein Neustart um drei Uhr nachts vergisst so keinen Tag.
+    const made = backup.dailyTick();
+    if (made) console.log(`Sicherung angelegt: ${made.name}`);
     attachments.sweepOrphans();
     binaries.sync().then(() => agents.syncAll()).catch(() => {});
   }),

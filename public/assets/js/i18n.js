@@ -43,6 +43,7 @@ export const S = {
   'common.open': { en: 'Open', de: 'Öffnen' },
   'common.edit': { en: 'Edit', de: 'Ändern' },
   'common.name': { en: 'Name', de: 'Name' },
+  'common.date': { en: 'Date', de: 'Datum' },
   'common.status': { en: 'Status', de: 'Zustand' },
   'common.credits': { en: 'Credits', de: 'Credits' },
   // Kleingeschrieben, wenn es mitten im Satz steht – im Englischen ist "Credits" dort falsch.
@@ -1502,6 +1503,25 @@ export const S = {
   'bill.covered': { en: 'covered', de: 'gedeckt' },
 
   // ---------------------------------------------------------------- Admin (neu)
+  // ---------------------------------------------------------------- Sicherungen
+  'bak.title': { en: 'Backups', de: 'Sicherungen' },
+  'bak.now': { en: 'Back up now', de: 'Jetzt sichern' },
+  'bak.download': { en: 'Download', de: 'Herunterladen' },
+  'bak.size': { en: 'Size', de: 'Größe' },
+  'bak.dailyOn': {
+    en: 'One backup a day, the last {n} are kept.',
+    de: 'Eine Sicherung am Tag, die letzten {n} bleiben liegen.',
+  },
+  'bak.dailyOff': {
+    en: 'Automatic backups are off – see Settings → Operations.',
+    de: 'Automatische Sicherungen sind aus – siehe Einstellungen → Betrieb.',
+  },
+  'bak.dropAsk': { en: 'Delete backup {name}?', de: 'Sicherung {name} löschen?' },
+  'bak.restore': {
+    en: 'To restore, stop the panel, put the file in place, start it again. There is no button for this on purpose: swapping the database while the panel is working on it does not end well.',
+    de: 'Zum Zurückspielen den Dienst anhalten, die Datei an ihren Platz legen, wieder starten. Dafür gibt es bewusst keinen Knopf: Die Datenbank auszutauschen, während das Panel auf ihr arbeitet, geht nicht gut aus.',
+  },
+
   // ---------------------------------------------------------------- Sicherheit
   'adm.security': { en: 'Security', de: 'Sicherheit' },
   'sec.busy': { en: 'Addresses that keep knocking', de: 'Adressen, die immer wieder klopfen' },

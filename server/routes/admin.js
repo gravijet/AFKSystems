@@ -20,6 +20,7 @@ import * as metrics from '../metrics.js';
 import * as stripe from '../stripe.js';
 import * as exportCsv from '../export.js';
 import * as security from '../security.js';
+import * as backup from '../backup.js';
 import { supervisor } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
 import { planView, ticketView } from './core.js';
@@ -2172,6 +2173,47 @@ admin.get(
         langOf(req)
       ),
     });
+  })
+);
+
+// ---------------------------------------------------------------- Sicherungen
+
+/**
+ * Die Datenbank als Datei, aus dem Panel heraus.
+ *
+ * Warum das kein `cp` ist und warum es keine Rückspielung von hier aus gibt, steht in
+ * server/backup.js. Hier steht nur, wer darf – und dass jedes Herunterladen im Protokoll steht:
+ * In dieser Datei stehen Passwort-Hashes, Sitzungen und jedes Token dieses Betriebs. Wer sie
+ * mitnimmt, nimmt alles mit, und das gehört aufgeschrieben.
+ */
+admin.get('/backups', wrap((req, res) => res.json(backup.state())));
+
+admin.post(
+  '/backups',
+  wrap((req, res) => {
+    const made = backup.create();
+    audit(req.user.id, 'backup-create', { name: made.name, size: made.size }, req.ip);
+    res.json({ made, ...backup.state() });
+  })
+);
+
+admin.get(
+  '/backups/:name',
+  wrap((req, res) => {
+    const file = backup.fileFor(req.params.name);
+    if (!file) throw notFound('Diese Sicherung gibt es nicht.', { en: 'No such backup.' });
+    audit(req.user.id, 'backup-download', { name: req.params.name }, req.ip);
+    res.setHeader('Cache-Control', 'no-store');
+    res.download(file, req.params.name);
+  })
+);
+
+admin.delete(
+  '/backups/:name',
+  wrap((req, res) => {
+    if (!backup.remove(req.params.name)) throw notFound('Diese Sicherung gibt es nicht.', { en: 'No such backup.' });
+    audit(req.user.id, 'backup-delete', { name: req.params.name }, req.ip);
+    res.json(backup.state());
   })
 );
 
