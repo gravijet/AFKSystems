@@ -373,7 +373,13 @@ export const botOnline = (userId, profile, account) =>
     userId,
     { de: `Bot "${account}" ist im Spiel`, en: `Bot "${account}" is in game` },
     { de: `Auf "${profile}".`, en: `On "${profile}".` },
-    { key: `online-${profile}-${account}`, color: COLORS.ok, quiet: QUIET.state, event: 'bot' }
+    {
+      key: `online-${profile}-${account}`,
+      color: COLORS.ok,
+      quiet: QUIET.state,
+      event: 'bot',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
   );
 
 export const lowBalance = (userId, credits) =>
@@ -384,7 +390,13 @@ export const lowBalance = (userId, credits) =>
       de: `Noch ${formatCredits(credits, 'de')} Credits (${formatEuro(credits, 'de')}). Für die nächste Verlängerung könnte es zu wenig sein.`,
       en: `${formatCredits(credits, 'en')} credits left (${formatEuro(credits, 'en')}). That may not cover the next renewal.`,
     },
-    { key: 'low-balance', color: COLORS.warn, quiet: QUIET.daily, event: 'billing' }
+    {
+      key: 'low-balance',
+      color: COLORS.warn,
+      quiet: QUIET.daily,
+      event: 'billing',
+      url: `${config.publicUrl}/en/app#/credits`,
+    }
   );
 
 export const planRenewed = (userId, name, price) =>
@@ -395,7 +407,13 @@ export const planRenewed = (userId, name, price) =>
       de: `"${name}" läuft weitere 30 Tage. Abgebucht: ${price} Credits.`,
       en: `"${name}" runs for another 30 days. ${price} credits were charged.`,
     },
-    { key: `renew-${name}`, color: COLORS.ok, quiet: QUIET.event, event: 'plan' }
+    {
+      key: `renew-${name}`,
+      color: COLORS.ok,
+      quiet: QUIET.event,
+      event: 'plan',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
   );
 
 export const planSuspended = (userId, name, reason) =>
@@ -411,7 +429,13 @@ export const planSuspended = (userId, name, reason) =>
           de: `"${name}" ist ausgelaufen, weil die Verlängerung abgeschaltet war. Die Bots sind aus.`,
           en: `"${name}" ran out because renewal was switched off. The bots are stopped.`,
         },
-    { key: `suspend-${name}`, color: COLORS.bad, quiet: QUIET.event, event: 'plan' }
+    {
+      key: `suspend-${name}`,
+      color: COLORS.bad,
+      quiet: QUIET.event,
+      event: 'plan',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
   );
 
 export const planExpiring = (userId, name, days, missing) =>
@@ -422,7 +446,13 @@ export const planExpiring = (userId, name, days, missing) =>
       de: `"${name}" wird in ${days} Tag(en) verlängert – es fehlen noch ${missing} Credits.`,
       en: `"${name}" renews in ${days} day(s) and is ${missing} credits short.`,
     },
-    { key: `expire-${name}`, color: COLORS.warn, quiet: QUIET.daily, event: 'plan' }
+    {
+      key: `expire-${name}`,
+      color: COLORS.warn,
+      quiet: QUIET.daily,
+      event: 'plan',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
   );
 
 export const botTrouble = (userId, name, reason) =>
@@ -433,5 +463,11 @@ export const botTrouble = (userId, name, reason) =>
       de: String(reason || 'Der Client wurde beendet.'),
       en: 'The client stopped unexpectedly. Open the panel for the full reason.',
     },
-    { key: `bot-${name}`, color: COLORS.bad, quiet: QUIET.state, event: 'bot' }
+    {
+      key: `bot-${name}`,
+      color: COLORS.bad,
+      quiet: QUIET.state,
+      event: 'bot',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
   );

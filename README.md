@@ -303,6 +303,28 @@ Nachricht, die das Panel verschickt. Ein Ticket bleibt der bessere Weg – es ha
 weiß, um welchen Serverplatz es geht –, aber wer kein Konto hat oder nicht mehr hineinkommt, kann
 keines aufmachen.
 
+## Für den Betreiber
+
+Der Admin-Bereich ist nach vier Bündeln sortiert – Tagesgeschäft, Tarife und Geld, Plattform,
+Protokolle und Zustand – und nicht nach siebzehn Reitern in einer Zeile. Was nicht selbsterklärend
+ist, steht ausführlich in **[docs/verwaltung.md](docs/verwaltung.md)**; die Kurzfassung:
+
+| Werkzeug | Wofür |
+| --- | --- |
+| **Strg+K** | Suche über alles: Nutzer, Serverplätze, Accounts, Tickets, Gutscheine, Standorte, Aufladungen – ein Anhaltspunkt genügt |
+| **Betrieb** | alle laufenden Bots über alle Standorte hinweg, dazu die wiederkehrenden Aufgaben mit letztem Lauf, Dauer, Fehler und einem Knopf „jetzt laufen“ |
+| **Sicherheit** | Anmeldeversuche, die Bremse gegen Passwort-Raten, Adresssperren (auch als Netz, auch IPv6), offene Sitzungen |
+| **Sicherungen** | eine am Tag von selbst, dazu auf Knopfdruck; als Datei zum Mitnehmen |
+| **Massenaktionen** | Guthaben, Sperren, Abmelden, Bots stoppen – für die ganze gefilterte Auswahl |
+| **CSV** | jede große Liste als Tabellendatei, mit ISO-Zeiten und ohne Excel-Formeln |
+| **Textbausteine** | die vier Sätze, die ein Support jeden Tag schreibt – mit `{name}` und `{ticket}` |
+| **Rundmail** | eine Nachricht an einen von sechs Empfängerkreisen, jeder mit seiner Zahl daneben |
+| **Erstatten** | Stripe-Zahlung zurückgeben, ohne das Panel zu verlassen |
+
+Zwei Regeln ziehen sich durch: **Was nicht geht, wird übersprungen und aufgezählt**, nicht mitten
+in einer Massenaktion abgebrochen. Und **niemand sperrt sich selbst aus** – weder aus dem eigenen
+Konto noch über die eigene Adresse.
+
 ## Aufbau
 
 ```
@@ -323,6 +345,10 @@ server/
   mail.js         SMTP, Vorlagen, Kategorien  oauth.js      Discord und Google
   tickets.js      Support                     notify.js     Discord-Webhooks
   todos.js        was ein Kunde zu tun hat – die Liste in der Übersicht
+  security.js     Anmeldeversuche, Bremse, Adresssperren, offene Sitzungen
+  backup.js       tägliche Sicherung der Datenbank (VACUUM INTO), Aufbewahrung
+  jobs.js         die wiederkehrenden Aufgaben als Verzeichnis statt als anonyme Intervalle
+  export.js       Nutzer, Buchungen, Aufladungen … als CSV, formelsicher
   attachments.js  Anhänge an Tickets (20 MB), im Panel wie in Discord
   roles.js        welche Discord-Rolle wem    bridge.js     die Leitung zum Bot
   routes/         core, profiles, billing, admin, bot, node
@@ -336,6 +362,7 @@ public/
   assets/js/i18n.js     alle Texte, beide Sprachen, von Server und Browser genutzt
   assets/js/chatlog.js  Chatzeilen zusammenlegen, §-Farben zerlegen – ebenfalls von beiden
   assets/js/shield.js   Inhaltsschutz im Browser
+  assets/js/palette.js  die Sprungmarke auf Strg+K – findet alles und führt überall hin
   assets/js/views/      Übersicht, Konten, Server, Guthaben, Tickets, Proxys, Admin …
 docs/             Aufbau, Standorte, Stripe, Live-Ansicht, Schutz, Discord-Bot, Google
 scripts/
@@ -364,6 +391,7 @@ Was daran wirklich geht und was nicht, steht ehrlich in **[docs/schutz.md](docs/
 ## Dokumentation
 
 Alles Weitere in **[docs/](docs/README.md)**: [wie alles funktioniert](docs/aufbau.md),
+[der Admin-Bereich](docs/verwaltung.md),
 [Standorte](docs/standorte.md), [Stripe](docs/stripe.md), [Live-Ansicht](docs/live-ansicht.md),
 [Inhaltsschutz](docs/schutz.md), [Discord-Bot](docs/discord-bot.md),
 [Google-Anmeldung](docs/google-anmeldung.md), [Umzug auf einen anderen Server](docs/umzug.md).
@@ -390,6 +418,15 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | Anhänge | `POST /tickets/files` (Rumpf = die Datei), `GET /tickets/files/:id` |
 | Sonstiges | `GET /announcements`, `GET /nodes` |
 | Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/resources/:version` (POST = Rumpf ist die JAR, `/fetch`, DELETE), `/mails`, `/audit`, `/ledger` |
+| Admin: suchen | `GET /admin/search?q=` – Nutzer, Serverplätze, Accounts, Tickets, Gutscheine, Standorte, Aufladungen auf einmal; jeder Treffer bringt seinen Weg mit |
+| Admin: viele auf einmal | `POST /admin/users/bulk` (`credits`, `block`, `unblock`, `logout`, `verify-mail`, `stop-bots`) |
+| Admin: Ausfuhr | `GET /admin/export/:liste` – `users`, `ledger`, `topups`, `profiles`, `tickets`, `audit` als CSV |
+| Admin: Sicherheit | `GET /admin/security`, `POST/DELETE /admin/security/blocks`, `DELETE /admin/security/sessions/:id` |
+| Admin: Sicherungen | `GET/POST /admin/backups`, `GET/DELETE /admin/backups/:datei` |
+| Admin: Betrieb | `GET /admin/bots`, `GET /admin/jobs`, `POST /admin/jobs/:key/run` |
+| Admin: Support | `GET/POST/PATCH/DELETE /admin/ticket-templates`, `POST /admin/ticket-templates/:id/used` |
+| Admin: Rundmail | `GET /admin/broadcast` (Kreise mit Zahlen), `POST /admin/broadcast` |
+| Admin: Geld zurück | `POST /admin/topups/:id/refund` – löst die Erstattung bei Stripe aus; Credits nimmt der Webhook zurück |
 | Bot | `/bot/config`, `/bot/tickets`, `/bot/users/:discordId`, `/bot/roles`, `/bot/events`, `WS /bot/stream` |
 | Standorte | `GET /node/manifest`, `GET /node/binaries/:name`, `GET /node/resources/:version`, `WS /node/stream` – alle mit dem Token des Standorts |
 | Stripe | `POST /stripe/webhook` – mit `Stripe-Signature` geprüft, die einzige Stelle, an der Guthaben entsteht |

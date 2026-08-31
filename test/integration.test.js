@@ -2005,6 +2005,40 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const templateAsUser = await api(base, '/api/admin/ticket-templates', { token: USER_TOKEN });
   assert.equal(templateAsUser.response.status, 403);
 
+  // Erstatten geht nur, wo es etwas zu erstatten gibt. Diese drei Absagen kommen, **bevor**
+  // irgendetwas zu Stripe geht – deshalb prüfen sie sich ohne Netz und ohne Schlüssel.
+  const cashTopup = db
+    .prepare(
+      `INSERT INTO topups (user_id, provider, amount_cent, credits, status, created_at, paid_at)
+       VALUES (?, 'transfer', 500, 500, 'paid', ?, ?)`
+    )
+    .run(user.id, Date.now(), Date.now()).lastInsertRowid;
+  const openTopup = db
+    .prepare(
+      `INSERT INTO topups (user_id, provider, amount_cent, credits, status, created_at)
+       VALUES (?, 'stripe', 500, 500, 'open', ?)`
+    )
+    .run(user.id, Date.now()).lastInsertRowid;
+  const paidTopup = db
+    .prepare(
+      `INSERT INTO topups (user_id, provider, amount_cent, credits, status, external_id, created_at, paid_at)
+       VALUES (?, 'stripe', 500, 500, 'paid', 'pi_test_123', ?, ?)`
+    )
+    .run(user.id, Date.now(), Date.now()).lastInsertRowid;
+
+  for (const [id, body] of [
+    [cashTopup, {}],
+    [openTopup, {}],
+    [paidTopup, { amount_cent: 900 }],
+  ]) {
+    const refused = await api(base, `/api/admin/topups/${id}/refund`, {
+      token: ADMIN_TOKEN,
+      method: 'POST',
+      body,
+    });
+    assert.equal(refused.response.status, 400, `Aufladung ${id} hätte abgelehnt werden müssen`);
+  }
+
   // Rundmail: Jeder Empfängerkreis kommt mit seiner Zahl, bevor irgendetwas hinausgeht.
   const broadcast = await api(base, '/api/admin/broadcast', { token: ADMIN_TOKEN });
   assert.equal(broadcast.response.status, 200);

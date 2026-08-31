@@ -1131,6 +1131,49 @@ admin.post(
   })
 );
 
+/**
+ * Geld zurückgeben, ohne das Panel zu verlassen.
+ *
+ * Bisher hieß "Erstattung" hier: Stripe-Dashboard öffnen, die Zahlung suchen, dort erstatten,
+ * zurückkommen. Der Weg funktioniert weiter und muss es auch – aber er ist einer, den man sich
+ * merken muss, und der Knopf steht jetzt dort, wo die Aufladung ohnehin schon steht.
+ *
+ * **Die Credits nimmt dieser Aufruf nicht zurück.** Das tut der Webhook, wenn Stripe die
+ * Erstattung meldet (`charge.refunded`) – und dieselbe Meldung kommt auch, wenn jemand doch im
+ * Dashboard erstattet hat. Zwei Stellen, die Guthaben abziehen, wären zwei Chancen, es doppelt
+ * zu tun. Wer hier klickt, sieht die Rückbuchung deshalb ein paar Sekunden später, nicht sofort.
+ */
+admin.post(
+  '/topups/:id/refund',
+  wrap(async (req, res) => {
+    const id = requireInt(req.params.id, 'Aufladung');
+    const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(id);
+    if (!topup) throw notFound('Diese Aufladung gibt es nicht.', { en: 'No such top-up.' });
+    if (topup.provider !== 'stripe') {
+      throw bad('Nur eine Stripe-Zahlung lässt sich von hier aus erstatten.', {
+        en: 'Only a Stripe payment can be refunded from here.',
+      });
+    }
+    if (topup.status !== 'paid') {
+      throw bad('Erstattet wird nur, was bezahlt ist.', { en: 'Only a paid top-up can be refunded.' });
+    }
+    const amount = Math.trunc(Number(req.body?.amount_cent) || 0);
+    if (amount < 0 || amount > topup.amount_cent) {
+      throw bad(`Höchstens ${(topup.amount_cent / 100).toFixed(2)} € lassen sich erstatten.`, {
+        en: `At most ${(topup.amount_cent / 100).toFixed(2)} € can be refunded.`,
+      });
+    }
+    const result = await stripe.refund({
+      paymentIntent: topup.external_id,
+      amountCent: amount,
+      topupId: topup.id,
+      reason: String(req.body?.reason || ''),
+    });
+    audit(req.user.id, 'topup-refund', { id: topup.id, amount_cent: amount || topup.amount_cent }, req.ip);
+    res.json({ refund: { id: result?.id || null, status: result?.status || null }, partial: amount > 0 });
+  })
+);
+
 // ---------------------------------------------------------------- Proxys
 //
 // Proxys gehören dem Betreiber und werden Nutzern zugeteilt. Ein Nutzer legt selbst keine an –

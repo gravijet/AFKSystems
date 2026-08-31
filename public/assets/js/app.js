@@ -112,6 +112,7 @@ function pushLine(key, entry) {
 let socket = null;
 let retry = 0;
 let ticketStatsTimer = null;
+let notificationStatsTimer = null;
 
 /**
  * Ticketzähler nie aus einzelnen Push-Nachrichten hochzählen: mehrere Antworten an einem
@@ -129,6 +130,25 @@ function refreshTicketStats() {
       })
       .catch(() => {});
   }, 180);
+}
+
+/** Der kleine Glockenzähler bleibt live, ohne dafür die ganze Chronik zu laden. */
+function refreshNotificationStats() {
+  clearTimeout(notificationStatsTimer);
+  notificationStatsTimer = setTimeout(() => {
+    api('/me/notifications?limit=1')
+      .then((data) => {
+        if (state.stats) state.stats.notifications_unread = data.unread || 0;
+        drawSide();
+        const badge = document.querySelector('.appbar-bell > span');
+        const button = document.querySelector('.appbar-bell');
+        const unread = data.unread || 0;
+        if (button && unread && !badge) button.insertAdjacentHTML('beforeend', `<span>${unread > 99 ? '99+' : unread}</span>`);
+        else if (badge && unread) badge.textContent = unread > 99 ? '99+' : String(unread);
+        else badge?.remove();
+      })
+      .catch(() => {});
+  }, 280);
 }
 
 function connect() {
@@ -171,6 +191,7 @@ function connect() {
       // Der Support-Chat läuft live – die Ticket-Ansicht hängt sich hier ein.
       state.onLive?.({ type: 'ticket', event: message.event, message });
       if (message.event !== 'typing') refreshTicketStats();
+      if (message.event !== 'typing') refreshNotificationStats();
       return;
     }
     if (message.type === 'state') {
@@ -187,12 +208,14 @@ function connect() {
         profile.online = profile.accounts.filter((entry) => entry.online).length;
       }
       drawSide();
+      refreshNotificationStats();
       state.onLive?.({ type: 'state', key: message.key, state: message.state });
       return;
     }
     if (message.type === 'credits') {
       if (state.me) state.me.credits = message.balance;
       drawSide();
+      refreshNotificationStats();
       state.onLive?.({ type: 'credits' });
       return;
     }
@@ -204,6 +227,7 @@ function connect() {
       }
       toast(tr('dash.suspended', { name: message.name }), 'bad');
       drawSide();
+      refreshNotificationStats();
       state.onLive?.({ type: 'suspended', profile_id: message.profile_id });
     }
   });

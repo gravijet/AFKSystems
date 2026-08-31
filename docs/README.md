@@ -18,6 +18,7 @@ Alles zu AFKSystems an einer Stelle. Die kurze Fassung des Ganzen steht in der
 | Dokument | Worum es geht |
 | --- | --- |
 | **[aufbau.md](aufbau.md)** | Wie alles funktioniert: Aufbau, Datenflüsse, das Leben eines Bots, Chat und Farben, Geld, Datenbank, Betrieb. |
+| **[verwaltung.md](verwaltung.md)** | Der Admin-Bereich: Suche über alles, Massenaktionen, Ausfuhr, Sicherheit, Sicherungen, Betrieb, Textbausteine, Rundmail, Erstattungen. |
 | **[live-ansicht.md](live-ansicht.md)** | Die Live-Ansicht (POV): die beiden Wege zu einem Bild, die Minecraft-Ressourcen, Steuern im Bild, Sichtweite, was sie kostet. |
 | **[schutz.md](schutz.md)** | Inhaltsschutz: was gegen Kopieren und Herunterladen getan wird – und was ehrlicherweise nicht geht. |
 
@@ -45,3 +46,13 @@ je Minecraft-Version eine Client-JAR hinterlegen, Standorte holen sie sich selbs
 
 **Die Entwicklerwerkzeuge zeigen nur einen Hinweis.**
 → [schutz.md](schutz.md) – abschalten unter *Administration → Einstellungen → Betrieb*
+
+**Jemand probiert Passwörter durch.**
+→ [verwaltung.md, Abschnitt 4](verwaltung.md#sicherheit) – die Bremse greift von selbst, die
+Adresse steht unter *Administration → Sicherheit* und lässt sich von dort sperren
+
+**Der Datenbestand soll gesichert werden.**
+→ [verwaltung.md, Abschnitt 5](verwaltung.md#sicherungen) – eine am Tag läuft von selbst
+
+**Ein Kunde will sein Geld zurück.**
+→ [verwaltung.md, Abschnitt 9](verwaltung.md#erstatten)

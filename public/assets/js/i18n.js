@@ -1826,6 +1826,20 @@ export const S = {
   'adm.announceSent': { en: 'Sent to {n} people.', de: 'An {n} Personen verschickt.' },
   'adm.announceAgain': { en: 'Already sent – send again?', de: 'Schon verschickt – noch einmal?' },
   'adm.announceLink': { en: 'Link (optional)', de: 'Link (optional)' },
+  'adm.refund': { en: 'Refund', de: 'Erstatten' },
+  'adm.refundAmount': { en: 'Amount in cents (0 = all of it)', de: 'Betrag in Cent (0 = alles)' },
+  'adm.refundHint': { en: 'The whole payment is {full}.', de: 'Die ganze Zahlung sind {full}.' },
+  'adm.refundAsked': { en: 'Customer asked for it', de: 'Kunde hat darum gebeten' },
+  'adm.refundDouble': { en: 'Paid twice', de: 'Doppelt bezahlt' },
+  'adm.refundFraud': { en: 'Fraud', de: 'Betrug' },
+  'adm.refundDone': {
+    en: 'Stripe is refunding. The credits come back as soon as Stripe reports it.',
+    de: 'Stripe erstattet. Die Credits kommen zurück, sobald Stripe es meldet.',
+  },
+  'adm.refundPartial': {
+    en: 'Stripe is refunding part of it. A partial refund takes no credits back – that stays your decision.',
+    de: 'Stripe erstattet einen Teil. Eine Teilerstattung nimmt keine Credits zurück – das bleibt deine Entscheidung.',
+  },
   'adm.noMail': {
     en: 'No SMTP server is set up – nothing can go out.',
     de: 'Es ist kein SMTP-Server hinterlegt – es kann nichts hinausgehen.',

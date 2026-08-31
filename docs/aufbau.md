@@ -451,15 +451,17 @@ Frontend-Dateien, schreibt die systemd-Units, richtet nginx ein und startet neu.
 
 ### Sichern
 
-Die Datenbank ist eine Datei – aber eine, in die gerade geschrieben wird. Deshalb nicht kopieren,
-sondern sichern lassen:
+Die Datenbank ist eine Datei – aber eine, in die gerade geschrieben wird. Kopieren mit `cp` erwischt
+deshalb im besten Fall eine Datei ohne die letzten Buchungen. Das Panel sichert sie selbst: einmal
+am Tag nach `data/backups/`, dazu ein Knopf unter *Administration → System*
+([verwaltung.md, Abschnitt 5](verwaltung.md#sicherungen)). Von Hand geht es genauso:
 
 ```bash
 sqlite3 /opt/afksystems/data/afksystems.db ".backup '/pfad/sicherung.db'"
 ```
 
 Dazu gehört `data/users/` (die Microsoft-Anmeldungen). Ohne die müssten alle Konten neu verbunden
-werden.
+werden – und weil sie in keine Sicherung aus dem Browser gehören, bleiben sie dort auch draußen.
 
 ### Nachsehen
 
@@ -473,19 +475,30 @@ curl -s localhost:3010/api/health
 
 ### Zeitgeber
 
-| Takt | Was |
-| --- | --- |
-| stündlich | Verlängerungen, Warnungen, abgelaufene Sitzungen, Client-Release prüfen |
-| jede Minute | Gratis-Plätze gegen die Discord-Mitgliedschaft prüfen |
-| alle 30 Sekunden | tote WebSockets aussortieren, Standorte anpingen |
-| alle 15 Sekunden | eigenen Maschinenzustand messen |
+Sie stehen als Verzeichnis in `server/jobs.js` und nicht als anonyme Intervalle: Name, Takt,
+letzter Lauf, Dauer und letzter Fehler sind unter *Administration → Betrieb* nachzulesen, und die
+meisten lassen sich von dort auch sofort anstoßen.
+
+| Takt | Aufgabe | Was |
+| --- | --- | --- |
+| stündlich | `abrechnung` | Verlängerungen, Warnungen, Suspendierungen |
+| stündlich | `aufraeumen` | abgelaufene Sitzungen, alte Anmeldeversuche, Anhänge, tägliche Sicherung, Client-Release |
+| jede Minute | `gratis-plaetze` | Gratis-Plätze gegen die Discord-Mitgliedschaft prüfen |
+| jede Minute | `wiederanlauf` | hochfahren, was laufen soll und gerade nicht läuft |
+| alle 30 Sekunden | `verbindungen` | tote WebSockets aussortieren, Standorte anpingen |
+| alle 15 Sekunden | `standort-eigen` | eigenen Maschinenzustand messen |
+
+Ein Fehler in einer dieser Aufgaben kostet höchstens einen Durchlauf. Sie laufen ohne Aufrufer, und
+eine unbehandelte Ausnahme beendete in Node den Prozess – mit ihm jeden laufenden Bot.
 
 ### Was wo liegt
 
 ```
 /opt/afksystems/            die laufende Fassung
   data/afksystems.db        die Datenbank
+  data/backups/             die täglichen Sicherungen davon
   data/bin/                 die Client-Dateien
+  data/mc/                  die Minecraft-Ressourcen (eine JAR je Version)
   data/users/<id>/          die Microsoft-Anmeldungen
   data/logs/                ein Protokoll je Bot (wird bei 5 MB umgelegt)
   .env                      Umgebung (Port, GitHub-Token, Bankdaten)
