@@ -589,6 +589,10 @@ input[type='password'],
 input[type='number'],
 input[type='url'],
 input[type='search'],
+input[type='tel'],
+/* Auch das Dateifeld: Ohne dieselbe Fläche und dasselbe Innenmaß säße der Knopf darin schief –
+ * die Regel für `::file-selector-button` weiter unten rechnet mit genau diesem Innenmaß. */
+input[type='file'],
 select,
 textarea {
   width: 100%;
@@ -1684,9 +1688,45 @@ body.site {
   color: var(--text-2);
   font-size: 0.8125rem;
 }
-.auth-alt a {
+.auth-alt a,
+.auth-alt .linkish {
   color: var(--text);
   font-weight: 600;
+}
+/* Ein Knopf, der wie ein Link aussieht. „Noch einmal schicken“ ist eine Handlung und kein Ziel –
+   ein <a href="#"> daraus wäre eine Adresse, die es nicht gibt, und für Screenreader eine
+   Ankündigung, die nicht stimmt. */
+.linkish {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+.linkish:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+/* Die Serveradresse in der Kopfzeile. Eine angedeutete Linie reicht: Sie sagt „anklickbar“, ohne
+   die Zeile wie einen Link aussehen zu lassen, der woandershin führt – sie kopiert ja nur. */
+.linkish.mono {
+  text-decoration-style: dotted;
+  text-decoration-color: currentColor;
+}
+
+/* Das Feld für den Anmeldecode. Sechs Ziffern, die von einem Telefon abgetippt werden – groß,
+   mit Abstand dazwischen und mittig, damit beim Vergleichen mit der E-Mail nichts verrutscht. */
+.code-input {
+  font-family: var(--mono);
+  font-size: 1.75rem;
+  letter-spacing: 0.4em;
+  text-align: center;
+  /* Der Buchstabenabstand schiebt die Ziffern nach links aus der Mitte: Er sitzt auch hinter der
+     letzten. Der halbe Abstand als Einzug gleicht das aus. */
+  text-indent: 0.4em;
 }
 .form-error {
   margin: 0;
@@ -2269,17 +2309,10 @@ body.site {
   color: var(--text);
   text-decoration: none;
 }
+/* Das Bild in der Fußzeile der Seitenleiste. Aussehen und Farbe kommen aus `.avatar` weiter
+ * unten – hier steht nur, was dieser Ort davon abweichend braucht. */
 .side-avatar {
   flex: none;
-  display: grid;
-  place-items: center;
-  width: 1.65rem;
-  height: 1.65rem;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--primary) 18%, transparent);
-  color: var(--primary-text);
-  font-size: 0.72rem;
-  font-weight: 700;
 }
 
 /* ---------------------------------------------------------------- Schmale Schiene */
@@ -3127,6 +3160,35 @@ hr.rule {
   background: color-mix(in srgb, var(--ok) 7%, transparent);
 }
 
+/* ---------------------------------------------------------------- Der Zielserver
+ *
+ * Sitzt am Fuß der Kontenliste und ist absichtlich ruhig: Er beantwortet eine Frage, die man nur
+ * stellt, wenn etwas nicht geht. Der MOTD darin kommt von einem fremden Server, kann drei Zeilen
+ * lang sein und beliebige Farben tragen – deshalb eine feste Höhe mit Überlauf statt eines
+ * Kastens, der je nach Server die halbe Seite einnimmt. */
+.mcstatus {
+  box-shadow: inset 0 1px 0 var(--line-soft);
+  padding: 0.7rem 1.1rem;
+}
+.mcstatus-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  /* Serversymbole sind 64×64-Pixelgrafiken. Weichgezeichnet sehen sie aus wie ein Ladefehler. */
+  image-rendering: pixelated;
+  flex: none;
+}
+.mcstatus-motd {
+  margin-top: 0.2rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  /* Der MOTD hat Zeilenumbrüche, und die meint der Server so. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 4.5rem;
+  overflow: auto;
+}
+
 /* ---------------------------------------------------------------- Live-Ansicht (POV)
  *
  * Zwei Bilder, ein Rahmen. Der texturierte Weg liefert ein fertiges PNG aus den echten Texturen
@@ -3879,6 +3941,121 @@ hr.rule {
   color: var(--ok-text);
 }
 
+/* ---------------------------------------------------------------- Profilbilder
+ *
+ * Ein Bild oder ein Buchstabe – beide gleich groß, gleich rund, an derselben Stelle. Die Größe
+ * kommt als Variable vom Aufrufer (ui.js `avatar`), damit dieselbe Regel für die 24 Pixel in
+ * einer Liste und die 64 im Kontokopf gilt.
+ *
+ * Die Farbe des Buchstabens wird aus dem Namen gerechnet (`--avatar-hue`). `oklch` statt `hsl`,
+ * weil dort gleiche Helligkeitswerte auch gleich hell **aussehen**: Mit `hsl` wäre Gelb grell und
+ * Blau dunkel, und die Schrift darauf mal lesbar und mal nicht. */
+.avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: var(--avatar-size, 2rem);
+  height: var(--avatar-size, 2rem);
+  border-radius: 999px;
+  background: oklch(0.62 0.13 var(--avatar-hue, 250));
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.08);
+  color: #fff;
+  font-size: calc(var(--avatar-size, 2rem) * 0.42);
+  font-weight: 650;
+  line-height: 1;
+  object-fit: cover;
+  user-select: none;
+}
+
+/* Der Kopf des Kontos: Bild, Name, Adresse, Etiketten. */
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+.identity-name {
+  font-size: 1.15rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+/* Anschrift: vier Felder, die nicht gleich breit sein wollen. Postleitzahl ist kurz, der Ort
+ * lang – zwei gleich breite Spalten wären an beiden Enden falsch. */
+.address-grid {
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.6fr) 1.4fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+@media (min-width: 48rem) {
+  .address-grid {
+    grid-template-columns: minmax(6rem, 0.6fr) 1.4fr 1fr 1.2fr;
+  }
+}
+
+/* Wie die Anschrift auf dem Beleg aussieht – daneben, während getippt wird. */
+.receipt-preview {
+  min-width: 14rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.receipt-preview address {
+  margin: 0.4rem 0 0;
+  font-style: normal;
+  line-height: 1.55;
+}
+
+/* Angemeldete Geräte. Dasselbe Muster wie die verknüpften Konten darüber, damit eine Liste, in
+ * der man etwas entfernt, überall gleich aussieht. */
+.device-list {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.device {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.7rem 0.85rem;
+  border-radius: var(--r-xl);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.device.is-current {
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+.device-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text-2);
+}
+.device.is-current .device-icon {
+  color: var(--primary-text);
+}
+.device p {
+  margin: 0.15rem 0 0;
+}
+
+/* Anmeldeversuche: ein Punkt sagt "geklappt" oder "nicht geklappt", bevor man das Wort liest. */
+.signin-dot {
+  flex: none;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background: var(--bad);
+}
+.signin-dot.ok {
+  background: var(--ok);
+}
+
 .mail-list li {
   padding: 0.5rem 0.7rem;
   border-radius: var(--r-lg);
@@ -4246,7 +4423,7 @@ hr.rule {
 }
 .chat-msg > header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.5rem;
   margin-bottom: 0.35rem;
   font-size: 0.8125rem;
@@ -4257,12 +4434,130 @@ hr.rule {
   font-family: var(--mono);
   font-size: 0.6875rem;
 }
-.chat-msg p {
-  margin: 0;
+/* Der Text einer Nachricht steht in `.dc` (siehe unten) und nicht mehr in einem nackten `<p>`:
+ * Er geht durch denselben Aufbereiter wie in Discord. Die Größe und die Zeilenhöhe stehen deshalb
+ * dort – hier stünde sonst eine zweite Wahrheit, die die erste je nach Reihenfolge überstimmt. */
+
+/* ---------------------------------------------------------------- Discord-Auszeichnungen
+ *
+ * Was aus public/assets/js/discord.js herauskommt. Es sieht **nicht** aus wie Discord, sondern
+ * wie dieses Panel: dieselben Flächen, dieselben Radien, dieselbe Schrift. Gleich ist nur, was
+ * eine Auszeichnung bedeutet – eine Erwähnung ist eine Fläche und kein blauer Link, ein Spoiler
+ * ist verdeckt, bis man ihn anklickt, ein Zitat hat einen Balken an der Seite.
+ *
+ * `.dc` steht um den ganzen Text einer Nachricht; darin kommen `.dc-line`, `.dc-quote` und der
+ * Rest vor. */
+
+.dc {
   font-size: 0.9375rem;
   line-height: 1.55;
   overflow-wrap: anywhere;
 }
+.dc > * {
+  margin: 0;
+}
+.dc > * + * {
+  margin-top: 0.45rem;
+}
+.dc-head {
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+h4.dc-head {
+  font-size: 0.9375rem;
+}
+h5.dc-head {
+  font-size: 0.875rem;
+  color: var(--text-2);
+}
+.dc-quote {
+  padding-left: 0.75rem;
+  border-left: 3px solid var(--line);
+  color: var(--text-2);
+}
+.dc-list {
+  margin-left: 1.1rem;
+  padding: 0;
+}
+.dc-list li + li {
+  margin-top: 0.15rem;
+}
+
+/* Eine Erwähnung: eine ruhige Fläche in der Primärfarbe, wie ein Etikett im Fließtext. Rollen
+ * bringen ihre eigene Farbe aus Discord mit (`--dc-role`), sofern sie eine haben. */
+.dc-mention {
+  display: inline-block;
+  padding: 0 0.3rem;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--dc-role, var(--primary)) 16%, transparent);
+  color: var(--dc-role, var(--primary-text));
+  font-weight: 550;
+  white-space: nowrap;
+}
+.dc-channel {
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+}
+
+/* Ein Spoiler ist verdeckt und nicht gelöscht: Die Fläche steht in der Breite des Textes da,
+ * damit sichtbar bleibt, dass dort etwas steht. */
+.dc-spoiler {
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 22%, var(--surface-2));
+  color: transparent;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.dc-spoiler * {
+  visibility: hidden;
+}
+.dc-spoiler.is-open {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: inherit;
+  cursor: auto;
+}
+.dc-spoiler.is-open * {
+  visibility: visible;
+}
+.dc-spoiler:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+.dc-code {
+  margin: 0;
+  padding: 0.6rem 0.75rem;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+.dc-inline {
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  font-family: var(--mono);
+  font-size: 0.85em;
+}
+/* Eigene Emoji: so hoch wie eine Zeile, damit eine Nachricht davon nicht auseinandergezogen wird. */
+.dc-emoji {
+  display: inline-block;
+  width: 1.375em;
+  height: 1.375em;
+  vertical-align: -0.3em;
+  object-fit: contain;
+}
+.dc-time {
+  padding: 0 0.25rem;
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
 /* ---------------------------------------------------------------- Anhänge
  *
  * Ein Bild gehört in den Verlauf und nicht hinter einen Link: Wer einen Screenshot schickt, will,
@@ -4275,7 +4570,7 @@ hr.rule {
   gap: 0.5rem;
   margin-top: 0.5rem;
 }
-.chat-msg p + .chat-files {
+.chat-msg .dc + .chat-files {
   margin-top: 0.6rem;
 }
 .chat-image {
@@ -4426,6 +4721,19 @@ hr.rule {
 }
 .reply-box textarea {
   resize: vertical;
+}
+.reply-compose-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.75rem;
+}
+#reply-draft:not(:empty) {
+  color: var(--ok-text);
+}
+.form-draft-status {
+  flex: 1;
+  min-width: 10rem;
+  color: var(--ok-text);
 }
 
 /* Der Zustand steht als Reihe von Knöpfen da, nicht als Auswahlfeld in der Ecke: welcher gilt,
@@ -5696,6 +6004,86 @@ dialog.shortcuts {
   width: 2.05rem;
   padding: 0;
   place-items: center;
+}
+
+/* ---------------------------------------------------------------- Zeitpläne
+ *
+ * Eine Karte je Zeitpunkt: links die Uhrzeit groß, daneben was passiert, darunter die Woche als
+ * sieben Kästchen. Die Woche als Bild statt als Aufzählung – "Mo Di Mi Do Fr" liest man, sieben
+ * Kästchen mit fünf gefüllten erkennt man. */
+
+.sch-card.is-off {
+  opacity: 0.6;
+}
+.sch-time {
+  flex: none;
+  font-size: 1.5rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+.sch-days {
+  display: flex;
+  gap: 0.25rem;
+  margin-top: 0.85rem;
+}
+.sch-day {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--text-2);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+.sch-day.on {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent);
+  color: var(--primary-text);
+}
+
+/* Stunde und Minute nebeneinander, der Doppelpunkt dazwischen. Zwei Auswahllisten statt eines
+ * `<input type="time">`: Das zeichnet jeder Browser selbst und in jedem anders – Chrome eine Uhr,
+ * Safari eine Trommel, Firefox gar nichts. Eine Auswahlliste sieht überall aus wie hier. */
+.time-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.time-picker select {
+  padding-right: 1.5rem;
+  background-position: right 0.65rem center, right 0.4rem center;
+  text-align: center;
+}
+
+/* Die Wochentage im Dialog: dieselbe Bauart wie die Umschaltgruppen in den Einstellungen, nur
+ * umbrechend – sieben Tage passen auf einem Handy nicht in eine Zeile. */
+.sch-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+}
+.sch-picker button {
+  min-height: 2.1rem;
+  padding: 0.35rem 0.6rem;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.sch-picker button[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 40%, transparent);
+  color: var(--primary-text);
 }
 
 /* Server suchen, filtern, favorisieren und je nach Bildschirm lesen. */

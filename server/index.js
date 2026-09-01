@@ -30,7 +30,11 @@ import { router as botRouter, tryBotSecret } from './routes/bot.js';
 import { router as nodeRouter, nodeByToken } from './routes/node.js';
 import * as agents from './agents.js';
 import * as security from './security.js';
+import * as logincode from './logincode.js';
 import * as backup from './backup.js';
+import * as account from './account.js';
+import * as schedules from './schedules.js';
+import * as systemreport from './systemreport.js';
 import * as jobs from './jobs.js';
 import { HttpError, langOf } from './util.js';
 
@@ -47,9 +51,10 @@ const CONTENT_SECURITY_POLICY = [
   "form-action 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  // Minecraft-Köpfe kommen von Minotar. Ohne diese explizite, eng begrenzte Ausnahme blockiert
-  // der Browser sie trotz korrekter API-Antwort mit der Content-Security-Policy.
-  "img-src 'self' data: https://minotar.net",
+  // Minecraft-Köpfe kommen von Minotar, Profilbilder verknüpfter Konten von Discords Bildserver.
+  // Ohne diese eng begrenzten Ausnahmen blockiert der Browser sie trotz korrekter API-Antwort
+  // mit der Content-Security-Policy. Beides sind reine Bildhosts – kein Skript, kein Rahmen.
+  "img-src 'self' data: https://minotar.net https://cdn.discordapp.com",
   "font-src 'self'",
   `connect-src 'self' ${websocketOrigin}`,
   "media-src 'none'",
@@ -944,6 +949,55 @@ jobs.every('standort-eigen', 15_000, localNodeTick, {
   manual: false,
 });
 
+/**
+ * Zeitpläne: Was fällig ist, wird ausgeführt.
+ *
+ * Jede Minute – seltener ginge nicht, denn ein Zeitplan ist auf die Minute genau. Was in dieser
+ * Minute nicht fällig ist, kostet nichts: Der Takt liest eine Handvoll Zeilen und rechnet daran
+ * eine Uhrzeit aus.
+ */
+jobs.every(
+  'zeitplaene',
+  60_000,
+  () => {
+    const done = schedules.tick();
+    if (done) console.log(`${done} Zeitplan/Zeitpläne ausgeführt.`);
+  },
+  { label: { de: 'Zeitpläne der Serverplätze', en: 'Server slot schedules' } }
+);
+
+/**
+ * Der Zustand der Anlage in den Webhook des Betreibers.
+ *
+ * Der Takt ist eng (alle fünf Minuten), der **Bericht** kommt trotzdem nur alle paar Stunden:
+ * Warnungen sollen sofort da sein, ein Lagebericht nicht. Was wie oft hinausgeht, entscheidet
+ * `systemreport.tick()` – siehe die Erklärung dort.
+ */
+jobs.every(
+  'systembericht',
+  5 * 60_000,
+  () => systemreport.tick(),
+  { label: { de: 'Systembericht und Warnungen', en: 'System report and alerts' } }
+);
+
+/**
+ * Konten, deren Frist abgelaufen ist, wirklich löschen.
+ *
+ * Eigene Aufgabe und nicht Teil des Aufräumens: Das Aufräumen darf jederzeit ohne Folgen laufen,
+ * diese hier nicht. Sie steht deshalb mit eigenem Namen in der Liste im Admin-Bereich, mit
+ * eigenem letzten Lauf und eigenem Fehler – und der Knopf "jetzt laufen" daneben tut genau eine
+ * nachvollziehbare Sache.
+ */
+jobs.every(
+  'kontoloeschungen',
+  3_600_000,
+  () => {
+    const done = account.runDueDeletions();
+    if (done) console.log(`${done} Konto/Konten nach Ablauf der Frist gelöscht.`);
+  },
+  { label: { de: 'Fällige Kontolöschungen ausführen', en: 'Carry out due account deletions' } }
+);
+
 // Stündlich: abgelaufene Sitzungen weg, Client-Release nachsehen, liegengebliebene Anhänge weg.
 jobs.every(
   'aufraeumen',
@@ -951,12 +1005,38 @@ jobs.every(
   () => {
     auth.cleanupSessions();
     security.cleanup();
+    // Abgelaufene Anmeldecodes und Browser, die seit über einem Jahr nicht mehr da waren.
+    logincode.cleanup();
     // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
     // fällt an der jüngsten Datei – ein Neustart um drei Uhr nachts vergisst so keinen Tag.
     const made = backup.dailyTick();
     if (made) console.log(`Sicherung angelegt: ${made.name}`);
     attachments.sweepOrphans();
-    return binaries.sync().then(() => agents.syncAll());
+    // Der Client. Was sich am Release geändert hat, liegt danach auf der Platte – **laufende Bots
+    // wechseln dabei nicht mit**: Ein Prozess hält seine Datei, und ein Bot, der seit zwei Wochen
+    // im Spiel sitzt, sitzt dort mit der Datei von vor zwei Wochen. Das ist Absicht (ein Neustart
+    // wirft ihn aus dem Spiel, und den Zeitpunkt dafür soll ein Mensch wählen) – aber es muss
+    // jemandem auffallen, und genau dafür stehen die beiden Zeilen darunter.
+    const before = binaries.state.clientVersion;
+    return binaries.sync().then(() => {
+      agents.syncAll();
+      const after = binaries.state.clientVersion;
+      if (!after || after === before) return;
+      const running = supervisor.runningCount();
+      console.log(
+        `Neue Client-Fassung: ${before || '–'} → ${after}.` +
+          (running ? ` ${running} laufende(r) Bot(s) benutzen weiter die alte, bis sie neu starten.` : '')
+      );
+      systemreport.event(
+        'New client version',
+        [
+          `${before || 'none'} → ${after}`,
+          running
+            ? `${running} bot(s) are still running the old file. Roll them over under Admin · Client.`
+            : 'Nothing is running, so the next start uses it.',
+        ].join('\n')
+      );
+    });
   },
   { label: { de: 'Aufräumen, sichern, Client abgleichen', en: 'Clean up, back up, sync client' } }
 );
@@ -984,6 +1064,10 @@ const started = async () => {
     console.log(`Bauformen: ${builds.join(', ') || 'keine'}`);
     if (restored) console.log(`${restored} Bot(s) aus dem letzten Lauf wieder gestartet.`);
     if (binaries.state.error) console.warn(`Hinweis zum Client: ${binaries.state.error}`);
+    // Und ein Wort in den Webhook des Betreibers. Wer nachts einen Neustart sieht, den niemand
+    // ausgelöst hat, weiß damit mehr als jeder Bericht am Morgen ihm sagen könnte. Im Testlauf
+    // bleibt es aus – dort gibt es keinen Webhook, und ein Aufruf ins Netz macht Tests langsam.
+    if (process.env.NODE_ENV !== 'test') systemreport.announceStart();
   });
 };
 

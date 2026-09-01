@@ -29,9 +29,20 @@ const binaries = await import('../server/binaries.js');
 const resources = await import('../server/resources.js');
 const tickets = await import('../server/tickets.js');
 const { Tickets } = await import('../bot/handlers/tickets.js');
-const { Bot, simpleChatMacro, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
+const { Bot, supervisor, simpleChatMacro, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
   await import('../server/supervisor.js');
+const { macros: macroEngine } = await import('../server/macros.js');
 const notify = await import('../server/notify.js');
+const auth = await import('../server/auth.js');
+const logincode = await import('../server/logincode.js');
+const profile = await import('../server/profile.js');
+const account = await import('../server/account.js');
+const receipt = await import('../server/receipt.js');
+const schedules = await import('../server/schedules.js');
+const systemreport = await import('../server/systemreport.js');
+const exportCsv = await import('../server/export.js');
+const { hashPassword } = await import('../server/util.js');
+const { renderDiscord } = await import('../public/assets/js/discord.js');
 const { staffTodos } = await import('../server/todos.js');
 const { parseFormatting } = await import('../public/assets/js/chatlog.js');
 const { Roles } = await import('../bot/handlers/roles.js');
@@ -850,7 +861,7 @@ test('coordinates, formatted Scoreboards and item menus are parsed without losin
   const account = createAccount(user);
   const profile = createProfile(user, billing.planBySlug('premium'));
   const bot = new Bot(
-    { emit: (...args) => emitted.push(args), macros: {} },
+    { emit: (...args) => emitted.push(args), macros: { onMenu: () => {} } },
     { profile, account, user, plan: billing.featuresOf(profile) }
   );
   bot.onEvent('@event board titel §r§6My Board');
@@ -876,6 +887,268 @@ test('coordinates, formatted Scoreboards and item menus are parsed without losin
   bot.proc = { stdin: { writable: true, write: () => {} } };
   assert.throws(() => bot.send(':pov live'), /geprüfte Befehlsfunktion/);
   assert.equal(simpleChatMacro([{ type: 'chat', text: ':pov live' }]), false);
+});
+
+/**
+ * Ein Minecraft-Server, der genau eine Sache kann: auf den Status-Ping antworten.
+ *
+ * Damit lässt sich das Protokoll wirklich prüfen und nicht nur die Textumwandlung: Längenpräfix,
+ * Paketkennung, UTF-8-String, und die Antwort in Stücken, wie sie über ein Netz auch käme.
+ */
+function fakeMinecraftServer(json, { chunked = false } = {}) {
+  const varInt = (value) => {
+    const bytes = [];
+    let rest = value >>> 0;
+    do {
+      let part = rest & 0x7f;
+      rest >>>= 7;
+      if (rest) part |= 0x80;
+      bytes.push(part);
+    } while (rest);
+    return Buffer.from(bytes);
+  };
+  const body = Buffer.from(JSON.stringify(json), 'utf8');
+  const inner = Buffer.concat([varInt(0x00), varInt(body.length), body]);
+  const packet = Buffer.concat([varInt(inner.length), inner]);
+
+  const server = net.createServer((socket) => {
+    socket.once('data', () => {
+      if (!chunked) return socket.write(packet);
+      // In zwei Stücken, mit einer Naht mitten im JSON: Genau daran ist schon mancher Parser
+      // gescheitert, der die Antwort für ein einziges `data`-Ereignis hielt.
+      socket.write(packet.subarray(0, 6));
+      setTimeout(() => socket.write(packet.subarray(6)), 20);
+    });
+    socket.on('error', () => {});
+  });
+  return server;
+}
+
+const listenOn = (server) =>
+  new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server.address().port)));
+
+test('the Minecraft ping reads a real status packet and lets nothing from a stranger through raw', async () => {
+  const mcping = await import('../server/mcping.js');
+
+  // Die Textumwandlung zuerst, ohne Netz. Der MOTD kommt in drei erlaubten Formen, und alle drei
+  // kommen im Alltag vor.
+  assert.equal(mcping.legacy('schlichter Text'), 'schlichter Text');
+  assert.equal(
+    mcping.legacy({ text: 'A ', color: 'gold', extra: [{ text: 'B', bold: true }] }),
+    '§6A §6§lB'
+  );
+  // Eine Hexfarbe in der Schreibweise, die chatlog.js versteht – sonst käme sie im Panel als
+  // Zeichensalat an.
+  assert.equal(mcping.legacy({ text: 'C', color: '#ff0040' }), '§x§f§f§0§0§4§0C');
+  assert.deepEqual(parseFormatting(mcping.legacy({ text: 'C', color: '#ff0040' }))[0].color, '#ff0040');
+  // Übersetzbare Komponenten haben keinen Wortlaut, den wir kennen – lieber nichts als "chat.type".
+  assert.equal(mcping.legacy({ translate: 'chat.type.text' }), '');
+  assert.equal(mcping.legacy(['eins', { text: 'zwei' }]), 'einszwei');
+
+  const server = fakeMinecraftServer({
+    version: { name: '§aPaper 1.21', protocol: 767 },
+    players: {
+      online: 7,
+      max: 20,
+      // Mehr Namen, als angezeigt werden sollen – bei großen Servern steht dort gern Werbung.
+      sample: Array.from({ length: 40 }, (_, index) => ({ name: `spieler${index}` })),
+    },
+    description: { text: '', extra: [{ text: 'Hallo', color: 'green' }] },
+    // Ein "Symbol", das keines ist. Es landet im Panel in einem src-Attribut.
+    favicon: 'data:text/html,<script>alert(1)</script>',
+  });
+  const port = await listenOn(server);
+  try {
+    const result = await mcping.ping('127.0.0.1', port);
+    assert.equal(result.online, true);
+    assert.equal(result.version, '§aPaper 1.21');
+    assert.equal(result.protocol, 767);
+    assert.equal(result.online_players, 7);
+    assert.equal(result.max_players, 20);
+    assert.equal(result.motd, '§aHallo');
+    // Zwölf, nicht vierzig.
+    assert.equal(result.sample.length, 12);
+    // **Kein fremdes data:-Etwas ins src.** Nur PNG, sonst nichts.
+    assert.equal(result.favicon, '');
+    assert.ok(result.latency_ms >= 0);
+  } finally {
+    server.close();
+  }
+
+  // Dieselbe Antwort, in Stücken über die Leitung – das Ergebnis muss dasselbe sein.
+  const split = fakeMinecraftServer(
+    { version: { name: '1.21' }, players: { online: 1, max: 2 }, description: 'geteilt' },
+    { chunked: true }
+  );
+  const splitPort = await listenOn(split);
+  try {
+    const result = await mcping.ping('127.0.0.1', splitPort);
+    assert.equal(result.online, true);
+    assert.equal(result.motd, 'geteilt');
+  } finally {
+    split.close();
+  }
+
+  // Und etwas, das kein Minecraft-Server ist: eine Auskunft, kein Absturz.
+  const noise = net.createServer((socket) => socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'));
+  const noisePort = await listenOn(noise);
+  try {
+    const result = await mcping.ping('127.0.0.1', noisePort);
+    assert.equal(result.online, false);
+    assert.ok(result.error);
+  } finally {
+    noise.close();
+  }
+
+  // Ein Port, auf dem nichts lauscht: derselbe ruhige Weg.
+  const dead = net.createServer();
+  const deadPort = await listenOn(dead);
+  await new Promise((resolve) => dead.close(resolve));
+  const gone = await mcping.ping('127.0.0.1', deadPort);
+  assert.equal(gone.online, false);
+  assert.match(gone.error, /Port lauscht nichts|Verbindung/);
+});
+
+/**
+ * Eine Bauform vortäuschen, ohne eine echte Client-Datei zu brauchen.
+ *
+ * `args()` liest ausschließlich `binaries.caps(build)`; woher die Fähigkeiten kommen, ist ihm egal.
+ * Ein echtes Release dafür herunterzuladen hieße, jeden Testlauf von GitHub abhängig zu machen.
+ */
+function withBuild(key, caps, run) {
+  const before = binaries.state.builds[key];
+  binaries.state.builds[key] = { key, file: 'x', present: true, caps, version: '9.9.9', stamp: '1:1' };
+  try {
+    return run();
+  } finally {
+    if (before) binaries.state.builds[key] = before;
+    else delete binaries.state.builds[key];
+  }
+}
+
+test('the panel keeps the reconnect to itself, and hands the viewer its own Minecraft jar first', async () => {
+  const resources = await import('../server/resources.js');
+  const user = createUser();
+  const account = createAccount(user, { name: 'Steve' });
+  const profile = createProfile(user, billing.planBySlug('ultra'));
+  // Ein Supervisor-Doppel: `args()` fragt ihn nach den Befehlen, die der Client selbst taktet.
+  const fake = { emit: () => {}, macros: { onMenu: () => {} }, joinCommands: () => [], clientMacros: () => [] };
+  // Live-Ansicht gebucht – sonst filtert `gateCaps` sie weg und die POV-Zeilen fallen ganz aus.
+  const plan = { ...billing.featuresOf(profile), pov: 1, premium: 1 };
+  const build = (caps) =>
+    withBuild('ultra', caps, () => {
+      const bot = new Bot(fake, { profile, account, user, plan });
+      bot.build = 'ultra';
+      const own = bot.caps;
+      bot.webPort = bot.wantsWebView(own) ? 42101 : null;
+      return { args: bot.args(own), viewer: Boolean(bot.webPort) };
+    });
+
+  const BASE = { local: true, events: true, macros: true };
+  const POV = { ...BASE, pov: true, povweb: true, povresources: true };
+
+  // **Client 2.6.0 verbindet sich von selbst neu – das Panel schaltet es ab.** Ohne diese Zeile
+  // liefe der Prozess nach einem Kick weiter, und damit nichts, was daran hängt: kein Prüfen von
+  // Guthaben und Laufzeit vor dem nächsten Versuch, kein Aufgeben nach acht Fehlversuchen, und
+  // ein abgeschaltetes `auto_reconnect` wäre eine Anzeige ohne Wirkung.
+  assert.ok(build({ ...BASE, noreconnect: true }).args.includes('--no-reconnect'));
+  // Einer älteren Bauform darf sie **nicht** mitgegeben werden: Eine unbekannte Option bricht den
+  // Start ab, und dann liefe gar kein Bot mehr.
+  assert.ok(!build(BASE).args.includes('--no-reconnect'));
+
+  resources.remove(profile.mc_version);
+
+  // Bis 2.5.0 war die hinterlegte Original-JAR Pflicht: ohne sie kein texturierter Viewer.
+  const old = build(POV);
+  assert.equal(old.viewer, false);
+  assert.ok(!old.args.includes('--pov-web'));
+
+  // Ab 2.6.0 sucht der Client sich selbst eine – der Kunde bekommt seine Texturen trotzdem.
+  const auto = build({ ...POV, povresourcesauto: true });
+  assert.equal(auto.viewer, true);
+  assert.ok(auto.args.includes('--pov-web'));
+  // Ohne `--pov-resources`: dort gilt dann die Vorgabe `auto`.
+  assert.ok(!auto.args.includes('--pov-resources'));
+
+  // Liegt eine hier, geht sie vor – sie gilt für alle Kunden dieser Maschine, während die
+  // Selbsthilfe des Clients unter dem Konto **eines** Kunden landet.
+  resources.store(profile.mc_version, fakeClientJar());
+  const own = build({ ...POV, povresourcesauto: true });
+  const at = own.args.indexOf('--pov-resources');
+  assert.ok(at > 0);
+  assert.equal(own.args[at + 1], resources.pathFor(profile.mc_version));
+  resources.remove(profile.mc_version);
+});
+
+test('a running bot knows it holds an outdated client file, and only while it runs', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const bot = new Bot(
+    { emit: () => {}, macros: { onMenu: () => {} } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+
+  // Eine Client-Datei, wie sie auf der Platte liegt – und der Abdruck, den `detect()` daraus
+  // gelesen hätte. Ein echtes Release herunterzuladen wäre für diese Frage ein Umweg über das
+  // Netz; geprüft wird hier der Vergleich zweier Abdrücke.
+  const binFile = path.join(TEST_DIR, 'bin', 'afk-linux');
+  fs.mkdirSync(path.dirname(binFile), { recursive: true });
+  fs.writeFileSync(binFile, 'ich bin ein client');
+  const before = binaries.state.builds.slim;
+  binaries.state.builds.slim = {
+    key: 'slim',
+    file: 'afk-linux',
+    present: true,
+    caps: {},
+    version: '9.9.0',
+    stamp: binaries.stampOf(binFile),
+  };
+  assert.ok(binaries.stampOf(binFile), 'eine vorhandene Datei hat einen Abdruck');
+  assert.equal(binaries.stampOf(path.join(TEST_DIR, 'gibt-es-nicht')), null);
+
+  // So sieht ein Bot aus, der gerade gestartet ist: Er hat sich die Bauform und deren Abdruck
+  // gemerkt. Der Abdruck stammt von der Datei, wie sie **in diesem Moment** dalag.
+  bot.build = 'slim';
+  bot.clientStamp = binaries.stampFor('slim');
+  bot.clientVersion = binaries.versionOf('slim');
+  bot.proc = { stdin: { writable: true, write: () => {} } };
+  assert.equal(bot.clientVersion, '9.9.0');
+
+  // Solange die Datei dieselbe ist, ist nichts veraltet.
+  assert.equal(bot.outdated, false);
+  assert.equal(bot.snapshot().outdated, false);
+
+  // Der Abgleich hat die Datei ersetzt: Größe und Änderungszeit sind andere.
+  bot.clientStamp = '1:1';
+  assert.equal(bot.outdated, true);
+  assert.equal(bot.snapshot().client_version, bot.clientVersion);
+
+  // **Nur laufende Bots.** Ein ausgeschalteter startet ohnehin mit dem, was jetzt daliegt – ihn
+  // als veraltet zu zählen hieße, einen Knopf anzubieten, der nichts tut.
+  bot.proc = null;
+  assert.equal(bot.outdated, false);
+
+  // Und nur, wenn überhaupt ein Abdruck bekannt ist. „Weiß ich nicht“ heißt hier „nein“: Ein
+  // Neustart aus einer Unsicherheit heraus wirft einen Bot ohne Gegenwert aus dem Spiel.
+  bot.proc = { stdin: { writable: true, write: () => {} } };
+  bot.clientStamp = null;
+  assert.equal(bot.outdated, false);
+
+  // Und jetzt der Weg, den es im Betrieb wirklich gibt: Der Abgleich schreibt eine neue Datei an
+  // dieselbe Stelle, `detect()` liest einen neuen Abdruck – und der laufende Bot hält den alten.
+  bot.clientStamp = binaries.stampFor('slim');
+  assert.equal(bot.outdated, false);
+  fs.writeFileSync(binFile, 'ich bin ein neuerer client, und laenger');
+  binaries.state.builds.slim.stamp = binaries.stampOf(binFile);
+  binaries.state.builds.slim.version = '9.9.1';
+  assert.equal(bot.outdated, true);
+  // Der Bot nennt weiter seine eigene Fassung – nicht die, die auf der Platte liegt.
+  assert.equal(bot.snapshot().client_version, '9.9.0');
+
+  bot.proc = null;
+  if (before) binaries.state.builds.slim = before;
+  else delete binaries.state.builds.slim;
 });
 
 test('chat colours survive the way from the client to the panel', () => {
@@ -1261,6 +1534,230 @@ test('view distance is only sent when it was raised, and only on a paid slot', (
 });
 
 /**
+ * Jede Datei, die in den Browser geht, muss sich überhaupt lesen lassen.
+ *
+ * **Der Grund für diesen Test ist ein Backtick.** Die Oberfläche baut ihr HTML in Template-Strings,
+ * und in einem davon stand ein Kommentar mit `so einem` Zeichen darin. Damit war der String zu
+ * Ende, der Rest der Datei war Unsinn, und **kein einziger Test schlug an**: Der Server liefert
+ * diese Dateien nur aus, er liest sie nie. Aufgefallen wäre es erst im Browser eines Kunden, an
+ * einer weißen Seite ohne Fehlermeldung.
+ *
+ * Geprüft wird nur die Syntax – ob der Code das Richtige tut, sagt er nicht. Aber „lässt sich
+ * lesen“ ist die Grundlage, ohne die jede andere Aussage über diese Dateien hinfällig ist.
+ */
+test('every browser file parses', async () => {
+  const { transform } = await import('esbuild');
+  const root = path.join(ROOT, 'public', 'assets', 'js');
+  const walk = (dir) =>
+    fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return walk(full);
+      return entry.name.endsWith('.js') ? [full] : [];
+    });
+
+  const files = walk(root);
+  assert.ok(files.length > 10, 'die Oberfläche besteht aus mehr als einer Handvoll Dateien');
+  for (const file of files) {
+    // Nacheinander und mit dem Dateinamen in der Meldung: Bei zwanzig Dateien ist "Unexpected
+    // token" ohne den Namen keine Auskunft, sondern eine Suche.
+    // eslint-disable-next-line no-await-in-loop
+    await assert.doesNotReject(
+      () => transform(fs.readFileSync(file, 'utf8'), { loader: 'js', format: 'esm' }),
+      `${path.relative(ROOT, file)} lässt sich nicht lesen`
+    );
+  }
+});
+
+/**
+ * Was ein Macro von einem Automaten unterscheidet.
+ *
+ * Vier Dinge werden hier festgehalten, und alle vier haben denselben Hintergrund: Ein Macro
+ * schickt Zeilen an einen fremden Server, und ein Server, der etwas für Spam hält, wirft den Bot
+ * raus. Platzhalter machen aus einer festen Zeile eine Antwort; Ausschluss verhindert, dass der
+ * Bot auf sich selbst antwortet; die Sperrzeit verhindert den Sekundentakt; und die Kette hat
+ * einen Boden, damit ein Macro, das sich selbst aufruft, den Dienst nicht anhält.
+ */
+test('a macro fills in its placeholders, honours its exclusion, its cooldown and the chain limit', async () => {
+  const user = createUser();
+  const account = createAccount(user, { name: 'Steve' });
+  const profile = createProfile(user, billing.planBySlug('premium'), { name: 'Zuhause' });
+
+  const sent = [];
+  const trouble = [];
+  const bot = {
+    key: `${profile.id}:${account.id}`,
+    profile,
+    account,
+    userId: user.id,
+    online: true,
+    running: true,
+    caps: { macros: true, movement: true },
+    push: (type, text) => {
+      if (type === 'error') trouble.push(text);
+    },
+    send: (text) => sent.push(text),
+    local: (verb, arg) => sent.push(`:${verb}${arg ? ` ${arg}` : ''}`),
+  };
+
+  const addMacro = (name, event, config, actions, extra = {}) =>
+    db
+      .prepare(
+        `INSERT INTO macros
+           (profile_id, name, event, config, actions, accounts, enabled, cooldown_sec, chance, created_at)
+         VALUES (?, ?, ?, ?, ?, '[]', 1, ?, ?, ?)`
+      )
+      .run(
+        profile.id,
+        name,
+        event,
+        JSON.stringify(config),
+        JSON.stringify(actions),
+        extra.cooldown_sec ?? 0,
+        extra.chance ?? 100,
+        Date.now()
+      ).lastInsertRowid;
+
+  // Der Ablauf ist asynchron, aber ohne Wartezeit im Macro auch sofort fertig. Eine Runde durch
+  // die Ereignisschleife genügt, damit `run()` durch ist.
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  // ---- Platzhalter: die Gruppen des Ausdrucks, das Konto, der Serverplatz.
+  addMacro('Antwort', 'chat', { regex: '(\\w+) hat dich angeschrieben', exclude: 'bin AFK' }, [
+    { type: 'chat', text: '/msg {1} bin AFK ({player} auf {server})' },
+  ]);
+  macroEngine.onChat(bot, 'Notch hat dich angeschrieben');
+  await settle();
+  assert.deepEqual(sent, ['/msg Notch bin AFK (Steve auf Zuhause)']);
+
+  // ---- Ausschluss: die eigene Antwort löst nicht noch einmal aus.
+  sent.length = 0;
+  macroEngine.onChat(bot, 'Notch hat dich angeschrieben – bin AFK');
+  await settle();
+  assert.deepEqual(sent, []);
+
+  // ---- Sperrzeit: derselbe Treffer noch einmal, aber innerhalb der Sperre.
+  sent.length = 0;
+  const limited = addMacro('Begrüßung', 'chat', { contains: 'willkommen' }, [
+    { type: 'chat', text: 'Danke!' },
+  ], { cooldown_sec: 600 });
+  macroEngine.onChat(bot, 'Willkommen auf dem Server');
+  await settle();
+  macroEngine.onChat(bot, 'Willkommen auf dem Server');
+  await settle();
+  assert.deepEqual(sent, ['Danke!']);
+
+  // Und dasselbe Macro geht **nicht** an den Client: Der kennt keine Sperrzeit und schickte die
+  // Zeile bei jedem Treffer – also genau das, was die Sperrzeit verhindern soll.
+  const row = db.prepare('SELECT * FROM macros WHERE id = ?').get(limited);
+  assert.equal(macroEngine.handledByClient(bot, row), false);
+  assert.equal(
+    macroEngine.handledByClient(bot, { ...row, cooldown_sec: 0 }),
+    true,
+    'ohne Sperrzeit ist es wieder eine reine Chatkette für den Client'
+  );
+
+  // **Dieselbe Antwort auf beiden Seiten.** Gäbe der Supervisor das Macro trotzdem als `--cmd`
+  // mit, liefe es doppelt: einmal vom Client und einmal vom Panel, bei jedem Beitritt.
+  addMacro('Ankunft', 'join', {}, [{ type: 'chat', text: '/afk' }]);
+  addMacro('Ankunft langsam', 'join', {}, [{ type: 'chat', text: '/hallo' }], { cooldown_sec: 60 });
+  assert.deepEqual(supervisor.joinCommands(profile.id, account.id), ['/afk']);
+
+  // ---- Die Kette hat einen Boden. Ein Macro, das sich selbst aufruft, endet mit einer Meldung
+  //      und nicht mit einem stehenden Dienst.
+  sent.length = 0;
+  addMacro('Kreis', 'death', {}, [{ type: 'run', name: 'Kreis' }]);
+  macroEngine.onDeath(bot);
+  await settle();
+  assert.ok(
+    trouble.some((line) => /zu tief/.test(line)),
+    `erwartet: Hinweis auf die Tiefe, bekommen: ${JSON.stringify(trouble)}`
+  );
+});
+
+/**
+ * Der Wiederanlauf – und vor allem die Fälle, in denen es ihn nicht gibt.
+ *
+ * Die eine Regel, an der alles hängt: **War der Bot im Spiel?** War er es, ist ein Ausfall eine
+ * Störung und die Verbindung kommt zurück. War er es nie, ist es eine Absage – falsche Adresse,
+ * falsche Version, Bann –, und die wiederholt sich nicht von selbst. Ohne diesen Unterschied wäre
+ * der Wiederanlauf eine Neustartschleife im Minutentakt gegen einen Server, der ohnehin nein sagt.
+ */
+test('a bot that was in game comes back on its own – one that never got in does not', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  // Kurze Zeiten, damit der Test keine Minute wartet: Der erste Versuch läge sonst bei 5 s.
+  db.prepare('UPDATE profiles SET reconnect_delay = 1, max_backoff = 2 WHERE id = ?').run(profile.id);
+
+  const lines = [];
+  // Der Bot meldet sich beim Supervisor an, wie ein echter auch: `cancelRestart` räumt die
+  // Anzeige über die Bot-Liste ab, und ein Test, der daran vorbeigeht, prüft etwas anderes als
+  // den Betrieb.
+  const fake = () => {
+    const bot = {
+      key: `${profile.id}:${account.id}`,
+      state: 'error',
+      userId: user.id,
+      profile,
+      account,
+      lastError: 'Kick: Server startet neu',
+      retry: null,
+      push: (type, text) => lines.push(`${type} ${text}`),
+      setState(state) {
+        this.state = state;
+      },
+    };
+    supervisor.bots.set(bot.key, bot);
+    return bot;
+  };
+  after(() => supervisor.bots.delete(`${profile.id}:${account.id}`));
+
+  // Nie im Spiel gewesen: keine Kette. Der Aufrufer löscht daraufhin den Startwunsch.
+  assert.equal(supervisor.planRestart(fake(), { wasOnline: 0 }), false);
+  assert.equal(supervisor.waitingForRestart(`${profile.id}:${account.id}`), false);
+
+  // Im Spiel gewesen: ein Versuch wartet, und der Bot sagt auch, der wievielte es ist.
+  const bot = fake();
+  assert.equal(supervisor.planRestart(bot, { wasOnline: 30_000 }), true);
+  assert.equal(supervisor.waitingForRestart(bot.key), true);
+  assert.equal(bot.retry.tries, 1);
+  assert.equal(bot.state, 'reconnecting');
+
+  // Der zweite Fehlversuch zählt weiter – **auch ohne "war online"**. Dass gerade dieser Versuch
+  // nicht bis ins Spiel kam, ist genau der Fall, für den es die Kette gibt.
+  const second = fake();
+  assert.equal(supervisor.planRestart(second, { wasOnline: 0 }), true);
+  assert.equal(second.retry.tries, 2);
+
+  // Und sie endet: Nach der achten Absage bleibt der Bot aus.
+  let last = second;
+  for (let n = 3; n <= 8; n += 1) {
+    last = fake();
+    assert.equal(supervisor.planRestart(last, { wasOnline: 0 }), true, `Versuch ${n}`);
+  }
+  assert.equal(supervisor.planRestart(fake(), { wasOnline: 0 }), false);
+  assert.equal(supervisor.waitingForRestart(last.key), false);
+  assert.ok(lines.some((line) => line.startsWith('error') && /aufgegeben/.test(line)));
+
+  // Wer stoppt, meint es: eine wartende Kette wird abgeräumt.
+  const stopped = fake();
+  assert.equal(supervisor.planRestart(stopped, { wasOnline: 30_000 }), true);
+  assert.equal(supervisor.cancelRestart(stopped.key), true);
+  assert.equal(supervisor.waitingForRestart(stopped.key), false);
+  assert.equal(stopped.retry, null);
+
+  // Ausgeschaltet heißt ausgeschaltet – und zwar ab sofort, nicht ab dem nächsten Start.
+  db.prepare('UPDATE profiles SET auto_reconnect = 0 WHERE id = ?').run(profile.id);
+  assert.equal(supervisor.planRestart(fake(), { wasOnline: 30_000 }), false);
+
+  // Eine abgelaufene Microsoft-Anmeldung braucht einen Menschen mit einem Browser.
+  db.prepare('UPDATE profiles SET auto_reconnect = 1 WHERE id = ?').run(profile.id);
+  const waitingForLogin = fake();
+  waitingForLogin.state = 'auth';
+  assert.equal(supervisor.planRestart(waitingForLogin, { wasOnline: 30_000 }), false);
+});
+
+/**
  * Der Webhook eines Kunden meldet, was er bestellt hat – und leer heißt alles.
  *
  * Die Regel steht auf beiden Seiten (server/notify.js und views/settings.js) und ist die einzige
@@ -1303,6 +1800,30 @@ test('a customer webhook sends what the customer asked for, and everything by de
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test('account activity is kept without Discord, deduplicated and readable on every device', async () => {
+  const user = createUser();
+
+  await notify.botTrouble(user.id, 'Steve', 'Verbindung abgebrochen.');
+  // Derselbe Zustand in derselben Sperrzeit ist ein Ereignis, keine Wand aus Wiederholungen.
+  await notify.botTrouble(user.id, 'Steve', 'Verbindung abgebrochen.');
+
+  const german = notify.notificationsFor(user.id, 'de');
+  const english = notify.notificationsFor(user.id, 'en');
+  assert.equal(german.length, 1);
+  assert.equal(notify.unreadFor(user.id), 1);
+  assert.match(german[0].title, /Steve/);
+  assert.match(english[0].title, /problem/i);
+  assert.equal(german[0].event, 'bot');
+  assert.equal(german[0].tone, 'bad');
+  assert.equal(german[0].href, '#/servers');
+
+  assert.equal(notify.markRead(user.id, [german[0].id]), 1);
+  assert.equal(notify.unreadFor(user.id), 0);
+  assert.ok(notify.notificationsFor(user.id, 'de')[0].read_at);
+  assert.equal(notify.removeRead(user.id), 1);
+  assert.equal(notify.notificationsFor(user.id, 'de').length, 0);
 });
 
 /** Die To-do-Liste des Teams zählt Warteschlangen – und schweigt, wenn nichts wartet. */
@@ -1614,6 +2135,537 @@ test('a backup is a complete, openable database and the oldest ones make room', 
 
   assert.equal(backup.fileFor('../../etc/passwd'), null);
   assert.equal(backup.fileFor('irgendwas.db'), null);
+});
+
+// ---------------------------------------------------------------- Persönliche Daten
+
+test('personal details are checked, tidied and stored in one canonical shape', () => {
+  const user = createUser();
+
+  const clean = profile.readChanges({
+    full_name: '  Hugo   Muster ',
+    company: 'Muster GmbH',
+    vat_id: 'atu 123.456.78',
+    street: 'Hauptstraße 1',
+    postal_code: '1010',
+    city: 'Wien',
+    country: 'at',
+    phone: '+43 660 1234567',
+    timezone: 'Europe/Vienna',
+  });
+  // Zusammengezogener Leerraum, Land und Steuernummer in fester Schreibweise.
+  assert.equal(clean.full_name, 'Hugo Muster');
+  assert.equal(clean.country, 'AT');
+  assert.equal(clean.vat_id, 'ATU12345678');
+
+  // Steuerzeichen haben in einer Anschrift nichts verloren – sie brächen jeden Beleg auseinander.
+  assert.equal(profile.readChanges({ city: 'Wien\u0000\nGraz' }).city, 'Wien Graz');
+
+  for (const [field, value] of [
+    ['country', 'XX'],
+    ['vat_id', 'hallo'],
+    ['phone', 'ruf mich an'],
+    ['timezone', 'Mittelerde/Auenland'],
+    ['billing_email', 'keine adresse'],
+  ]) {
+    assert.throws(() => profile.readChanges({ [field]: value }), `${field} sollte abgelehnt werden`);
+  }
+
+  // Ein Feld, das gar nicht im Rumpf stand, wird nicht angefasst – sonst löscht jedes Speichern
+  // eines einzelnen Feldes den ganzen Rest.
+  profile.applyChanges(user.id, clean);
+  profile.applyChanges(user.id, profile.readChanges({ city: 'Graz' }));
+  const stored = db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+  assert.equal(stored.city, 'Graz');
+  assert.equal(stored.street, 'Hauptstraße 1');
+
+  // Die Anschrift auf dem Beleg: Firma, Name, Straße, PLZ + Ort, Land – in dieser Reihenfolge.
+  assert.deepEqual(profile.addressLines(stored, 'de'), [
+    'Muster GmbH',
+    'Hugo Muster',
+    'Hauptstraße 1',
+    '1010 Graz',
+    'Österreich',
+  ]);
+  // In den Vereinigten Staaten steht der Ort vorn und die Postleitzahl hinter dem Bundesstaat.
+  assert.deepEqual(
+    profile.addressLines(
+      { full_name: 'Jane Doe', street: '1 Main St', city: 'Springfield', region: 'IL', postal_code: '62704', country: 'US' },
+      'en'
+    ),
+    ['Jane Doe', '1 Main St', 'Springfield, IL 62704', 'United States']
+  );
+});
+
+test('the username has a cooldown and the email only moves once the new address confirms', async () => {
+  const user = createUser({ username: 'umzugsfall' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword('passwort123'), user.id);
+  const fresh = () => db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+
+  const renamed = auth.changeUsername(fresh(), 'Umzugsfall2');
+  assert.equal(renamed.username, 'Umzugsfall2');
+  // Zweimal hintereinander geht nicht – ein Name, der stündlich wechselt, macht jeden Verlauf
+  // unlesbar.
+  assert.throws(() => auth.changeUsername(fresh(), 'Umzugsfall3'), /30 Tag|30 day/);
+
+  // Nur die Schreibweise ändern: Der eigene Name darf dabei nicht als "schon vergeben" gelten.
+  db.prepare('UPDATE users SET username_changed_at = NULL WHERE id = ?').run(user.id);
+  assert.equal(auth.changeUsername(fresh(), 'UMZUGSFALL2').username, 'UMZUGSFALL2');
+
+  // Die E-Mail-Adresse braucht das Passwort **und** eine Bestätigung an der neuen Adresse.
+  setSetting('smtp_host', 'localhost');
+  await assert.rejects(
+    () => auth.requestEmailChange(fresh(), 'neu@example.test', 'falsch'),
+    /Passwort|password/
+  );
+  await auth.requestEmailChange(fresh(), 'neu@example.test', 'passwort123');
+  assert.equal(fresh().pending_email, 'neu@example.test');
+  // Bis zur Bestätigung gilt die alte Adresse – ein Tippfehler sperrt also niemanden aus.
+  assert.notEqual(fresh().email, 'neu@example.test');
+
+  const confirmed = auth.confirmEmailChange(fresh().pending_email_token);
+  assert.equal(confirmed.email, 'neu@example.test');
+  assert.equal(fresh().pending_email, null);
+  // Ein zweites Mal löst derselbe Link nichts mehr aus.
+  assert.equal(auth.confirmEmailChange('gibt-es-nicht'), null);
+  setSetting('smtp_host', '');
+});
+
+test('open sessions are listed without their tokens and can be ended one at a time', () => {
+  const user = createUser();
+  createSession(user, 'sitzung-eins');
+  createSession(user, 'sitzung-zwei');
+  db.prepare('UPDATE sessions SET agent = ? WHERE token = ?').run(
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36',
+    'sitzung-eins'
+  );
+
+  const list = auth.sessionsOf(user.id, 'sitzung-eins');
+  assert.equal(list.length, 2);
+  // **Kein Token in der Antwort.** Es ist die Anmeldung selbst; eine Seite, die alle Token des
+  // Kontos im Speicher hält, verschenkt bei der ersten Lücke jedes Gerät mit.
+  for (const entry of list) {
+    assert.ok(!('token' in entry));
+    assert.match(entry.ref, /^[0-9a-f]{16}$/);
+  }
+  assert.equal(list.find((entry) => entry.current)?.device, 'Chrome · Linux');
+
+  const other = list.find((entry) => !entry.current);
+  // Die eigene Sitzung bleibt, auch wenn ihr Abdruck genannt wird.
+  assert.equal(auth.endSession(user.id, list.find((entry) => entry.current).ref, 'sitzung-eins'), false);
+  assert.equal(auth.endSession(user.id, other.ref, 'sitzung-eins'), true);
+  assert.equal(auth.sessionsOf(user.id, 'sitzung-eins').length, 1);
+  // Ein geratener Abdruck meldet kein fremdes Gerät ab.
+  assert.equal(auth.endSession(user.id, '0'.repeat(16), 'sitzung-eins'), false);
+});
+
+/**
+ * Zwei Anfragen und eine Antwort nachgebaut – mehr braucht der Anmeldecode nicht.
+ *
+ * Er liest genau drei Dinge aus einer Anfrage (Cookie, Browserkennung, Adresse) und schreibt genau
+ * eines in die Antwort (das Gerätecookie). Ein echter HTTP-Server dafür wäre ein Umweg über den
+ * halben Express-Stapel, um am Ende dieselben drei Felder zu setzen.
+ */
+const fakeRes = () => {
+  const jar = {};
+  return { jar, cookie: (name, value) => { jar[name] = value; } };
+};
+const fakeReq = (res = null, agent = 'Mozilla/5.0 (Windows NT 10.0) Chrome/131.0 Safari/537.36') => ({
+  headers: { 'user-agent': agent, cookie: res?.jar?.afk_device ? `afk_device=${res.jar.afk_device}` : '' },
+  ip: '198.51.100.7',
+});
+
+test('the sign-in code only asks unknown browsers, and a password change makes every browser unknown', () => {
+  const user = () => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const { id } = createUser({ username: 'codefall' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword('passwort123'), id);
+
+  // Ohne Postausgang bleibt der Code aus – sonst stünde jemand vor einem Feld, in das nie etwas
+  // eintrifft. Das ist die Bedingung, die den Kunden nicht aussperrt, und sie kommt zuerst.
+  setSetting('smtp_host', '');
+  assert.equal(logincode.required(user(), fakeReq()), false);
+
+  setSetting('smtp_host', 'localhost');
+  assert.equal(logincode.required(user(), fakeReq()), true);
+
+  // Abgeschaltet: nie.
+  db.prepare('UPDATE users SET login_code = 0 WHERE id = ?').run(id);
+  assert.equal(logincode.required(user(), fakeReq()), false);
+  db.prepare('UPDATE users SET login_code = 1 WHERE id = ?').run(id);
+
+  // Eine unbestätigte Adresse trägt keinen Zugang: An ein Postfach, von dem niemand weiß, ob es
+  // dem Kontoinhaber gehört, darf die Anmeldung nicht gebunden werden.
+  db.prepare('UPDATE users SET email_verified = 0 WHERE id = ?').run(id);
+  assert.equal(logincode.required(user(), fakeReq()), false);
+  db.prepare('UPDATE users SET email_verified = 1 WHERE id = ?').run(id);
+
+  // Gemerkt: derselbe Browser fragt nicht mehr.
+  const res = fakeRes();
+  logincode.remember(user(), fakeReq(), res);
+  assert.match(res.jar.afk_device, /^[A-Za-z0-9_-]{20,64}$/);
+  assert.equal(logincode.required(user(), fakeReq(res)), false);
+
+  // Ein anderer Browser mit demselben `User-Agent` ist trotzdem ein anderer. Genau hier lag die
+  // Lücke der alten Erkennung: "Chrome auf Windows" haben Millionen.
+  assert.equal(logincode.required(user(), fakeReq()), true);
+
+  const list = logincode.devicesOf(id, res.jar.afk_device);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].current, true);
+  assert.equal(list[0].device, 'Chrome · Windows');
+  // Der Zufallswert selbst bleibt drinnen – er steht im Cookie und ist ein Merkmal, keine Auskunft.
+  assert.ok(!('token' in list[0]));
+
+  // Ein Passwortwechsel wirft jeden bekannten Browser hinaus. Das ist der Fall, für den es das
+  // gibt: Wer wechselt, glaubt oft, jemand anderes kenne das alte – und der sitzt vielleicht an
+  // einem Browser, der hier als bekannt geführt wird.
+  auth.changePassword(user(), 'passwort123', 'nochbesser99', 'nochbesser99');
+  assert.equal(logincode.devicesOf(id).length, 0);
+  assert.equal(logincode.required(user(), fakeReq(res)), true);
+
+  // Einzeln vergessen geht über den kurzen Abdruck, und ein geratener trifft nichts.
+  const res2 = fakeRes();
+  logincode.remember(user(), fakeReq(), res2);
+  assert.equal(logincode.forget(id, '0'.repeat(16)), false);
+  assert.equal(logincode.forget(id, logincode.devicesOf(id)[0].ref), true);
+  assert.equal(logincode.devicesOf(id).length, 0);
+
+  setSetting('smtp_host', '');
+});
+
+test('a sign-in code is spent once, counts its attempts down and dies with the fifth', () => {
+  const { id } = createUser({ username: 'codeversuche' });
+
+  /** Eine Marke wie `start()` sie anlegt – nur mit einem Code, den der Test kennt. */
+  const challenge = (code, { expiresIn = 15 * 60_000, tries = 0 } = {}) => {
+    const value = crypto.randomUUID();
+    db.prepare(
+      `INSERT INTO login_challenges (token, user_id, code_hash, tries, sent_at, expires_at, ip, agent, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, '', '', ?)`
+    ).run(value, id, hashPassword(code), tries, Date.now(), Date.now() + expiresIn, Date.now());
+    return value;
+  };
+
+  // Der richtige Code lässt genau einmal herein – danach ist die Marke verbraucht.
+  const good = challenge('123456');
+  assert.equal(logincode.redeem(good, '123456').id, id);
+  assert.throws(() => logincode.redeem(good, '123456'), /gilt nicht mehr|no longer valid/);
+
+  // Vier Fehlversuche zählen herunter, der fünfte nimmt die Marke mit. Ohne diese Grenze wären
+  // sechs Ziffern in einer Viertelstunde durchprobierbar.
+  const counted = challenge('654321');
+  for (let left = 4; left >= 1; left -= 1) {
+    assert.throws(() => logincode.redeem(counted, '000000'), new RegExp(`${left} `));
+  }
+  assert.throws(() => logincode.redeem(counted, '000000'), /gilt nicht mehr|no longer valid/);
+  // Und danach hilft auch der richtige nicht mehr.
+  assert.throws(() => logincode.redeem(counted, '654321'), /gilt nicht mehr|no longer valid/);
+
+  // Abgelaufen ist abgelaufen.
+  assert.throws(() => logincode.redeem(challenge('111111', { expiresIn: -1 }), '111111'), /gilt nicht mehr|no longer valid/);
+  // Etwas, das keine sechs Ziffern ist, verbraucht keinen Versuch – es ist ein Vertipper.
+  const typo = challenge('222222');
+  assert.throws(() => logincode.redeem(typo, 'abc'), /sechs Ziffern|six digits/);
+  assert.equal(logincode.redeem(typo, '222222').id, id);
+
+  // Ein gesperrtes Konto kommt auch mit dem richtigen Code nicht herein: Zwischen dem Anfordern
+  // und dem Eintippen liegen Minuten, und in denen kann sich das ändern.
+  db.prepare('UPDATE users SET blocked = 1 WHERE id = ?').run(id);
+  assert.throws(() => logincode.redeem(challenge('333333'), '333333'), /gesperrt|blocked/);
+  db.prepare('UPDATE users SET blocked = 0 WHERE id = ?').run(id);
+
+  // Die halb verdeckte Adresse hilft beim Wiedererkennen und verrät nichts.
+  assert.equal(logincode.maskEmail('hugo@example.test'), 'h•••@example.test');
+  assert.equal(logincode.maskEmail('kaputt'), '');
+});
+
+test('the data export carries the account but no keys, and deletion waits out its grace period', () => {
+  const user = createUser({ credits: 500 });
+  const slot = createProfile(user, billing.planBySlug('premium'));
+  createAccount(user, { name: 'ExportBot' });
+  tickets.create(user, { subject: 'Frage zum Export', body: 'Hallo' });
+
+  const dump = account.exportFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
+  assert.equal(dump.account.username, user.username);
+  assert.equal(dump.server_slots.length, 1);
+  assert.equal(dump.minecraft_accounts.length, 1);
+  assert.equal(dump.tickets.length, 1);
+  // Schlüssel sind keine Auskunft: Die Datei liegt danach im Download-Ordner und geht per Mail
+  // weiter – ein Passwort-Hash oder ein Sitzungs-Token darin wäre der Zugang, nicht die Auskunft.
+  const asText = JSON.stringify(dump);
+  assert.doesNotMatch(asText, /password_hash|verify_token|reset_token|pending_email_token/);
+
+  // Ein Administrator kann sich hier nicht selbst löschen – sonst bleibt niemand übrig, der
+  // andere hereinlässt.
+  const boss = createUser({ role: 'admin' });
+  assert.throws(() => account.requestDeletion(boss, { verified: true }), /Administrator/);
+
+  const pending = account.requestDeletion(
+    db.prepare('SELECT * FROM users WHERE id = ?').get(user.id),
+    { verified: true }
+  );
+  assert.ok(pending.due_at > Date.now());
+  // Vor dem Stichtag passiert nichts, und nichts ist weg.
+  assert.equal(account.runDueDeletions(), 0);
+  assert.ok(db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(slot.id));
+  // Ein Widerruf genügt.
+  assert.equal(account.cancelDeletion(user.id), true);
+  assert.equal(db.prepare('SELECT delete_due_at FROM users WHERE id = ?').get(user.id).delete_due_at, null);
+
+  // Eine bezahlte Aufladung mit Beleg – die darf die Löschung **nicht** mitnehmen.
+  const paid = billing.createTopup({
+    userId: user.id,
+    amountCent: 500,
+    credits: 500,
+    provider: 'transfer',
+  });
+  billing.settleTopup(paid.id, 'Test');
+  const number = db.prepare('SELECT receipt_no FROM topups WHERE id = ?').get(paid.id).receipt_no;
+
+  // Und wenn die Frist wirklich abgelaufen ist, geht das Konto mit allem, was daran hängt.
+  account.requestDeletion(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id), { verified: true });
+  db.prepare('UPDATE users SET delete_due_at = ? WHERE id = ?').run(Date.now() - 1000, user.id);
+  assert.equal(account.runDueDeletions(), 1);
+  assert.equal(db.prepare('SELECT 1 FROM users WHERE id = ?').get(user.id), undefined);
+  assert.equal(db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(slot.id), undefined);
+
+  // Der Beleg steht danach im Archiv – mit derselben Nummer und derselben Anschrift.
+  const kept = db.prepare('SELECT * FROM receipt_archive WHERE receipt_no = ?').get(number);
+  assert.ok(kept, 'ein ausgestellter Beleg gehört dem Betreiber und nicht dem Konto');
+  assert.equal(kept.amount_cent, 500);
+  assert.equal(kept.former_user, user.id);
+  // Und die nächste Nummer zählt ihn mit: Sonst wäre sie ein zweites Mal vergeben.
+  assert.notEqual(billing.nextReceiptNumber(), number);
+
+  // Zum Archiv gehört kein Konto mehr, also auch keine Liste im Panel. Die Ausfuhr ist der
+  // einzige Weg dorthin – wenn die fehlt, sind die Belege zwar da, aber für niemanden.
+  const csv = exportCsv.build('receipts');
+  assert.ok(csv.rows >= 1);
+  assert.match(csv.body.split('\r\n')[0], /^﻿receipt_no,/);
+  assert.ok(csv.body.includes(number));
+});
+
+// ---------------------------------------------------------------- Belege
+
+test('a settled top-up gets a receipt number and freezes the address it was billed to', () => {
+  const buyer = createUser({ username: 'belegkunde' });
+  profile.applyChanges(
+    buyer.id,
+    profile.readChanges({
+      full_name: 'Hugo Muster',
+      company: 'Muster GmbH',
+      street: 'Hauptstraße 1',
+      postal_code: '1010',
+      city: 'Wien',
+      country: 'AT',
+    })
+  );
+  const topup = billing.createTopup({ userId: buyer.id, amountCent: 500, credits: 500, provider: 'transfer' });
+  billing.settleTopup(topup.id, 'Test');
+
+  const paid = db.prepare('SELECT * FROM topups WHERE id = ?').get(topup.id);
+  assert.match(paid.receipt_no, /^AFK-\d{4}-\d{4}$/);
+  assert.ok(paid.vat_note, 'der Steuerhinweis von damals gehört auf den Beleg');
+  const frozen = JSON.parse(paid.billed_to);
+  assert.equal(frozen.company, 'Muster GmbH');
+  assert.equal(frozen.city, 'Wien');
+
+  // Der Umzug danach ändert den Beleg nicht – sonst änderte er rückwirkend jede alte Rechnung.
+  profile.applyChanges(buyer.id, profile.readChanges({ city: 'Graz' }));
+  const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(buyer.id);
+  const page = receipt.html(db.prepare('SELECT * FROM topups WHERE id = ?').get(topup.id), owner, 'de');
+  assert.match(page, /Muster GmbH/);
+  assert.match(page, /1010 Wien/);
+  assert.doesNotMatch(page, /Graz/);
+  // Und keine Skripte: Auf einem Dokument mit den Angaben eines Kunden hat nichts Ausführbares
+  // etwas verloren – die Content-Security-Policy dieses Servers ließe es ohnehin nicht zu.
+  assert.doesNotMatch(page, /<script|onclick=/i);
+
+  // Zweiter Beleg, nächste Nummer – fortlaufend und ohne Lücke.
+  const second = billing.createTopup({ userId: buyer.id, amountCent: 1000, credits: 1050, provider: 'voucher' });
+  billing.settleTopup(second.id, 'Test');
+  const numbers = db
+    .prepare("SELECT receipt_no FROM topups WHERE receipt_no LIKE 'AFK-%' ORDER BY id")
+    .all()
+    .map((row) => row.receipt_no);
+  assert.equal(new Set(numbers).size, numbers.length, 'jede Nummer gibt es genau einmal');
+
+  // Und die Liste zeigt nur, was wirklich eine Nummer hat.
+  const open = billing.createTopup({ userId: buyer.id, amountCent: 500, credits: 500, provider: 'transfer' });
+  assert.ok(!receipt.listFor(buyer.id).some((entry) => entry.id === open.id));
+});
+
+// ---------------------------------------------------------------- Discord-Darstellung
+
+test('Discord messages are rendered with names instead of numbers, and nothing escapes', () => {
+  const mentions = {
+    '153820284044548513': { type: 'user', name: 'Hugo' },
+    '153820284474490881': { type: 'channel', name: 'support' },
+    '153820284044548514': { type: 'role', name: 'Team', color: '#206cfe' },
+  };
+  const html = renderDiscord(
+    'Hallo <@153820284044548513>, sieh in <#153820284474490881> — <@&153820284044548514> **dringend**!',
+    { mentions, locale: 'de', unknown: 'unbekannt' }
+  );
+  assert.match(html, />@Hugo</);
+  assert.match(html, />#support</);
+  assert.match(html, />@Team</);
+  assert.match(html, /--dc-role:#206cfe/);
+  // Im **Text** steht keine Zahl mehr. Im `title` bleibt sie stehen – wer im Support eine
+  // Erwähnung nachschlagen muss, braucht genau sie, und ein Tooltip stört niemanden beim Lesen.
+  assert.doesNotMatch(html.replace(/title="[^"]*"/g, ''), /15382028/);
+  assert.match(html, /<strong>dringend<\/strong>/);
+
+  // Ohne Auflösung bleibt es eine Erwähnung – sie heißt dann nur nicht beim Namen.
+  assert.match(renderDiscord('<@999999999999999999>', { unknown: 'unbekannt' }), />@unbekannt</);
+
+  // Alles, was nach HTML aussieht, kommt als Text wieder heraus.
+  const attack = renderDiscord('<script>alert(1)</script> <img src=x onerror=alert(1)>', {});
+  // Kein echtes Element und kein echtes Attribut – die Wörter selbst dürfen als Text dastehen,
+  // sie sind ja das, was jemand geschrieben hat.
+  assert.doesNotMatch(attack, /<script/i);
+  assert.doesNotMatch(attack, /<img(?![^>]*class="dc-emoji")/i);
+  assert.match(attack, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  // Und eine Adresse mit einem anderen Schema wird kein Link.
+  assert.doesNotMatch(renderDiscord('[hier](javascript:alert(1))', {}), /<a /);
+
+  // Codeblöcke stehen für sich und nicht in einem Absatz – sonst wäre es ungültiges HTML.
+  const code = renderDiscord('davor ```js\nconst x = 1 < 2;\n``` danach', {});
+  assert.doesNotMatch(code, /<p[^>]*><pre/);
+  assert.match(code, /<pre class="dc-code"><code>const x = 1 &lt; 2;<\/code><\/pre>/);
+
+  // Ein Unterstrich mitten im Wort ist kein Kursivsatz – so heißen Serverplätze und Dateien.
+  assert.doesNotMatch(renderDiscord('mein_server_name', {}), /<em>/);
+  assert.match(renderDiscord('_kursiv_', {}), /<em>kursiv<\/em>/);
+
+  // Was der Bot mitschickt, wird geprüft, bevor es in die Datenbank geht: Aus diesem Feld wird
+  // später HTML gebaut.
+  const packed = JSON.parse(
+    tickets.packMentions({
+      '153820284044548513': { type: 'user', name: 'Hugo' },
+      '12': { type: 'user', name: 'zu kurze ID' },
+      '153820284044548515': { type: 'unfug', name: 'Rolle', color: 'javascript:alert(1)' },
+    })
+  );
+  assert.deepEqual(Object.keys(packed), ['153820284044548513', '153820284044548515']);
+  assert.equal(packed['153820284044548515'].type, 'user', 'unbekannte Arten werden zu "user"');
+  assert.ok(!('color' in packed['153820284044548515']), 'eine Farbe, die keine ist, fällt weg');
+  assert.equal(tickets.packMentions(null), null);
+  assert.equal(tickets.unpackMentions('kein json'), null);
+});
+
+// ---------------------------------------------------------------- Zeitpläne
+
+test('a schedule fires once per occurrence, in the account time zone, and not too late', () => {
+  const user = createUser({ username: 'zeitplaner' });
+  db.prepare("UPDATE users SET timezone = 'Europe/Vienna' WHERE id = ?").run(user.id);
+  const slot = createProfile(user, billing.planBySlug('premium'));
+
+  const add = (minutes, days) =>
+    db
+      .prepare(
+        `INSERT INTO profile_schedules (profile_id, action, minutes, days, active, created_at)
+         VALUES (?, 'stop', ?, ?, 1, ?)`
+      )
+      .run(slot.id, minutes, days, Date.now()).lastInsertRowid;
+
+  // Dienstag, 1. September 2026, 18:00:30 Ortszeit Wien (= 16:00:30 UTC).
+  const now = Date.parse('2026-09-01T16:00:30Z');
+  const due = add(18 * 60, '2'); // genau jetzt
+  const wrongDay = add(18 * 60, '3'); // Mittwoch
+  const tooOld = add(17 * 60, '2'); // eine Stunde her – außerhalb der Nachlauffrist
+  const later = add(19 * 60, '2'); // noch nicht
+
+  assert.equal(schedules.tick(now), 1);
+  const result = (id) => db.prepare('SELECT last_run_at FROM profile_schedules WHERE id = ?').get(id).last_run_at;
+  assert.ok(result(due));
+  for (const id of [wrongDay, tooOld, later]) assert.equal(result(id), null);
+
+  // Derselbe Zeitpunkt löst kein zweites Mal aus – das ist es, was aus einem Minutentakt genau
+  // eine Ausführung je Zeitpunkt macht.
+  assert.equal(schedules.tick(now + 30_000), 0);
+
+  // Wann er das nächste Mal dran ist, rechnet der Server aus – in der Zeitzone des Kontos und
+  // nicht in der des Browsers, der gerade hinsieht.
+  const upcoming = schedules.nextAt(
+    { minutes: 18 * 60, days: '2' },
+    'Europe/Vienna',
+    Date.parse('2026-09-01T16:30:00Z')
+  );
+  assert.ok(upcoming > Date.parse('2026-09-01T16:30:00Z'));
+  // Nächster Dienstag, wieder 18:00 Ortszeit.
+  assert.equal(
+    new Intl.DateTimeFormat('de-AT', { timeZone: 'Europe/Vienna', weekday: 'long', hour: '2-digit', minute: '2-digit' })
+      .format(upcoming),
+    'Dienstag, 18:00'
+  );
+
+  // Und der Wochentag zählt zum Zeitpunkt, nicht zu jetzt: Freitag 23:55, nachgeholt um
+  // Samstag 00:02 Ortszeit, gehört immer noch zum Freitag.
+  db.prepare('DELETE FROM profile_schedules WHERE profile_id = ?').run(slot.id);
+  const friday = add(23 * 60 + 55, '5');
+  const saturday = add(23 * 60 + 55, '6');
+  assert.equal(schedules.tick(Date.parse('2026-09-04T22:02:00Z')), 1);
+  assert.ok(result(friday));
+  assert.equal(result(saturday), null);
+});
+
+test('a schedule takes a weekday, a real time and only accounts that sit on this slot', () => {
+  const user = createUser();
+  const slot = createProfile(user, billing.planBySlug('premium'));
+  const stranger = createAccount(createUser(), { name: 'Fremd' });
+
+  assert.throws(() => schedules.create(slot, { minutes: 60, days: '' }, user.id), /Wochentag|weekday/);
+  assert.throws(() => schedules.create(slot, { minutes: 2000, days: '1' }, user.id), /Uhrzeit|Time/i);
+  assert.throws(
+    () => schedules.create(slot, { minutes: 60, days: '1', account_id: stranger.id }, user.id),
+    /sitzt nicht|not on this/
+  );
+
+  const made = schedules.create(slot, { minutes: 6 * 60, days: '1,1,7,-2,5', action: 'unfug' }, user.id);
+  // Doppelte und unmögliche Tage fallen weg, eine unbekannte Aktion wird zur harmlosen.
+  assert.deepEqual(made.days, [1, 5]);
+  assert.equal(made.action, 'start');
+  // Der Schalter allein lässt den Rest, wie er war.
+  const off = schedules.update(slot, made.id, { active: false }, user.id);
+  assert.equal(off.active, false);
+  assert.deepEqual(off.days, [1, 5]);
+  assert.equal(off.minutes, 360);
+});
+
+// ---------------------------------------------------------------- Systembericht
+
+test('the system report reads the machine and names what is out of order', async () => {
+  const data = await systemreport.collect();
+  assert.ok(data.host.hostname);
+  assert.ok(Number.isFinite(data.counts.users));
+  assert.ok(Array.isArray(data.nodes.offline));
+
+  const embed = systemreport.embed(data);
+  assert.match(embed.title, /system report/i);
+  // Vier beschriftete Felder statt eines Absatzes mit acht Zahlen darin.
+  assert.ok(embed.fields.length >= 4);
+  assert.ok(embed.fields.some((field) => field.name === 'Load'));
+
+  // Ohne Client kann kein Bot starten – das gehört gemeldet, auch ohne Webhook.
+  const alerts = await systemreport.findAlerts();
+  assert.ok(Array.isArray(alerts));
+  // Jede Warnung steht in beiden Sprachen da: Discord bekommt Englisch, das Panel die Sprache
+  // dessen, der gerade hinsieht.
+  for (const alert of alerts) {
+    assert.ok(systemreport.alertText(alert.title, 'de'), `${alert.key} ohne deutsche Überschrift`);
+    assert.ok(systemreport.alertText(alert.title, 'en'), `${alert.key} ohne englische Überschrift`);
+    assert.notEqual(systemreport.alertText(alert.title, 'de'), systemreport.alertText(alert.title, 'en'));
+  }
+  // Und ohne Webhook geht nichts hinaus.
+  assert.equal(await systemreport.send(), false);
+
+  // Der Takt kommt aus den Einstellungen; 0 heißt "nur Warnungen".
+  setSetting('system_report_hours', 0);
+  assert.equal(systemreport.reportInterval(), 0);
+  setSetting('system_report_hours', 6);
+  assert.equal(systemreport.reportInterval(), 6 * 3_600_000);
+  setSetting('system_report_hours', 12);
 });
 
 test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work end to end', async () => {
@@ -2465,6 +3517,216 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   });
   assert.equal(escape_.response.status, 403);
   assert.ok(db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(suspendedProfile.id));
+
+  // ------------------------------------------------------------ Das eigene Konto über HTTP
+  //
+  // Die Prüfungen selbst stehen weiter oben als eigene Tests; hier geht es um den Weg dorthin:
+  // Kommen die Felder an, kommen sie richtig zurück, und ist eine Absage eine Absage.
+
+  const patched = await api(base, '/api/me', {
+    token: 'stranger-session',
+    method: 'PATCH',
+    body: {
+      full_name: 'Hugo Muster',
+      company: 'Muster GmbH',
+      street: 'Hauptstraße 1',
+      postal_code: '1010',
+      city: 'Wien',
+      country: 'at',
+      timezone: 'Europe/Vienna',
+    },
+  });
+  assert.equal(patched.response.status, 200);
+  assert.equal(patched.data.user.profile.country, 'AT');
+  assert.equal(patched.data.user.profile.timezone, 'Europe/Vienna');
+
+  const wrongCountry = await api(base, '/api/me', {
+    token: 'stranger-session',
+    method: 'PATCH',
+    body: { country: 'XX' },
+  });
+  assert.equal(wrongCountry.response.status, 400);
+  // Und die vorherige Angabe steht noch – eine abgelehnte Änderung ändert nichts.
+  assert.equal(
+    db.prepare('SELECT country FROM users WHERE id = ?').get(stranger.id).country,
+    'AT'
+  );
+
+  // Der Datenexport ist eine **Datei** und keine Antwort zum Ansehen: Der Wert dieser Auskunft
+  // liegt darin, sie zu haben.
+  const exportResponse = await fetch(`${base}/api/me/export`, {
+    headers: { cookie: 'afk_session=stranger-session' },
+  });
+  assert.equal(exportResponse.status, 200);
+  assert.match(exportResponse.headers.get('content-disposition') || '', /attachment; filename="afksystems-/);
+  const myData = JSON.parse(await exportResponse.text());
+  assert.equal(myData.account.id, stranger.id);
+  assert.equal(myData.account.city, 'Wien');
+
+  // Ein gesunder Serverplatz mit einem Konto darauf – daran lässt sich zeigen, dass die
+  // angemeldete Löschung den Start verhindert und nicht irgendetwas anderes.
+  const leavingProfile = createProfile(stranger, billing.planBySlug('premium'));
+  const leavingAccount = createAccount(stranger, { name: 'AbschiedsBot' });
+  db.prepare('INSERT INTO profile_accounts (profile_id, account_id, wanted) VALUES (?, ?, 0)').run(
+    leavingProfile.id,
+    leavingAccount.id
+  );
+
+  // Eine Löschung ohne Passwort ist keine Löschung.
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword('passwort123'), stranger.id);
+  const noPassword = await api(base, '/api/me/delete', {
+    token: 'stranger-session',
+    method: 'POST',
+    body: { password: 'falsch' },
+  });
+  assert.equal(noPassword.response.status, 400);
+  const scheduled = await api(base, '/api/me/delete', {
+    token: 'stranger-session',
+    method: 'POST',
+    body: { password: 'passwort123' },
+  });
+  assert.equal(scheduled.response.status, 200);
+  assert.ok(scheduled.data.deletion.due_at > Date.now());
+  // Ein Konto, das gelöscht werden soll, startet keine Bots mehr – auch nicht über den Knopf.
+  // Geprüft wird am **Grund** und nicht am Fehlschlag: Ohne Client scheitert hier ohnehin jeder
+  // Start, und dann bewiese ein bloßes "hat nicht geklappt" gar nichts.
+  const blockedStart = await api(base, `/api/profiles/${leavingProfile.id}/start`, {
+    token: 'stranger-session',
+    method: 'POST',
+    body: {},
+  });
+  assert.equal(blockedStart.response.status, 200);
+  assert.ok(
+    blockedStart.data.results.every((entry) => !entry.ok && /deletion|Löschung/.test(entry.error)),
+    'der Grund muss die angemeldete Löschung sein'
+  );
+  const cancelled = await api(base, '/api/me/delete', { token: 'stranger-session', method: 'DELETE' });
+  assert.equal(cancelled.response.status, 200);
+  assert.equal(db.prepare('SELECT delete_due_at FROM users WHERE id = ?').get(stranger.id).delete_due_at, null);
+
+  // Sitzungen: eine Liste ohne Token, und eine fremde Sitzung lässt sich nicht abmelden.
+  const sessions = await api(base, '/api/me/sessions', { token: 'stranger-session' });
+  assert.equal(sessions.response.status, 200);
+  assert.ok(sessions.data.sessions.every((entry) => !('token' in entry) && entry.ref));
+  const notMine = await api(base, '/api/me/sessions/deadbeefdeadbeef', {
+    token: 'stranger-session',
+    method: 'DELETE',
+  });
+  assert.equal(notMine.response.status, 404);
+
+  // Der Beleg: ein Dokument, das nur seinem Konto gehört.
+  const bought = billing.createTopup({
+    userId: stranger.id,
+    amountCent: 500,
+    credits: 500,
+    provider: 'transfer',
+  });
+  billing.settleTopup(bought.id, 'Test');
+  const page = await fetch(`${base}/api/billing/receipts/${bought.id}`, {
+    headers: { cookie: 'afk_session=stranger-session' },
+  });
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type') || '', /text\/html/);
+  // Persönlich heißt: in keinem gemeinsamen Zwischenspeicher.
+  assert.match(page.headers.get('cache-control') || '', /private|no-store/);
+  const receiptPage = await page.text();
+  assert.match(receiptPage, /Hugo Muster/);
+  const foreign = await fetch(`${base}/api/billing/receipts/${bought.id}`, {
+    headers: { cookie: `afk_session=${USER_TOKEN}` },
+  });
+  assert.equal(foreign.status, 404);
+
+  // Zeitpläne: anlegen, ändern, löschen – und nur am eigenen Serverplatz. Eigener Platz, weil
+  // die Prüfungen oben `profile` inzwischen gesperrt haben und ein gesperrter Platz sich zu Recht
+  // nicht mehr ändern lässt.
+  const planned = createProfile(user, billing.planBySlug('premium'), { name: 'Zeitplan-Platz' });
+  const madeSchedule = await api(base, `/api/profiles/${planned.id}/schedules`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { action: 'start', minutes: 18 * 60, days: '1,2,3,4,5' },
+  });
+  assert.equal(madeSchedule.response.status, 200);
+  assert.deepEqual(madeSchedule.data.schedule.days, [1, 2, 3, 4, 5]);
+  const scheduleList = await api(base, `/api/profiles/${planned.id}/schedules`, { token: USER_TOKEN });
+  assert.equal(scheduleList.data.schedules.length, 1);
+  assert.ok(scheduleList.data.timezone, 'ohne Zeitzone ist eine Uhrzeit eine Behauptung');
+  const foreignSchedule = await api(base, `/api/profiles/${planned.id}/schedules`, {
+    token: 'stranger-session',
+    method: 'POST',
+    body: { action: 'stop', minutes: 60, days: '1' },
+  });
+  assert.equal(foreignSchedule.response.status, 404);
+  // Kopieren: derselbe Aufbau noch einmal, ohne die Konten – und bezahlt wie jeder neue Platz.
+  await api(base, `/api/profiles/${planned.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { note: 'Zeile eins\nZeile zwei', join_delay: 11 },
+  });
+  await api(base, `/api/profiles/${planned.id}/macros`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { name: 'Beim Beitritt', event: 'join', actions: [{ type: 'chat', text: '/afk' }] },
+  });
+  await api(base, `/api/profiles/${planned.id}/spam`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { message: '/afk', interval_sec: 300 },
+  });
+  // Genug Guthaben für einen zweiten bezahlten Platz – die Kopie ist einer und kostet auch so viel.
+  const copyPlan = billing.planBySlug('premium');
+  billing.grant(user.id, copyPlan.price_credits * 2, 'bonus', 'Guthaben für den Kopiertest');
+  const beforeCopy = db.prepare('SELECT credits FROM users WHERE id = ?').get(user.id).credits;
+  const copied = await api(base, `/api/profiles/${planned.id}/copy`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { name: 'Zeitplan-Platz Kopie', address: 'zweiter.example.test', plan_id: copyPlan.id },
+  });
+  assert.equal(copied.response.status, 200);
+  // Der Zeitplan von oben ist gelöscht, Makro und Spam nicht – genau das muss dastehen.
+  assert.deepEqual(copied.data.copied, { macros: 1, spam: 1, schedules: 1 });
+  assert.equal(copied.data.profile.note, 'Zeile eins\nZeile zwei');
+  assert.equal(copied.data.profile.join_delay, 11);
+  assert.equal(copied.data.profile.host, 'zweiter.example.test');
+  // **Ohne Konten.** Ein Minecraft-Konto kann nur in einem Spiel gleichzeitig sein; kopiert stünde
+  // es auf zwei Plätzen, und der zweite Start würde abgewiesen.
+  assert.equal(copied.data.profile.accounts.length, 0);
+  // Eine Kopie ist ein Serverplatz und kostet wie einer.
+  assert.equal(
+    db.prepare('SELECT credits FROM users WHERE id = ?').get(user.id).credits,
+    beforeCopy - copyPlan.price_credits
+  );
+  // Und die Kopie hat wirklich eigene Zeilen – nicht dieselben noch einmal verlinkt.
+  const copiedMacros = db.prepare('SELECT * FROM macros WHERE profile_id = ?').all(copied.data.profile.id);
+  assert.equal(copiedMacros.length, 1);
+  assert.equal(copiedMacros[0].name, 'Beim Beitritt');
+  // Die Kontobindung geht dabei verloren: Ein Makro für ein Konto, das hier nicht sitzt, zeigte
+  // ins Leere.
+  assert.equal(copiedMacros[0].accounts, '[]');
+  // Ein fremder Platz lässt sich nicht kopieren.
+  const foreignCopy = await api(base, `/api/profiles/${planned.id}/copy`, {
+    token: 'stranger-session',
+    method: 'POST',
+    body: { name: 'Geklaut', address: 'x.example.test' },
+  });
+  assert.equal(foreignCopy.response.status, 404);
+
+  const goneSchedule = await api(
+    base,
+    `/api/profiles/${planned.id}/schedules/${madeSchedule.data.schedule.id}`,
+    { token: USER_TOKEN, method: 'DELETE' }
+  );
+  assert.equal(goneSchedule.response.status, 200);
+
+  // Der Systembericht steht der Verwaltung offen und sonst niemandem.
+  const report = await api(base, '/api/admin/system/report', { token: ADMIN_TOKEN });
+  assert.equal(report.response.status, 200);
+  assert.equal(report.data.webhook, false);
+  assert.ok(Array.isArray(report.data.alerts));
+  const notStaff = await api(base, '/api/admin/system/report', { token: USER_TOKEN });
+  assert.equal(notStaff.response.status, 403);
+  // Ohne hinterlegten Webhook gibt es nichts zu schicken, und das sagt die Absage auch.
+  const noHook = await api(base, '/api/admin/system/report', { token: ADMIN_TOKEN, method: 'POST' });
+  assert.equal(noHook.response.status, 400);
 
   assert.doesNotMatch(childOutput, /Unexpected server response: 404/);
 });

@@ -13,6 +13,8 @@ import { db, getSetting, audit } from './db.js';
 import { voucherCode, bad, notFound } from './util.js';
 import * as mail from './mail.js';
 import * as notify from './notify.js';
+import * as profile from './profile.js';
+import * as vat from './vat.js';
 
 /** Ein Monat sind hier immer 30 Tage. Keine Kalenderrechnerei, kein Februar-Sonderfall. */
 export const MONTH_MS = 30 * 86_400_000;
@@ -739,6 +741,27 @@ export function createTopup({ userId, provider, amountCent, credits, reference =
   return db.prepare('SELECT * FROM topups WHERE id = ?').get(info.lastInsertRowid);
 }
 
+/**
+ * Die nächste Belegnummer: `AFK-2026-0001`.
+ *
+ * Fortlaufend **je Jahr**, mit vier Stellen und ohne Lücken, solange nichts gelöscht wird. Gezählt
+ * wird, was es schon gibt, und nicht ein Zähler in den Einstellungen: Ein Zähler, der neben den
+ * Daten steht, geht bei einer Wiederherstellung aus einer Sicherung auseinander, und dann gäbe es
+ * eine Nummer zweimal. Die Belege selbst sind die Wahrheit darüber, wie viele es gibt.
+ */
+export function nextReceiptNumber(at = Date.now()) {
+  const year = new Date(at).getFullYear();
+  const prefix = `AFK-${year}-`;
+  // **Beide Tabellen.** Ein gelöschtes Konto nimmt seine Aufladungen mit (`ON DELETE CASCADE`),
+  // seine Belege aber nicht: die stehen danach im Archiv (Migration 025). Zählte hier nur
+  // `topups`, ginge die Nummer nach jeder Kontolöschung zurück und wäre ein zweites Mal vergeben –
+  // in zwei Tabellen, zwischen denen niemand mehr die Verbindung sieht.
+  const used =
+    db.prepare('SELECT COUNT(*) AS n FROM topups WHERE receipt_no LIKE ?').get(`${prefix}%`).n +
+    db.prepare('SELECT COUNT(*) AS n FROM receipt_archive WHERE receipt_no LIKE ?').get(`${prefix}%`).n;
+  return `${prefix}${String(used + 1).padStart(4, '0')}`;
+}
+
 const settle = db.transaction((topupId, note = '', force = false) => {
   const topup = db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId);
   if (!topup) throw notFound('Aufladung gibt es nicht.', { en: 'No such top-up.' });
@@ -754,7 +777,29 @@ const settle = db.transaction((topupId, note = '', force = false) => {
   // steht eine Entscheidung eines Menschen dahinter und nicht ein Klick des Kunden.
   if (topup.status === 'paid' || topup.status === 'refunded') return { topup, already: true };
   if (topup.status === 'cancelled' && !force) return { topup, already: true };
-  db.prepare('UPDATE topups SET status = ?, paid_at = ? WHERE id = ?').run('paid', Date.now(), topupId);
+
+  // **Der Beleg entsteht hier und nur hier.** Genau in dem Moment, in dem aus einer Bestellung
+  // eine Zahlung wird, bekommt sie ihre Nummer und einen Abzug der Rechnungsdaten. Beides ist ab
+  // dann unveränderlich: Wer im Januar unter seiner alten Anschrift gekauft hat und im März
+  // umzieht, hat trotzdem im Januar unter der alten gekauft – ein Beleg, der auf das Konto
+  // verweist, änderte rückwirkend jede Rechnung des Vorjahres.
+  //
+  // Die Nummer ist fortlaufend je Jahr. Sie wird in derselben Transaktion vergeben wie die
+  // Buchung, also kann es sie nie zweimal geben – und ein `UNIQUE`-Index steht zusätzlich davor.
+  const buyer = db.prepare('SELECT * FROM users WHERE id = ?').get(topup.user_id);
+  const paidAt = Date.now();
+  const receipt = topup.receipt_no || nextReceiptNumber(paidAt);
+  db.prepare(
+    `UPDATE topups SET status = 'paid', paid_at = ?, receipt_no = ?,
+            billed_to = COALESCE(billed_to, ?), vat_note = COALESCE(vat_note, ?)
+      WHERE id = ?`
+  ).run(
+    paidAt,
+    receipt,
+    JSON.stringify(profile.billingSnapshot(buyer || {})),
+    vat.note(buyer?.language === 'en' ? 'en' : 'de'),
+    topupId
+  );
   const balance = move(
     topup.user_id,
     topup.credits,

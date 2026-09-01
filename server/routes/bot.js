@@ -15,6 +15,7 @@ import * as tickets from '../tickets.js';
 import * as attachments from '../attachments.js';
 import * as roles from '../roles.js';
 import * as billing from '../billing.js';
+import * as notify from '../notify.js';
 import { roleMetadataFields } from '../oauth.js';
 import { bridge } from '../bridge.js';
 import { supervisor } from '../supervisor.js';
@@ -120,7 +121,9 @@ router.get(
       guild_id: String(getSetting('discord_guild_id') || ''),
       ticket_channel: String(getSetting('discord_ticket_channel') || ''),
       ticket_category: String(getSetting('discord_ticket_category') || ''),
-      staff_webhook: Boolean(String(getSetting('discord_staff_webhook') || '').trim()),
+      // Ob der Betreiber einen Webhook für Systemmeldungen hinterlegt hat. Der Bot benutzt ihn
+      // nicht (Tickets meldet er über seinen Kanal), aber er darf wissen, dass es ihn gibt.
+      system_webhook: Boolean(notify.systemWebhook()),
       // Auch hier geprüft: Der Bot setzt sie als Link in eine Discord-Nachricht.
       invite: safeUrl(getSetting('discord_invite')) || '',
       roles: roles.managed(),
@@ -309,7 +312,6 @@ router.post(
       { source: 'discord' }
     );
     if (body.channel_id) tickets.setChannel(ticket.id, body.channel_id);
-    tickets.notifyStaff(ticket, user);
     tickets.notifyParticipants(ticket, 'ticket_opened', {}, null);
     // Damit das Panel es sofort zeigt – dieselbe Meldung wie bei einem Ticket aus dem Panel.
     bridge.emit('ticket.created', { ticket_id: ticket.id, source: 'discord', user_id: user.id });
@@ -403,10 +405,10 @@ router.post(
       discordId: String(body.discord_id || '') || null,
       staff,
       files: fileIds,
+      // Welche Zahl in dieser Nachricht welchen Namen hatte. Der Bot löst es auf, das Panel
+      // schreibt es an die Nachricht – geprüft wird es in `tickets.packMentions`.
+      mentions: body.mentions,
     });
-    if (!staff) {
-      tickets.notifyStaffReply(updated, user, body.body);
-    }
     tickets.notifyParticipants(
       updated,
       'ticket_reply',

@@ -27,6 +27,7 @@ export const S = {
   'nav.skip': { en: 'Skip to content', de: 'Zum Inhalt springen' },
 
   'common.save': { en: 'Save', de: 'Speichern' },
+  'common.draftSaved': { en: 'Draft saved on this device', de: 'Entwurf auf diesem Gerät gespeichert' },
   'common.cancel': { en: 'Cancel', de: 'Abbrechen' },
   'common.delete': { en: 'Delete', de: 'Löschen' },
   'common.create': { en: 'Create', de: 'Anlegen' },
@@ -68,7 +69,6 @@ export const S = {
   'common.optional': { en: 'optional', de: 'optional' },
   'common.remove': { en: 'Remove', de: 'Entfernen' },
   'common.more': { en: 'Read more', de: 'Mehr dazu' },
-  'common.order': { en: 'Order', de: 'Reihenfolge' },
   'common.forever': { en: 'forever', de: 'dauerhaft' },
   'common.paidSlot': { en: 'Paid server slot', de: 'Bezahlter Serverplatz' },
   'common.created': { en: 'Added', de: 'Hinzugefügt' },
@@ -359,6 +359,23 @@ export const S = {
   'auth.or': { en: 'or', de: 'oder' },
   'auth.working': { en: 'One moment …', de: 'Einen Moment …' },
 
+  // Der zweite Schritt der Anmeldung. `lead` steht da, solange die Adresse noch nicht bekannt ist
+  // (der Server schickt sie halb verdeckt mit); `leadTo` ersetzt ihn, sobald sie da ist.
+  'auth.code.title': { en: 'Enter your code', de: 'Code eingeben' },
+  'auth.code.lead': {
+    en: 'We sent a six-digit code to the email address of this account. It is valid for 15 minutes.',
+    de: 'Wir haben einen sechsstelligen Code an die E-Mail-Adresse dieses Kontos geschickt. Er gilt 15 Minuten.',
+  },
+  'auth.code.leadTo': {
+    en: 'We sent a six-digit code to {email}. It is valid for 15 minutes.',
+    de: 'Wir haben einen sechsstelligen Code an {email} geschickt. Er gilt 15 Minuten.',
+  },
+  'auth.code.label': { en: 'Code from the email', de: 'Code aus der E-Mail' },
+  'auth.code.submit': { en: 'Sign in', de: 'Anmelden' },
+  'auth.code.resend': { en: 'Send again', de: 'Noch einmal schicken' },
+  'auth.code.resent': { en: 'Sent again', de: 'Noch einmal geschickt' },
+  'auth.code.back': { en: 'Back', de: 'Zurück' },
+
   'auth.register.title': { en: 'Create account', de: 'Konto anlegen' },
   'auth.register.lead': {
     en: 'One server slot is free with an active AFKSystems Discord membership. No payment details needed.',
@@ -484,6 +501,44 @@ export const S = {
   'tab.pov': { en: 'Live view', de: 'Live-Ansicht' },
   'tab.proxies': { en: 'Proxies', de: 'Proxys' },
   'tab.macros': { en: 'Macros', de: 'Macros' },
+  'tab.schedule': { en: 'Schedule', de: 'Zeitplan' },
+
+  // ---------------------------------------------------------------- Zeitpläne
+  'sch.what': {
+    en: 'Start and stop bots at fixed times. A bot that comes and goes every evening looks like a player; one that sits online around the clock looks like a bot.',
+    de: 'Bots zu festen Zeiten starten und stoppen. Ein Bot, der jeden Abend kommt und geht, sieht aus wie ein Spieler; einer, der rund um die Uhr sitzt, sieht aus wie ein Bot.',
+  },
+  'sch.timezone': { en: 'Times are in {zone}.', de: 'Die Zeiten gelten in {zone}.' },
+  'sch.new': { en: 'New schedule', de: 'Neuer Zeitplan' },
+  'sch.edit': { en: 'Edit schedule', de: 'Zeitplan ändern' },
+  'sch.none': { en: 'No schedule yet', de: 'Noch kein Zeitplan' },
+  'sch.example': {
+    en: 'For example: start at 18:00 on weekdays, stop at 23:30.',
+    de: 'Zum Beispiel: werktags um 18:00 starten, um 23:30 stoppen.',
+  },
+  'sch.action': { en: 'Action', de: 'Aktion' },
+  'sch.action.start': { en: 'Start', de: 'Starten' },
+  'sch.action.stop': { en: 'Stop', de: 'Stoppen' },
+  'sch.action.restart': { en: 'Restart', de: 'Neu starten' },
+  'sch.time': { en: 'Time', de: 'Uhrzeit' },
+  'sch.timeBad': { en: 'That is not a time of day.', de: 'Das ist keine Uhrzeit.' },
+  'sch.hour': { en: 'Hour', de: 'Stunde' },
+  'sch.minute': { en: 'Minute', de: 'Minute' },
+  'sch.account': { en: 'Account', de: 'Konto' },
+  'sch.allAccounts': { en: 'all accounts', de: 'alle Konten' },
+  'sch.days': { en: 'Weekdays', de: 'Wochentage' },
+  'sch.daysHint': {
+    en: 'At least one. The day counts for the moment the schedule is due, not for now.',
+    de: 'Mindestens einer. Der Tag zählt für den Zeitpunkt des Plans, nicht für jetzt.',
+  },
+  'sch.daysBad': { en: 'Pick at least one weekday.', de: 'Bitte mindestens einen Wochentag wählen.' },
+  'sch.everyDay': { en: 'every day', de: 'täglich' },
+  'sch.note': { en: 'Note', de: 'Notiz' },
+  'sch.notePlaceholder': { en: 'What this is for', de: 'Wofür das gut ist' },
+  'sch.active': { en: 'Active', de: 'Aktiv' },
+  'sch.nextRun': { en: 'Next run {when}', de: 'Läuft wieder am {when}' },
+  'sch.lastRun': { en: 'Last run {when} ago', de: 'Zuletzt vor {when} gelaufen' },
+  'sch.deleteAsk': { en: 'Delete this schedule?', de: 'Diesen Zeitplan löschen?' },
   'tab.plan': { en: 'Plan', de: 'Tarif' },
   'tab.settings': { en: 'Settings', de: 'Einstellungen' },
 
@@ -713,9 +768,80 @@ export const S = {
     en: 'Running bots pick this up on their next start.',
     de: 'Laufende Bots übernehmen das erst beim nächsten Start.',
   },
-  'srv.disconnectStops': {
-    en: 'A kick or broken connection ends the client. Start it again from the panel when you want to reconnect.',
-    de: 'Ein Kick oder Verbindungsabbruch beendet den Client. Für eine neue Verbindung startest du ihn bewusst im Panel erneut.',
+  // ---- Wiederanlauf ------------------------------------------------------------------------
+  //
+  // Der Text sagt bewusst, **wann nicht** neu gestartet wird. Das ist die Frage, die sonst als
+  // Beschwerde ankommt: „Warum ist er aus?“ – weil er nie im Spiel war, und dann ist ein zweiter
+  // Versuch nur derselbe erste noch einmal.
+  'srv.reconnect': { en: 'Automatic restart', de: 'Wiederanlauf' },
+  'srv.reconnectHint': {
+    en: 'Applies when the bot was in game and then dropped out — a kick, a server restart, a broken line, or a reboot of the whole machine. If it never got in (wrong address, wrong version, ban, whitelist), it stays off: a second attempt would fail the same way.',
+    de: 'Gilt, wenn der Bot im Spiel war und dann rausflog – ein Kick, ein Serverneustart, eine abgerissene Leitung, oder ein Neustart der ganzen Maschine. Kam er nie hinein (falsche Adresse, falsche Version, Bann, Whitelist), bleibt er aus: Ein zweiter Versuch scheiterte genauso.',
+  },
+  'srv.reconnectOffHint': {
+    en: 'The wait doubles with every failed attempt up to that ceiling. After eight attempts in a row the bot stays off and you get a message. Switched off, a kick or a broken connection ends the session and you start it again yourself.',
+    de: 'Die Wartezeit verdoppelt sich mit jedem Fehlversuch bis zu dieser Grenze. Nach acht Versuchen hintereinander bleibt der Bot aus, und du bekommst Bescheid. Ausgeschaltet beendet ein Kick oder Verbindungsabbruch die Sitzung, und du startest sie selbst wieder.',
+  },
+  'srv.retryOf': { en: 'Attempt {n}/{max}', de: 'Versuch {n}/{max}' },
+
+  // Die neue Client-Fassung. Der Ton ist absichtlich ruhig: Nichts ist kaputt – ein Bot mit der
+  // Fassung von letzter Woche tut, was er letzte Woche getan hat. Neu ist nur, dass es etwas
+  // Neueres gibt, und dass der Weg dorthin durch einen Neustart führt.
+  'srv.clientNew': { en: 'A newer client is ready', de: 'Es liegt ein neuerer Client bereit' },
+  'srv.clientNewCount': {
+    en: '{n} running bot(s) still use the file they started with. A restart picks up the new one.',
+    de: '{n} laufende(r) Bot(s) benutzen noch die Datei, mit der sie gestartet sind. Ein Neustart holt die neue.',
+  },
+  'srv.clientNewFromTo': {
+    en: '{n} running bot(s) are on {from}, ready to go is {to}. A restart picks it up.',
+    de: '{n} laufende(r) Bot(s) sind auf {from}, bereit liegt {to}. Ein Neustart holt sie.',
+  },
+  'srv.clientUpdate': { en: 'Restart onto the new one', de: 'Auf die neue neu starten' },
+  'srv.clientUpdateAsk': {
+    en: 'Restart {n} bot(s) now? Each one leaves the server and comes back – on servers with a queue that costs the place in it.',
+    de: '{n} Bot(s) jetzt neu starten? Jeder verlässt den Server und kommt wieder – auf Servern mit Warteschlange kostet das den Platz darin.',
+  },
+  'srv.clientUpdateDone': { en: '{n} bot(s) are restarting.', de: '{n} Bot(s) starten neu.' },
+  'srv.clientOld': { en: 'Client {v}', de: 'Client {v}' },
+  // Die eigene Notiz und das Kopieren eines Serverplatzes.
+  'srv.note': { en: 'Your note', de: 'Deine Notiz' },
+  'srv.notePlaceholder': {
+    en: 'Why this slot is set up the way it is …',
+    de: 'Warum dieser Platz so eingestellt ist, wie er ist …',
+  },
+  'srv.noteHint': {
+    en: 'Only you see this. Nothing here reaches the bot or the Minecraft server.',
+    de: 'Das sieht nur du. Nichts davon erreicht den Bot oder den Minecraft-Server.',
+  },
+  'srv.copyAddress': { en: 'Copy the address', de: 'Adresse kopieren' },
+  'srv.copyTitle': { en: 'Copy this slot', de: 'Diesen Platz kopieren' },
+  'srv.copy': { en: 'Make a copy', de: 'Kopie anlegen' },
+  'srv.copyWhat': {
+    en: 'A new slot with the same settings, macros, schedules and repeated messages. The Minecraft accounts do not come along – one account can only be in one game at a time.',
+    de: 'Ein neuer Platz mit denselben Einstellungen, Makros, Zeitplänen und wiederkehrenden Nachrichten. Die Minecraft-Konten kommen nicht mit – ein Konto kann nur in einem Spiel gleichzeitig sein.',
+  },
+  'srv.copyNote': {
+    en: 'The copy is a server slot of its own and costs what its plan costs. Booked extras do not come along.',
+    de: 'Die Kopie ist ein eigener Serverplatz und kostet, was ihr Tarif kostet. Gebuchte Zusätze kommen nicht mit.',
+  },
+  'srv.copied': {
+    en: 'Copied: {macros} macro(s), {schedules} schedule(s), {spam} repeated message(s).',
+    de: 'Kopiert: {macros} Makro(s), {schedules} Zeitplan/Zeitpläne, {spam} wiederkehrende Nachricht(en).',
+  },
+
+  // Der Zielserver. Die Texte sagen ausdrücklich „dein Minecraft-Server“ und nicht „der Server“ –
+  // im Panel heißt „Server“ sonst der Serverplatz, und die Verwechslung wäre genau dort am
+  // teuersten, wo jemand einen Fehler sucht.
+  'srv.statusCheck': { en: 'Check again', de: 'Noch einmal prüfen' },
+  'srv.statusChecking': { en: 'Asking the Minecraft server …', de: 'Der Minecraft-Server wird gefragt …' },
+  'srv.statusOnline': { en: 'The Minecraft server is up', de: 'Der Minecraft-Server läuft' },
+  'srv.statusOffline': { en: 'The Minecraft server did not answer', de: 'Der Minecraft-Server antwortet nicht' },
+  'srv.statusPlayers': { en: '{n} of {max} players', de: '{n} von {max} Spielern' },
+  'srv.statusSrv': { en: 'points to {host}', de: 'zeigt auf {host}' },
+
+  'srv.clientOldHint': {
+    en: 'This bot started with that version. A newer one is on disk.',
+    de: 'Mit dieser Fassung ist der Bot gestartet. Auf der Platte liegt eine neuere.',
   },
   'srv.walk': { en: 'Walk', de: 'Gehen' },
   'srv.walkHint': { en: 'a few blocks at a time', de: 'ein paar Blöcke auf einmal' },
@@ -818,6 +944,26 @@ export const S = {
     de: 'Nur nötig für Muster, die sich mit „enthält“ nicht ausdrücken lassen.',
   },
   'srv.waitBefore': { en: 'Wait before (seconds)', de: 'Vorher warten (Sekunden)' },
+  // ---- Sperrzeit, Wahrscheinlichkeit und Platzhalter ----------------------------------------
+  //
+  // Die Hinweise nennen den Fall, für den es die Zahl gibt, und nicht ihre Wirkung. „Sperrzeit:
+  // wartet zwischen zwei Läufen“ erklärt das Wort; „damit ein Server, der die Zeile im
+  // Sekundentakt schickt, nicht deinen Bot rauswirft“ erklärt, warum man sie setzen will.
+  'srv.cooldown': { en: 'Cooldown (s)', de: 'Sperrzeit (s)' },
+  'srv.cooldownHint': {
+    en: '0 = every time. Set it when the server repeats the trigger line often.',
+    de: '0 = jedes Mal. Setz sie, wenn der Server die auslösende Zeile oft wiederholt.',
+  },
+  'srv.cooldownOf': { en: 'at most every {n} s', de: 'höchstens alle {n} s' },
+  'srv.chance': { en: 'Probability (%)', de: 'Wahrscheinlichkeit (%)' },
+  'srv.chanceHint': {
+    en: '100 = always. Below that, the answer stops looking like clockwork.',
+    de: '100 = immer. Darunter sieht die Antwort nicht mehr nach Uhrwerk aus.',
+  },
+  'srv.placeholders': {
+    en: 'In any text: {line} is the triggering line, {player} the account, {server} the slot, and {1}…{9} the groups of your regular expression.',
+    de: 'In jedem Text: {line} ist die auslösende Zeile, {player} das Konto, {server} der Serverplatz, und {1}…{9} sind die Gruppen deines regulären Ausdrucks.',
+  },
   'srv.behaviour': { en: 'Behaviour', de: 'Verhalten' },
   'srv.joinDelay': { en: 'Wait after joining (seconds)', de: 'Wartezeit nach dem Beitritt (Sekunden)' },
   'srv.autoReconnect': { en: 'Reconnect automatically after a drop', de: 'Nach einem Abbruch automatisch neu verbinden' },
@@ -1123,10 +1269,23 @@ export const S = {
   'adm.settings': { en: 'Settings', de: 'Einstellungen' },
   'adm.mails': { en: 'Mail log', de: 'Mail-Protokoll' },
   'adm.client': { en: 'Client', de: 'Client' },
+  'adm.clientOutdated': {
+    en: '{n} of {total} running bots still hold the old client file',
+    de: '{n} von {total} laufenden Bots halten noch die alte Client-Datei',
+  },
+  'adm.clientRollout': { en: 'Restart them all', de: 'Alle neu starten' },
+  'adm.clientRolloutAsk': {
+    en: 'Restart {n} bot(s) across every account? Each one leaves its Minecraft server and comes back. They are spaced a few seconds apart.',
+    de: '{n} Bot(s) über alle Konten hinweg neu starten? Jeder verlässt seinen Minecraft-Server und kommt wieder. Sie starten mit ein paar Sekunden Abstand.',
+  },
+  'adm.clientRolloutDone': { en: '{n} bot(s) are restarting.', de: '{n} Bot(s) starten neu.' },
   'adm.mc.title': { en: 'Minecraft resources', de: 'Minecraft-Ressourcen' },
+  // Seit Client 2.6.0 ist die Datei keine Pflicht mehr – der Client findet selbst eine. Der Text
+  // sagt deshalb nicht mehr „muss“, sondern warum es trotzdem besser ist: Eine Datei hier gilt für
+  // alle Kunden dieser Maschine, die Selbsthilfe des Clients landet unter dem Konto **eines**.
   'adm.mc.lead': {
-    en: 'The textured live view reads block models, textures and menu graphics from the original Minecraft client JAR while it renders. We may not ship those files, so one has to be here per protocol version. Without them everything still runs – the live view just stays the coloured voxel view.',
-    de: 'Die texturierte Live-Ansicht liest Blockmodelle, Texturen und Menügrafiken beim Zeichnen aus der Original-Client-JAR von Minecraft. Diese Dateien dürfen wir nicht mitliefern, deshalb muss je Protokollversion eine hier liegen. Ohne sie läuft alles weiter – die Live-Ansicht bleibt dann die farbige Voxelansicht.',
+    en: 'The textured live view reads block models, textures and menu graphics from the original Minecraft client JAR while it renders. We may not ship those files. From client 2.6.0 on the client finds one by itself if none is here – but it then stores it under one customer’s account, so every customer with a live view downloads their own 30 MB. A file here is used by all of them.',
+    de: 'Die texturierte Live-Ansicht liest Blockmodelle, Texturen und Menügrafiken beim Zeichnen aus der Original-Client-JAR von Minecraft. Diese Dateien dürfen wir nicht mitliefern. Ab Client 2.6.0 sucht sich der Client selbst eine, wenn hier keine liegt – er legt sie dann aber unter dem Konto **eines** Kunden ab, jeder Kunde mit Live-Ansicht lädt sich also seine eigenen 30 MB. Eine Datei hier gilt für alle.',
   },
   'adm.mc.noVersions': {
     en: 'Sync the client first – then this lists the protocol versions it speaks.',
@@ -1139,8 +1298,8 @@ export const S = {
   'adm.mc.uploading': { en: 'Uploading {version} …', de: '{version} wird hochgeladen …' },
   'adm.mc.fetching': { en: 'Fetching {version} from Mojang …', de: '{version} wird von Mojang geholt …' },
   'adm.mc.dropAsk': {
-    en: 'Delete the resources for {version}? The live view falls back to the voxel view for every slot on that version.',
-    de: 'Die Ressourcen für {version} löschen? Die Live-Ansicht fällt auf jedem Platz mit dieser Version auf die Voxelansicht zurück.',
+    en: 'Delete the resources for {version}? From client 2.6.0 on every customer on that version then fetches their own copy; on older clients the live view falls back to the voxel view.',
+    de: 'Die Ressourcen für {version} löschen? Ab Client 2.6.0 holt sich danach jeder Kunde mit dieser Version seine eigene Kopie; bei älteren Clients fällt die Live-Ansicht auf die Voxelansicht zurück.',
   },
   'adm.mc.where': {
     en: 'The file is the one the official launcher leaves in ~/.minecraft/versions/<version>/<version>.jar – the client JAR, not the server JAR. Locations fetch their own copy from here.',
@@ -1184,6 +1343,11 @@ export const S = {
   'adm.exportHint': {
     en: 'Download this list as a spreadsheet file',
     de: 'Diese Liste als Tabellendatei herunterladen',
+  },
+  'adm.archivedReceipts': { en: 'Receipts of deleted accounts ({n})', de: 'Belege gelöschter Konten ({n})' },
+  'adm.archivedReceiptsHint': {
+    en: 'Issued receipts stay for the statutory retention period even after the account is gone',
+    de: 'Ausgestellte Belege bleiben auch nach dem Konto für die Aufbewahrungsfrist erhalten',
   },
   'adm.saved': { en: 'Saved.', de: 'Gespeichert.' },
   'adm.usersLine': { en: '+{new} in 30 days · {active} active today', de: '+{new} in 30 Tagen · {active} heute aktiv' },
@@ -1447,6 +1611,10 @@ export const S = {
     de: 'Auch die Zustandsmeldungen des Clients zeigen – Verbinden, Kicks, Warnungen.',
   },
   'ch.export': { en: 'Download the history', de: 'Verlauf herunterladen' },
+  'ch.historyHint': {
+    en: 'Enter sends. Use ↑ and ↓ for recently sent messages.',
+    de: 'Enter schickt ab. Mit ↑ und ↓ holst du zuletzt gesendete Nachrichten zurück.',
+  },
   'ch.connected': { en: 'Live', de: 'Live' },
   'ch.reconnecting': { en: 'Reconnecting …', de: 'Verbinde neu …' },
 
@@ -1531,6 +1699,235 @@ export const S = {
   'set.welcome': { en: 'Welcome! Your account is ready.', de: 'Willkommen! Dein Konto steht.' },
   'set.linkOk': { en: 'Account linked.', de: 'Konto verknüpft.' },
 
+  // ---------------------------------------------------------------- Einstellungen: die Reiter
+  //
+  // Die Einstellungen sind gewachsen: Konto, persönliche Daten, Rechnungsadresse, Nachrichten,
+  // Sicherheit, Darstellung, eigene Daten. Alles untereinander wäre eine Seite, auf der man
+  // scrollt, bis man findet – deshalb Reiter, dieselben wie beim Serverplatz.
+  'set.tab.account': { en: 'Account', de: 'Konto' },
+  'set.tab.personal': { en: 'Personal details', de: 'Persönliche Daten' },
+  'set.tab.messages': { en: 'Messages', de: 'Nachrichten' },
+  'set.tab.security': { en: 'Security', de: 'Sicherheit' },
+  'set.tab.display': { en: 'Appearance', de: 'Darstellung' },
+  'set.tab.data': { en: 'Your data', de: 'Deine Daten' },
+
+  // ---------------------------------------------------------------- Konto: Name und Adresse
+  'set.identity': { en: 'Who you are here', de: 'Wer du hier bist' },
+  'set.identitySub': {
+    en: 'Your name in the panel and the address we reach you at.',
+    de: 'Dein Name im Panel und die Adresse, unter der wir dich erreichen.',
+  },
+  'set.memberSince': { en: 'Member since', de: 'Dabei seit' },
+  'set.changeUsername': { en: 'Change username', de: 'Benutzernamen ändern' },
+  'set.usernameNote': {
+    en: 'Your username appears on every ticket reply and in Discord. It can be changed once every 30 days.',
+    de: 'Dein Benutzername steht unter jeder Ticketantwort und in Discord. Er lässt sich alle 30 Tage ändern.',
+  },
+  'set.usernameOk': { en: 'Username changed.', de: 'Benutzername geändert.' },
+  'set.usernameNext': {
+    en: 'Changeable again on {date}.',
+    de: 'Wieder änderbar am {date}.',
+  },
+  'set.changeEmail': { en: 'Change email address', de: 'E-Mail-Adresse ändern' },
+  'set.emailNote': {
+    en: 'The new address has to confirm the change. Until then the current one stays in charge – so a typo cannot lock you out.',
+    de: 'Die neue Adresse muss die Änderung bestätigen. Bis dahin bleibt die jetzige in Kraft – ein Tippfehler sperrt dich also nicht aus.',
+  },
+  'set.emailNew': { en: 'New email address', de: 'Neue E-Mail-Adresse' },
+  'set.emailPassword': { en: 'Your password', de: 'Dein Passwort' },
+  'set.emailPasswordHint': {
+    en: 'The email address is the way back into your account. That is why we ask for the password here.',
+    de: 'Über die E-Mail-Adresse kommt man ins Konto zurück. Deshalb fragen wir hier nach dem Passwort.',
+  },
+  'set.emailSent': {
+    en: 'Check {email} – the link there switches the address.',
+    de: 'Sieh in {email} nach – der Link dort schaltet die Adresse um.',
+  },
+  'set.emailPending': {
+    en: 'Waiting for {email} to confirm.',
+    de: 'Wartet auf die Bestätigung von {email}.',
+  },
+  'set.emailCancel': { en: 'Withdraw', de: 'Zurückziehen' },
+  'set.emailCancelled': { en: 'Withdrawn.', de: 'Zurückgezogen.' },
+  'set.emailUnverified': { en: 'not confirmed', de: 'nicht bestätigt' },
+  'auth.verify.mailMoved': {
+    en: 'Done – this account now uses {email}.',
+    de: 'Erledigt – dieses Konto läuft jetzt auf {email}.',
+  },
+
+  // ---------------------------------------------------------------- Persönliche Daten
+  'set.personal': { en: 'Personal details', de: 'Persönliche Daten' },
+  'set.personalSub': {
+    en: 'Only used for receipts and for reaching you. Nothing here is public.',
+    de: 'Wird nur für Belege und zum Erreichen gebraucht. Nichts davon ist öffentlich.',
+  },
+  'set.fullName': { en: 'Full name', de: 'Vollständiger Name' },
+  'set.fullNameHint': {
+    en: 'What goes on a receipt. Not the same as the username.',
+    de: 'Was auf einem Beleg steht. Nicht dasselbe wie der Benutzername.',
+  },
+  'set.phone': { en: 'Phone', de: 'Telefon' },
+  'set.phoneHint': {
+    en: 'Optional. We only call if a ticket cannot be answered in writing.',
+    de: 'Optional. Wir rufen nur an, wenn ein Ticket sich schriftlich nicht klären lässt.',
+  },
+  'set.timezone': { en: 'Time zone', de: 'Zeitzone' },
+  'set.timezoneHint': {
+    en: 'Decides when a schedule fires and which day a receipt carries.',
+    de: 'Entscheidet, wann ein Zeitplan zuschlägt und welches Datum auf einem Beleg steht.',
+  },
+  'set.timezoneDetect': { en: 'Use this device', de: 'Die dieses Geräts' },
+  'set.timezoneServer': {
+    en: 'Not set – the server uses {zone}',
+    de: 'Nicht gesetzt – der Server rechnet in {zone}',
+  },
+  'set.billing': { en: 'Billing address', de: 'Rechnungsadresse' },
+  'set.billingSub': {
+    en: 'What every receipt is made out to. Change it whenever you like – receipts already issued keep the address they were issued with.',
+    de: 'Auf wen jeder Beleg ausgestellt wird. Jederzeit änderbar – schon ausgestellte Belege behalten die Anschrift, mit der sie ausgestellt wurden.',
+  },
+  'set.company': { en: 'Company', de: 'Firma' },
+  'set.companyHint': {
+    en: 'Filled in means the receipt is made out to the company.',
+    de: 'Ausgefüllt heißt: Der Beleg läuft auf die Firma.',
+  },
+  'set.vatId': { en: 'VAT ID', de: 'USt-IdNr.' },
+  'set.vatIdHint': {
+    en: 'For businesses inside the EU. We print it, we do not check it.',
+    de: 'Für Firmen innerhalb der EU. Wir drucken sie, wir prüfen sie nicht.',
+  },
+  'set.street': { en: 'Street and number', de: 'Straße und Nummer' },
+  'set.street2': { en: 'Address line 2', de: 'Adresszusatz' },
+  'set.street2Hint': { en: 'Care of, floor, apartment.', de: 'c/o, Stock, Wohnung.' },
+  'set.postalCode': { en: 'Postcode', de: 'PLZ' },
+  'set.city': { en: 'City', de: 'Ort' },
+  'set.region': { en: 'State or province', de: 'Bundesland/Region' },
+  'set.country': { en: 'Country', de: 'Land' },
+  'set.countryPick': { en: 'Please choose', de: 'Bitte wählen' },
+  'set.billingEmail': { en: 'Receipts to', de: 'Belege an' },
+  'set.billingEmailHint': {
+    en: 'Leave empty to use the account address.',
+    de: 'Leer lassen heißt: an die Adresse des Kontos.',
+  },
+  'set.addressPreview': { en: 'On the receipt', de: 'So steht es auf dem Beleg' },
+  'set.addressEmpty': {
+    en: 'No address yet – receipts will only carry your account name.',
+    de: 'Noch keine Anschrift – auf Belegen steht dann nur dein Kontoname.',
+  },
+  'set.saved': { en: 'Saved.', de: 'Gespeichert.' },
+
+  // ---------------------------------------------------------------- Sitzungen
+  'set.sessionsSub': {
+    en: 'Every device that is signed in right now. Anything you do not recognise belongs out.',
+    de: 'Jedes Gerät, das gerade angemeldet ist. Was du nicht kennst, gehört hier raus.',
+  },
+  'set.sessionCurrent': { en: 'this device', de: 'dieses Gerät' },
+  'set.sessionEnd': { en: 'Sign out', de: 'Abmelden' },
+  'set.sessionEnded': { en: 'That device is signed out.', de: 'Dieses Gerät ist abgemeldet.' },
+  'set.sessionSince': { en: 'since {when}', de: 'seit {when}' },
+  'set.signIns': { en: 'Recent sign-ins', de: 'Letzte Anmeldungen' },
+  'set.signInsSub': {
+    en: 'Successful and failed attempts on this account. A failed one from an address you know is usually just a typo.',
+    de: 'Gelungene und gescheiterte Versuche an diesem Konto. Ein gescheiterter von einer bekannten Adresse ist meistens nur ein Vertipper.',
+  },
+  'set.signInOk': { en: 'signed in', de: 'angemeldet' },
+  'set.signInFailed': { en: 'wrong password', de: 'falsches Passwort' },
+  'set.signInBlocked': { en: 'blocked', de: 'gesperrt' },
+  'set.signInThrottled': { en: 'too many attempts', de: 'zu viele Versuche' },
+  'set.signInCodeOk': { en: 'signed in with a code', de: 'mit Code angemeldet' },
+  'set.signInCodeWrong': {
+    en: 'wrong code – the password was right',
+    de: 'falscher Code – das Passwort stimmte',
+  },
+  'set.signInsNone': { en: 'Nothing recorded yet.', de: 'Bisher nichts aufgezeichnet.' },
+
+  // ---------------------------------------------------------------- Anmeldecode
+  //
+  // Der Wortlaut hier verspricht bewusst keine „Zwei-Faktor-Anmeldung“: Der Code geht über
+  // dieselbe E-Mail-Adresse, über die auch „Passwort vergessen“ läuft. Was er wirklich leistet –
+  // ein gestohlenes Passwort allein reicht nicht mehr – steht dafür so da, dass man es glauben
+  // kann. Der Grund dafür steht ausführlich in server/logincode.js.
+  'set.loginCode': { en: 'Sign-in code', de: 'Anmeldecode' },
+  'set.loginCodeSub': {
+    en: 'A stolen password alone should not be enough. It is not a second factor: the code goes to the same address that “Forgot password” uses.',
+    de: 'Ein gestohlenes Passwort allein soll nicht reichen. Ein zweiter Faktor ist es nicht: Der Code geht an dieselbe Adresse wie „Passwort vergessen“.',
+  },
+  'set.loginCodeAsk': {
+    en: 'Ask for a code from a new browser',
+    de: 'Bei einem neuen Browser nach einem Code fragen',
+  },
+  'set.loginCodeWhat': {
+    en: 'Signing in from a browser we have not seen before then needs a six-digit code from your email. Known browsers are not asked again.',
+    de: 'Eine Anmeldung aus einem Browser, den wir noch nicht kennen, braucht dann sechs Ziffern aus deiner E-Mail. Bekannte Browser werden nicht noch einmal gefragt.',
+  },
+  'set.loginCodeOffAsk': {
+    en: 'Turn the sign-in code off? From then on the password alone is enough to get into this account, from any device.',
+    de: 'Den Anmeldecode abschalten? Ab dann genügt das Passwort allein, um von jedem Gerät in dieses Konto zu kommen.',
+  },
+  'set.loginCodeNoMail': {
+    en: 'This panel has no outgoing mail set up, so no code can be sent. The switch takes effect as soon as it is.',
+    de: 'Auf diesem Panel ist kein Postausgang eingerichtet, es kann also kein Code verschickt werden. Der Schalter wirkt, sobald es einen gibt.',
+  },
+  'set.devices': { en: 'Known browsers', de: 'Bekannte Browser' },
+  'set.devicesSub': {
+    en: 'These get in without a code. Signing out does not remove one – forgetting it does.',
+    de: 'Diese kommen ohne Code herein. Abmelden entfernt keinen davon – vergessen schon.',
+  },
+  'set.deviceCurrent': { en: 'this browser', de: 'dieser Browser' },
+  'set.deviceLastSeen': { en: 'last here {when}', de: 'zuletzt hier {when}' },
+  'set.deviceForget': { en: 'Forget', de: 'Vergessen' },
+  'set.deviceForgotten': {
+    en: 'Forgotten. The next sign-in from it needs a code.',
+    de: 'Vergessen. Die nächste Anmeldung von dort braucht einen Code.',
+  },
+  'set.devicesForgetAll': { en: 'Forget all others', de: 'Alle anderen vergessen' },
+  'set.devicesForgetAllAsk': {
+    en: 'Forget every browser except this one? Each of them needs a code again on the next sign-in.',
+    de: 'Jeden Browser außer diesem vergessen? Jeder von ihnen braucht bei der nächsten Anmeldung wieder einen Code.',
+  },
+  'common.disable': { en: 'Turn off', de: 'Abschalten' },
+
+  // ---------------------------------------------------------------- Eigene Daten
+  'set.dataTitle': { en: 'Your data', de: 'Deine Daten' },
+  'set.dataSub': {
+    en: 'Everything this panel knows about you – to take with you, or to get rid of.',
+    de: 'Alles, was dieses Panel über dich weiß – zum Mitnehmen oder zum Loswerden.',
+  },
+  'set.export': { en: 'Download my data', de: 'Meine Daten herunterladen' },
+  'set.exportWhat': {
+    en: 'One file with your account, server slots, Minecraft accounts, bookings, top-ups, tickets and messages. Readable JSON, nothing left out.',
+    de: 'Eine Datei mit Konto, Serverplätzen, Minecraft-Konten, Buchungen, Aufladungen, Tickets und Nachrichten. Lesbares JSON, ohne Auslassungen.',
+  },
+  'set.deleteTitle': { en: 'Delete account', de: 'Konto löschen' },
+  'set.deleteWhat': {
+    en: 'Server slots, Minecraft accounts, tickets and any remaining credits go with it. We keep the deletion on hold for {days} days – one click brings everything back.',
+    de: 'Serverplätze, Minecraft-Konten, Tickets und übriges Guthaben gehen mit. Wir halten die Löschung {days} Tage zurück – ein Klick holt alles zurück.',
+  },
+  'set.deleteAsk': { en: 'Delete this account', de: 'Dieses Konto löschen' },
+  'set.deleteConfirmWord': { en: 'DELETE', de: 'LÖSCHEN' },
+  'set.deleteConfirmHint': {
+    en: 'Type {word} to confirm.',
+    de: 'Tippe {word}, um zu bestätigen.',
+  },
+  'set.deleteCredits': {
+    en: 'There are still {credits} credits on this account. They will not be paid out.',
+    de: 'Auf diesem Konto liegen noch {credits} Credits. Sie werden nicht ausgezahlt.',
+  },
+  'set.deletePending': {
+    en: 'This account will be deleted on {date}. Until then nothing is lost and the bots stay off.',
+    de: 'Dieses Konto wird am {date} gelöscht. Bis dahin ist nichts verloren, und die Bots bleiben aus.',
+  },
+  'set.deleteCancel': { en: 'Keep my account', de: 'Konto behalten' },
+  'set.deleteCancelled': { en: 'Your account stays.', de: 'Dein Konto bleibt.' },
+  'set.deleteScheduled': {
+    en: 'Noted. Everything stays until {date}.',
+    de: 'Notiert. Bis zum {date} bleibt alles stehen.',
+  },
+  'set.deleteAdmin': {
+    en: 'An administrator cannot delete their own account here – someone has to stay who can let others in.',
+    de: 'Ein Administrator kann sein eigenes Konto hier nicht löschen – jemand muss bleiben, der andere hereinlässt.',
+  },
+
   // ---------------------------------------------------------------- Persönliche Serveransicht
   'srv.favorite': { en: 'Favourite server', de: 'Favorisierter Server' },
   'srv.favoriteAdd': { en: 'Add to favourites', de: 'Zu Favoriten hinzufügen' },
@@ -1554,6 +1951,10 @@ export const S = {
     de: 'Dieses Ticket ist geschlossen. Eine Antwort macht es wieder auf.',
   },
   'tk.people': { en: 'People on this ticket', de: 'Beteiligte' },
+  // Eine Erwähnung aus Discord, zu der es keinen Namen (mehr) gibt: das Konto ist weg, der Kanal
+  // gelöscht, oder die Nachricht kam an, bevor der Bot mitschickte, wer gemeint war.
+  'tk.unknownMention': { en: 'unknown', de: 'unbekannt' },
+  'tk.spoilerShow': { en: 'Spoiler – click to show', de: 'Spoiler – zum Anzeigen klicken' },
   'tk.addPerson': { en: 'Add someone', de: 'Jemanden dazuholen' },
   'tk.removePerson': { en: 'Remove', de: 'Entfernen' },
   'tk.author': { en: 'Author', de: 'Ersteller' },
@@ -1588,6 +1989,10 @@ export const S = {
   },
   'tk.system': { en: 'System', de: 'System' },
   'tk.writeHint': { en: 'Enter sends, Shift+Enter is a new line.', de: 'Enter schickt ab, Shift+Enter macht eine neue Zeile.' },
+  'tk.draftSaved': {
+    en: '{n} characters · draft saved on this device',
+    de: '{n} Zeichen · Entwurf auf diesem Gerät gespeichert',
+  },
   'tk.priorityShort': { en: 'Priority', de: 'Dringlichkeit' },
 
   // ---------------------------------------------------------------- Guthaben (neu)
@@ -1608,6 +2013,17 @@ export const S = {
   'bill.kind.addon': { en: 'Add-on', de: 'Zusatz' },
   'bill.runsOut': { en: 'runs out {date}', de: 'reicht bis {date}' },
   'bill.covered': { en: 'covered', de: 'gedeckt' },
+
+  // ---------------------------------------------------------------- Belege
+  'bill.receipts': { en: 'Receipts', de: 'Belege' },
+  'bill.receiptsSub': {
+    en: 'One per payment, with a number that never changes.',
+    de: 'Einer je Zahlung, mit einer Nummer, die sich nie wieder ändert.',
+  },
+  'bill.receiptNo': { en: 'Number', de: 'Nummer' },
+  'bill.amount': { en: 'Amount', de: 'Betrag' },
+  'bill.receiptOpen': { en: 'Open receipt', de: 'Beleg öffnen' },
+  'bill.receiptPrint': { en: 'Print or save as PDF', de: 'Drucken oder als PDF sichern' },
 
   // ---------------------------------------------------------------- Admin (neu)
   // ---------------------------------------------------------------- Textbausteine und Rundmail
@@ -1725,6 +2141,8 @@ export const S = {
   'sec.wrong': { en: 'wrong', de: 'falsch' },
   'sec.blockedAccount': { en: 'account blocked', de: 'Konto gesperrt' },
   'sec.throttled': { en: 'slowed down', de: 'gebremst' },
+  'sec.codeOk': { en: 'code accepted', de: 'Code angenommen' },
+  'sec.codeWrong': { en: 'wrong code', de: 'falscher Code' },
   'sec.limits': {
     en: 'Blocked after {ip} failures from one address, {account} on one account, within {minutes} minutes',
     de: 'Gebremst ab {ip} Fehlversuchen einer Adresse, {account} an einem Konto, in {minutes} Minuten',
@@ -1848,6 +2266,28 @@ export const S = {
   'adm.ram': { en: 'Memory', de: 'Arbeitsspeicher' },
   'adm.disk': { en: 'Disk', de: 'Festplatte' },
   'adm.machine': { en: 'Machine', de: 'Maschine' },
+  'adm.leavingOn': {
+    en: 'This account is scheduled for deletion on {date}.',
+    de: 'Dieses Konto wird am {date} gelöscht.',
+  },
+
+  // ---------------------------------------------------------------- Systemmeldungen
+  'adm.systemHook': { en: 'System messages', de: 'Systemmeldungen' },
+  'adm.systemHookWhat': {
+    en: 'The state of the machine as a Discord message: load, locations, backups, failed tasks and payments that do not add up. No tickets – those live in the panel and in their own channel.',
+    de: 'Der Zustand der Anlage als Discord-Nachricht: Auslastung, Standorte, Sicherungen, gescheiterte Aufgaben und Zahlungen, die nicht zusammenpassen. Keine Tickets – die stehen im Panel und in ihrem eigenen Kanal.',
+  },
+  'adm.systemHookEvery': { en: 'Full report', de: 'Vollständiger Bericht' },
+  'adm.systemHookHours': { en: 'every {n} h', de: 'alle {n} h' },
+  'adm.systemHookAlertsOnly': { en: 'alerts only', de: 'nur Warnungen' },
+  'adm.systemHookMissing': {
+    en: 'No webhook is set – alerts stay in here.',
+    de: 'Es ist kein Webhook hinterlegt – Warnungen bleiben hier stehen.',
+  },
+  'adm.systemAlerts': { en: 'What stands out right now', de: 'Was gerade auffällt' },
+  'adm.systemAlertsNone': { en: 'Nothing. Everything is within its limits.', de: 'Nichts. Alles im Rahmen.' },
+  'adm.systemSendNow': { en: 'Send report now', de: 'Bericht jetzt schicken' },
+  'adm.systemSent': { en: 'Report sent.', de: 'Bericht ist raus.' },
   'adm.ofThat': { en: 'of that AFKSystems', de: 'davon AFKSystems' },
   'adm.cores': { en: '{n} cores', de: '{n} Kerne' },
   'adm.load': { en: 'Load', de: 'Last' },

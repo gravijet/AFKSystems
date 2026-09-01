@@ -20,6 +20,7 @@ import { requireUser } from '../auth.js';
 import * as billing from '../billing.js';
 import * as stripe from '../stripe.js';
 import * as vat from '../vat.js';
+import * as receipt from '../receipt.js';
 import * as notify from '../notify.js';
 import { planView } from './core.js';
 import { wrap, requireInt, bad, notFound, token, formatCredits, langOf } from '../util.js';
@@ -83,6 +84,10 @@ router.get(
         .filter((row) => !row.free_slot)
         .map((row) => ({ label: row.name, credits: row.price_credits })),
       topups: db.prepare('SELECT * FROM topups WHERE user_id = ? ORDER BY id DESC LIMIT 20').all(user.id),
+      // Die Belege kommen mit derselben Antwort: Der Guthaben-Bereich zeigt sie direkt darunter,
+      // und eine zweite Anfrage für eine Liste, die aus derselben Tabelle stammt, wäre eine
+      // Anfrage mehr für dieselbe Sache.
+      receipts: receipt.listFor(user.id),
       methods: {
         stripe: stripe.configured(),
         transfer: Boolean(config.bankTransfer.iban),
@@ -110,6 +115,48 @@ router.post(
   wrap((req, res) => {
     const result = billing.redeemVoucher(req.user.id, req.body?.code);
     res.json({ ...result, balance_text: formatCredits(result.balance, langOf(req)) });
+  })
+);
+
+// ---------------------------------------------------------------- Belege
+//
+// Ein Beleg entsteht beim Verbuchen einer Zahlung und ändert sich danach nie wieder – Nummer,
+// Anschrift und Steuerhinweis stehen als Abzug an der Aufladung (siehe billing.js `settle`).
+// Hier wird nur noch gelesen.
+
+router.get(
+  '/billing/receipts',
+  requireUser,
+  wrap((req, res) => res.json({ receipts: receipt.listFor(req.user.id) }))
+);
+
+/**
+ * Der Beleg selbst – als **Seite**, nicht als JSON.
+ *
+ * Er ist ein Dokument: Man öffnet ihn, druckt ihn, schickt ihn weiter. Deshalb kommt hier fertiges
+ * HTML heraus und kein Datensatz, den irgendeine Ansicht noch einmal zusammenbauen müsste.
+ *
+ * Er hängt an keinem Stylesheet dieses Servers (alles steht darin) und braucht kein JavaScript.
+ * Die Content-Security-Policy dieses Servers erlaubt ohnehin kein Inline-Skript – das ist hier
+ * keine Einschränkung, sondern das Richtige: In einem Dokument mit den Angaben eines Kunden hat
+ * nichts Ausführbares etwas verloren.
+ */
+router.get(
+  '/billing/receipts/:id',
+  requireUser,
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Beleg');
+    // Ein Administrator darf jeden Beleg sehen – er beantwortet damit Rückfragen, ohne sich als
+    // der Kunde ausgeben zu müssen. Jeder andere sieht nur seine eigenen.
+    const row = receipt.byId(id, req.user.role === 'admin' ? null : req.user.id);
+    if (!row || !row.receipt_no) {
+      throw notFound('Diesen Beleg gibt es nicht.', { en: 'No such receipt.' });
+    }
+    const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // Ein Beleg ist persönlich: Er darf in keinem gemeinsamen Zwischenspeicher landen.
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.send(receipt.html(row, owner, langOf(req)));
   })
 );
 
@@ -286,7 +333,7 @@ function settleFrom(payment) {
       `[stripe] Zahlung ${payment.paymentIntent}: Aufladung #${topup.id} gehört Konto ` +
         `${topup.user_id}, in der Kasse steht ${payment.userId}. Nicht gebucht.`
     );
-    notify.staff({
+    notify.system({
       title: 'Stripe: Konto passt nicht',
       description:
         `Zahlung \`${payment.paymentIntent}\` nennt Konto ${payment.userId}, Aufladung ` +
@@ -302,7 +349,7 @@ function settleFrom(payment) {
       `[stripe] Betrag passt nicht: erwartet ${topup.amount_cent} Cent EUR, ` +
         `bezahlt ${payment.amountCent} ${payment.currency || '?'} (${payment.paymentIntent}).`
     );
-    notify.staff({
+    notify.system({
       title: 'Stripe: Betrag passt nicht',
       description:
         `Zahlung \`${payment.paymentIntent}\` zu Aufladung #${topup.id}: erwartet ` +
@@ -327,7 +374,7 @@ function settleFrom(payment) {
 /** Geld zurück: Erstattung oder verlorener Streitfall. Höchstens so viel, wie noch da ist. */
 function revokeFrom(payment, topup, reason) {
   const result = billing.refundTopup(topup.id, `Stripe ${reason} ${payment.paymentIntent || ''}`.trim());
-  notify.staff({
+  notify.system({
     title: `Stripe: ${reason}`,
     description:
       `Aufladung #${topup.id}: ${result.taken} Credits abgezogen` +
@@ -385,7 +432,7 @@ export const stripeWebhook = wrap(async (req, res) => {
       const failed = topupFor(payment);
       if (failed) {
         billing.cancelTopup(failed.id);
-        notify.staff({
+        notify.system({
           title: 'Stripe: Zahlung fehlgeschlagen',
           description: `Aufladung #${failed.id} über ${(failed.amount_cent / 100).toFixed(2)} € wurde nicht bezahlt.`,
         });
@@ -408,14 +455,14 @@ export const stripeWebhook = wrap(async (req, res) => {
     case 'charge.refunded': {
       const topup = topupFor(payment);
       if (!topup) {
-        notify.staff({
+        notify.system({
           title: 'Stripe: Erstattung',
           description: `Zahlung \`${payment.paymentIntent || 'unbekannt'}\` – keine Aufladung dazu gefunden.`,
         });
       } else if (payment.amountRefunded >= payment.amountCent) {
         revokeFrom(payment, topup, 'Erstattung');
       } else {
-        notify.staff({
+        notify.system({
           title: 'Stripe: Teilerstattung',
           description:
             `Aufladung #${topup.id}: ${(payment.amountRefunded / 100).toFixed(2)} € von ` +
@@ -430,7 +477,7 @@ export const stripeWebhook = wrap(async (req, res) => {
     // mit der Aufladung, um die es geht.
     case 'charge.dispute.created': {
       const topup = topupFor(payment);
-      notify.staff({
+      notify.system({
         title: 'Stripe: Streitfall eröffnet',
         description: topup
           ? `Aufladung #${topup.id} über ${(topup.amount_cent / 100).toFixed(2)} € ` +
@@ -447,7 +494,7 @@ export const stripeWebhook = wrap(async (req, res) => {
       const topup = topupFor(payment);
       if (topup && payment.disputeStatus === 'lost') revokeFrom(payment, topup, 'Streitfall verloren');
       else {
-        notify.staff({
+        notify.system({
           title: `Stripe: Streitfall ${payment.disputeStatus || 'geschlossen'}`,
           description: topup
             ? `Aufladung #${topup.id} – nichts zurückgebucht.`

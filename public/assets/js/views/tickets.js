@@ -12,9 +12,11 @@
 // der Route. Die Rolle allein reicht nicht: Ein Admin ist unter "Support" selbst Kunde.
 
 import {
-  api, icon, escapeHtml, datetime, since, safeLink, tr, $, $$, ok, fail, toast, formDialog, debounce, fileSize,
+  api, icon, escapeHtml, datetime, since, safeLink, tr, $, $$, ok, fail, toast, formDialog, debounce,
+  fileSize, avatar, locale,
 } from '../ui.js';
 import { state, appbar, refresh, draw, go } from '../app.js';
+import { renderDiscord } from '../discord.js';
 
 // Drei Zustände, drei Aussagen: bei uns, beim Kunden, erledigt. Ein vierter („wartet“) stand
 // früher daneben und bedeutete dasselbe wie „beantwortet“ – siehe server/tickets.js.
@@ -231,6 +233,7 @@ async function create() {
   // Frage beantwortet also jeder gleich. Die Nachricht ist kein Pflichtfeld – der Betreff sagt
   // schon, worum es geht, und ein Ticket, das beim Abschicken verschwindet, weil ein Feld leer
   // war, ist schlimmer als eines ohne Text.
+  const draftKey = `afk-new-ticket-draft-${state.me?.id || 0}`;
   const answer = await formDialog(
     tr('tk.new'),
     [
@@ -243,7 +246,7 @@ async function create() {
         hint: tr('tk.filesHint', { max: fileSize(MAX_UPLOAD) }),
       },
     ],
-    { submit: tr('tk.send') }
+    { submit: tr('tk.send'), draftKey }
   );
   if (!answer) return;
   try {
@@ -254,6 +257,11 @@ async function create() {
       method: 'POST',
       body: { subject: answer.subject, body: answer.body, files },
     });
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      /* Das Ticket ist bereits angelegt; ein gesperrter Gerätespeicher ändert daran nichts. */
+    }
     ok(tr('tk.created'));
     await refresh({ profiles: false, accounts: false });
     go(`/tickets/${result.ticket.id}`);
@@ -306,7 +314,10 @@ async function one(root, id, { staff, backHash }) {
           <input id="reply-files" type="file" multiple hidden>
           <div class="attach-list" id="attach-list" hidden></div>
           <div class="row spread wrap" style="margin-top:.6rem">
-            <span class="small muted">${escapeHtml(tr('tk.writeHint'))}</span>
+            <span class="small muted reply-compose-meta">
+              <span>${escapeHtml(tr('tk.writeHint'))}</span>
+              <span id="reply-draft"></span>
+            </span>
             <div class="row">
               <button class="btn btn-sm" id="attach" title="${escapeHtml(
                 tr('tk.filesHint', { max: fileSize(MAX_UPLOAD) })
@@ -422,6 +433,19 @@ async function one(root, id, { staff, backHash }) {
     if (atBottom) thread.scrollTop = thread.scrollHeight;
   };
 
+  /**
+   * Eine Nachricht im Verlauf.
+   *
+   * **Der Text geht durch `renderDiscord`.** Ein Ticket ist dasselbe Gespräch im Panel und im
+   * Discord-Kanal; wer dort `**dringend**` schreibt, sieht dort fettes „dringend“, und hier soll
+   * dasselbe stehen. Vor allem aber lösen sich damit die Erwähnungen auf: `<@1538…>` wird zu
+   * „@Hugo“ und `<#1538…>` zu „#support“, statt als zwanzigstellige Zahl mitten im Satz zu
+   * stehen. Welche Zahl welchen Namen hatte, hängt an der Nachricht (`message.mentions`) und
+   * kommt vom Bot – siehe server/tickets.js.
+   *
+   * Ohne Auflösung bleibt eine Erwähnung eine Erwähnung, sie heißt dann nur „unbekannt“. Genau
+   * das tut Discord auch, wenn es jemanden nicht mehr findet.
+   */
   function bubble(message) {
     if (message.role === 'system') {
       return `<div class="chat-system"><span>${escapeHtml(message.body)}</span></div>`;
@@ -434,12 +458,21 @@ async function one(root, id, { staff, backHash }) {
       message.internal ? 'internal' : ''
     }">
       <header>
+        ${avatar({ username: who, avatar: message.avatar }, { size: 22 })}
         <span class="strong">${escapeHtml(who)}</span>
         ${message.role === 'staff' && !message.internal ? `<span class="pill primary">${escapeHtml(tr('tk.staff'))}</span>` : ''}
         ${message.discord_id ? `<span class="pill">${icon('discord')}</span>` : ''}
         <time>${datetime(message.created_at)}</time>
       </header>
-      ${message.body ? `<p>${escapeHtml(message.body).replace(/\n/g, '<br>')}</p>` : ''}
+      ${
+        message.body
+          ? `<div class="dc">${renderDiscord(message.body, {
+              mentions: message.mentions,
+              locale,
+              unknown: tr('tk.unknownMention'),
+            })}</div>`
+          : ''
+      }
       ${attachments(message.files)}
     </article>`;
   }
@@ -449,7 +482,7 @@ async function one(root, id, { staff, backHash }) {
       participants
         .map(
           (person) => `<div class="row spread">
-            <span class="row" style="gap:.5rem;min-width:0">${icon('user')}
+            <span class="row" style="gap:.5rem;min-width:0">${avatar(person, { size: 24 })}
               <span class="truncate">${escapeHtml(person.username)}</span>
               ${person.owner ? `<span class="pill">${escapeHtml(tr('tk.author'))}</span>` : ''}</span>
             ${
@@ -484,6 +517,39 @@ async function one(root, id, { staff, backHash }) {
   const input = $('#reply');
   const picker = $('#reply-files');
   const attachBox = $('#attach-list');
+  const draftStatus = $('#reply-draft');
+  // Der Entwurf gehört zum Gerät, zum Ticket und zur jeweiligen Rolle. So erscheint eine interne
+  // Teamnotiz niemals versehentlich im Antwortfeld des Kunden – und ein zweites Konto am selben
+  // Browser übernimmt ebenfalls nichts. localStorage ist Komfort, deshalb darf er auch fehlen.
+  const draftKey = `afk-ticket-draft-${staff ? 'staff' : 'customer'}-${state.me?.id || 0}-${ticket.id}`;
+
+  const setStoredDraft = (value) => {
+    try {
+      if (value) localStorage.setItem(draftKey, value);
+      else localStorage.removeItem(draftKey);
+    } catch {
+      /* Privater Modus oder voller Speicher: Das Ticket bleibt trotzdem vollständig bedienbar. */
+    }
+  };
+  try {
+    // Eine manipulierte Ablage darf das Feld nicht mit Megabytes füllen.
+    input.value = String(localStorage.getItem(draftKey) || '').slice(0, 20_000);
+  } catch {
+    input.value = '';
+  }
+  const paintDraft = () => {
+    // Ein Emoji ist für den Menschen ein Zeichen, auch wenn JavaScript dafür zwei Codeeinheiten
+    // zählt. Die Anzeige soll den Text beschreiben und nicht seine interne UTF-16-Darstellung.
+    const length = [...input.value].length;
+    draftStatus.textContent = length ? tr('tk.draftSaved', { n: length }) : '';
+  };
+  const persistDraft = debounce(() => setStoredDraft(input.value), 180);
+  input.addEventListener('input', () => {
+    paintDraft();
+    persistDraft();
+  });
+  input.addEventListener('blur', () => setStoredDraft(input.value));
+  paintDraft();
 
   /** Was gerade angehängt werden soll – erst beim Abschicken hochgeladen. */
   let pending = [];
@@ -572,6 +638,8 @@ async function one(root, id, { staff, backHash }) {
       );
       messages = result.messages;
       Object.assign(ticket, result.ticket);
+      setStoredDraft('');
+      paintDraft();
       paint();
       paintStatus(result.ticket.status);
       await refresh({ profiles: false, accounts: false });
@@ -580,6 +648,8 @@ async function one(root, id, { staff, backHash }) {
       // Nichts geht verloren: Text und Auswahl stehen wieder da, wo sie waren.
       input.value = body;
       pending = chosen;
+      setStoredDraft(input.value);
+      paintDraft();
       paintPending();
     }
   };
@@ -641,6 +711,7 @@ async function one(root, id, { staff, backHash }) {
     input.value = `${before}${before && !before.endsWith('\n') ? '\n' : ''}${filled}${after}`;
     input.focus();
     input.selectionStart = input.selectionEnd = input.value.length - after.length;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
     api(`/admin/ticket-templates/${chosen.id}/used`, { method: 'POST' }).catch(() => {});
   });
 

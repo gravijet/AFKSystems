@@ -5,8 +5,8 @@
 // angeboten – ein Knopf, der nichts tut, ist schlimmer als kein Knopf.
 
 import {
-  api, icon, escapeHtml, since, clock, credits, euro, date, stateBadge, mcText, safeLink, tr, $, $$,
-  ok, fail, toast, confirmDialog, formDialog, debounce,
+  api, icon, escapeHtml, since, clock, credits, euro, date, datetime, stateBadge, mcText, safeLink, tr, locale,
+  $, $$, ok, fail, toast, confirmDialog, formDialog, debounce, copy,
 } from '../ui.js';
 import { mergeLines, stripFormatting } from '../chatlog.js';
 import { state, appbar, refresh, draw, drawSide, profileById, tabsFor, linesOf } from '../app.js';
@@ -304,7 +304,11 @@ async function renderProfile(root, route) {
        <span class="pill ${profile.plan.free_slot ? '' : 'primary'}">${escapeHtml(profile.plan.name)}</span>
        ${profile.node ? `<span class="pill">${icon('pin')}${escapeHtml(profile.node.name)}</span>` : ''}
        <span class="pill">${profile.online}/${profile.features?.max_accounts ?? profile.total}</span>`,
-      `<span class="mono">${escapeHtml(profile.address)}</span>`
+      // Die Adresse zum Anklicken. Sie ist das, was man in den Minecraft-Client tippt, wenn man
+      // selbst nachsehen will, was der Bot dort sieht – und Abtippen aus einer Kopfzeile ist genau
+      // die Stelle, an der ein Buchstabe verlorengeht.
+      `<button class="linkish mono" type="button" id="copy-address"
+         title="${escapeHtml(tr('srv.copyAddress'))}">${escapeHtml(profile.address)}</button>`
     )}
     ${
       profile.locked
@@ -348,11 +352,13 @@ async function renderProfile(root, route) {
     inventory: tabInventory,
     pov: tabPov,
     macros: tabMacros,
+    schedule: tabSchedule,
     proxies: tabProxies,
     plan: tabPlan,
     addons: tabAddons,
     settings: tabSettings,
   };
+  $('#copy-address')?.addEventListener('click', () => copy(profile.address));
   $('[data-profile-favorite]')?.addEventListener('click', (event) => {
     const button = event.currentTarget;
     const favorite = toggleFavoriteServer(state.me.id, profile.id);
@@ -368,6 +374,38 @@ async function renderProfile(root, route) {
 // Ein Reiter, nicht zwei. Wer einen Bot startet, will sehen, was er sagt – vorher hieß das:
 // starten, Reiter wechseln, mitlesen, zurückwechseln, stoppen.
 
+/**
+ * „Es gibt eine neue Client-Fassung – deine Bots laufen noch mit der alten.“
+ *
+ * Der Hinweis steht ganz oben im Reiter „Verbinden“, weil dort die Knöpfe zum Starten und Stoppen
+ * stehen: Wer ohnehin gerade an seinen Bots arbeitet, hat den besten Moment für einen Neustart.
+ *
+ * Er ist bewusst kein roter Alarmstreifen. Nichts ist kaputt – ein Bot mit der Fassung von letzter
+ * Woche tut genau das, was er letzte Woche getan hat. Neu ist nur, dass es etwas Neueres gibt.
+ */
+function clientUpdateBox(profile) {
+  if (!profile.outdated) return '';
+  const running = profile.accounts.filter((member) => member.outdated);
+  // Die Fassung, mit der die Bots losgelaufen sind. Steht bei allen dieselbe, wird sie genannt –
+  // stehen verschiedene da (ein Bot von gestern, einer von letztem Monat), wäre eine davon eine
+  // halbe Wahrheit, und dann bleibt es bei der Anzahl.
+  const versions = [...new Set(running.map((member) => member.client_version).filter(Boolean))];
+  const from = versions.length === 1 ? versions[0] : '';
+  return `<div class="note" style="margin-bottom:1rem">${icon('download')}
+    <div class="grow">
+      <strong>${escapeHtml(tr('srv.clientNew'))}</strong>
+      <div class="small muted">${escapeHtml(
+        from && profile.client_version
+          ? tr('srv.clientNewFromTo', { n: profile.outdated, from, to: profile.client_version })
+          : tr('srv.clientNewCount', { n: profile.outdated })
+      )}</div>
+    </div>
+    <button class="btn btn-sm btn-primary" id="client-update">${icon('refresh')} ${escapeHtml(
+      tr('srv.clientUpdate')
+    )}</button>
+  </div>`;
+}
+
 async function tabConnect(root, profile) {
   const members = profile.accounts;
   const free = state.accounts.filter(
@@ -376,6 +414,7 @@ async function tabConnect(root, profile) {
 
   root.innerHTML = `
     <div id="auth-hint"></div>
+    ${clientUpdateBox(profile)}
 
     <div class="row wrap" style="margin-bottom:1rem">
       <button class="btn btn-primary btn-sm" id="start" ${profile.active ? '' : 'disabled'}>${icon('play')} ${escapeHtml(
@@ -396,6 +435,10 @@ async function tabConnect(root, profile) {
           <span class="small muted">${profile.online}/${profile.features?.max_accounts ?? members.length}</span>
         </header>
         <div class="body" style="padding:0" id="bots"></div>
+        <!-- Der Zielserver. Er steht unter der Kontenliste und nicht in einem eigenen Reiter:
+             Die Frage „warum kommt mein Bot nicht rein“ stellt sich genau hier, mit den
+             Startknöpfen im Blick – und die halbe Antwort steht oft schon in dieser Zeile. -->
+        <div class="body mcstatus" id="mcstatus" aria-live="polite"></div>
       </section>
 
       <section class="panel console-panel">
@@ -441,7 +484,8 @@ async function tabConnect(root, profile) {
           <div class="console grow" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}"></div>
           <div class="row send-row">
             <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))}"
-              autocomplete="off" aria-label="${escapeHtml(tr('tab.chat'))}">
+              autocomplete="off" aria-label="${escapeHtml(tr('tab.chat'))}"
+              aria-keyshortcuts="Enter ArrowUp ArrowDown" title="${escapeHtml(tr('ch.historyHint'))}">
             ${
               members.length > 1
                 ? `<select id="sender" class="mini" style="min-width:8rem">
@@ -530,6 +574,25 @@ async function tabConnect(root, profile) {
         <div class="small muted truncate">
           ${stateBadge(bot.state || 'offline', bot.detail || bot.last_error || '')}
           ${running && bot.since ? `<span class="mono">· ${since(bot.since)}</span>` : ''}
+          <!-- Wartet ein Wiederanlauf, gehört das hierher und nicht nur in den Tooltip: „Neuer
+               Versuch“ allein sagt nicht, ob noch einer kommt oder ob das der letzte war. -->
+          ${
+            bot.retry
+              ? `<span class="pill">${escapeHtml(
+                  tr('srv.retryOf', { n: bot.retry.tries, max: bot.retry.max })
+                )}</span>`
+              : ''
+          }
+          <!-- Mit welcher Client-Fassung dieser Lauf angefangen hat – aber nur, wenn sie
+               inzwischen abgelöst wurde. Bei allen anderen wäre es eine Zahl, die jede Zeile
+               länger macht und in keiner etwas erklärt. -->
+          ${
+            bot.outdated
+              ? `<span class="pill" title="${escapeHtml(tr('srv.clientOldHint'))}">${escapeHtml(
+                  tr('srv.clientOld', { v: bot.client_version || '?' })
+                )}</span>`
+              : ''
+          }
         </div>
       </div>
       <div class="row" style="gap:.25rem">
@@ -541,6 +604,88 @@ async function tabConnect(root, profile) {
           title="${escapeHtml(tr('srv.remove'))}">${icon('x')}</button>
       </div>
     </li>`;
+  }
+
+  // ------------------------------------------------------------ Der Zielserver
+  //
+  // Einmal beim Öffnen des Reiters, danach auf Knopfdruck. Kein Takt: Der Server gehört jemand
+  // anderem, und ein Panel, das ihn im Sekundentakt anpingt, weil ein Fenster offen steht, ist aus
+  // seiner Sicht kein Besucher mehr. Der Server antwortet in einer Zehntelsekunde; wer es genauer
+  // wissen will, drückt noch einmal.
+
+  const paintStatus = (data) => {
+    const box = $('#mcstatus');
+    if (!box) return;
+    if (data === 'loading') {
+      box.innerHTML = `<span class="small muted">${escapeHtml(tr('srv.statusChecking'))}</span>`;
+      return;
+    }
+    if (!data) {
+      box.innerHTML = `<button class="btn btn-ghost btn-sm" id="status-retry">${icon('refresh')} ${escapeHtml(
+        tr('srv.statusCheck')
+      )}</button>`;
+    } else if (data.online) {
+      const players =
+        data.online_players === null
+          ? ''
+          : tr('srv.statusPlayers', { n: data.online_players, max: data.max_players ?? '?' });
+      box.innerHTML = `
+        <div class="row" style="gap:.6rem;align-items:flex-start">
+          ${
+            data.favicon
+              ? `<img class="mcstatus-icon" src="${escapeHtml(data.favicon)}" alt="" width="32" height="32">`
+              : `<span class="dot live" style="color:var(--ok);margin-top:.4rem"></span>`
+          }
+          <div class="grow" style="min-width:0">
+            <div class="row" style="gap:.4rem;flex-wrap:wrap">
+              <span class="strong">${escapeHtml(tr('srv.statusOnline'))}</span>
+              ${players ? `<span class="pill">${escapeHtml(players)}</span>` : ''}
+              ${data.version ? `<span class="pill">${mcText(data.version)}</span>` : ''}
+              <span class="small muted mono">${data.latency_ms} ms</span>
+            </div>
+            ${data.motd ? `<div class="mcstatus-motd">${mcText(data.motd)}</div>` : ''}
+            ${
+              // Nur nennen, wenn er woanders liegt als eingetragen – sonst ist es eine Zeile,
+              // die dasselbe zweimal sagt.
+              data.srv
+                ? `<div class="small muted mono">${escapeHtml(
+                    tr('srv.statusSrv', { host: `${data.host}:${data.port}` })
+                  )}</div>`
+                : ''
+            }
+          </div>
+          <button class="btn btn-ghost btn-sm" id="status-retry"
+            title="${escapeHtml(tr('srv.statusCheck'))}"
+            aria-label="${escapeHtml(tr('srv.statusCheck'))}">${icon('refresh')}</button>
+        </div>`;
+    } else {
+      box.innerHTML = `
+        <div class="row" style="gap:.6rem">
+          <span class="dot" style="color:var(--bad-text);margin-top:.4rem"></span>
+          <div class="grow" style="min-width:0">
+            <div class="strong">${escapeHtml(tr('srv.statusOffline'))}</div>
+            <div class="small muted">${escapeHtml(data.error || '')}</div>
+          </div>
+          <button class="btn btn-ghost btn-sm" id="status-retry"
+            title="${escapeHtml(tr('srv.statusCheck'))}"
+            aria-label="${escapeHtml(tr('srv.statusCheck'))}">${icon('refresh')}</button>
+        </div>`;
+    }
+    $('#status-retry')?.addEventListener('click', checkStatus);
+  };
+
+  async function checkStatus() {
+    paintStatus('loading');
+    try {
+      const result = await api(`/profiles/${profile.id}/status`);
+      // Der Reiter kann in der Zwischenzeit gewechselt haben – dann gehört das Ergebnis nirgendwo
+      // mehr hin, und `paintStatus` schriebe in ein Element, das eine andere Ansicht gebaut hat.
+      if (state.route.name === 'server' && state.route.id === profile.id) paintStatus(result.status);
+    } catch {
+      // Der Zielserver ist Beiwerk. Steht das Panel selbst nicht zur Verfügung, sagt das schon
+      // alles andere auf dieser Seite – ein zweiter roter Kasten dafür hilft niemandem.
+      paintStatus(null);
+    }
   }
 
   /** Wartet ein Bot auf eine neue Microsoft-Anmeldung, gehört der Link nach ganz oben. */
@@ -564,6 +709,47 @@ async function tabConnect(root, profile) {
   const box = $('#chat');
   const autoscroll = $('#autoscroll');
   const receiverKey = `afk-chat-recv-${profile.id}`;
+  const messageInput = $('#msg');
+  const storageScope = `${state.me?.id || 0}-${profile.id}`;
+  const draftKey = `afk-chat-draft-${storageScope}`;
+  const historyKey = `afk-chat-history-${storageScope}`;
+  const writeLocal = (key, value) => {
+    try {
+      if (value) localStorage.setItem(key, value);
+      else localStorage.removeItem(key);
+    } catch {
+      /* Der Chat braucht den Gerätespeicher nicht, er nutzt ihn nur für Komfort. */
+    }
+  };
+  try {
+    messageInput.value = String(localStorage.getItem(draftKey) || '').slice(0, 4_000);
+  } catch {
+    messageInput.value = '';
+  }
+  let sentHistory = [];
+  try {
+    const stored = JSON.parse(localStorage.getItem(historyKey) || '[]');
+    if (Array.isArray(stored)) {
+      sentHistory = stored.filter((entry) => typeof entry === 'string' && entry.trim()).slice(-30);
+    }
+  } catch {
+    sentHistory = [];
+  }
+  let historyCursor = sentHistory.length;
+  let historyScratch = messageInput.value;
+
+  const rememberSent = (text) => {
+    if (sentHistory.at(-1) !== text) sentHistory.push(text);
+    sentHistory = sentHistory.slice(-30);
+    historyCursor = sentHistory.length;
+    historyScratch = '';
+    writeLocal(historyKey, JSON.stringify(sentHistory));
+  };
+  messageInput.addEventListener('input', () => {
+    writeLocal(draftKey, messageInput.value);
+    historyCursor = sentHistory.length;
+    historyScratch = messageInput.value;
+  });
   // Der lokale Speicher darf fehlen (privater Modus) und darf Unsinn enthalten (eine ältere
   // Fassung, ein halb geschriebener Wert). Beides warf hier ungefangen – und mit der Ausnahme war
   // der ganze Reiter weg: kein Chat, keine Bots, keine Knöpfe.
@@ -666,6 +852,9 @@ async function tabConnect(root, profile) {
   paintAuth();
   paintBots();
   paintChat();
+  // Ohne `await`: Der Reiter soll dastehen, bevor ein fremder Server geantwortet hat. Fünf
+  // Sekunden Zeitüberschreitung wären sonst fünf Sekunden leerer Bildschirm.
+  checkStatus();
 
   $$('[data-recv]').forEach((node) =>
     node.addEventListener('change', () => {
@@ -696,24 +885,52 @@ async function tabConnect(root, profile) {
   });
 
   const send = async () => {
-    const input = $('#msg');
+    const input = messageInput;
     const text = input.value.trim();
     if (!text) return;
     const sender = $('#sender')?.value || '';
     const accounts = sender ? [Number(sender)] : receivers;
     input.value = '';
+    writeLocal(draftKey, '');
     try {
       const result = await api(`/profiles/${profile.id}/chat`, { method: 'POST', body: { text, accounts } });
       const failures = result.results.filter((entry) => !entry.ok);
-      if (failures.length === result.results.length) toast(failures[0].error, 'bad');
+      const delivered = result.results.length - failures.length;
+      if (!delivered) {
+        input.value = text;
+        writeLocal(draftKey, input.value);
+        toast(failures[0]?.error || tr('common.error'), 'bad');
+        return;
+      }
+      rememberSent(text);
+      for (const failure of failures) {
+        toast(`${nameOf(failure.account_id)}: ${failure.error}`, 'bad');
+      }
     } catch (error) {
       fail(error);
       input.value = text;
+      writeLocal(draftKey, input.value);
     }
   };
   $('#send').addEventListener('click', send);
-  $('#msg').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') send();
+  messageInput.addEventListener('keydown', (event) => {
+    if (event.isComposing) return;
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      send();
+      return;
+    }
+    if (!sentHistory.length || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+    event.preventDefault();
+    if (historyCursor === sentHistory.length) historyScratch = messageInput.value;
+    historyCursor =
+      event.key === 'ArrowUp'
+        ? Math.max(0, historyCursor - 1)
+        : Math.min(sentHistory.length, historyCursor + 1);
+    messageInput.value =
+      historyCursor === sentHistory.length ? historyScratch : sentHistory[historyCursor];
+    writeLocal(draftKey, messageInput.value);
+    messageInput.setSelectionRange(messageInput.value.length, messageInput.value.length);
   });
 
   // ------------------------------------------------------------ Knöpfe und Spam
@@ -722,6 +939,28 @@ async function tabConnect(root, profile) {
   $('#stop').addEventListener('click', () => act('stop'));
   $('#restart').addEventListener('click', () => act('restart'));
   $('#attach').addEventListener('click', attach);
+
+  $('#client-update')?.addEventListener('click', async (event) => {
+    // Der Knopf sagt vorher, was er kostet: Jeder betroffene Bot verlässt das Spiel und kommt
+    // wieder. Auf einem Server mit Warteschlange ist das nicht umsonst, und wer das weiß, drückt
+    // vielleicht lieber heute Abend.
+    if (!(await confirmDialog(tr('srv.clientUpdateAsk', { n: profile.outdated }), {
+      confirm: tr('srv.clientUpdate'),
+      danger: false,
+    }))) {
+      return;
+    }
+    event.currentTarget.disabled = true;
+    try {
+      const result = await api(`/profiles/${profile.id}/client-update`, { method: 'POST' });
+      ok(tr('srv.clientUpdateDone', { n: result.restarted }));
+      await refresh({ accounts: false });
+      draw();
+    } catch (error) {
+      fail(error);
+      event.currentTarget.disabled = false;
+    }
+  });
 
   async function act(what) {
     const accounts = members.map((member) => member.account_id);
@@ -1555,6 +1794,315 @@ async function tabAddons(root, profile) {
   );
 }
 
+// ---------------------------------------------------------------- Zeitplan
+//
+// Bots zu festen Zeiten starten und stoppen. Kein cron, sondern eine Uhrzeit, eine Reihe von
+// Wochentagen und was passieren soll – siehe server/schedules.js.
+//
+// Über der Liste steht die **Zeitzone**, in der diese Uhrzeiten gelten. Ohne sie wäre "06:00"
+// eine Behauptung: Der Server steht irgendwo, der Kunde wohnt woanders, und wer das nicht sieht,
+// wundert sich über einen Bot, der zwei Stunden zu früh kommt.
+
+/** Die Wochentage in der Reihenfolge, in der ein Kalender sie zeigt – Montag zuerst. */
+const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
+
+/** Der kurze Name eines Wochentags in der Sprache des Panels – ohne eigene Übersetzungstabelle. */
+const weekdayName = (day, style = 'short') =>
+  // Der 4. Januar 1970 war ein Sonntag; +day trifft damit genau den gewünschten Wochentag.
+  new Date(Date.UTC(1970, 0, 4 + day)).toLocaleDateString(locale, { weekday: style, timeZone: 'UTC' });
+
+/** Minuten seit Mitternacht als Uhrzeit. */
+const asClock = (minutes) =>
+  `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+
+/**
+ * Die Uhrzeit als **zwei Auswahllisten** und nicht als `<input type="time">`.
+ *
+ * Ein Zeitfeld zeichnet jeder Browser selbst: Chrome setzt eine Uhr hinein, Safari eine Trommel,
+ * Firefox gar nichts – drei verschiedene Bedienelemente in einer Oberfläche, die sonst überall
+ * gleich aussieht. Zwei Auswahllisten sehen dagegen aus wie jede andere im Panel und lassen sich
+ * mit der Tastatur genauso bedienen.
+ *
+ * Die Minuten stehen in Fünferschritten. Genauer muss ein Zeitplan nicht sein – und wer über die
+ * Schnittstelle doch eine krumme Minute eingetragen hat, findet sie hier trotzdem wieder: Sie
+ * wird als zusätzlicher Eintrag mit aufgenommen, statt beim Öffnen des Dialogs stillschweigend
+ * auf die nächste Fünf zu springen.
+ */
+const MINUTE_STEPS = Array.from({ length: 12 }, (_, index) => index * 5);
+
+function timePicker(minutes) {
+  const hour = Math.floor(minutes / 60);
+  const minute = minutes % 60;
+  const steps = MINUTE_STEPS.includes(minute) ? MINUTE_STEPS : [...MINUTE_STEPS, minute].sort((a, b) => a - b);
+  const option = (value, selected) =>
+    `<option value="${value}" ${selected ? 'selected' : ''}>${String(value).padStart(2, '0')}</option>`;
+  return `<div class="time-picker">
+    <select id="sch-hour" aria-label="${escapeHtml(tr('sch.hour'))}">
+      ${Array.from({ length: 24 }, (_, value) => option(value, value === hour)).join('')}
+    </select>
+    <span aria-hidden="true">:</span>
+    <select id="sch-minute" aria-label="${escapeHtml(tr('sch.minute'))}">
+      ${steps.map((value) => option(value, value === minute)).join('')}
+    </select>
+  </div>`;
+}
+
+async function tabSchedule(root, profile) {
+  const data = await api(`/profiles/${profile.id}/schedules`);
+  const accountName = (id) =>
+    profile.accounts.find((entry) => entry.account_id === id)?.name ||
+    state.accounts.find((entry) => entry.id === id)?.name ||
+    `#${id}`;
+
+  const paint = () => {
+    root.innerHTML = `
+      <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
+        <div style="max-width:44rem">
+          <p class="small muted" style="margin:0">${escapeHtml(tr('sch.what'))}</p>
+          <p class="small muted" style="margin:.35rem 0 0">
+            ${icon('clock')} ${escapeHtml(tr('sch.timezone', { zone: data.timezone }))}
+            <a href="#/settings/personal">${escapeHtml(tr('common.edit'))}</a></p>
+        </div>
+        <button class="btn btn-primary btn-sm" id="add-schedule"
+          ${data.schedules.length >= data.max ? 'disabled' : ''}>${icon('plus')} ${escapeHtml(
+            tr('sch.new')
+          )}</button>
+      </div>
+
+      ${
+        data.schedules.length
+          ? `<div class="stack">${data.schedules.map(card).join('')}</div>`
+          : `<div class="empty"><h3>${escapeHtml(tr('sch.none'))}</h3>
+              <p>${escapeHtml(tr('sch.example'))}</p>
+              <button class="btn btn-primary" id="add-schedule-2">${icon('plus')} ${escapeHtml(
+                tr('sch.new')
+              )}</button></div>`
+      }`;
+    bind();
+  };
+
+  function card(entry) {
+    const days = WEEK_ORDER.map(
+      (day) => `<span class="sch-day ${entry.days.includes(day) ? 'on' : ''}">${escapeHtml(
+        weekdayName(day, 'narrow')
+      )}</span>`
+    ).join('');
+    const everyDay = entry.days.length === 7;
+    return `<article class="card sch-card ${entry.active ? '' : 'is-off'}">
+      <div class="row spread wrap" style="gap:1rem">
+        <div class="row" style="gap:.9rem;min-width:0">
+          <span class="sch-time mono">${escapeHtml(asClock(entry.minutes))}</span>
+          <div style="min-width:0">
+            <div class="strong">${escapeHtml(tr(`sch.action.${entry.action}`))}
+              <span class="muted">${escapeHtml(
+                entry.account_id ? accountName(entry.account_id) : tr('sch.allAccounts')
+              )}</span></div>
+            <div class="small muted">${
+              everyDay
+                ? escapeHtml(tr('sch.everyDay'))
+                : entry.days.map((day) => escapeHtml(weekdayName(day))).join(', ')
+            }${entry.note ? ` · ${escapeHtml(entry.note)}` : ''}</div>
+          </div>
+        </div>
+        <span class="switch" role="switch" tabindex="0" aria-checked="${entry.active}"
+          aria-label="${escapeHtml(tr('sch.active'))}" data-sch-toggle="${entry.id}"></span>
+      </div>
+      <div class="sch-days">${days}</div>
+      <!-- „Wann das nächste Mal“ rechnet der Server aus, nicht der Browser: Die Uhrzeit gilt in
+           der Zeitzone des Kontos, und die kann eine andere sein als die des Geräts, auf dem
+           gerade jemand hinsieht. -->
+      ${
+        entry.next_at
+          ? `<p class="small muted" style="margin:.75rem 0 0">${icon('clock')} ${escapeHtml(
+              tr('sch.nextRun', { when: datetime(entry.next_at) })
+            )}</p>`
+          : ''
+      }
+      ${
+        entry.last_run_at
+          ? `<p class="small muted" style="margin:.35rem 0 0">${escapeHtml(
+              tr('sch.lastRun', { when: since(entry.last_run_at) })
+            )}${entry.last_result ? ` · ${escapeHtml(entry.last_result)}` : ''}</p>`
+          : ''
+      }
+      <div class="row" style="margin-top:1rem">
+        <button class="btn btn-sm" data-sch-edit="${entry.id}">${escapeHtml(tr('common.edit'))}</button>
+        <button class="btn btn-ghost btn-sm btn-danger" data-sch-del="${entry.id}">${icon('trash')}</button>
+      </div>
+    </article>`;
+  }
+
+  /**
+   * Anlegen und Ändern in einem Dialog.
+   *
+   * Die Wochentage sind Kästchen und keine Kommaliste: "1,2,3,4,5" ist etwas, das man ausrechnet,
+   * "Mo Di Mi Do Fr" etwas, das man sieht. Deshalb ein eigener Dialog statt `formDialog` – der
+   * kennt keine Gruppe von Umschaltern.
+   */
+  async function edit(entry) {
+    const dialog = document.createElement('dialog');
+    const current = entry || { action: 'start', minutes: 18 * 60, days: [1, 2, 3, 4, 5, 6, 0], account_id: null, note: '' };
+    dialog.innerHTML = `
+      <form method="dialog">
+        <header><h3>${escapeHtml(entry ? tr('sch.edit') : tr('sch.new'))}</h3></header>
+        <div class="body stack">
+          <div class="row wrap" style="gap:1rem">
+            <div class="field" style="max-width:11rem">
+              <label for="sch-action">${escapeHtml(tr('sch.action'))}</label>
+              <select id="sch-action">
+                ${['start', 'stop', 'restart']
+                  .map(
+                    (action) =>
+                      `<option value="${action}" ${current.action === action ? 'selected' : ''}>${escapeHtml(
+                        tr(`sch.action.${action}`)
+                      )}</option>`
+                  )
+                  .join('')}
+              </select>
+            </div>
+            <div class="field" style="max-width:9.5rem">
+              <label for="sch-hour">${escapeHtml(tr('sch.time'))}</label>
+              ${timePicker(current.minutes)}
+            </div>
+            <div class="field grow">
+              <label for="sch-account">${escapeHtml(tr('sch.account'))}</label>
+              <select id="sch-account">
+                <option value="">${escapeHtml(tr('sch.allAccounts'))}</option>
+                ${profile.accounts
+                  .map(
+                    (member) =>
+                      `<option value="${member.account_id}" ${
+                        current.account_id === member.account_id ? 'selected' : ''
+                      }>${escapeHtml(member.name)}</option>`
+                  )
+                  .join('')}
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <span class="strong small">${escapeHtml(tr('sch.days'))}</span>
+            <div class="sch-picker" role="group" aria-label="${escapeHtml(tr('sch.days'))}">
+              ${WEEK_ORDER.map(
+                (day) => `<button type="button" data-day="${day}"
+                  aria-pressed="${current.days.includes(day)}">${escapeHtml(weekdayName(day))}</button>`
+              ).join('')}
+            </div>
+            <span class="hint">${escapeHtml(tr('sch.daysHint'))}</span>
+          </div>
+
+          <div class="field">
+            <label for="sch-note">${escapeHtml(tr('sch.note'))}</label>
+            <input id="sch-note" type="text" maxlength="120" value="${escapeHtml(current.note || '')}"
+              placeholder="${escapeHtml(tr('sch.notePlaceholder'))}">
+          </div>
+        </div>
+        <footer>
+          <button class="btn" value="cancel" type="submit" formnovalidate>${escapeHtml(tr('common.cancel'))}</button>
+          <button class="btn btn-primary" value="ok" type="submit">${escapeHtml(tr('common.save'))}</button>
+        </footer>
+      </form>`;
+    document.body.append(dialog);
+
+    const chosen = new Set(current.days);
+    for (const button of dialog.querySelectorAll('[data-day]')) {
+      button.addEventListener('click', () => {
+        const day = Number(button.dataset.day);
+        if (chosen.has(day)) chosen.delete(day);
+        else chosen.add(day);
+        button.setAttribute('aria-pressed', String(chosen.has(day)));
+      });
+    }
+
+    let result = null;
+    dialog.querySelector('form').addEventListener('submit', (event) => {
+      if (event.submitter?.value !== 'ok') return;
+      result = {
+        action: dialog.querySelector('#sch-action').value,
+        minutes:
+          Number(dialog.querySelector('#sch-hour').value) * 60 +
+          Number(dialog.querySelector('#sch-minute').value),
+        account_id: Number(dialog.querySelector('#sch-account').value) || null,
+        days: [...chosen].sort((a, b) => a - b),
+        note: dialog.querySelector('#sch-note').value,
+      };
+    });
+    const answer = await new Promise((resolve) => {
+      dialog.addEventListener('close', () => {
+        dialog.remove();
+        resolve(result);
+      });
+      dialog.showModal();
+    });
+    if (!answer) return;
+    if (!Number.isInteger(answer.minutes) || answer.minutes < 0 || answer.minutes > 1439) {
+      return toast(tr('sch.timeBad'), 'bad');
+    }
+    if (!answer.days.length) return toast(tr('sch.daysBad'), 'bad');
+
+    try {
+      const body = { ...answer, days: answer.days.join(',') };
+      if (entry) await api(`/profiles/${profile.id}/schedules/${entry.id}`, { method: 'PATCH', body });
+      else await api(`/profiles/${profile.id}/schedules`, { method: 'POST', body });
+      data.schedules = (await api(`/profiles/${profile.id}/schedules`)).schedules;
+      ok(tr('srv.saved'));
+      paint();
+    } catch (error) {
+      fail(error);
+    }
+  }
+
+  function bind() {
+    for (const id of ['#add-schedule', '#add-schedule-2']) {
+      $(id)?.addEventListener('click', () => edit(null));
+    }
+    $$('[data-sch-edit]').forEach((button) =>
+      button.addEventListener('click', () =>
+        edit(data.schedules.find((entry) => entry.id === Number(button.dataset.schEdit)))
+      )
+    );
+    $$('[data-sch-del]').forEach((button) =>
+      button.addEventListener('click', async () => {
+        if (!(await confirmDialog(tr('sch.deleteAsk')))) return;
+        try {
+          await api(`/profiles/${profile.id}/schedules/${button.dataset.schDel}`, { method: 'DELETE' });
+          data.schedules = data.schedules.filter((entry) => entry.id !== Number(button.dataset.schDel));
+          paint();
+        } catch (error) {
+          fail(error);
+        }
+      })
+    );
+    $$('[data-sch-toggle]').forEach((node) => {
+      const toggle = async () => {
+        const entry = data.schedules.find((item) => item.id === Number(node.dataset.schToggle));
+        if (!entry) return;
+        const next = !entry.active;
+        node.setAttribute('aria-checked', String(next));
+        try {
+          await api(`/profiles/${profile.id}/schedules/${entry.id}`, {
+            method: 'PATCH',
+            body: { active: next },
+          });
+          entry.active = next;
+          paint();
+        } catch (error) {
+          node.setAttribute('aria-checked', String(!next));
+          fail(error);
+        }
+      };
+      node.addEventListener('click', toggle);
+      node.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+      });
+    });
+  }
+
+  paint();
+}
+
 // ---------------------------------------------------------------- Proxys
 
 async function tabProxies(root, profile) {
@@ -1640,28 +2188,43 @@ async function tabMacros(root, profile) {
             )}</button></div>`
     }`;
 
+  /** Der Name eines Schritts in der Sprache des Panels – nicht seine Kennung aus der Datenbank. */
+  const stepName = (type) =>
+    state.meta.actions.find((entry) => entry.type === type)?.label || type;
+
   function macroCard(macro) {
     const summary = macro.actions
       .map((action) => {
-        if (action.type === 'chat') return `"${action.text}"`;
+        if (action.type === 'chat' || action.type === 'chat_random') return `"${action.text}"`;
         if (action.type === 'wait') return `${action.seconds} s`;
+        if (action.type === 'wait_random') return `${action.min_seconds}–${action.max_seconds} s`;
         if (action.type === 'move') return `${action.direction} ${action.blocks}`;
         if (action.type === 'look') return `${action.yaw}/${action.pitch}`;
-        return action.type;
+        // Alles Übrige mit seinem Namen und nicht mit seiner Kennung: "Neu verbinden" statt
+        // "reconnect", und zwar in der Sprache, in der das Panel gerade steht.
+        return stepName(action.type);
       })
       .join(' → ');
     const when =
       macro.event === 'timer'
-        ? `${macro.config.interval_sec || 300} s`
+        ? `${macro.config.interval_sec || 300} s${macro.config.jitter_sec ? ` ±${macro.config.jitter_sec}` : ''}`
         : macro.event === 'chat'
           ? `"${macro.config.contains || macro.config.regex || '…'}"`
           : events[macro.event] || macro.event;
+    // Sperrzeit und Wahrscheinlichkeit stehen nur dann da, wenn sie etwas bewirken. Ein "100 %"
+    // an jeder Karte wäre eine Zeile, die bei allen gleich ist und deshalb nichts sagt.
+    const limits = [
+      macro.cooldown_sec ? tr('srv.cooldownOf', { n: macro.cooldown_sec }) : null,
+      macro.chance < 100 ? `${macro.chance} %` : null,
+    ].filter(Boolean);
     return `<article class="card">
       <div class="row spread">
         <div>
           <div class="strong">${escapeHtml(macro.name)}</div>
           <div class="small muted">${escapeHtml(when)} · ${macro.actions.length} ·
-            ${escapeHtml(macro.accounts.length ? `${macro.accounts.length}` : tr('common.all'))}</div>
+            ${escapeHtml(macro.accounts.length ? `${macro.accounts.length}` : tr('common.all'))}${
+              limits.length ? ` · ${escapeHtml(limits.join(' · '))}` : ''
+            }</div>
         </div>
         <span class="switch" role="switch" tabindex="0" aria-checked="${macro.enabled}"
           data-macro-toggle="${macro.id}"></span>
@@ -1745,23 +2308,13 @@ async function editMacro(profile, macro) {
         </select>
       </div>
 
-      ${
-        event === 'timer'
-          ? `<div class="field"><label for="interval">${escapeHtml(tr('srv.intervalSec'))}</label>
-              <input id="interval" type="number" min="5" max="86400"
-                value="${macro?.config?.interval_sec ?? 300}"></div>`
-          : ''
-      }
-      ${
-        event === 'chat'
-          ? `<div class="field"><label for="contains">${escapeHtml(tr('srv.chatContains'))}</label>
-              <input id="contains" value="${escapeHtml(macro?.config?.contains || '')}">
-              <span class="hint">${escapeHtml(tr('srv.chatContainsHint'))}</span></div>
-             <div class="field"><label for="regex">${escapeHtml(tr('srv.chatRegex'))}</label>
-              <input id="regex" value="${escapeHtml(macro?.config?.regex || '')}">
-              <span class="hint">${escapeHtml(tr('srv.chatRegexHint'))}</span></div>`
-          : ''
-      }
+      <!-- Die Felder des Auslösers kommen aus der Beschreibung, die der Server mitschickt, und
+           nicht aus einer Abfrage auf seinen Namen. Vorher standen Takt und Chat-Text hier fest
+           verdrahtet – jeder neue Auslöser hätte seine Felder nur im Server gehabt und im Editor
+           gar nicht, und das wäre nicht aufgefallen, bis jemand ihn benutzt. -->
+      ${(state.meta.events.find((entry) => entry.type === event)?.config || [])
+        .map((field) => configField(field, macro?.config?.[field.key]))
+        .join('')}
 
       <div class="field">
         <label for="accounts">${escapeHtml(tr('ov.col.account'))}</label>
@@ -1778,11 +2331,29 @@ async function editMacro(profile, macro) {
         </select>
       </div>
 
+      <!-- Sperrzeit und Wahrscheinlichkeit gelten für jeden Auslöser, deshalb stehen sie
+           außerhalb seiner Einstellungen. Der Grund für beide steht in server/macros.js: Ein
+           Macro, das bei jedem Treffer sofort feuert, ist auf einem gesprächigen Server nicht
+           von Spam zu unterscheiden – und genau dafür fliegt der Bot dann raus. -->
+      <div class="row wrap" style="gap:1rem;align-items:flex-end">
+        <div class="field" style="max-width:11rem">
+          <label for="cooldown">${escapeHtml(tr('srv.cooldown'))}</label>
+          <input id="cooldown" type="number" min="0" max="86400" value="${macro?.cooldown_sec ?? 0}">
+          <span class="hint">${escapeHtml(tr('srv.cooldownHint'))}</span>
+        </div>
+        <div class="field" style="max-width:11rem">
+          <label for="chance">${escapeHtml(tr('srv.chance'))}</label>
+          <input id="chance" type="number" min="1" max="100" value="${macro?.chance ?? 100}">
+          <span class="hint">${escapeHtml(tr('srv.chanceHint'))}</span>
+        </div>
+      </div>
+
       <div>
         <div class="row spread" style="margin-bottom:.5rem">
           <span class="strong small">${escapeHtml(tr('srv.steps'))}</span>
           <button class="btn btn-sm" id="add-step">${icon('plus')}</button>
         </div>
+        <p class="small muted" style="margin:0 0 .5rem">${escapeHtml(tr('srv.placeholders'))}</p>
         <div class="stack" id="steps">${
           actions.map(stepRow).join('') || `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`
         }</div>
@@ -1796,30 +2367,49 @@ async function editMacro(profile, macro) {
     bindSteps();
   };
 
+  /**
+   * Ein Feld eines Auslösers. Dieselbe Beschreibung wie bei einem Schritt, nur mit `data-config`
+   * statt `data-step` – gelesen wird sie beim Speichern über genau dieses Merkmal.
+   */
+  function configField(field, current) {
+    return inputFor(field, current, `data-config="${field.key}"`);
+  }
+
+  /**
+   * Ein Eingabefeld aus seiner Beschreibung.
+   *
+   * **Die Beschriftung kommt aus `option_labels`.** Vorher stand in der Auswahl der rohe Wert –
+   * also „zurück“ auch in der englischen Oberfläche, und bei den neuen Schritten Wörter wie „rec“
+   * und „go“, die niemand ohne Handbuch versteht. Die Übersetzung schickt der Server längst mit;
+   * sie wurde hier nur nicht benutzt.
+   */
+  function inputFor(field, current, attributes) {
+    const value = current ?? (field.type === 'number' ? field.min ?? 0 : '');
+    const hint = field.hint ? `<span class="hint">${escapeHtml(field.hint)}</span>` : '';
+    if (field.type === 'select') {
+      const labels = field.option_labels || field.options;
+      return `<div class="field"><label>${escapeHtml(field.label)}</label>
+        <select ${attributes}>
+          ${field.options
+            .map(
+              (option, at) =>
+                `<option value="${escapeHtml(option)}" ${option === String(value) ? 'selected' : ''}>${escapeHtml(
+                  labels[at] ?? option
+                )}</option>`
+            )
+            .join('')}</select>${hint}</div>`;
+    }
+    return `<div class="field"><label>${escapeHtml(field.label)}</label>
+      <input ${attributes} type="${field.type === 'number' ? 'number' : 'text'}"
+        value="${escapeHtml(value)}"
+        ${field.min !== undefined ? `min="${field.min}"` : ''}
+        ${field.max !== undefined ? `max="${field.max}"` : ''}>${hint}</div>`;
+  }
+
   function stepRow(action, index) {
     const definition = available.find((entry) => entry.type === action.type) || available[0];
     const fields = (definition.fields || [])
-      .map((field) => {
-        const value = action[field.key] ?? (field.type === 'number' ? field.min ?? 1 : '');
-        if (field.type === 'select') {
-          return `<div class="field"><label>${escapeHtml(field.label)}</label>
-            <select data-step="${index}" data-key="${field.key}">
-              ${field.options
-                .map(
-                  (option) =>
-                    `<option value="${escapeHtml(option)}" ${option === value ? 'selected' : ''}>${escapeHtml(
-                      option
-                    )}</option>`
-                )
-                .join('')}</select></div>`;
-        }
-        return `<div class="field"><label>${escapeHtml(field.label)}</label>
-          <input data-step="${index}" data-key="${field.key}" type="${
-            field.type === 'number' ? 'number' : 'text'
-          }" value="${escapeHtml(value)}"
-            ${field.min !== undefined ? `min="${field.min}"` : ''}
-            ${field.max !== undefined ? `max="${field.max}"` : ''}></div>`;
-      })
+      .map((field) => inputFor(field, action[field.key], `data-step="${index}" data-key="${field.key}"`))
       .join('');
 
     return `<div class="card tight">
@@ -1896,13 +2486,12 @@ async function editMacro(profile, macro) {
 
   $('#save', dialog).addEventListener('click', async () => {
     const event = $('#event', dialog).value;
+    // Jedes Feld des Auslösers, das gerade im Formular steht – **alle**, auch die leeren. Ein
+    // Feld wegzulassen hieße "nicht angefasst", und dann bliebe beim Speichern stehen, was der
+    // Kunde gerade herausgelöscht hat.
     const config = {};
-    if (event === 'timer') config.interval_sec = Number($('#interval', dialog).value);
-    if (event === 'chat') {
-      // Beide Felder mitschicken, sonst verschwindet beim Speichern still, was gerade nicht
-      // im Formular stand.
-      config.contains = $('#contains', dialog).value.trim();
-      config.regex = $('#regex', dialog).value.trim();
+    for (const input of $$('[data-config]', dialog)) {
+      config[input.dataset.config] = input.type === 'number' ? Number(input.value) : input.value.trim();
     }
     const accountValue = $('#accounts', dialog).value;
 
@@ -1910,6 +2499,8 @@ async function editMacro(profile, macro) {
       name: $('#name', dialog).value,
       event,
       config,
+      cooldown_sec: Number($('#cooldown', dialog).value),
+      chance: Number($('#chance', dialog).value),
       accounts: accountValue ? [Number(accountValue)] : [],
       actions: actions.map((action) => {
         const clean = { type: action.type };
@@ -2202,6 +2793,13 @@ async function tabSettings(root, profile) {
                 ? `≤ ${plan.chat_limit}`
                 : tr('srv.chatLimitLocked', { n: plan.chat_limit })
             )}</span></div>
+          <!-- Die eigene Notiz. Sie steht bewusst zwischen den Einstellungen und nicht in einer
+               Ecke: Wer sich hier etwas aufschreibt, schreibt es meistens **über** eine der
+               Einstellungen daneben. -->
+          <div class="field"><label for="note">${escapeHtml(tr('srv.note'))}</label>
+            <textarea id="note" rows="4" maxlength="2000"
+              placeholder="${escapeHtml(tr('srv.notePlaceholder'))}">${escapeHtml(profile.note || '')}</textarea>
+            <span class="hint">${escapeHtml(tr('srv.noteHint'))}</span></div>
         </div>
       </section>
 
@@ -2210,7 +2808,6 @@ async function tabSettings(root, profile) {
         <div class="body stack">
           <div class="field"><label for="join_delay">${escapeHtml(tr('srv.joinDelay'))}</label>
             <input id="join_delay" type="number" min="0" max="600" value="${profile.join_delay}"></div>
-          <div class="note">${icon('info')}<div>${escapeHtml(tr('srv.disconnectStops'))}</div></div>
           <div class="field"><label for="chat_delay">${escapeHtml(tr('srv.chatDelay'))}</label>
             <input id="chat_delay" type="number" min="200" max="60000" value="${profile.chat_delay}"></div>
           <div class="field"><label for="on_cooldown">${escapeHtml(tr('srv.onCooldown'))}</label>
@@ -2243,6 +2840,29 @@ async function tabSettings(root, profile) {
         </div>
       </section>
 
+      <!-- Der Wiederanlauf. Er steht in einem eigenen Kasten und nicht als Häkchen zwischen
+           Wartezeiten, weil er als Einziger etwas tut, wenn niemand zusieht: Was hier steht,
+           entscheidet, ob ein Bot, der nachts um drei rausfliegt, am Morgen läuft oder aus ist. -->
+      <section class="panel">
+        <header><h3>${escapeHtml(tr('srv.reconnect'))}</h3></header>
+        <div class="body stack">
+          <label class="check"><input type="checkbox" id="auto_reconnect"
+            ${profile.auto_reconnect ? 'checked' : ''}> ${escapeHtml(tr('srv.autoReconnect'))}</label>
+          <p class="small muted" style="margin:0">${escapeHtml(tr('srv.reconnectHint'))}</p>
+          <div class="row wrap" style="gap:1rem;align-items:flex-end">
+            <div class="field" style="max-width:11rem">
+              <label for="reconnect_delay">${escapeHtml(tr('srv.firstWait'))}</label>
+              <input id="reconnect_delay" type="number" min="1" max="3600"
+                value="${profile.reconnect_delay || 5}"></div>
+            <div class="field" style="max-width:11rem">
+              <label for="max_backoff">${escapeHtml(tr('srv.maxWait'))}</label>
+              <input id="max_backoff" type="number" min="5" max="3600"
+                value="${profile.max_backoff || 60}"></div>
+          </div>
+          <div class="note">${icon('info')}<div>${escapeHtml(tr('srv.reconnectOffHint'))}</div></div>
+        </div>
+      </section>
+
     </div>
 
     <div class="row" style="margin-top:1.25rem">
@@ -2250,7 +2870,17 @@ async function tabSettings(root, profile) {
       <span class="small muted" id="hint"></span>
     </div>
 
+    <!-- Kopieren steht **über** dem gefährlichen Bereich und nicht darin: Es legt etwas an,
+         es nimmt nichts weg. Dass es Geld kostet, sagt der Dialog. -->
     <section class="panel" style="margin-top:2rem">
+      <header><h3>${escapeHtml(tr('srv.copyTitle'))}</h3></header>
+      <div class="body row spread wrap" style="gap:1rem">
+        <p class="small muted" style="max-width:38rem;margin:0">${escapeHtml(tr('srv.copyWhat'))}</p>
+        <button class="btn" id="copy">${icon('copy')} ${escapeHtml(tr('srv.copy'))}</button>
+      </div>
+    </section>
+
+    <section class="panel" style="margin-top:1.5rem">
       <header><h3>${escapeHtml(tr('srv.danger'))}</h3></header>
       <div class="body row spread wrap" style="gap:1rem">
         <p class="small muted" style="max-width:38rem">${escapeHtml(tr('srv.deleteHint'))}</p>
@@ -2266,6 +2896,10 @@ async function tabSettings(root, profile) {
       join_delay: Number($('#join_delay').value),
       chat_delay: Number($('#chat_delay').value),
       on_cooldown: Number($('#on_cooldown').value),
+      auto_reconnect: $('#auto_reconnect').checked,
+      reconnect_delay: Number($('#reconnect_delay').value),
+      max_backoff: Number($('#max_backoff').value),
+      note: $('#note').value,
     };
     if (plan.chat_limit_editable) body.chat_limit = Number($('#chat_limit').value);
     if (plan.movement) body.movement = $('#movement').checked;
@@ -2280,6 +2914,57 @@ async function tabSettings(root, profile) {
       await refresh({ accounts: false });
       ok(tr('srv.saved'));
       $('#hint').textContent = result.restart_needed ? tr('srv.restartNeeded') : '';
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $('#copy').addEventListener('click', async () => {
+    const plans = state.meta.plans || [];
+    const freeLeft = state.stats?.free_slots_left ?? 0;
+    const options = plans
+      .filter((entry) => !entry.free_slot || freeLeft > 0)
+      .map((entry) => ({
+        value: String(entry.id),
+        label: entry.free_slot
+          ? `${entry.name} – ${tr('common.free')}`
+          : `${entry.name} – ${entry.price_credits} ${tr('common.credits')} / ${state.meta.month_days} ${tr('common.days')}`,
+      }));
+    // Vorausgewählt ist der Tarif des Originals, sofern er noch zu haben ist. Sonst der erste
+    // wählbare – der Gratis-Platz fällt aus der Liste, wenn er schon vergeben ist.
+    const preferred = options.find((entry) => entry.value === String(profile.plan.id))?.value;
+
+    const data = await formDialog(
+      tr('srv.copyTitle'),
+      [
+        { key: 'name', label: tr('srv.name'), value: `${profile.name} (2)`, required: true },
+        {
+          key: 'address',
+          label: tr('srv.address'),
+          value: profile.address,
+          hint: tr('srv.addressHint'),
+          required: true,
+        },
+        {
+          key: 'plan_id',
+          label: tr('srv.plan'),
+          type: 'select',
+          value: preferred || options[0]?.value,
+          options,
+        },
+      ],
+      { submit: tr('srv.copy'), note: tr('srv.copyNote') }
+    );
+    if (!data) return;
+    try {
+      const result = await api(`/profiles/${profile.id}/copy`, {
+        method: 'POST',
+        body: { ...data, plan_id: Number(data.plan_id) },
+      });
+      await refresh();
+      ok(tr('srv.copied', { ...result.copied }));
+      location.hash = `#/servers/${result.profile.id}/connect`;
+      draw();
     } catch (error) {
       fail(error);
     }

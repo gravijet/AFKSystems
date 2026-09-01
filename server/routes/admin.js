@@ -21,6 +21,9 @@ import * as stripe from '../stripe.js';
 import * as exportCsv from '../export.js';
 import * as security from '../security.js';
 import * as backup from '../backup.js';
+import * as profile from '../profile.js';
+import * as notify from '../notify.js';
+import * as systemreport from '../systemreport.js';
 import * as jobs from '../jobs.js';
 import { supervisor } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
@@ -257,6 +260,53 @@ admin.get(
   })
 );
 
+/**
+ * Der Zustand des Systemwebhooks: Ist einer hinterlegt, wie oft berichtet er, und was ist gerade
+ * nicht in Ordnung?
+ *
+ * Die Liste der Auffälligkeiten steht **auch dann** hier, wenn kein Webhook eingetragen ist. Sie
+ * ist die eigentliche Auskunft; der Webhook ist nur der Weg, auf dem sie jemanden erreicht, der
+ * nicht gerade hinsieht.
+ */
+admin.get(
+  '/system/report',
+  wrap(async (req, res) => {
+    // In der Sprache der Anfrage. Der Webhook bleibt englisch (dort sitzen mehrere Zuschauer), das
+    // Panel spricht die Sprache dessen, der gerade hinsieht.
+    const lang = langOf(req);
+    res.json({
+      webhook: Boolean(notify.systemWebhook()),
+      interval_ms: systemreport.reportInterval(),
+      alerts: (await systemreport.findAlerts()).map((alert) => ({
+        key: alert.key,
+        title: systemreport.alertText(alert.title, lang),
+        text: systemreport.alertText(alert.text, lang),
+        color: alert.color,
+      })),
+    });
+  })
+);
+
+/** Den Bericht sofort schicken – die Antwort auf „kommt da überhaupt etwas an?“. */
+admin.post(
+  '/system/report',
+  wrap(async (req, res) => {
+    if (!notify.systemWebhook()) {
+      throw bad('Es ist kein Webhook für Systemmeldungen hinterlegt.', {
+        en: 'No system webhook is set.',
+      });
+    }
+    const sent = await systemreport.send();
+    if (!sent) {
+      throw bad('Discord hat die Nachricht nicht angenommen. Stimmt die Adresse noch?', {
+        en: 'Discord did not accept the message. Is the address still right?',
+      });
+    }
+    audit(req.user.id, 'system-report', null, req.ip);
+    res.json({ ok: true });
+  })
+);
+
 // ---------------------------------------------------------------- Suche über alles
 
 /**
@@ -452,9 +502,22 @@ admin.get(
 );
 
 function clientState() {
+  // Wer läuft noch mit einer Datei, die es so nicht mehr gibt? Gruppiert nach Fassung, damit in
+  // der Verwaltung nicht "sieben Bots veraltet" steht, sondern "fünf auf 2.5.0, zwei auf 2.4.1".
+  const stale = supervisor.outdated();
+  const byVersion = {};
+  for (const bot of stale) {
+    const key = bot.clientVersion || '?';
+    byVersion[key] = (byVersion[key] || 0) + 1;
+  }
   return {
     tag: binaries.state.tag,
     version: binaries.state.clientVersion,
+    // Die laufenden Bots, unter denen die Client-Datei gewechselt hat. `running` daneben, weil
+    // "drei veraltet" ohne "von wie vielen" keine Auskunft ist.
+    outdated: stale.length,
+    outdated_by_version: byVersion,
+    running: supervisor.runningCount(),
     versions: binaries.state.versions,
     default_version: binaries.state.defaultVersion,
     checked: binaries.state.checkedAt,
@@ -508,6 +571,13 @@ const userRow = (row) => ({
   discord_guild_member: Boolean(row.discord_guild_member),
   discord_guild_checked_at: row.discord_guild_checked_at || null,
   discord_roles: roles.targetFor(row).badges,
+  // Das Bild neben dem Namen. Eine Nutzerliste aus dreißig gleich aussehenden Zeilen liest man
+  // Buchstabe für Buchstabe; mit Gesichtern erkennt man sie.
+  avatar: profile.avatarOf(row),
+  // Name, Firma und Anschrift. Die Verwaltung sieht sie, weil sie Rückfragen zu Belegen und
+  // Zahlungen beantworten muss – ändern kann sie sie nicht: Es sind die Angaben des Kunden.
+  profile: profile.profileOf(row),
+  delete_due_at: row.delete_due_at || null,
   premium_until: row.premium_until,
   proxy_allowance: row.proxy_allowance,
   notes: row.notes || '',
@@ -1103,6 +1173,10 @@ admin.get(
             ORDER BY t.status = 'open' DESC, t.id DESC LIMIT 300`
         )
         .all(),
+      // Belege gelöschter Konten stehen in keiner Liste mehr – das Konto ist ja weg. Die Zahl
+      // sagt, ob es sie gibt: Ohne sie wäre die Ausfuhr ein Knopf, der bei den meisten Panels
+      // eine leere Datei liefert, und niemand wüsste, ob das ein Fehler ist oder die Wahrheit.
+      archived: db.prepare('SELECT COUNT(*) AS n FROM receipt_archive').get().n,
     });
   })
 );
@@ -1805,6 +1879,27 @@ admin.post(
     agents.syncAll();
     audit(req.user.id, 'client-sync', { tag: binaries.state.tag });
     res.json({ client: clientState() });
+  })
+);
+
+/**
+ * Jeden laufenden Bot auf die Datei heben, die jetzt auf der Platte liegt.
+ *
+ * Der Knopf für den Betreiber – der Kunde hat denselben für seinen eigenen Serverplatz (siehe
+ * `POST /profiles/:id/client-update`). Hier geht er über alle Konten, und deshalb steht der
+ * Abstand zwischen den Neustarts größer: Hundert Bots, die im selben Augenblick wiederkommen,
+ * sind für jeden Zielserver ein Ereignis, und für die eigene Maschine hundert gleichzeitige
+ * Prozessstarts.
+ *
+ * Es ist kein Takt und wird nie einer werden. Ein Neustart wirft einen Bot aus dem Spiel; das darf
+ * nur passieren, wenn ein Mensch es will und den Zeitpunkt kennt.
+ */
+admin.post(
+  '/client/rollout',
+  wrap((req, res) => {
+    const restarted = supervisor.rolloutClient({ spacingMs: 5000 });
+    audit(req.user.id, 'client-rollout', { bots: restarted, tag: binaries.state.tag }, req.ip);
+    res.json({ ok: true, restarted, client: clientState() });
   })
 );
 

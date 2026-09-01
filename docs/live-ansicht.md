@@ -28,14 +28,19 @@ des anderen:
 | --- | --- | --- |
 | Woher | HTTP-Viewer im Client (`--pov-web`) | Halbblöcke auf der Fehlerausgabe |
 | Aussehen | echte Blockmodelle und Texturen des Spiels | farbige Voxel, ein Zeichen = zwei Bildpunkte |
-| Braucht | Client ≥ 2.5.0 **und** eine Original-Client-JAR auf dem Server | nichts weiter |
+| Braucht | Client ≥ 2.6.0; bei 2.5.0 zusätzlich eine Original-Client-JAR auf dem Server | nichts weiter |
 | Bildgröße | 320×180, 426×240 oder 640×360, im Panel wählbar | fest 160 × 80 |
 | Gerechnet wird | wenn der Browser ein Bild abholt | dauernd, solange die Ansicht läuft |
 | Menüs und Inventar | als Daten, mit echten Gegenstandsbildern | nur über `:menu` / `:inv` als Text |
 
-Der texturierte Weg ist der bessere, wo er geht. Der Voxelweg bleibt, weil er **überall** geht: Er
-braucht keine Datei, die wir nicht mitliefern dürfen, und sein Format ist vom Client als
-Schnittstelle zugesagt.
+Der texturierte Weg ist der bessere, wo er geht – und seit Client 2.6.0 geht er fast überall, weil
+der Client sich die fehlende JAR selbst besorgt. Der Voxelweg bleibt trotzdem: Er braucht gar
+nichts, sein Format ist vom Client als Schnittstelle zugesagt, und er ist der Weg für jede Bauform,
+die älter ist als 2.6.0 und keine hinterlegte Datei findet.
+
+Seit 2.6.0 zeigt der texturierte Weg außerdem **echtes Licht** (Höhlen sind dunkel, Fackeln
+leuchten) und **Biomfarben** statt eines Ebenen-Grüns für alles. Beides steckt im Client; im Panel
+ist dafür nichts einzustellen.
 
 Welcher gerade gilt, steht an der Ansicht selbst – nicht in einer Fehlermeldung.
 
@@ -66,8 +71,19 @@ für Fadenkreuz und Container, und die Symbole der Gegenstände. Er legt dabei k
 greift in die Datei, die auf dem Server liegt.
 
 Diese Datei liefern wir nicht mit und dürfen es nicht. Sie gehört Mojang, und sie ist dieselbe,
-die der offizielle Launcher unter `~/.minecraft/versions/<version>/<version>.jar` ablegt. Nötig ist
-sie **je Protokollversion** – ein Serverplatz auf `26.2` braucht die JAR von `26.2`.
+die der offizielle Launcher unter `~/.minecraft/versions/<version>/<version>.jar` ablegt. Gebraucht
+wird sie **je Protokollversion** – ein Serverplatz auf `26.2` braucht die JAR von `26.2`.
+
+> **Seit Client 2.6.0 ist sie keine Voraussetzung mehr.** Liegt hier keine, sucht sich der Client
+> selbst eine: eigene Ablage, eine vorhandene Minecraft-Installation, zuletzt der Download von
+> Mojang – über dasselbe öffentliche Versionsmanifest wie der Launcher und mit Prüfung der dort
+> genannten SHA-1. Die texturierte Ansicht läuft damit auch ohne einen Handgriff des Betreibers.
+>
+> Trotzdem lohnt sich das Hinterlegen, und zwar aus einem Grund: Der Client legt seine Kopie unter
+> `XDG_CONFIG_HOME` ab, und das ist hier das Verzeichnis **eines Kunden**. Ohne hinterlegte Datei
+> lädt sich also jeder Kunde mit Live-Ansicht seine eigenen rund 30 MB. Eine Datei unter `data/mc`
+> gilt dagegen für alle Kunden dieser Maschine – das Panel schickt ihren Pfad dann ausdrücklich mit
+> und lässt den Client gar nicht erst suchen.
 
 **Administration → Client → Minecraft-Ressourcen.** Dort steht je Version, ob eine Datei da ist,
 wie groß sie ist und wie ihr Fingerabdruck lautet. Zwei Wege, sie hinzubekommen:
@@ -80,9 +96,10 @@ wie groß sie ist und wie ihr Fingerabdruck lautet. Zwei Wege, sie hinzubekommen
   Anfang, und im Inhalt die beiden Verzeichnisse, aus denen der Viewer liest. Die Server-JAR fällt
   damit durch, und das ist der Fehler, den man sonst zweimal macht.
 
-Fehlt die Datei, ist **nichts kaputt**: Der Bot startet ohne `--pov-web`, und die Live-Ansicht
-bleibt die Voxelansicht. Nur steht dann eben ein Voxelbild da, wo jemand für Texturen bezahlt hat –
-deshalb sagt der Admin-Bereich das an dieser Stelle ausdrücklich.
+Fehlt die Datei, ist **nichts kaputt**. Ab Client 2.6.0 holt sich der Client selbst eine, und die
+Ansicht ist texturiert wie sonst auch – nur eben je Kunde einmal geladen. Bei einer älteren Bauform
+startet der Bot ohne `--pov-web`, und die Live-Ansicht bleibt die Voxelansicht; dann steht ein
+Voxelbild da, wo jemand für Texturen bezahlt hat.
 
 **Standorte holen sich ihre Kopie selbst.** Ein Bot zeichnet dort, wo er läuft; die JAR muss also
 auf derselben Maschine liegen. Sie steht deshalb im Manifest, das ein Standort ohnehin abruft
@@ -306,7 +323,7 @@ nur die Ansicht nicht.
 | Der Reiter fehlt | Zusatz nicht gebucht, oder der Client kann es nicht | **Zusätze** ansehen; **Administration → Client** zeigt, welche Bauformen da sind |
 | *"Die Live-Ansicht ist für diesen Serverplatz nicht gebucht."* | genau das | Zusatz buchen |
 | *"Erst den Bot starten …"* | der Bot ist nicht im Spiel | erst verbinden, dann zusehen |
-| Voxelbild statt Texturen | für diese Minecraft-Version liegt keine JAR bereit | **Administration → Client → Minecraft-Ressourcen** |
+| Voxelbild statt Texturen | keine JAR für diese Version **und** eine Bauform vor 2.6.0 (ältere Clients können sich keine besorgen) | **Administration → Client → Minecraft-Ressourcen**, oder den Client abgleichen |
 | *"Position noch unbekannt"* | der Bot ist verbunden, hat aber noch keine Position | ein paar Sekunden warten – der Satz kommt vom Client und heißt genau das |
 | Die Welt endet drei Schritte vor dem Bot | Sichtweite 2 | **Einstellungen → Sichtweite**, danach Bot neu starten |
 | *"Warte auf das erste Bild …"* bleibt stehen | der Server hat noch keine Chunks geschickt | ein paar Sekunden warten; bei `:pov info` steht die Chunk-Zahl |

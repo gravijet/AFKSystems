@@ -283,3 +283,36 @@ export function codeUrl(uri, code) {
     return `${base}${base.includes('?') ? '&' : '?'}otc=${encodeURIComponent(code)}`;
   }
 }
+
+/**
+ * Aus einem User-Agent das, was ein Mensch daran wiedererkennt: Browser und System.
+ *
+ * Keine Bibliothek und keine Vollständigkeit – eine Zeichenkette wie
+ * "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+ * beantwortet die einzige Frage, die hier zählt ("war ich das?"), mit "Chrome auf Linux".
+ * Die Reihenfolge ist wichtig: Edge und Opera nennen sich auch Chrome, Chrome nennt sich auch
+ * Safari. Wer zuerst passt, gewinnt – deshalb steht das Spezifischere oben.
+ */
+export function deviceOf(agent) {
+  const value = String(agent || '');
+  if (!value) return '';
+  const browser =
+    [
+      [/Edg[A-Z]?\//, 'Edge'],
+      [/OPR\/|Opera/, 'Opera'],
+      [/SamsungBrowser\//, 'Samsung Internet'],
+      [/Firefox\//, 'Firefox'],
+      [/Chrome\//, 'Chrome'],
+      [/Safari\//, 'Safari'],
+    ].find(([probe]) => probe.test(value))?.[1] || '';
+  const system =
+    [
+      [/Windows NT/, 'Windows'],
+      [/Android/, 'Android'],
+      [/iPhone|iPad|iPod/, 'iOS'],
+      [/Mac OS X/, 'macOS'],
+      [/CrOS/, 'ChromeOS'],
+      [/Linux/, 'Linux'],
+    ].find(([probe]) => probe.test(value))?.[1] || '';
+  return [browser, system].filter(Boolean).join(' · ');
+}

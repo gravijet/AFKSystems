@@ -14,9 +14,10 @@
 
 import {
   api, icon, escapeHtml, credits, euro, datetime, date, clock, since, bytes, meter, mcText, todoList, stateBadge,
-  safeLink, lang, tr, $, $$, ok, fail, toast, confirmDialog, formDialog, copy, debounce,
+  safeLink, lang, tr, avatar, $, $$, ok, fail, toast, confirmDialog, formDialog, copy, debounce,
 } from '../ui.js';
 import { mergeLines } from '../chatlog.js';
+import { countryName } from '../countries.js';
 import { state, appbar, draw, go, showPalette, ADMIN_GROUPS } from '../app.js';
 import * as chart from '../charts.js';
 
@@ -610,7 +611,7 @@ async function system(root) {
   // Zwei Bereiche: oben die Messwerte, die sich alle vier Sekunden selbst neu zeichnen, unten
   // die Sicherungen. Getrennt, weil das Neuzeichnen sonst jeden Klick unter dem Zeiger wegzöge –
   // eine Liste von Dateien ändert sich nicht im Sekundentakt.
-  root.innerHTML = '<div id="sys-live"></div><div id="sys-backups"></div>';
+  root.innerHTML = '<div id="sys-live"></div><div id="sys-webhook"></div><div id="sys-backups"></div>';
   const live = $('#sys-live');
 
   const paint = (data) => {
@@ -716,7 +717,71 @@ async function system(root) {
   timer = setInterval(tick, 4000);
   setTimeout(tick, 1200);
 
+  await systemWebhook($('#sys-webhook'));
   await backups($('#sys-backups'));
+}
+
+/**
+ * Der Webhook für Systemmeldungen – und was er gerade zu melden hätte.
+ *
+ * **Die Liste steht auch ohne Webhook da.** Sie ist die eigentliche Auskunft: volle Platte, ein
+ * Standort, der sich nicht meldet, eine wiederkehrende Aufgabe, die scheitert. Der Webhook ist
+ * nur der Weg, auf dem sie jemanden erreicht, der gerade nicht hinsieht.
+ *
+ * Und ein Knopf „jetzt schicken“, weil die häufigste Frage an einen Webhook lautet: Kommt da
+ * überhaupt etwas an?
+ */
+async function systemWebhook(root) {
+  const data = await api('/admin/system/report').catch(() => null);
+  if (!data) return;
+  const hours = data.interval_ms ? Math.round(data.interval_ms / 3_600_000) : 0;
+
+  root.innerHTML = panel(
+    tr('adm.systemHook'),
+    `<div class="stack">
+      <p class="small muted" style="margin:0">${escapeHtml(tr('adm.systemHookWhat'))}</p>
+      ${
+        data.webhook
+          ? `<div class="row spread"><span class="muted small">${escapeHtml(tr('adm.systemHookEvery'))}</span>
+              <span class="mono">${
+                hours ? escapeHtml(tr('adm.systemHookHours', { n: hours })) : escapeHtml(tr('adm.systemHookAlertsOnly'))
+              }</span></div>`
+          : `<div class="note warn" style="margin:0">${icon('info')}<div>${escapeHtml(
+              tr('adm.systemHookMissing')
+            )} <a href="#/admin/settings">${escapeHtml(tr('adm.settings'))}</a></div></div>`
+      }
+      <hr class="rule">
+      <div class="strong small">${escapeHtml(tr('adm.systemAlerts'))}</div>
+      ${
+        data.alerts.length
+          ? `<ul class="plain-list stack">${data.alerts
+              .map(
+                (alert) => `<li class="note ${alert.color === 0xfb2c36 ? 'bad' : 'warn'}" style="margin:0">
+                  ${icon('alert')}
+                  <div><strong>${escapeHtml(alert.title)}</strong>
+                    <p class="small" style="margin:.2rem 0 0">${escapeHtml(alert.text)}</p></div>
+                </li>`
+              )
+              .join('')}</ul>`
+          : `<p class="small muted" style="margin:0">${escapeHtml(tr('adm.systemAlertsNone'))}</p>`
+      }
+    </div>`,
+    data.webhook
+      ? `<button class="btn btn-sm" id="send-report">${icon('send')} ${escapeHtml(tr('adm.systemSendNow'))}</button>`
+      : ''
+  );
+
+  $('#send-report')?.addEventListener('click', async (event) => {
+    event.target.disabled = true;
+    try {
+      await api('/admin/system/report', { method: 'POST' });
+      ok(tr('adm.systemSent'));
+    } catch (error) {
+      fail(error);
+    } finally {
+      event.target.disabled = false;
+    }
+  });
 }
 
 /**
@@ -1014,9 +1079,16 @@ async function users(root) {
             <td><input type="checkbox" class="pick" data-id="${user.id}"
               aria-label="${escapeHtml(user.username)}"></td>
             <td class="mono small muted">${user.id}</td>
-            <td><span class="row" style="gap:.4rem">${escapeHtml(user.username)}
+            <td><span class="row" style="gap:.4rem">${avatar(user, { size: 22 })}${escapeHtml(user.username)}
               ${user.role === 'admin' ? `<span class="pill primary">admin</span>` : ''}
               ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}
+              ${
+                user.delete_due_at
+                  ? `<span class="pill missing" title="${escapeHtml(
+                      tr('adm.leavingOn', { date: date(user.delete_due_at) })
+                    )}">${icon('trash')}</span>`
+                  : ''
+              }
               ${!user.email_verified ? `<span class="pill missing">mail</span>` : ''}
               ${user.discord ? `<span class="pill" title="${escapeHtml(user.discord.name || '')}">${icon('discord')}</span>` : ''}</span></td>
             <td class="small muted">${escapeHtml(user.email)}</td>
@@ -1101,6 +1173,28 @@ async function users(root) {
   });
 }
 
+/**
+ * Wie die Felder der persönlichen Daten heißen.
+ *
+ * Dieselben Beschriftungen wie in den Einstellungen des Kunden – ein zweiter Wortschatz für
+ * dieselben Felder wäre die sichere Art, dass in der Verwaltung irgendwann „Ort“ steht, wo der
+ * Kunde „Stadt“ eingetragen hat.
+ */
+const PROFILE_LABELS = {
+  full_name: 'set.fullName',
+  company: 'set.company',
+  vat_id: 'set.vatId',
+  street: 'set.street',
+  street2: 'set.street2',
+  postal_code: 'set.postalCode',
+  city: 'set.city',
+  region: 'set.region',
+  country: 'set.country',
+  phone: 'set.phone',
+  billing_email: 'set.billingEmail',
+  timezone: 'set.timezone',
+};
+
 async function userDetail(root, id) {
   const data = await api(`/admin/users/${id}`);
   const user = data.user;
@@ -1118,7 +1212,9 @@ async function userDetail(root, id) {
 
   root.innerHTML = `
     <div class="row wrap spread" style="margin-bottom:1.25rem">
-      <div>
+      <div class="row" style="gap:.9rem;min-width:0">
+        ${avatar(user, { size: 48 })}
+        <div style="min-width:0">
         <h2 style="font-size:1.4rem">${escapeHtml(user.username)}
           ${user.role === 'admin' ? '<span class="pill primary">admin</span>' : ''}
           ${(user.discord_roles || [])
@@ -1128,6 +1224,7 @@ async function userDetail(root, id) {
         <p class="small muted mono">${escapeHtml(user.email)} · #${user.id} ·
           ${escapeHtml(tr('common.status'))}: ${user.last_seen_at ? since(user.last_seen_at) : '–'}
           ${user.discord ? ` · Discord ${escapeHtml(user.discord.name || user.discord.id)}` : ''}</p>
+        </div>
       </div>
       <div class="row wrap">
         <a class="btn btn-sm" href="#/admin/users">${escapeHtml(tr('common.back'))}</a>
@@ -1161,6 +1258,32 @@ async function userDetail(root, id) {
       <button class="btn btn-sm" id="stop">${escapeHtml(tr('adm.stopBots'))}</button>
       <button class="btn btn-sm" id="logout">${escapeHtml(tr('adm.logoutUser'))}</button>
     </div>
+
+    ${
+      user.delete_due_at
+        ? `<div class="note bad" style="margin-bottom:1.5rem">${icon('alert')}
+            <div>${escapeHtml(tr('adm.leavingOn', { date: date(user.delete_due_at) }))}</div></div>`
+        : ''
+    }
+
+    <!-- **Ansehen, nicht ändern.** Name, Firma und Anschrift sind die Angaben des Kunden; sie
+         stehen hier, weil die Verwaltung Rückfragen zu Belegen beantworten muss. Ein Formular
+         daraus zu machen hieße, dass zwei Stellen dieselbe Wahrheit schreiben – und auf dem
+         Beleg steht am Ende, was der Kunde selbst angegeben hat. -->
+    ${
+      Object.values(user.profile || {}).some(Boolean)
+        ? panel(
+            tr('set.personal'),
+            `<dl class="facts">${Object.entries(user.profile)
+              .filter(([, value]) => value)
+              .map(
+                ([key, value]) => `<div><dt>${escapeHtml(tr(PROFILE_LABELS[key] || 'common.name'))}</dt>
+                  <dd>${escapeHtml(key === 'country' ? countryName(value, lang) : value)}</dd></div>`
+              )
+              .join('')}</dl>`
+          )
+        : ''
+    }
 
     <section class="panel" style="margin-bottom:1.5rem">
       <header><h3>${escapeHtml(tr('adm.discordRoles'))}</h3>
@@ -2455,7 +2578,15 @@ async function topups(root) {
         </tr>`
       )
     ),
-    exportButton('topups')
+    // Der zweite Knopf erscheint nur, wenn es wirklich Belege gelöschter Konten gibt. Ein Knopf,
+    // der fast immer eine leere Datei liefert, ist kein Angebot, sondern eine Falle.
+    exportButton('topups') +
+      (data.archived
+        ? ` <a class="btn btn-sm btn-ghost" href="/api/admin/export/receipts" download
+             title="${escapeHtml(tr('adm.archivedReceiptsHint'))}">${icon('download')} ${escapeHtml(
+            tr('adm.archivedReceipts', { n: data.archived })
+          )}</a>`
+        : '')
   );
 
   $$('[data-settle]').forEach((button) =>
@@ -3420,6 +3551,26 @@ async function client(root) {
         : ''
     }
 
+    <!-- Wer läuft noch mit einer Datei, die es so nicht mehr gibt? Ein Bot hält seine Client-Datei
+         offen; der Abgleich tauscht sie unter ihm aus. Ohne diesen Kasten stand im Panel
+         „Client 2.6.0“, während zwanzig Bots seit zwei Wochen 2.5.0 waren. -->
+    ${
+      data.outdated
+        ? `<div class="note" style="margin-bottom:1.25rem">${icon('download')}
+            <div class="grow">
+              <strong>${escapeHtml(tr('adm.clientOutdated', { n: data.outdated, total: data.running }))}</strong>
+              <div class="small muted mono">${Object.entries(data.outdated_by_version || {})
+                .sort((a, b) => b[1] - a[1])
+                .map(([version, count]) => `${escapeHtml(version)}: ${count}`)
+                .join(' · ')} → ${escapeHtml(data.version || '?')}</div>
+            </div>
+            <button class="btn btn-sm btn-primary" id="rollout">${icon('refresh')} ${escapeHtml(
+              tr('adm.clientRollout')
+            )}</button>
+          </div>`
+        : ''
+    }
+
     ${panel(
       tr('ov.builds'),
       table(
@@ -3525,6 +3676,26 @@ async function client(root) {
   };
   $('#sync').addEventListener('click', () => sync(false));
   $('#force').addEventListener('click', () => sync(true));
+
+  $('#rollout')?.addEventListener('click', async (event) => {
+    // Das trifft fremde Serverplätze: Jeder betroffene Bot verlässt sein Spiel und kommt wieder,
+    // und der Kunde hat nicht darum gebeten. Die Rückfrage nennt deshalb die Zahl.
+    if (!(await confirmDialog(tr('adm.clientRolloutAsk', { n: data.outdated }), {
+      confirm: tr('adm.clientRollout'),
+      danger: false,
+    }))) {
+      return;
+    }
+    event.currentTarget.disabled = true;
+    try {
+      const result = await api('/admin/client/rollout', { method: 'POST' });
+      ok(tr('adm.clientRolloutDone', { n: result.restarted }));
+      draw();
+    } catch (error) {
+      fail(error);
+      event.currentTarget.disabled = false;
+    }
+  });
 
   // ---- Minecraft-Ressourcen -------------------------------------------------------------------
   //
@@ -3827,8 +3998,18 @@ async function security(root) {
   const active = data.blocks.filter((block) => !block.expired);
 
   const reason = (attempt) => {
-    if (attempt.ok) return `<span class="pill primary">${escapeHtml(tr('sec.ok'))}</span>`;
-    const keys = { wrong: 'sec.wrong', blocked: 'sec.blockedAccount', throttled: 'sec.throttled' };
+    if (attempt.ok) {
+      // Ein geglückter Versuch mit `code` ist der zweite Schritt einer Anmeldung und nicht ihr
+      // Anfang – als schlichtes „angemeldet“ stünde er zweimal in derselben Liste.
+      const key = attempt.reason === 'code' ? 'sec.codeOk' : 'sec.ok';
+      return `<span class="pill primary">${escapeHtml(tr(key))}</span>`;
+    }
+    const keys = {
+      wrong: 'sec.wrong',
+      blocked: 'sec.blockedAccount',
+      throttled: 'sec.throttled',
+      code: 'sec.codeWrong',
+    };
     return `<span class="pill missing">${escapeHtml(tr(keys[attempt.reason] || 'sec.wrong'))}</span>`;
   };
 

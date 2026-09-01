@@ -4,7 +4,9 @@
 // den Zustand übergeben; neu gezeichnet wird immer die ganze Ansicht – bei dieser Größe ist das
 // einfacher zu verstehen als jede feinere Aktualisierung, und schnell genug.
 
-import { api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, safeLink, $, fail, toast } from './ui.js';
+import {
+  api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, safeLink, avatar, $, fail, toast,
+} from './ui.js';
 import {
   applyPreferences,
   isFavoriteServer,
@@ -41,7 +43,7 @@ const ROUTES = [
   { path: /^\/credits$/, name: 'credits' },
   { path: /^\/activity$/, name: 'activity' },
   { path: /^\/tickets(?:\/(\d+))?$/, name: 'tickets' },
-  { path: /^\/settings$/, name: 'settings' },
+  { path: /^\/settings(?:\/([a-z]+))?$/, name: 'settings' },
   { path: /^\/admin(?:\/([a-z-]+))?(?:\/(\d+))?$/, name: 'admin' },
 ];
 
@@ -54,6 +56,7 @@ function parseRoute() {
       return { name: 'server', id: Number(match[1]), tab: match[2] || 'connect' };
     }
     if (route.name === 'tickets') return { name: 'tickets', id: match[1] ? Number(match[1]) : null, tab: null };
+    if (route.name === 'settings') return { name: 'settings', id: null, tab: match[1] || 'account' };
     if (route.name === 'admin') {
       return { name: 'admin', id: match[2] ? Number(match[2]) : null, tab: match[1] || 'overview' };
     }
@@ -414,6 +417,10 @@ export const TABS = [
   { key: 'connect', label: 'tab.connect', group: 'control' },
   { key: 'movement', label: 'tab.movement', group: 'automation', need: 'movement' },
   { key: 'macros', label: 'tab.macros', group: 'automation' },
+  // Zeitpläne gibt es auf jedem Serverplatz, auch auf dem Gratis-Platz: Wer seinen Bot nur
+  // abends laufen lassen will, braucht dafür keinen Tarif – im Gegenteil, er nimmt damit
+  // weniger in Anspruch als jemand, der ihn durchlaufen lässt.
+  { key: 'schedule', label: 'tab.schedule', group: 'automation' },
   { key: 'board', label: 'tab.board', group: 'views', need: 'board' },
   { key: 'menu', label: 'tab.menu', group: 'views', need: 'menu' },
   // Das eigene Inventar liest nur eine Bauform mit Gegenstandslesung – dieselbe Fähigkeit, die
@@ -656,7 +663,7 @@ export function drawSide() {
       </a>
       <div class="side-user">
         <a class="side-user-name" href="#/settings" title="${escapeHtml(state.me?.username || '')}">
-          <span class="side-avatar">${escapeHtml((state.me?.username || '?').slice(0, 1).toUpperCase())}</span>
+          ${avatar(state.me, { size: 26, klass: 'side-avatar' })}
           <span class="side-item-label">${escapeHtml(state.me?.username || '')}</span>
         </a>
         ${themeSwitch()}

@@ -43,6 +43,18 @@ export const GROUPS = [
     },
   },
   {
+    key: 'seller',
+    icon: 'package',
+    de: {
+      title: 'Verkäufer und Belege',
+      text: 'Wer verkauft – das steht als Absender auf jedem Beleg, den ein Kunde herunterlädt. Verkäufer ist der Betreiber und nicht Stripe; ohne diese Angaben trägt der Beleg nur die Marke, und das ist auf einer Rechnung zu wenig.',
+    },
+    en: {
+      title: 'Seller and receipts',
+      text: 'Who sells – this is the sender on every receipt a customer downloads. The seller is the operator, not Stripe; without these details a receipt carries only the brand name, and that is not enough on an invoice.',
+    },
+  },
+  {
     key: 'signup',
     icon: 'users',
     de: { title: 'Registrierung', text: 'Wer sich anmelden darf und was dabei verlangt wird.' },
@@ -434,12 +446,32 @@ export const SETTINGS = [
     en: { label: 'Invite link', help: 'Shown on the website and in the panel. Empty means the link appears nowhere.', placeholder: 'https://discord.gg/…' },
   },
   {
-    key: 'discord_staff_webhook',
+    key: 'discord_system_webhook',
     group: 'discord',
     type: 'password',
     secret: true,
-    de: { label: 'Webhook fürs Team', help: 'Neue Tickets und Antworten landen in diesem Kanal. Ein Webhook ist so gut wie ein Passwort – deshalb verdeckt.' },
-    en: { label: 'Staff webhook', help: 'New tickets and replies land in that channel. A webhook is as good as a password, hence masked.' },
+    de: {
+      label: 'Webhook für Systemmeldungen',
+      help: 'Hier kommt der Zustand der Anlage an: Auslastung, Standorte, Sicherungen, Aufgaben, die aus dem Tritt sind, und Zahlungen, die nicht zusammenpassen. **Keine Tickets** – die stehen im Panel und in ihrem eigenen Discord-Kanal, und eine dritte Kopie davon hat diesen Kanal nur unlesbar gemacht. Ein Webhook ist so gut wie ein Passwort, deshalb verdeckt.',
+    },
+    en: {
+      label: 'System webhook',
+      help: 'The state of the machine lands here: load, locations, backups, scheduled tasks that failed, and payments that do not add up. **No tickets** – those live in the panel and in their own Discord channel; a third copy only made this channel unreadable. A webhook is as good as a password, hence masked.',
+    },
+  },
+  {
+    key: 'system_report_hours',
+    group: 'discord',
+    type: 'number',
+    needs: 'discord_system_webhook',
+    de: {
+      label: 'Lagebericht alle … Stunden',
+      help: 'Wie oft der vollständige Bericht von selbst kommt. 0 heißt: nur Warnungen, kein Bericht. Warnungen (Platte voll, Standort weg, Aufgabe gescheitert) kommen unabhängig davon sofort und höchstens einmal am Tag je Sache.',
+    },
+    en: {
+      label: 'Report every … hours',
+      help: 'How often the full report goes out on its own. 0 means alerts only, no report. Alerts (disk full, location gone, task failed) arrive immediately regardless, at most once a day per issue.',
+    },
   },
   {
     key: 'discord_bot_token',
@@ -713,6 +745,53 @@ export const SETTINGS = [
       label: 'Contact email',
       help: 'Shown in the footer of every public page and above the customer\'s own tickets, and every message from here carries it as its reply address. For everyone who cannot write a ticket – no account, no way in. Empty means it is shown nowhere.',
       placeholder: 'user@example.invalid',
+    },
+  },
+
+  // ---------------------------------------------------------------- Verkäufer und Belege
+  {
+    key: 'company_name',
+    group: 'seller',
+    type: 'text',
+    de: {
+      label: 'Name des Verkäufers',
+      help: 'Die Firmierung oder der Name, unter dem verkauft wird. Leer heißt: es steht die Marke da.',
+      placeholder: 'AFKSystems',
+    },
+    en: {
+      label: 'Seller name',
+      help: 'The company or the name the sale is made under. Empty means the brand name is used.',
+      placeholder: 'AFKSystems',
+    },
+  },
+  {
+    key: 'company_address',
+    group: 'seller',
+    type: 'textarea',
+    de: {
+      label: 'Anschrift',
+      help: 'Eine Zeile je Zeile – genau so steht sie auf dem Beleg.',
+      placeholder: 'Musterstraße 1\n1010 Wien\nÖsterreich',
+    },
+    en: {
+      label: 'Address',
+      help: 'One line per line – it appears on the receipt exactly like this.',
+      placeholder: 'Example Street 1\n1010 Vienna\nAustria',
+    },
+  },
+  {
+    key: 'company_vat_id',
+    group: 'seller',
+    type: 'text',
+    de: {
+      label: 'Eigene USt-IdNr.',
+      help: 'Steht auf jedem Beleg. Leer lassen, wenn es keine gibt – bei der Kleinunternehmerregelung ist das der Normalfall.',
+      placeholder: 'ATU12345678',
+    },
+    en: {
+      label: 'Own VAT ID',
+      help: 'Printed on every receipt. Leave empty if there is none – with the small-business scheme that is the normal case.',
+      placeholder: 'ATU12345678',
     },
   },
 

@@ -6,7 +6,36 @@
           <span>{{brand}}</span>
         </a>
 
-        <div class="auth-card">
+        <!-- Der zweite Schritt: der Code aus der E-Mail. Er steht als eigene Karte hier und nicht
+             auf einer eigenen Seite – ein Seitenwechsel mitten in einer Anmeldung sähe aus wie
+             eine Weiterleitung, und genau das ist es nicht: Es ist derselbe Vorgang, nur eine
+             Frage weiter. auth.js blendet um. -->
+        <div class="auth-card hide" id="code-card">
+          <h1>{{auth.code.title}}</h1>
+          <p class="auth-lead" id="code-lead">{{auth.code.lead}}</p>
+
+          <form id="code-form" class="stack" novalidate>
+            <div class="field">
+              <label for="code">{{auth.code.label}}</label>
+              <!-- inputmode/autocomplete: Auf dem Telefon kommt die Zifferntastatur, und iOS und
+                   Android bieten den Code aus der eben eingetroffenen Nachricht zum Einsetzen an.
+                   Ohne `one-time-code` tun sie das nicht. -->
+              <input id="code" name="code" type="text" inputmode="numeric" pattern="[0-9]*"
+                     autocomplete="one-time-code" maxlength="6" required
+                     class="code-input" autofocus />
+            </div>
+            <p id="code-error" class="form-error hide" role="alert"></p>
+            <button class="btn btn-primary btn-block" type="submit">{{auth.code.submit}}</button>
+          </form>
+
+          <p class="auth-alt">
+            <button class="linkish" type="button" id="code-resend">{{auth.code.resend}}</button>
+            <span aria-hidden="true">·</span>
+            <button class="linkish" type="button" id="code-back">{{auth.code.back}}</button>
+          </p>
+        </div>
+
+        <div class="auth-card" id="login-card">
           <h1>{{auth.login.title}}</h1>
           <p class="auth-lead">{{auth.login.lead}}</p>
 

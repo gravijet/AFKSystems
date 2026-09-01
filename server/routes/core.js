@@ -20,6 +20,10 @@ import * as billing from '../billing.js';
 import * as stripe from '../stripe.js';
 import * as vat from '../vat.js';
 import * as security from '../security.js';
+import * as logincode from '../logincode.js';
+import * as profile from '../profile.js';
+import * as account from '../account.js';
+import * as roles from '../roles.js';
 import { setLangCookie, t } from '../pages.js';
 import { bridge } from '../bridge.js';
 import { wrap, requireInt, bad, notFound, forbidden, token, HttpError, langOf, safeUrl } from '../util.js';
@@ -77,6 +81,14 @@ router.get(
       mail_categories: mail.categoriesFor(lang),
       low_balance: Number(getSetting('low_balance')),
       signup_bonus: Number(getSetting('signup_bonus')),
+      // Wie lange zwischen "löschen" und "gelöscht" liegt. Die Zahl steht im Panel in demselben
+      // Satz, in dem der Kunde die Löschung beantragt – sie darf deshalb nicht dort noch einmal
+      // hingeschrieben werden, sondern kommt von der Stelle, die sie auch anwendet.
+      delete_grace_days: account.GRACE_DAYS,
+      // Die Zeitzone dieses Servers. Sie gilt für jeden, der keine eigene eingetragen hat – und
+      // steht deshalb im Panel dabei: „nicht gesetzt“ ist keine Auskunft darüber, was dann gilt.
+      // Raten kann der Browser das nicht; er kennt nur seine eigene.
+      server_timezone: profile.timezoneOf(null),
       support_hours: String(getSetting('support_hours') || ''),
       support_email: String(getSetting('support_email') || ''),
       payment: {
@@ -165,15 +177,37 @@ router.post(
     }
     const user = auth.register({ ...(req.body || {}), language: langOf(req) });
     const pending = mail.verifyRequired() && !user.email_verified;
-    if (!pending) auth.createSession(res, user, req);
+    // Der Browser, in dem ein Konto entsteht, ist ihm bekannt – alles andere wäre grotesk: Ein
+    // Anmeldecode für ein Konto, das in diesem Fenster gerade angelegt wurde.
+    if (!pending) signIn(res, user, req, 'register');
     setLangCookie(res, user.language);
     res.json({ user: auth.publicUser(user), verify_pending: pending });
   })
 );
 
+/**
+ * Eine geglückte Anmeldung abschließen – von wo auch immer sie kam.
+ *
+ * Fünf Anmeldewege enden hier: Passwort, Anmeldecode, Discord, Google und der Bestätigungslink
+ * aus der Registrierungsmail. Jeder von ihnen muss dasselbe tun – Sitzung anlegen, den Browser als
+ * bekannt merken, es aufschreiben –, und jeder von ihnen hat es vorher einzeln getan. Eine
+ * vergessene Zeile in einem der fünf wäre nicht aufgefallen: Der Weg funktioniert ja, er merkt
+ * sich nur das Gerät nicht, und der Kunde bekommt fortan bei jeder Anmeldung einen Code.
+ *
+ * `how` ist der Eintrag im Protokoll. `null` heißt "der Aufrufer hat schon geschrieben" – nach
+ * einem Passwortwechsel steht die Zeile dort bereits, und dieselbe Sache zweimal im Protokoll
+ * macht es nicht genauer, sondern länger.
+ */
+function signIn(res, user, req, how = 'login') {
+  logincode.remember(user, req, res);
+  auth.createSession(res, user, req);
+  if (how) audit(user.id, how, null, req.ip);
+  return user;
+}
+
 router.post(
   '/auth/login',
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const identifier = String(req.body?.login || '').trim();
     // Zuerst nachsehen, ob hier gerade jemand Passwörter durchprobiert. Die Prüfung steht **vor**
     // auth.login, denn eine Passwortprüfung ist absichtlich teuer – wer gebremst wird, soll diese
@@ -202,14 +236,86 @@ router.post(
       throw error;
     }
     security.record({ ip: req.ip, identifier, ok: true });
-    // Vor dem Anlegen der Sitzung: danach wäre jedes Gerät bekannt (siehe auth.noticeNewDevice).
+
+    // **Der zweite Schritt, wenn dieser Browser neu ist.** Das Passwort stimmt – mehr sagt diese
+    // Antwort nicht, und mehr bekommt der Aufrufer auch nicht: keine Sitzung, kein Cookie, kein
+    // Konto. Zurück geht nur eine Wartemarke und die halb verdeckte Adresse, an die der Code ging.
+    //
+    // Kommt von `logincode.start` ein `null`, ging die Nachricht nicht hinaus (kein Postausgang,
+    // ein fremder Server antwortet nicht). Dann meldet diese Anmeldung ganz normal an: Das
+    // Passwort war richtig, und ein klemmender Mailserver darf niemanden aus seinem Konto
+    // aussperren. Warum das so herum entschieden ist, steht in server/logincode.js.
+    if (logincode.required(user, req)) {
+      const challenge = await logincode.start(user, req);
+      if (challenge) {
+        // Die Nachricht über das neue Gerät bleibt hier aus. Der Code **ist** sie: Sie ginge an
+        // dieselbe Adresse, im selben Moment, über denselben Vorgang – zwei Nachrichten über eine
+        // Anmeldung, die noch gar nicht stattgefunden hat.
+        return res.json({
+          challenge: challenge.token,
+          expires_at: challenge.expires_at,
+          email_hint: challenge.hint,
+          tries: logincode.MAX_TRIES,
+        });
+      }
+    }
+
+    // Vor `signIn`: danach wäre dieses Gerät bekannt (siehe auth.noticeNewDevice).
     auth.noticeNewDevice(user, req);
-    auth.createSession(res, user, req);
-    audit(user.id, 'login', null, req.ip);
+    signIn(res, user, req);
     res.json({
       user: auth.publicUser(user),
       verify_pending: mail.verifyRequired() && !user.email_verified,
     });
+  })
+);
+
+/**
+ * Den Anmeldecode einlösen. Zweiter und letzter Schritt der Anmeldung.
+ *
+ * Die Bremse aus security.js gilt hier genauso wie beim Passwort, und zwar über die Adresse: Die
+ * Marke selbst zählt ihre fünf Versuche mit und verfällt danach, aber wer beliebig viele Marken
+ * beschaffen kann (er kennt ja das Passwort), hätte sonst beliebig viele Fünferpakete. Der
+ * Verbrauch steht deshalb im selben Protokoll wie die Passwortversuche.
+ */
+router.post(
+  '/auth/login/code',
+  wrap((req, res) => {
+    // Die Adresse **vor** allem anderen holen: Ein geglückter Versuch nimmt die Marke mit, ein
+    // fünfter Fehlversuch auch – danach gäbe es nichts mehr, woran sich Bremse und Protokolleintrag
+    // festmachen ließen. Und mit ihr gilt hier dieselbe Bremse wie beim Passwort, in beiden
+    // Richtungen: je Adresse **und** je Konto.
+    const identifier = logincode.identifierFor(req.body?.challenge);
+    if (security.tooMany(req.ip, identifier)) {
+      security.record({ ip: req.ip, identifier, ok: false, reason: 'throttled' });
+      throw new HttpError(429, 'Zu viele Fehlversuche. Bitte in einer Viertelstunde noch einmal versuchen.', {
+        en: 'Too many failed attempts. Please try again in fifteen minutes.',
+      });
+    }
+    let user;
+    try {
+      user = logincode.redeem(req.body?.challenge, req.body?.code);
+    } catch (error) {
+      security.record({ ip: req.ip, identifier, ok: false, reason: 'code' });
+      throw error;
+    }
+    security.record({ ip: req.ip, identifier, ok: true, reason: 'code' });
+    // Erst jetzt gilt die Anmeldung – und erst jetzt wird dieser Browser bekannt. Ab dem nächsten
+    // Mal geht es hier ohne Code weiter, bis ihn jemand in den Einstellungen wieder vergisst.
+    signIn(res, user, req, 'login-code');
+    res.json({
+      user: auth.publicUser(user),
+      verify_pending: mail.verifyRequired() && !user.email_verified,
+    });
+  })
+);
+
+/** Noch einmal schicken – dieselbe Marke, ein frischer Code, dieselbe Frist. */
+router.post(
+  '/auth/login/code/resend',
+  wrap(async (req, res) => {
+    const result = await logincode.resend(req.body?.challenge);
+    res.json({ ok: true, expires_at: result.expires_at, email_hint: result.hint });
   })
 );
 
@@ -226,7 +332,9 @@ router.post(
   wrap((req, res) => {
     const user = auth.verifyEmail(req.body?.token);
     if (!user) throw bad('Dieser Link gilt nicht mehr.', { en: 'This link is no longer valid.', code: 'verify-invalid' });
-    auth.createSession(res, user, req);
+    // Wer diesen Link öffnet, hat das Postfach – also genau das, wonach der Anmeldecode fragt.
+    // Ein Code obendrauf wäre dieselbe Frage ein zweites Mal.
+    signIn(res, user, req, 'login-verify');
     res.json({ user: auth.publicUser(user) });
   })
 );
@@ -331,8 +439,13 @@ router.get(
       const result = await oauth.callback({ code: req.query.code, state: req.query.state, binding });
       if (result.action === 'login' || result.action === 'created') {
         const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.userId);
-        auth.createSession(res, user, req);
-        audit(user.id, `login-${key}`, null, req.ip);
+        // Kein Anmeldecode: Discord und Google haben soeben selbst festgestellt, wer da sitzt –
+        // und das mit ihren eigenen zweiten Faktoren. Eine weitere Frage über einen dritten Kanal
+        // brächte keine Sicherheit dazu, sie brächte nur einen Schritt dazu. Gemerkt wird der
+        // Browser trotzdem: Wer sich hier heute über Discord anmeldet, soll morgen mit seinem
+        // Passwort nicht wie ein Fremder behandelt werden.
+        auth.noticeNewDevice(user, req);
+        signIn(res, user, req, `login-${key}`);
         setLangCookie(res, user.language);
         return res.redirect(
           `/${user.language}/app${result.action === 'created' ? '#/settings?welcome=1' : ''}`
@@ -543,6 +656,10 @@ router.patch(
       fields.push('discord_events = ?');
       values.push(unique.length === notify.EVENTS.length ? '' : unique.join(','));
     }
+    if (body.login_code !== undefined) {
+      fields.push('login_code = ?');
+      values.push(body.login_code ? 1 : 0);
+    }
     if (body.language !== undefined) {
       const lang = body.language === 'de' ? 'de' : 'en';
       fields.push('language = ?');
@@ -561,17 +678,161 @@ router.patch(
       fields.push('mail_prefs = ?');
       values.push(JSON.stringify(clean));
     }
-    if (!fields.length) throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
-    values.push(req.user.id);
-    db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    // Name, Firma, Anschrift, Umsatzsteuer-Identifikationsnummer, Telefon, Zeitzone. Geprüft und
+    // geschrieben wird das in profile.js und nicht hier: Dort steht auch, was davon ins Protokoll
+    // gehört (die geänderten **Feldnamen**, nicht die Anschrift selbst).
+    const personal = profile.readChanges(body);
+
+    if (!fields.length && !Object.keys(personal).length) {
+      throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
+    }
+    if (fields.length) {
+      values.push(req.user.id);
+      db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+    }
+    profile.applyChanges(req.user.id, personal);
     res.json({ user: auth.publicUser(db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id)) });
+  })
+);
+
+/**
+ * Der Benutzername.
+ *
+ * Eigener Endpunkt und nicht Teil von `PATCH /me`: Er ist das einzige Feld am Konto, das anderen
+ * gehört – er steht unter jeder Ticketantwort, in Discord und in den Protokollen. Deshalb hat er
+ * eine Sperrfrist, eine eigene Absage und einen eigenen Eintrag im Protokoll, und nichts davon
+ * gehört in einen Sammelaufruf, der nebenbei auch die Sprache umstellt.
+ */
+router.post(
+  '/me/username',
+  auth.requireUser,
+  wrap((req, res) => {
+    const user = auth.changeUsername(req.user, req.body?.username);
+    // Discord kennt diesen Namen ebenfalls – als Anzeigename am Ticket-Kanal und in den Rollen.
+    roles.changed(user.id);
+    res.json({ user: auth.publicUser(user) });
+  })
+);
+
+/** Eine neue E-Mail-Adresse beantragen. Sie gilt erst, wenn sie bestätigt wurde. */
+router.post(
+  '/me/email',
+  auth.requireUser,
+  wrap(async (req, res) => {
+    const address = await auth.requestEmailChange(req.user, req.body?.email, req.body?.password);
+    res.json({ ok: true, pending_email: address });
+  })
+);
+
+/** Den laufenden Antrag zurückziehen – ein Tippfehler soll kein Grund sein, einen Tag zu warten. */
+router.delete(
+  '/me/email',
+  auth.requireUser,
+  wrap((req, res) => {
+    auth.cancelEmailChange(req.user.id);
+    res.json({ ok: true });
+  })
+);
+
+/**
+ * Den Link aus der Bestätigungsmail einlösen.
+ *
+ * **Ohne Anmeldung.** Wer die Adresse eines Kontos ändert, öffnet die Bestätigung oft in einem
+ * anderen Browser – nämlich in dem, in dem sein Postfach steht. Eine Bestätigung, die eine
+ * Sitzung voraussetzt, wäre genau dort nicht einlösbar. Der Schlüssel ist die Marke aus der
+ * Nachricht an die neue Adresse; wer sie hat, hat Zugriff auf dieses Postfach, und mehr wird
+ * hier nicht behauptet.
+ */
+router.post(
+  '/auth/email/confirm',
+  wrap((req, res) => {
+    const user = auth.confirmEmailChange(req.body?.token);
+    if (!user) {
+      throw bad('Dieser Link gilt nicht mehr.', {
+        en: 'This link is no longer valid.',
+        code: 'verify-invalid',
+      });
+    }
+    res.json({ ok: true, email: user.email });
   })
 );
 
 router.get(
   '/me/sessions',
   auth.requireUser,
-  wrap((req, res) => res.json({ sessions: auth.sessionsOf(req.user.id) }))
+  wrap((req, res) => res.json({ sessions: auth.sessionsOf(req.user.id, req.sessionToken) }))
+);
+
+/** Ein einzelnes Gerät abmelden – das, das man nicht wiedererkennt. */
+router.delete(
+  '/me/sessions/:ref',
+  auth.requireUser,
+  wrap((req, res) => {
+    const done = auth.endSession(req.user.id, req.params.ref, req.sessionToken);
+    if (!done) throw notFound('Diese Sitzung gibt es nicht (mehr).', { en: 'No such session (any more).' });
+    res.json({ ok: true, sessions: auth.sessionsOf(req.user.id, req.sessionToken) });
+  })
+);
+
+/**
+ * Die Browser, die dieses Konto ohne Anmeldecode hereinlassen.
+ *
+ * Steht neben den offenen Sitzungen und ist doch etwas anderes: Eine Sitzung ist ein offenes
+ * Fenster und endet mit dem Abmelden; ein bekannter Browser ist ein Vertrauensvorschuss und
+ * überlebt es. Wer an einem fremden Rechner angemeldet war, meldet sich zwar ab – der Rechner
+ * bliebe aber bekannt und käme mit dem Passwort allein wieder herein. Deshalb lässt sich hier
+ * vergessen, was man nicht wiedererkennt.
+ */
+router.get(
+  '/me/devices',
+  auth.requireUser,
+  wrap((req, res) =>
+    res.json({
+      devices: logincode.devicesOf(req.user.id, logincode.readDeviceToken(req)),
+      login_code: Boolean(req.user.login_code),
+      // Ohne Postausgang bleibt der Schalter wirkungslos. Das gehört ins Panel geschrieben und
+      // nicht verschwiegen – ein Häkchen, das nichts tut, ist schlimmer als ein fehlendes.
+      mail_ready: mail.configured(),
+    })
+  )
+);
+
+router.delete(
+  '/me/devices/:ref',
+  auth.requireUser,
+  wrap((req, res) => {
+    if (!logincode.forget(req.user.id, req.params.ref)) {
+      throw notFound('Dieses Gerät gibt es nicht (mehr).', { en: 'No such device (any more).' });
+    }
+    res.json({ ok: true, devices: logincode.devicesOf(req.user.id, logincode.readDeviceToken(req)) });
+  })
+);
+
+/** Alle auf einmal – der Knopf für den Fall, dass man keinem davon mehr traut. */
+router.delete(
+  '/me/devices',
+  auth.requireUser,
+  wrap((req, res) => {
+    const gone = logincode.forgetAll(req.user.id);
+    // Dieser Browser hier bleibt bekannt: Wer gerade angemeldet davorsitzt, hat sich eben belegt,
+    // und ihn mit zu vergessen hieße, dem Kunden für seinen eigenen Rechner einen Code zu
+    // schicken – für eine Aufräumaktion, die er selbst ausgelöst hat.
+    logincode.remember(req.user, req, res);
+    res.json({ ok: true, forgotten: gone, devices: logincode.devicesOf(req.user.id, logincode.readDeviceToken(req)) });
+  })
+);
+
+/**
+ * Die letzten Anmeldeversuche an **diesem** Konto.
+ *
+ * Dieselben Zeilen, die die Verwaltung unter „Sicherheit“ sieht – aber nur die eigenen. Wer eine
+ * Nachricht über eine Anmeldung von einem fremden Gerät bekommt, hat damit die zweite Hälfte der
+ * Auskunft: Was ist seitdem noch versucht worden, und von wo?
+ */
+router.get(
+  '/me/signins',
+  auth.requireUser,
+  wrap((req, res) => res.json({ attempts: security.attemptsFor(req.user, 25) }))
 );
 
 /**
@@ -659,6 +920,57 @@ router.post(
   })
 );
 
+// ---------------------------------------------------------------- Eigene Daten
+
+/**
+ * Alles, was hier über dieses Konto steht – als Datei.
+ *
+ * Nicht als JSON-Antwort für das Panel, sondern als Download: Der Wert dieser Auskunft liegt
+ * darin, sie **zu haben**, und nicht darin, sie einmal auf einem Bildschirm gesehen zu haben.
+ * Deshalb ein Dateiname mit Datum und `Content-Disposition: attachment`.
+ */
+router.get(
+  '/me/export',
+  auth.requireUser,
+  wrap((req, res) => {
+    const data = account.exportFor(req.user);
+    const day = new Date().toISOString().slice(0, 10);
+    audit(req.user.id, 'data-export', null, req.ip);
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="afksystems-${req.user.username.replace(/[^a-z0-9_.-]/gi, '_')}-${day}.json"`
+    );
+    res.send(JSON.stringify(data, null, 2));
+  })
+);
+
+/** Die Löschung anmelden. Passwort und das ausgeschriebene Wort – beides bewusst. */
+router.post(
+  '/me/delete',
+  auth.requireUser,
+  wrap((req, res) => {
+    if (req.impersonator) {
+      throw forbidden('Nicht, während ein Administrator dieses Konto ansieht.', {
+        en: 'Not while an administrator is viewing this account.',
+      });
+    }
+    const verified = auth.checkPassword(req.user, req.body?.password);
+    const result = account.requestDeletion(req.user, { verified });
+    res.json({ ok: true, deletion: result, grace_days: account.GRACE_DAYS });
+  })
+);
+
+/** Doch nicht. Ein Klick, kein Passwort – wer sein Konto behalten will, soll nicht kämpfen müssen. */
+router.delete(
+  '/me/delete',
+  auth.requireUser,
+  wrap((req, res) => {
+    account.cancelDeletion(req.user.id);
+    res.json({ ok: true });
+  })
+);
+
 router.post(
   '/me/password',
   auth.requireUser,
@@ -669,7 +981,10 @@ router.post(
       req.body?.new_password,
       req.body?.new_password2
     );
-    auth.createSession(res, req.user, req);
+    // `changePassword` vergisst alle bekannten Browser – auch diesen. Das ist richtig so (siehe
+    // dort), aber dieser eine sitzt gerade davor und hat sein Passwort soeben belegt. Er wird
+    // deshalb zusammen mit der neuen Sitzung gleich wieder gemerkt; alle anderen bleiben fremd.
+    signIn(res, req.user, req, null);
     res.json({ ok: true });
   })
 );
@@ -939,8 +1254,10 @@ router.post(
   auth.requireUser,
   wrap((req, res) => {
     const ticket = tickets.create(req.user, req.body || {});
-    // Das Team bekommt Bescheid – über den Webhook und, wenn er läuft, als Kanal in Discord.
-    tickets.notifyStaff(ticket, req.user);
+    // Das Team bekommt Bescheid, wo es arbeitet: im Panel (Zahl an der Seitenleiste) und, wenn
+    // der Bot läuft, als eigener Kanal in Discord. Eine zusätzliche Webhook-Meldung darüber gab
+    // es einmal; sie steht jetzt in server/systemreport.js unter etwas, das wirklich nur dort
+    // steht – siehe die Erklärung in server/tickets.js.
     tickets.notifyParticipants(ticket, 'ticket_opened', {}, null);
     bridge.emit('ticket.created', { ticket_id: ticket.id, source: 'panel', user_id: req.user.id });
     res.json({ ticket: ticketView(ticket) });
@@ -987,7 +1304,6 @@ router.post(
       staff: false,
       files: req.body?.files,
     });
-    tickets.notifyStaffReply(updated, req.user, req.body?.body || '');
     // Alle anderen Beteiligten bekommen Post – der Schreiber nicht.
     tickets.notifyParticipants(
       updated,

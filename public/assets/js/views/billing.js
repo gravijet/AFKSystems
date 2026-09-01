@@ -1,7 +1,7 @@
 // Guthaben: Stand, Serverplätze, Aufladen, Gutschein einlösen, Kontoauszug.
 
 import {
-  api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, copy, formDialog,
+  api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, toast, copy, formDialog,
 } from '../ui.js';
 import { appbar, refresh, draw } from '../app.js';
 import * as chart from '../charts.js';
@@ -198,7 +198,9 @@ export async function render(root) {
           }
         </div>
       </section>
-    </div>`;
+    </div>
+
+    ${receipts(data.receipts || [])}`;
 
   /**
    * Drei Bilder zum Geld: Verlauf, Monate, Verteilung.
@@ -283,8 +285,64 @@ export async function render(root) {
     </li>`;
   }
 
+  /**
+   * Die Belege.
+   *
+   * Ein Beleg entsteht in dem Moment, in dem eine Zahlung verbucht wird, und ändert sich danach
+   * nie wieder – Nummer, Anschrift und Steuerhinweis stehen als Abzug an der Aufladung. Hier
+   * steht die Liste; das Dokument selbst kommt vom Server (server/receipt.js).
+   *
+   * Aufladungen von **vor** dieser Änderung haben keine Nummer und tauchen deshalb nicht auf.
+   * Das ist ehrlicher, als ihnen nachträglich eine zu geben: Eine Belegnummer, die erst Monate
+   * nach der Zahlung vergeben wurde, ist keine fortlaufende Nummer mehr.
+   */
+  function receipts(list) {
+    if (!list.length) return '';
+    return `<section class="panel" style="margin-top:1.5rem">
+      <header>
+        <h3>${escapeHtml(tr('bill.receipts'))}</h3>
+        <span class="small muted">${escapeHtml(tr('bill.receiptsSub'))}</span>
+      </header>
+      <div class="body" style="padding:0">
+        <div class="table-wrap"><table class="table">
+          <thead><tr>
+            <th>${escapeHtml(tr('bill.receiptNo'))}</th>
+            <th>${escapeHtml(tr('common.date'))}</th>
+            <th>${escapeHtml(tr('bill.amount'))}</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${list
+            .map(
+              (entry) => `<tr>
+                <td class="mono">${escapeHtml(entry.receipt_no)}
+                  ${
+                    entry.status === 'refunded'
+                      ? `<span class="pill missing">${escapeHtml(tr('bill.kind.refund'))}</span>`
+                      : ''
+                  }</td>
+                <td class="small muted">${date(entry.paid_at || entry.created_at)}</td>
+                <td class="mono">${euro(entry.amount_cent)}</td>
+                <td class="row" style="gap:.35rem;justify-content:flex-end">
+                  <button class="btn btn-ghost btn-sm" data-print-receipt="${entry.id}"
+                    title="${escapeHtml(tr('bill.receiptPrint'))}">${icon('download')}</button>
+                  <a class="btn btn-ghost btn-sm" href="/api/billing/receipts/${entry.id}"
+                    target="_blank" rel="noopener"
+                    title="${escapeHtml(tr('bill.receiptOpen'))}">${icon('external')}</a>
+                </td>
+              </tr>`
+            )
+            .join('')}</tbody>
+        </table></div>
+      </div>
+    </section>`;
+  }
+
   $$('[data-copy]').forEach((button) =>
     button.addEventListener('click', () => copy(button.dataset.copy))
+  );
+
+  $$('[data-print-receipt]').forEach((button) =>
+    button.addEventListener('click', () => printReceipt(button.dataset.printReceipt))
   );
 
   $$('[data-pack]').forEach((button) =>
@@ -314,6 +372,38 @@ export async function render(root) {
       fail(error);
     }
   });
+}
+
+/**
+ * Einen Beleg drucken, ohne die Seite zu verlassen.
+ *
+ * Das Belegdokument selbst hat **kein JavaScript** – die Content-Security-Policy dieses Servers
+ * lässt kein Inline-Skript zu, und auf einem Dokument mit den Angaben eines Kunden ist das auch
+ * richtig so. Der Knopf gehört deshalb hierher: Der Beleg wird in einen unsichtbaren Rahmen
+ * geladen (gleiche Herkunft, also darf das Panel ihn bedienen) und von dort gedruckt. Von wo aus
+ * gedruckt wird, sieht am Ende niemand – im Druckdialog steht der Beleg.
+ *
+ * Der Rahmen wird nach dem Drucken wieder abgeräumt. Der Zeitgeber dafür ist keine Eleganz,
+ * sondern Notwendigkeit: `print()` kehrt in manchen Browsern sofort zurück, in anderen erst nach
+ * dem Schließen des Dialogs – wer den Rahmen zu früh entfernt, druckt eine leere Seite.
+ */
+async function printReceipt(id) {
+  const frame = document.createElement('iframe');
+  frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+  frame.src = `/api/billing/receipts/${encodeURIComponent(id)}`;
+  document.body.append(frame);
+  frame.addEventListener('load', () => {
+    try {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch {
+      // Wenn der Browser das nicht mag, bleibt der gewöhnliche Weg daneben: der Link, der den
+      // Beleg in einem eigenen Tab öffnet.
+      toast(tr('bill.receiptOpen'));
+    }
+    setTimeout(() => frame.remove(), 60_000);
+  });
+  frame.addEventListener('error', () => frame.remove());
 }
 
 /** Zahlweg wählen, dann je nach Anbieter weiterleiten oder die Anweisung zeigen. */

@@ -124,6 +124,27 @@ const PROBES = {
   povweb: /--pov-web\b/,
   /** `--pov-resources <client.jar>`: woher der Viewer Blockmodelle, Texturen und GUI nimmt. */
   povresources: /--pov-resources\b/,
+  /**
+   * `--pov-resources <jar|auto|aus>`: ab 2.6.0 **findet der Client die JAR selbst**.
+   *
+   * Bis 2.5.0 war der Pfad Pflicht: Ohne hinterlegte Original-JAR gab es keinen texturierten
+   * Viewer. Ab 2.6.0 sucht der Client in seiner eigenen Ablage, in einer vorhandenen
+   * Minecraft-Installation und lädt sie zuletzt von Mojang – geprüft an der SHA-1 aus dem
+   * öffentlichen Versionsmanifest.
+   *
+   * Erkannt an der Schreibweise der Werte in der Hilfe und nicht an `--pov-resources` allein: Die
+   * Option gab es vorher auch, sie konnte nur weniger. Ohne diesen Unterschied schickte das Panel
+   * einer 2.5.0-Datei `--pov-web` ohne Pfad, und der Viewer stünde ohne Texturen da.
+   */
+  povresourcesauto: /--pov-resources\s+<jar\|auto\|aus>/,
+  /**
+   * `--no-reconnect`: **ab 2.6.0 verbindet sich der Client nach einem Kick von selbst neu.**
+   *
+   * Für dieses Panel ist das die wichtigste Zeile des ganzen Release. Es *ist* die Aufsicht, von
+   * der die Release-Notes sprechen – warum es deshalb immer `--no-reconnect` schickt, steht in
+   * supervisor.js bei `args()`.
+   */
+  noreconnect: /--no-reconnect\b/,
 };
 
 export const state = {
@@ -135,10 +156,32 @@ export const state = {
   versions: [],
   defaultVersion: '26.1',
   clientVersion: null,
-  /** build -> { present, version, caps: {…} } */
+  /** build -> { present, version, stamp, caps: {…} } */
   builds: {},
   error: null,
 };
+
+/**
+ * Der Fingerabdruck einer Client-Datei: Fassung, Größe, Änderungszeit.
+ *
+ * **Wozu.** Ein Bot läuft tage- und wochenlang. Der Stundentakt holt in dieser Zeit jedes neue
+ * Release – die Datei auf der Platte ist danach die neue, der laufende Prozess aber immer noch der
+ * alte: Er hält seine Datei offen und merkt von der Ablösung nichts. Bisher stand das nirgends,
+ * und das Ergebnis war ein Panel, das „Client 2.6.0“ meldete, während zwanzig Bots seit vierzehn
+ * Tagen 2.5.0 waren – samt der Fehler, wegen derer 2.6.0 gebaut wurde.
+ *
+ * Die Fassungsnummer allein reicht dafür nicht: Ein Release ohne Versionssprung (ein Fix, ein
+ * neuer Bau derselben Nummer) wäre daran nicht zu erkennen. Größe und Änderungszeit erkennen jede
+ * ausgetauschte Datei, und die Nummer davor macht den Abdruck für Menschen lesbar.
+ */
+export function stampOf(file) {
+  try {
+    const stat = fs.statSync(file);
+    return `${stat.size}:${Math.round(stat.mtimeMs)}`;
+  } catch {
+    return null;
+  }
+}
 
 function readManifest() {
   try {
@@ -229,6 +272,7 @@ export async function detect() {
       present: fs.existsSync(file),
       caps: { ...build.features },
       version: null,
+      stamp: stampOf(file),
     };
     state.builds[key] = entry;
     if (!entry.present) continue;
@@ -280,6 +324,15 @@ export async function detect() {
 export function caps(build = 'slim') {
   return state.builds[build]?.caps || {};
 }
+
+/**
+ * Fassung und Abdruck einer Bauform, so wie sie **jetzt** auf der Platte liegt.
+ *
+ * Ein Bot merkt sich beim Start, was hier stand; wer die beiden später vergleicht, weiß, ob unter
+ * ihm die Datei gewechselt hat.
+ */
+export const versionOf = (build) => state.builds[build]?.version || null;
+export const stampFor = (build) => state.builds[build]?.stamp || null;
 
 /** Alles, was irgendeine vorhandene Bauform kann – für die Feature-Liste auf der Startseite. */
 export function anyCaps() {

@@ -102,6 +102,9 @@ journalctl -u afksystems -f
   Überweisung/PayPal von Hand (Admin bestätigt), oder der Admin bucht direkt auf. Guthaben
   entsteht an genau einer Stelle im Code – dem geprüften Webhook. Einrichtung:
   **[docs/stripe.md](docs/stripe.md)**.
+* Jede verbuchte Zahlung bekommt einen **Beleg** mit fortlaufender Nummer (`AFK-2026-0001`). Was
+  darauf steht, wird im Moment der Buchung festgehalten und ändert sich danach nie wieder – siehe
+  „Belege“ weiter unten.
 * Stripe ist **kein Verkäufer im eigenen Namen**: Verkäufer bleibt der Betreiber. Preis, Beleg und
   Umsatzsteuer kommen deshalb aus dem Panel. Vorgabe ist die **Kleinunternehmerregelung** – keine
   Umsatzsteuer aufgeschlagen, keine ausgewiesen, dafür der Grund als Satz unter jedem Preis, an der
@@ -158,10 +161,67 @@ bekommt sie nur, wer die Ansicht gebucht hat. Ein Ultra-Platz ohne Live-Ansicht 
 `premium-items-afk-linux` – dieselben sichtbaren Fähigkeiten, ohne die Arbeit für ein Bild, das
 niemand ansieht.
 
-Alle Bauformen sprechen über `--mc` Minecraft 1.21.1, 1.21.11, 26.1 und 26.2. Nach einem Kick oder
-gewöhnlichen Verbindungsabbruch endet der Prozess absichtlich mit Fehlerstatus; das Panel startet
-ihn nicht heimlich neu. Nur ein vom Server angeordneter Transfer auf einen Unterserver bleibt Teil
-derselben Sitzung. Tablist und Playerlist gibt es in den Rust-Clients nicht mehr.
+Alle Bauformen sprechen über `--mc` Minecraft 1.21.1, 1.21.11, 26.1 und 26.2. Nur ein vom Server
+angeordneter Transfer auf einen Unterserver bleibt Teil derselben Sitzung. Tablist und Playerlist
+gibt es in den Rust-Clients nicht mehr.
+
+### Der Wiederanlauf gehört dem Panel (Client 2.6.0)
+
+Ab Client 2.6.0 verbindet sich der Client nach einem Kick **von selbst** neu. Für ein Panel, das
+selbst eine Aufsicht ist, wäre das eine zweite Antwort auf dieselbe Frage – deshalb schickt es
+`--no-reconnect` mit, sobald die Bauform die Option kennt, und der Prozess endet nach einem Abbruch
+wie eh und je mit Fehlerstatus.
+
+Drei Gründe, jeder für sich ausreichend:
+
+1. **Der Kunde hat das Sagen.** Wer `auto_reconnect` abschaltet, will einen Bot, der aus bleibt.
+2. **Zwischen zwei Versuchen wird gerechnet.** Jeder Start prüft Laufzeit, Guthaben, Sperren,
+   Kontogrenzen und die Discord-Mitgliedschaft des Gratis-Tarifs. Ein Platz, dessen Laufzeit nachts
+   endet, liefe sonst bis zum Morgen weiter – bezahlt hat ihn niemand mehr.
+3. **Aufgeben muss sichtbar sein.** Nach acht erfolglosen Versuchen bekommt der Kunde eine
+   Nachricht. Ein Client, der still weiterprobiert, hat niemanden, der das meldet.
+
+Einer älteren Bauform wird die Option **nicht** mitgegeben – eine unbekannte Option bricht den Start
+ab, und dann liefe gar kein Bot mehr. Das ist dieselbe Regel wie bei jeder anderen Option: Was in
+`--help` steht, wird benutzt; was dort fehlt, nicht.
+
+### Texturen ohne Handarbeit (Client 2.6.0)
+
+`--pov-resources` ist keine Pflicht mehr: Der Client sucht die Original-Client-JAR selbst – eigene
+Ablage, vorhandene Minecraft-Installation, zuletzt Mojang über dasselbe Versionsmanifest wie der
+Launcher, mit Prüfung der SHA-1. Damit gibt es die texturierte Live-Ansicht auch dort, wo der
+Betreiber nie eine Datei hinterlegt hat.
+
+Das Panel hinterlegt sie trotzdem lieber selbst und schickt den Pfad mit: Eine Datei unter `data/mc`
+gilt für **alle** Kunden dieser Maschine, während die Selbsthilfe des Clients unter
+`XDG_CONFIG_HOME` landet – und das ist hier das Verzeichnis *eines* Kunden. Bei dreißig Kunden mit
+Live-Ansicht wären das dreißigmal dieselben dreißig Megabyte.
+
+### Eine neue Fassung erreicht laufende Bots nicht von selbst
+
+Der Stundentakt holt jedes neue Release aus `gravijet/HugoAFKClient` und legt die Dateien nach
+`data/bin`; die Standorte holen sich dieselben über ihre Leitung. Ein **laufender** Bot wechselt
+dabei nicht mit: Ein Prozess hält seine Datei offen und merkt von der Ablösung nichts. Wer seit drei
+Wochen im Spiel sitzt, sitzt dort mit dem Client von vor drei Wochen.
+
+Das ist Absicht und keine Nachlässigkeit – ein Neustart wirft einen Bot aus dem Spiel, auf Servern
+mit Warteschlange kostet das den Platz darin, und den Zeitpunkt dafür soll ein Mensch wählen.
+Sichtbar muss es trotzdem sein, und dafür merkt sich jeder Bot beim Start einen **Abdruck** seiner
+Datei (Größe und Änderungszeit, dazu die Fassungsnummer). Weicht er später von dem ab, was auf der
+Platte liegt, steht das an drei Stellen:
+
+* am Bot selbst in der Kontenliste (`Client 2.5.0`),
+* als Hinweis über dem Reiter *Verbinden* mit einem Knopf, der genau die betroffenen Bots dieses
+  Platzes neu startet,
+* unter *Administration → Client* für alle Konten auf einmal, nach Fassung aufgeschlüsselt.
+
+Beide Knöpfe starten gestaffelt (drei bzw. fünf Sekunden Abstand): Zwanzig Bots, die im selben
+Augenblick beim selben Minecraft-Server anklopfen, sehen von dort aus wie ein Angriff, und die
+üblichen Schutzmaßnahmen träfen genau die, die gerade wiederkommen wollten.
+
+Kommt eine neue Fassung an, sagt der Systembericht das auch von sich aus (Discord-Webhook des
+Betreibers) – samt der Zahl, wie viele Bots noch mit der alten laufen. Die Fassungsnummer allein
+wäre als Merkmal zu grob: Ein neuer Bau derselben Nummer wäre daran nicht zu erkennen.
 
 ## Standorte
 
@@ -204,15 +264,51 @@ Zwei Dinge, die unabhängig voneinander laufen:
   lässt. Ein Ticket macht man am **Knopf im Support-Kanal** auf – Slash-Befehle dafür gibt es
   bewusst nicht.
 
+### Erwähnungen sehen aus wie Erwähnungen
+
+Discord verschickt Erwähnungen als Zahlen: `<@1538…>` ist eine Person, `<#1538…>` ein Kanal,
+`<@&1538…>` eine Rolle. Im Discord-Client steht daran ein Name, im Panel stand eine zwanzigstellige
+Zahl mitten im Satz.
+
+Auflösen kann das nur, wer den Server sieht – der Bot. Er schickt zu jeder übernommenen Nachricht
+mit, **welche Zahl welchen Namen hatte**, und zwar zum Zeitpunkt der Nachricht: Ein Kanal, der
+später umbenannt oder gelöscht wird, ändert den Verlauf damit nicht, genauso wenig wie in Discord.
+Die Zuordnung steht an der Nachricht (`ticket_messages.mentions`), gerendert wird sie in
+`public/assets/js/discord.js` – zusammen mit allem anderen, was ein Discord-Nutzer benutzt, ohne
+darüber nachzudenken: `**fett**`, `||Spoiler||`, Zitate, Listen, Codeblöcke, eigene Emoji und
+Zeitstempel (`<t:…>`, in der Zeitzone dessen, der sie liest). Der Text selbst kommt dabei durch
+genau eine Tür ins HTML, nämlich durch `escapeHtml`.
+
+### Der Webhook meldet das System, nicht die Tickets
+
+Der Webhook des Betreibers meldete früher neue Tickets und jede Antwort darauf. Das war die vierte
+Kopie einer Nachricht, die schon im Panel stand, mit einer Zahl in der Seitenleiste, und – sobald
+der Bot läuft – als eigener Kanal, in dem das Gespräch tatsächlich stattfindet. Ein Kanal, der
+ständig rauscht, wird nicht mehr gelesen, auch dann nicht, wenn dort einmal etwas steht.
+
+Er heißt deshalb **Webhook für Systemmeldungen** und meldet, was sonst nirgends steht:
+
+* Ein **Lagebericht** im eingestellten Takt (Vorgabe: alle zwölf Stunden) – CPU, Speicher, Platte,
+  Standorte, laufende Bots, Konten, offene Tickets und Aufladungen, Client-Stand, letzte Sicherung
+  und jede wiederkehrende Aufgabe, die zuletzt gescheitert ist.
+* **Warnungen sofort**, höchstens einmal am Tag je Sache: Platte fast voll, Speicher fast voll, ein
+  Standort meldet sich nicht, keine Client-Datei, eine Aufgabe scheitert.
+* Was beim **Bezahlen nicht zusammenpasst**: Betrag oder Konto stimmen nicht, eine Erstattung, ein
+  Streitfall. Das sind die einzigen Meldungen über Geld, und sie stehen dort, weil sie einen
+  Menschen brauchen.
+
+Dieselbe Liste steht ohne Webhook unter *Administration → System*, mit einem Knopf „Bericht jetzt
+schicken“ daneben – die häufigste Frage an einen Webhook ist, ob überhaupt etwas ankommt.
+
 Anleitungen: **[docs/discord-bot.md](docs/discord-bot.md)** und
 **[docs/google-anmeldung.md](docs/google-anmeldung.md)**.
 
 ## Post
 
-`server/mail.js` kennt Vorlagen für alles, was ein Kunde erfahren soll: Adresse bestätigen,
-Passwort zurücksetzen, Anmeldung von einem neuen Gerät, Aufladung gutgeschrieben, Platz verlängert,
-Platz läuft ab, Platz stillgelegt, Guthaben knapp, Ticket angelegt/beantwortet/geschlossen,
-Ankündigung, Nachricht von Hand.
+`server/mail.js` kennt Vorlagen für alles, was ein Kunde erfahren soll: Adresse bestätigen, **neue
+Adresse bestätigen**, Passwort zurücksetzen, Anmeldung von einem neuen Gerät, Aufladung
+gutgeschrieben, Platz verlängert, Platz läuft ab, Platz stillgelegt, Guthaben knapp, Ticket
+angelegt/beantwortet/geschlossen, **Konto zur Löschung vorgemerkt**, Ankündigung, Nachricht von Hand.
 
 Jede Nachricht gehört zu einer **Kategorie**, und der Kunde stellt in seinen Einstellungen ein,
 welche er will. Zwei lassen sich nicht abbestellen: was das Konto absichert und was ohne Nachricht
@@ -221,6 +317,199 @@ gar nicht ginge.
 Was verschickt wurde, steht in `mails` – **mit Empfänger und Wortlaut**. Der Kunde sieht seine
 eigenen Nachrichten unter *Einstellungen → Nachrichten an dich*. Wer eine E-Mail mit unserem Namen
 bekommt und sich fragt, ob sie echt war, prüft das dort ohne Rückfrage.
+
+## Das eigene Konto
+
+Ein Konto war lange eine E-Mail-Adresse und ein Benutzername. Für einen Dienst, der Geld einnimmt,
+ist das zu wenig – auf einen Beleg gehört, an wen geleistet wurde. Unter **Einstellungen** steht
+deshalb alles, was zu einem Konto gehört, in sechs Reitern statt in vier Kästen untereinander:
+
+| Reiter | Was dort steht |
+| --- | --- |
+| **Konto** | Bild, Benutzername, E-Mail-Adresse, Sprache, verknüpfte Konten (Discord, Google) |
+| **Persönliche Daten** | Name, Telefon, Zeitzone – und die Rechnungsadresse samt Firmierung und USt-IdNr. |
+| **Nachrichten** | welche E-Mails kommen, was der eigene Discord-Webhook meldet, und was schon verschickt wurde |
+| **Sicherheit** | Passwort, Anmeldecode, bekannte Browser, angemeldete Geräte, die letzten Anmeldeversuche |
+| **Darstellung** | Farbschema, Abstände, Bewegung, Startseite – alles nur auf **diesem** Gerät |
+| **Deine Daten** | alles herunterladen oder das Konto löschen |
+
+Drei Dinge daran sind keine Formularfelder, sondern Abläufe:
+
+* **Der Benutzername** steht unter jeder Ticketantwort, in Discord und in den Protokollen. Er lässt
+  sich ändern, aber nur **alle 30 Tage** – ein Name, der stündlich wechselt, macht jeden Verlauf
+  unlesbar. Nur die Groß-/Kleinschreibung zu ändern gilt nicht als „vergeben“.
+* **Die E-Mail-Adresse** braucht das Passwort und eine **Bestätigung an der neuen Adresse**. Bis
+  dahin bleibt die alte in Kraft; ein Tippfehler sperrt also niemanden aus. Die alte Adresse bekommt
+  dabei eine Nachricht – sie ist die einzige Warnung, wenn jemand anderes gerade ein Konto übernimmt.
+* **Der Anmeldecode** (Einstellungen → Sicherheit) macht aus einer Anmeldung zwei Fragen. Stimmt das
+  Passwort und ist der Browser einer, den dieses Konto noch nie benutzt hat, kommt keine Sitzung,
+  sondern eine Wartemarke: sechs Ziffern per E-Mail, fünfzehn Minuten gültig, fünf Versuche.
+  Vorgabe ist **an**; wer ihn nicht will, schaltet ihn ab. Was er leistet, steht auch so im Panel:
+  Ein gestohlenes Passwort allein reicht nicht mehr. Was er **nicht** ist, ebenso – ein zweiter
+  Faktor wäre etwas anderes, denn der Code geht an dieselbe Adresse, über die auch „Passwort
+  vergessen“ läuft. Er ist nie eine Falle: Ohne eingerichteten Postausgang bleibt er wirkungslos,
+  und wenn eine Nachricht gerade nicht hinausgeht, meldet die Anmeldung ganz normal an. Ein
+  klemmender Mailserver darf niemanden aus seinem eigenen Konto aussperren.
+* **Bekannte Browser** sind die, die den Code schon einmal beantwortet haben. Erkannt werden sie an
+  einem Zufallswert in einem eigenen, langlebigen Cookie – **nicht** an der Browserkennung: „Chrome
+  auf Windows“ schicken Millionen zeichengleich, und sie ändert sich bei jeder Aktualisierung.
+  Abmelden entfernt keinen davon, *vergessen* schon; jeder Passwortwechsel und jedes Zurücksetzen
+  vergisst alle auf einmal. Der Grund dafür ist derselbe wie beim Wechsel selbst: Wer ihn vornimmt,
+  glaubt oft, jemand anderes kenne das alte Passwort – und der sitzt vielleicht an einem Browser,
+  der bis eben als bekannt galt.
+* **Konto löschen** hat eine Frist von 14 Tagen. Der Wunsch steht an, die Bots gehen sofort aus
+  (und lassen sich bis zum Stichtag auch nicht wieder starten), gelöscht wird nichts. Ein Klick holt
+  alles zurück. Danach geht das Konto mit allem: Serverplätze, Minecraft-Konten, Tickets, Guthaben,
+  Dateien. Ein Administrator kann sich hier nicht selbst löschen – sonst bliebe niemand, der andere
+  hereinlässt.
+
+**Der Datenexport** (`GET /api/me/export`) ist eine Datei und keine Ansicht: Konto, Serverplätze,
+Minecraft-Konten, Buchungen, Aufladungen, Tickets samt Verlauf, verschickte Nachrichten,
+Benachrichtigungen, Sitzungen und Protokoll. Nicht darin: Passwort-Hash, Sitzungs-Token,
+Bestätigungsmarken und die Microsoft-Anmeldungen. Das sind Schlüssel und keine Auskunft – wer die
+Datei weitergibt, gäbe sonst den Zugang weiter statt der Auskunft.
+
+**Profilbilder** kommen von Discord, wenn es verknüpft ist – dasselbe Gesicht wie im Support-Kanal.
+Sonst zeichnet das Panel selbst: Anfangsbuchstabe auf einer Farbe, die aus dem Namen gerechnet ist
+und deshalb überall dieselbe bleibt. Ein Gravatar kommt nicht in Frage; das wäre die E-Mail-Adresse
+des Kunden, bei jedem Seitenaufruf an einen Dritten geschickt.
+
+## Belege
+
+Bis dahin war der einzige Nachweis über eine Zahlung eine E-Mail. Wer sie gelöscht hat, wer keine
+bekommen konnte (kein SMTP) oder wer sie seiner Buchhaltung geben muss, stand ohne da – und die
+Bestätigung von Stripe ist kein Beleg des Verkäufers, denn Verkäufer ist der Betreiber.
+
+Jede verbuchte Aufladung bekommt deshalb im selben Moment eine **fortlaufende Nummer** je Jahr und
+einen **Abzug** dessen, was darauf steht: Anschrift, Firmierung, USt-IdNr. und der Umsatzsteuersatz,
+der damals galt – dazu die Sprache, in der er galt. Wer im Januar unter seiner alten Anschrift
+gekauft hat und im März umzieht, hat trotzdem im Januar unter der alten gekauft; ein Beleg, der auf
+das Konto verweist, änderte rückwirkend jede Rechnung des Vorjahres.
+
+Das Dokument selbst (`GET /api/billing/receipts/:id`) ist eine **eigenständige HTML-Seite**: alle
+Marken darin, kein Stylesheet von außen, kein JavaScript. Am Bildschirm sieht sie aus wie das
+Panel, auf Papier ist sie schwarz auf weiß, und der Browser macht daraus ein PDF. Wer verkauft,
+steht unter *Administration → Einstellungen → Verkäufer und Belege*; ohne diese Angaben trägt der
+Beleg nur die Marke, und das ist auf einer Rechnung zu wenig.
+
+## Der Serverplatz
+
+Ein Serverplatz ist ein Zielserver, ein Tarif und ein paar Konten, die dort sitzen. Drei Dinge daran
+sind neu und beantworten Fragen, die vorher offen blieben.
+
+### Läuft der Minecraft-Server überhaupt?
+
+„Mein Bot kommt nicht rein“ hat zwei mögliche Ursachen, und die eine liegt nicht bei uns. Im Panel
+stand dazu bisher nur „Verbindung abgelehnt“ – damit fing die Suche beim Minecraft-Konto an, ging
+über den Client und endete oft bei der Erkenntnis, dass der Zielserver seit einer Stunde aus ist.
+
+Unter der Kontenliste im Reiter *Verbinden* steht deshalb, wie es dem **Zielserver** geht: MOTD in
+seinen Farben, Spielerzahl, Version, Serversymbol und die Antwortzeit. Gefragt wird mit derselben
+Abfrage, die auch der Minecraft-Launcher für seine Serverliste benutzt (Server List Ping) – kein
+Beitritt, kein Konto, keine Anmeldung bei Mojang. Ohne ausdrücklichen Port wird vorher der
+SRV-Eintrag `_minecraft._tcp.<host>` aufgelöst, genau wie es der Spielclient tut; ohne das fragte
+das Panel Port 25565 auf einer Adresse, an der niemand lauscht, und meldete „offline“ für einen
+Server, der bestens läuft.
+
+Antwortet er nicht, steht der Grund im Klartext dabei: keine Adresse (DNS), nichts auf diesem Port,
+keine Antwort (aus oder Firewall), Verbindung abgebrochen. Die Abfrage läuft einmal beim Öffnen des
+Reiters und sonst auf Knopfdruck, mit fünfzehn Sekunden Zwischenspeicher – der Server gehört jemand
+anderem, und ein Panel, das ihn im Sekundentakt anpingt, weil ein Fenster offen steht, ist aus
+seiner Sicht kein Besucher mehr. Was von dort zurückkommt, ist Text und ein Bild von einem Fremden:
+Jedes Feld wird einzeln herausgenommen und beschnitten, das Serversymbol muss ein PNG sein, und die
+Namensliste endet nach zwölf Einträgen.
+
+### Warum ist dieser Platz so eingestellt?
+
+Serverplätze hatten Felder für alles, was ein Programm braucht, und keines für das, was ein Mensch
+braucht. Wer sechs davon hat, hat sechs Namen und keine Erinnerung daran, warum auf diesem hier die
+Sichtweite auf 12 steht. Unter *Einstellungen* steht deshalb ein freies **Notizfeld**. Es wird nicht
+ausgewertet, nicht durchsucht, und der Bot bekommt es nie zu sehen.
+
+### Denselben Aufbau noch einmal
+
+Wer einen Platz eingerichtet hat, hat oft eine halbe Stunde investiert: fünfzehn Macros, ein
+Zeitplan, vier wiederkehrende Nachrichten, Wartezeiten, die auf genau diesen Server passen.
+**Kopieren** (Einstellungen → Diesen Platz kopieren) legt einen neuen Platz mit alldem an – Name und
+Adresse frei wählbar, Tarif vorausgewählt wie beim Original.
+
+Zwei Dinge kommen bewusst nicht mit. Die **Minecraft-Konten**: Ein Konto kann nur in einem Spiel
+gleichzeitig sein, kopiert stünde es auf zwei Plätzen, und der zweite Start würde abgewiesen. Und
+die **Zusätze**: Sie sind bezahlt, je Platz, und eine Kopie, die ungefragt Zusätze mitbucht, bucht
+ungefragt Geld ab. Die Kopie selbst ist ein Serverplatz wie jeder andere und kostet, was ihr Tarif
+kostet.
+
+## Zeitpläne
+
+Ein AFK-Bot soll oft nicht rund um die Uhr sitzen, sondern zu bestimmten Zeiten. Das ging bisher nur
+von Hand, also gar nicht: Wer um sechs Uhr starten will, steht nicht um sechs Uhr auf, um auf einen
+Knopf zu drücken.
+
+Im Reiter **Zeitplan** eines Serverplatzes steht deshalb eine Uhrzeit, eine Auswahl von Wochentagen
+und was passieren soll (starten, stoppen, neu starten) – wahlweise für ein Konto oder für alle.
+Bewusst keine cron-Zeile: „0 6 * * 1-5“ ist eine Sprache, die man lernen muss und die genau eine
+falsche Stelle braucht, um etwas anderes zu tun.
+
+Gerechnet wird in der **Zeitzone des Kontos** (Einstellungen → Persönliche Daten). Sechs Uhr heißt
+sechs Uhr dort, wo der Kunde wohnt, und nicht dort, wo zufällig der Server steht. Ein verpasster
+Zeitpunkt wird bis zu einer Viertelstunde nachgeholt – das fängt einen Neustart ab, ohne dass ein
+Server, der einen halben Tag aus war, beim Hochfahren zwölf Stunden alte Pläne abarbeitet. Was ein
+Zeitplan zuletzt bewirkt hat, steht an ihm; auch die Absage, wenn das Guthaben nicht reichte.
+
+## Wiederanlauf
+
+Ein AFK-Bot, der nachts um drei rausfliegt und am Morgen aus ist, hat seinen Zweck verfehlt. Der
+Client kennt keinen eigenen Reconnect: Nach einem Kick oder einem Netzabbruch beendet er sich, und
+bis hierher löschte das Panel damit auch gleich den Startwunsch.
+
+Ab jetzt entscheidet eine einzige Frage, und sie steht auch so im Panel: **war der Bot vorher im
+Spiel?**
+
+* **Ja** – dann ist das Aus eine Störung, und die Verbindung kommt zurück. Erster Versuch nach fünf
+  Sekunden, danach verdoppelt sich die Wartezeit bis zu einer Minute, höchstens acht Versuche
+  hintereinander. Beides ist je Serverplatz einstellbar.
+* **Nein** – dann ist es eine Absage. Falsche Adresse, falsche Version, Bann, Whitelist: Ein
+  zweiter Versuch scheitert genauso, und ein Panel, das trotzdem weiterstartet, ist für den
+  Minecraft-Server nicht von einem Angriff zu unterscheiden. Der Bot bleibt aus.
+
+Wer fünf Minuten am Stück gestanden hat, hat die Versuchskette hinter sich: Der nächste Ausfall
+fängt wieder bei Versuch eins an. Wer achtmal in Folge scheitert, bleibt aus – und bekommt eine
+Nachricht, denn ein Wiederanlauf, der still aufgibt, sieht aus wie ein Bot, der einfach weg war.
+
+Derselbe Mechanismus deckt den **Neustart der ganzen Maschine** ab. Der Startwunsch steht in der
+Datenbank, die systemd-Einheit fährt das Panel wieder hoch, und beim Hochfahren wird jeder offene
+Wunsch eingelöst. Es gibt dafür keinen zweiten Weg und keine zweite Einstellung.
+
+## Macros
+
+Ein Macro ist ein Auslöser und eine Kette von Schritten. Auslöser sind Beitritt, **Wiederkehr**,
+Zeittakt, Chatzeile, Weltwechsel, Tod, ein aufgehendes **Menü** und der Verbindungsabbruch. Die
+Wiederkehr ist dabei der Auslöser, den man erst vermisst, wenn man ihn braucht: Nach einem Kick ist
+oft etwas anderes zu tun als beim ersten Beitritt.
+
+Die Schritte reichen von „Chatzeile senden“ bis „neu verbinden“: laufen, blicken (nach Winkel oder
+nach Himmelsrichtung), springen, fallen lassen, Heimatposition und Wegpunkte, schleichen, sprinten,
+Menüfelder anklicken, Anzeigetafel/Inventar/Menü abfragen, Anti-AFK schalten, die Live-Ansicht
+starten, ein anderes Macro aufrufen, alle laufenden abbrechen – und **mir Bescheid geben**, damit
+ein Macro auf „du wurdest gebannt“ nicht nur eine Zeile im Verlauf hinterlässt.
+
+Drei Zahlen machen daraus etwas, das nicht wie ein Automat aussieht, und alle drei haben denselben
+Hintergrund: Ein Server, der etwas für Spam hält, wirft den Bot dafür raus.
+
+| | Vorgabe | Wofür |
+| --- | --- | --- |
+| **Sperrzeit** | 0 (jedes Mal) | Der Server wiederholt die auslösende Zeile im Sekundentakt |
+| **Wahrscheinlichkeit** | 100 % | Eine Antwort, die immer auf die Millisekunde gleich kommt |
+| **Streuung** | 0 (exakt) | „alle 300 s“ ist ein Muster, „alle 300 s ± 30 s“ ist keines |
+
+In jedem Text stehen Platzhalter zur Verfügung: `{line}` ist die auslösende Zeile, `{player}` das
+Konto, `{server}` der Serverplatz, `{1}` bis `{9}` sind die Gruppen des regulären Ausdrucks. Damit
+wird aus „wer hat geschrieben“ eine Antwort an genau den.
+
+Wer taktet, entscheidet sich an einer Stelle: Eine reine Chatkette ohne Sperrzeit, Zufall, Streuung
+und Ausschluss gibt der Client selbst ab (`--cmd`, `--on`) – er sieht Beitritt, Tod und Weltwechsel
+im Protokoll und nicht im Meldungstext. Alles andere taktet das Panel. Diese Frage wird **einmal**
+beantwortet; zwei Antworten hießen, dass ein Macro doppelt läuft.
 
 ## Was zu tun ist
 
@@ -320,6 +609,7 @@ ist, steht ausführlich in **[docs/verwaltung.md](docs/verwaltung.md)**; die Kur
 | **Textbausteine** | die vier Sätze, die ein Support jeden Tag schreibt – mit `{name}` und `{ticket}` |
 | **Rundmail** | eine Nachricht an einen von sechs Empfängerkreisen, jeder mit seiner Zahl daneben |
 | **Erstatten** | Stripe-Zahlung zurückgeben, ohne das Panel zu verlassen |
+| **Systemmeldungen** | was gerade auffällt – und ein Knopf, der den Lagebericht sofort in den Discord-Kanal schickt |
 
 Zwei Regeln ziehen sich durch: **Was nicht geht, wird übersprungen und aufgezählt**, nicht mitten
 in einer Massenaktion abgebrochen. Und **niemand sperrt sich selbst aus** – weder aus dem eigenen
@@ -344,8 +634,15 @@ server/
   pages.js        Vorlagen                    landing.js    das Bewegliche der öffentlichen Seiten
   mail.js         SMTP, Vorlagen, Kategorien  oauth.js      Discord und Google
   tickets.js      Support                     notify.js     Discord-Webhooks
+  profile.js      Name, Anschrift, Firmierung, USt-IdNr., Zeitzone – geprüft an einer Stelle
+  account.js      das eigene Konto mitnehmen (Export) oder loswerden (Löschung mit Frist)
+  receipt.js      der Beleg über eine Aufladung – eine Seite, die ohne diesen Server aussieht wie sie selbst
+  schedules.js    Bots zu festen Zeiten starten und stoppen, in der Zeitzone des Kontos
+  systemreport.js der Zustand der Anlage als Discord-Nachricht: Lagebericht und Warnungen
   todos.js        was ein Kunde zu tun hat – die Liste in der Übersicht
   security.js     Anmeldeversuche, Bremse, Adresssperren, offene Sitzungen
+  logincode.js    der Anmeldecode bei einem neuen Browser – und welche Browser bekannt sind
+  mcping.js       den Zielserver fragen, wie es ihm geht (Server List Ping, SRV, MOTD)
   backup.js       tägliche Sicherung der Datenbank (VACUUM INTO), Aufbewahrung
   jobs.js         die wiederkehrenden Aufgaben als Verzeichnis statt als anonyme Intervalle
   export.js       Nutzer, Buchungen, Aufladungen … als CSV, formelsicher
@@ -361,6 +658,8 @@ public/
   pages/          die festen Seiten als Vorlagen ({{> partial}} und {{schlüssel}})
   assets/js/i18n.js     alle Texte, beide Sprachen, von Server und Browser genutzt
   assets/js/chatlog.js  Chatzeilen zusammenlegen, §-Farben zerlegen – ebenfalls von beiden
+  assets/js/countries.js  die Länder der Rechnungsadresse – geprüft am Server, gewählt im Browser
+  assets/js/discord.js  Discord-Nachrichten als HTML: Erwähnungen mit Namen statt Zahlen
   assets/js/shield.js   Inhaltsschutz im Browser
   assets/js/palette.js  die Sprungmarke auf Strg+K – findet alles und führt überall hin
   assets/js/views/      Übersicht, Konten, Server, Guthaben, Tickets, Proxys, Admin …
@@ -403,27 +702,36 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | Bereich | Endpunkte |
 | --- | --- |
 | Anmeldung | `POST /auth/register`, `/auth/login`, `/auth/logout`, `/auth/verify`, `/auth/forgot`, `/auth/reset` |
+| Anmeldung: Code | `POST /auth/login/code` (Marke + sechs Ziffern), `POST /auth/login/code/resend`. `/auth/login` antwortet mit `{challenge, email_hint}` statt einer Sitzung, wenn der Browser neu ist |
 | Discord/Google | `GET /auth/:provider/start` (`mode=link\|login\|verify`), `/auth/:provider/callback`, `DELETE /auth/:provider` |
-| Eigenes | `GET/PATCH /me`, `GET/DELETE /me/sessions`, `POST /me/password`, `GET /me/mails`, `/me/discord-test` |
+| Eigenes | `GET/PATCH /me` (samt Name, Anschrift, Firmierung, USt-IdNr., Zeitzone), `POST /me/password`, `GET /me/mails`, `/me/discord-test` |
+| Eigenes: Name und Adresse | `POST /me/username`, `POST/DELETE /me/email`, `POST /auth/email/confirm` (ohne Anmeldung – der Link geht an die neue Adresse) |
+| Eigenes: Geräte | `GET/DELETE /me/sessions`, `DELETE /me/sessions/:abdruck`, `GET /me/signins`, `GET/DELETE /me/devices`, `DELETE /me/devices/:abdruck` (bekannte Browser vergessen) |
+| Eigenes: Daten | `GET /me/export` (alles als Datei), `POST/DELETE /me/delete` (Löschung mit Frist) |
+| Belege | `GET /billing/receipts`, `GET /billing/receipts/:id` – das Dokument selbst, druckfertig |
+| Zeitpläne | `GET/POST /profiles/:id/schedules`, `PATCH/DELETE /profiles/:id/schedules/:planId` |
 | Konten | `GET /accounts`, `POST /accounts/login` (Gerätecode), `POST /accounts/offline`, `DELETE /accounts/:id` |
-| Serverplätze | `GET/POST /profiles`, `GET/PATCH/DELETE /profiles/:id`, `POST /profiles/:id/plan`, `/resume`, `/node` |
+| Serverplätze | `GET/POST /profiles`, `GET/PATCH/DELETE /profiles/:id`, `POST /profiles/:id/plan`, `/resume`, `/node`, `/copy` (Kopie samt Macros, Zeitplänen und Spam) |
+| Zielserver | `GET /profiles/:id/status` – MOTD, Spielerzahl, Version, Antwortzeit des Minecraft-Servers (Server List Ping, 15 s Zwischenspeicher) |
+| Client-Fassung | `POST /profiles/:id/client-update` – die Bots dieses Platzes auf die Datei heben, die jetzt daliegt |
 | Zusätze | `GET/POST /profiles/:id/addons`, `DELETE /profiles/:id/addons/:addonId` |
 | Bots | `POST /profiles/:id/start`, `/stop`, `/restart` |
 | Chat | `GET/POST /profiles/:id/chat`, `GET /profiles/:id/chat.txt` (Verlauf als Datei), `GET /profiles/:id/views`, `…/spam` |
 | Im Spiel | `POST /profiles/:id/command` (`go`, `look`, `home`, `board`, `menu`, `inv`, `click`, `sneak`, …) |
 | Live-Ansicht | `GET /profiles/:id/pov/:accountId/frame.png`, `/state.json`, `/item.png`, `POST …/click`, `/close`, `/hotbar` – die Brücke zum Viewer des Clients |
-| Automatik | `…/macros` (GET/POST/PATCH/DELETE, dazu `/test`) |
+| Automatik | `…/macros` (GET/POST/PATCH/DELETE, dazu `/test`) – Auslöser samt Einstellungen, Schritte, `cooldown_sec`, `chance` |
 | Guthaben | `GET /billing`, `POST /billing/voucher`, `POST /billing/topup` |
 | Support | `GET/POST /tickets`, `GET /tickets/:id`, `/messages`, `POST /tickets/:id/reply`, `/status`, `/typing` |
 | Anhänge | `POST /tickets/files` (Rumpf = die Datei), `GET /tickets/files/:id` |
 | Sonstiges | `GET /announcements`, `GET /nodes` |
-| Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/resources/:version` (POST = Rumpf ist die JAR, `/fetch`, DELETE), `/mails`, `/audit`, `/ledger` |
+| Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/client/rollout` (alle veralteten Bots neu starten), `/resources/:version` (POST = Rumpf ist die JAR, `/fetch`, DELETE), `/mails`, `/audit`, `/ledger` |
 | Admin: suchen | `GET /admin/search?q=` – Nutzer, Serverplätze, Accounts, Tickets, Gutscheine, Standorte, Aufladungen auf einmal; jeder Treffer bringt seinen Weg mit |
 | Admin: viele auf einmal | `POST /admin/users/bulk` (`credits`, `block`, `unblock`, `logout`, `verify-mail`, `stop-bots`) |
-| Admin: Ausfuhr | `GET /admin/export/:liste` – `users`, `ledger`, `topups`, `profiles`, `tickets`, `audit` als CSV |
+| Admin: Ausfuhr | `GET /admin/export/:liste` – `users`, `ledger`, `topups`, `profiles`, `tickets`, `audit`, `receipts` als CSV |
 | Admin: Sicherheit | `GET /admin/security`, `POST/DELETE /admin/security/blocks`, `DELETE /admin/security/sessions/:id` |
 | Admin: Sicherungen | `GET/POST /admin/backups`, `GET/DELETE /admin/backups/:datei` |
 | Admin: Betrieb | `GET /admin/bots`, `GET /admin/jobs`, `POST /admin/jobs/:key/run` |
+| Admin: System | `GET /admin/system/report` (was gerade auffällt), `POST /admin/system/report` (Bericht jetzt schicken) |
 | Admin: Support | `GET/POST/PATCH/DELETE /admin/ticket-templates`, `POST /admin/ticket-templates/:id/used` |
 | Admin: Rundmail | `GET /admin/broadcast` (Kreise mit Zahlen), `POST /admin/broadcast` |
 | Admin: Geld zurück | `POST /admin/topups/:id/refund` – löst die Erstattung bei Stripe aus; Credits nimmt der Webhook zurück |

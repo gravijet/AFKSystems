@@ -186,6 +186,25 @@ document.addEventListener('click', (event) => {
   if (button) applyTheme(button.dataset.theme);
 });
 
+/**
+ * Spoiler aus Discord aufdecken.
+ *
+ * Einmal für die ganze Seite, nicht je Nachricht: Der Ticketverlauf wird bei jeder Antwort neu
+ * gezeichnet, und ein Behandler je Element müsste dabei jedes Mal neu angehängt werden – einer
+ * davon würde irgendwann vergessen, und dann bliebe ein Spoiler für immer verdeckt.
+ */
+document.addEventListener('click', (event) => {
+  const spoiler = event.target.closest('.dc-spoiler:not(.is-open)');
+  if (spoiler) spoiler.classList.add('is-open');
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key !== 'Enter' && event.key !== ' ') return;
+  const spoiler = event.target.closest?.('.dc-spoiler:not(.is-open)');
+  if (!spoiler) return;
+  event.preventDefault();
+  spoiler.classList.add('is-open');
+});
+
 // ---------------------------------------------------------------- API
 
 export class ApiError extends Error {
@@ -390,6 +409,57 @@ export function mcText(raw) {
     .join('');
 }
 
+// ---------------------------------------------------------------- Profilbilder
+//
+// Ein Gesicht neben einem Namen macht eine Liste lesbar – man sucht nicht mehr Buchstabe für
+// Buchstabe, sondern erkennt. Es gibt hier aber **kein fremdes Bild von irgendwoher**: Ein
+// Gravatar wäre die E-Mail-Adresse des Kunden, bei jedem Seitenaufruf an einen Dritten geschickt,
+// ohne dass ihn jemand gefragt hätte.
+//
+// Also zwei Fälle, und nur diese zwei:
+//
+//   * **Discord ist verknüpft** – dann steht dort dasselbe Bild wie im Support-Kanal. Es kommt vom
+//     Bildserver von Discord; die Content-Security-Policy erlaubt genau diesen einen Host.
+//   * **Sonst** zeichnet das Panel selbst: der erste Buchstabe auf einer Farbe, die aus dem Namen
+//     berechnet ist. Derselbe Name ergibt immer dieselbe Farbe – auf jedem Gerät, in jeder Liste,
+//     ohne dass irgendwo eine Farbe gespeichert werden müsste.
+
+/**
+ * Eine Zahl aus einem Text – klein, stabil, ohne Anspruch auf Kryptografie.
+ *
+ * Das ist der FNV-1a-Grundgedanke: multiplizieren und mischen. Er wird hier für eine Farbe
+ * benutzt und für nichts anderes; entscheidend ist allein, dass derselbe Name immer dieselbe
+ * Zahl ergibt und ähnliche Namen nicht dieselbe.
+ */
+function hueOf(text) {
+  let hash = 0x811c9dc5;
+  for (const char of String(text || '?')) {
+    hash ^= char.codePointAt(0);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash % 360;
+}
+
+/**
+ * Das Bild neben einem Namen.
+ *
+ * `person` ist alles, was einen `username` (oder `name`) und vielleicht ein `avatar` hat – das
+ * eigene Konto, ein Beteiligter an einem Ticket, eine Zeile in der Nutzerliste.
+ */
+export function avatar(person, { size = 32, klass = '' } = {}) {
+  const name = String(person?.username || person?.name || '?');
+  const letter = [...name][0]?.toUpperCase() || '?';
+  const style = `--avatar-size:${size}px`;
+  if (person?.avatar) {
+    return `<img class="avatar ${klass}" style="${style}" src="${escapeHtml(safeLink(person.avatar))}"
+      alt="" width="${size}" height="${size}" loading="lazy" referrerpolicy="no-referrer">`;
+  }
+  const hue = hueOf(name.toLowerCase());
+  return `<span class="avatar ${klass}" style="${style};--avatar-hue:${hue}" aria-hidden="true">${escapeHtml(
+    letter
+  )}</span>`;
+}
+
 /** Byte in etwas, das man vorlesen kann. */
 export function bytes(value) {
   const number = Number(value) || 0;
@@ -491,11 +561,35 @@ export function confirmDialog(
   });
 }
 
-/** Formular-Dialog: Felder rein, Werte raus (oder null bei Abbruch). */
-export function formDialog(title, fields, { submit = tr('common.save'), note = '' } = {}) {
+/**
+ * Formular-Dialog: Felder rein, Werte raus (oder null bei Abbruch).
+ *
+ * Mit `draftKey` bleiben Textfelder auf diesem Gerät erhalten. Der Aufrufer löscht den Schlüssel
+ * erst, wenn seine eigentliche Serveranfrage erfolgreich war – das Schließen des Dialogs allein
+ * ist noch kein Erfolg und darf einen längeren Text deshalb nicht vernichten.
+ */
+export function formDialog(
+  title,
+  fields,
+  { submit = tr('common.save'), note = '', draftKey = '', draftLabel = tr('common.draftSaved') } = {}
+) {
   return new Promise((resolve) => {
     const dialog = document.createElement('dialog');
-    const body = fields
+    let savedDraft = {};
+    if (draftKey) {
+      try {
+        const parsed = JSON.parse(localStorage.getItem(draftKey) || '{}');
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) savedDraft = parsed;
+      } catch {
+        savedDraft = {};
+      }
+    }
+    const activeFields = fields.map((field) =>
+      draftKey && field.type !== 'files' && field.type !== 'note' && Object.hasOwn(savedDraft, field.key)
+        ? { ...field, value: savedDraft[field.key] }
+        : field
+    );
+    const body = activeFields
       .map((field) => {
         if (field.type === 'note') {
           return `<p class="small muted">${escapeHtml(field.label)}</p>`;
@@ -507,7 +601,7 @@ export function formDialog(title, fields, { submit = tr('common.save'), note = '
             .map(
               (option) =>
                 `<option value="${escapeHtml(option.value ?? option)}" ${
-                  (option.value ?? option) === field.value ? 'selected' : ''
+                  String(option.value ?? option) === String(field.value ?? '') ? 'selected' : ''
                 }>${escapeHtml(option.label ?? option)}</option>`
             )
             .join('');
@@ -550,6 +644,7 @@ export function formDialog(title, fields, { submit = tr('common.save'), note = '
           <div class="stack">${body}</div>
         </div>
         <footer>
+          ${draftKey ? `<span class="form-draft-status small muted" aria-live="polite"></span>` : ''}
           <button class="btn" value="cancel" type="submit" formnovalidate>${escapeHtml(tr('common.cancel'))}</button>
           <button class="btn btn-primary" value="ok" type="submit">${escapeHtml(submit)}</button>
         </footer>
@@ -560,10 +655,43 @@ export function formDialog(title, fields, { submit = tr('common.save'), note = '
     // der Browser überschreibt den Wert nach dem Absenden mit dem des gedrückten Knopfes.
     let result = null;
     const form = dialog.querySelector('form');
+    const draftStatus = dialog.querySelector('.form-draft-status');
+    const readValues = () => {
+      const data = {};
+      for (const field of activeFields) {
+        if (field.type === 'note' || field.type === 'files') continue;
+        const input = form.elements[field.key];
+        if (!input) continue;
+        data[field.key] = field.type === 'checkbox' ? input.checked : input.value;
+      }
+      return data;
+    };
+    const storeDraft = () => {
+      if (!draftKey) return;
+      const data = readValues();
+      const hasContent = Object.values(data).some(
+        (value) => value === true || (typeof value === 'string' && value.trim())
+      );
+      try {
+        if (hasContent) localStorage.setItem(draftKey, JSON.stringify(data));
+        else localStorage.removeItem(draftKey);
+      } catch {
+        /* Komfortfunktion: Ein gesperrter Gerätespeicher darf das Formular nicht beeinflussen. */
+      }
+      if (draftStatus) draftStatus.textContent = hasContent ? draftLabel : '';
+    };
+    if (draftKey) {
+      form.addEventListener('input', storeDraft);
+      form.addEventListener('change', storeDraft);
+      const hasSavedContent = Object.values(savedDraft).some(
+        (value) => value === true || (typeof value === 'string' && value.trim())
+      );
+      if (draftStatus) draftStatus.textContent = hasSavedContent ? draftLabel : '';
+    }
     form.addEventListener('submit', (event) => {
       if (event.submitter?.value !== 'ok') return;
       const data = {};
-      for (const field of fields) {
+      for (const field of activeFields) {
         if (field.type === 'note') continue;
         const input = form.elements[field.key];
         if (!input) continue;
