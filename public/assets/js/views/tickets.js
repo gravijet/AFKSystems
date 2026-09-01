@@ -379,7 +379,7 @@ async function one(root, id, { staff, backHash }) {
                           (person) =>
                             `<option value="${person.id}" ${
                               ticket.assigned_to === person.id ? 'selected' : ''
-                            }>${escapeHtml(person.username)}</option>`
+                            }>${escapeHtml(person.display_name || person.username)}</option>`
                         )
                         .join('')}
                     </select>
@@ -388,7 +388,7 @@ async function one(root, id, { staff, backHash }) {
                     data.user
                       ? `<hr class="rule">
                          <a class="row spread" href="#/admin/users/${data.user.id}">
-                           <span class="row">${icon('user')} ${escapeHtml(data.user.username)}</span>${icon('arrow')}</a>
+                           <span class="row">${icon('user')} ${escapeHtml(data.user.display_name || data.user.username)}</span>${icon('arrow')}</a>
                          <div class="small muted">${escapeHtml(data.user.email)}
                            ${data.paying ? `<span class="pill primary">${escapeHtml(tr('adm.paying'))}</span>` : ''}</div>`
                       : ''
@@ -453,7 +453,7 @@ async function one(root, id, { staff, backHash }) {
     const mine = message.user_id === (data.me ?? state.me.id);
     const who = message.internal
       ? tr('tk.internal')
-      : message.author_name || message.username || (message.role === 'staff' ? tr('tk.staff') : tr('tk.you'));
+      : message.author_name || message.display_name || message.username || (message.role === 'staff' ? tr('tk.staff') : tr('tk.you'));
     return `<article class="chat-msg ${message.role} ${mine ? 'mine' : ''} ${
       message.internal ? 'internal' : ''
     }">
@@ -483,7 +483,7 @@ async function one(root, id, { staff, backHash }) {
         .map(
           (person) => `<div class="row spread">
             <span class="row" style="gap:.5rem;min-width:0">${avatar(person, { size: 24 })}
-              <span class="truncate">${escapeHtml(person.username)}</span>
+              <span class="truncate">${escapeHtml(person.display_name || person.username)}</span>
               ${person.owner ? `<span class="pill">${escapeHtml(tr('tk.author'))}</span>` : ''}</span>
             ${
               staff && !person.owner
@@ -781,7 +781,10 @@ async function one(root, id, { staff, backHash }) {
     const known = new Set(participants.map((person) => person.id));
     const options = users
       .filter((user) => !known.has(user.id))
-      .map((user) => ({ value: String(user.id), label: `${user.username} · ${user.email}` }));
+      .map((user) => ({
+        value: String(user.id),
+        label: `${user.display_name || user.username} · ${user.email}`,
+      }));
     if (!options.length) return toast(tr('common.none'));
     const answer = await formDialog(
       tr('tk.addPerson'),

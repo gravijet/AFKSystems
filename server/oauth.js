@@ -49,7 +49,7 @@ export const PROVIDERS = {
     // Ohne "consent" bekommt man beim zweiten Mal keine Zustimmungsseite mehr zu sehen; das ist
     // hier gewollt, weil nur Name und Adresse gelesen werden.
     extra: { access_type: 'online', prompt: 'select_account' },
-    columns: { id: 'google_id', name: null, avatar: null, email: 'google_email' },
+    columns: { id: 'google_id', name: 'google_name', avatar: 'google_avatar', email: 'google_email' },
     settings: { id: 'google_client_id', secret: 'google_client_secret', login: 'google_login' },
     identify: (raw) => ({
       id: raw.sub,

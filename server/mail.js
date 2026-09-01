@@ -16,6 +16,7 @@ import nodemailer from 'nodemailer';
 import { db, getSetting } from './db.js';
 import { config, ROOT } from './config.js';
 import * as vat from './vat.js';
+import { displayNameOf } from './profile.js';
 import { safeUrl } from './util.js';
 
 /** Ist der Versand eingerichtet? */
@@ -758,7 +759,7 @@ export function render(user, kind, vars = {}) {
   // Die Werte des Aufrufers stehen **hinten**: `name` ist in der Anrede der Benutzername, in
   // einer Nachricht über einen Serverplatz aber dessen Name. Andersherum stand in jeder
   // Verlängerungsmail der Kontoname statt des Servers.
-  const values = { base: `${config.publicUrl}/${lang}`, name: user.username, ...vars };
+  const values = { base: `${config.publicUrl}/${lang}`, name: displayNameOf(user), ...vars };
 
   // Die Vorlagen bauen ihre Zeilen absichtlich mit ein wenig HTML (`<b>` um Beträge). Was aber
   // von außen kommt – ein Ticketbetreff, ein Serverplatzname, der Textausschnitt einer Antwort –

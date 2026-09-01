@@ -16,6 +16,7 @@
 // dass ein Land ein Land ist, dass eine Zeitzone existiert. Alles andere ist die Angabe des
 // Kunden – und die ist auf einem Beleg genau das, was dort hingehört.
 
+import crypto from 'node:crypto';
 import { db, audit } from './db.js';
 import { bad } from './util.js';
 import { isCountry, countryName, addressLines } from '../public/assets/js/countries.js';
@@ -171,6 +172,21 @@ export const billingName = (user) =>
   String(user?.username || '').trim();
 
 /**
+ * Der Name eines Menschen in Gesprächen und Oberflächen.
+ *
+ * `username` bleibt die eindeutige Anmeldekennung. Wo ein Mensch angesprochen oder als Absender
+ * gezeigt wird, gilt dagegen der selbst eingetragene Name, danach der Name eines freiwillig
+ * verknüpften Kontos und erst ganz zuletzt die Kennung. Diese eine Funktion verhindert, dass
+ * Ticket, Mail und Administration jeweils eine andere Rangfolge erfinden.
+ */
+export const displayNameOf = (user) =>
+  String(user?.full_name || '').trim() ||
+  String(user?.discord_name || '').trim() ||
+  String(user?.google_name || '').trim() ||
+  String(user?.username || '').trim() ||
+  '–';
+
+/**
  * Der Abzug fürs Archiv: Was auf dem Beleg dieser Aufladung stehen wird, so wie es **heute** ist.
  *
  * Ein Beleg darf sich nie wieder ändern. Wer im Januar unter seiner alten Anschrift gekauft hat
@@ -197,17 +213,65 @@ export function billingSnapshot(user) {
 /**
  * Das Bild, das im Panel neben dem Namen steht.
  *
- * Ist Discord verknüpft, ist es das Discord-Bild – dasselbe Gesicht, das im Support-Kanal
- * schreibt. Sonst gibt es **kein** fremdes Bild von irgendeinem Dienst: Ein Gravatar wäre die
- * E-Mail-Adresse des Kunden, bei jedem Seitenaufruf an einen Dritten geschickt, ohne dass ihn
- * jemand gefragt hätte. Dann zeichnet das Panel selbst (siehe `avatar` in ui.js).
- *
- * `.png` und nicht `.webp`: Ein animiertes Bild (`a_…`) liefert als PNG das erste Einzelbild –
- * als WebP je nach Browser gar nichts.
+ * Die Quelle ist eine Kontoeinstellung. "auto" nimmt Discord, Google, dann Gravatar; "initials"
+ * bleibt vollständig lokal. So entscheidet der Kunde ausdrücklich, wenn er die Vorgabe nicht
+ * will. Bei Gravatar geht nur der standardisierte MD5-Abdruck der Adresse in die Bild-URL.
  */
-export function avatarOf(user) {
+export const AVATAR_SOURCES = ['auto', 'discord', 'google', 'gravatar', 'initials'];
+
+const discordAvatar = (user) => {
   if (!user?.discord_id || !user?.discord_avatar) return null;
+  // Neue OAuth-Verknüpfungen speichern bereits die vollständige Adresse; ältere Datensätze
+  // enthalten nur den Discord-Hash. Beide bleiben nach dem Update gültig.
+  if (/^https:\/\/cdn\.discordapp\.com\//.test(user.discord_avatar)) return user.discord_avatar;
   return `https://cdn.discordapp.com/avatars/${user.discord_id}/${user.discord_avatar}.png?size=128`;
+};
+
+const googleAvatar = (user) =>
+  /^https:\/\/[^/]*googleusercontent\.com\//.test(String(user?.google_avatar || ''))
+    ? String(user.google_avatar)
+    : null;
+
+const gravatarAvatar = (user) => {
+  const email = String(user?.email || '').trim().toLowerCase();
+  if (!email) return null;
+  const hash = crypto.createHash('md5').update(email).digest('hex');
+  // `d=identicon` liefert auch ohne hinterlegtes Gravatar ein stabiles Standardbild.
+  return `https://www.gravatar.com/avatar/${hash}?s=256&d=identicon`;
+};
+
+export function avatarChoices(user) {
+  return {
+    discord: discordAvatar(user),
+    google: googleAvatar(user),
+    gravatar: gravatarAvatar(user),
+  };
+}
+
+export function avatarOf(user) {
+  const source = AVATAR_SOURCES.includes(user?.avatar_source) ? user.avatar_source : 'auto';
+  if (source === 'initials') return null;
+  const choices = avatarChoices(user);
+  if (source !== 'auto') return choices[source] || null;
+  return choices.discord || choices.google || choices.gravatar || null;
+}
+
+/** Eine Avatar-Auswahl prüfen und speichern. Fehlende Anbieter werden nicht still vorgetäuscht. */
+export function setAvatarSource(userId, raw) {
+  const source = String(raw || '').trim();
+  if (!AVATAR_SOURCES.includes(source)) {
+    throw bad('Unbekannte Profilbild-Quelle.', { en: 'Unknown profile-picture source.' });
+  }
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  if (!user) return;
+  if (!['auto', 'initials'].includes(source) && !avatarChoices(user)[source]) {
+    throw bad('Für diese Quelle ist kein Profilbild verfügbar.', {
+      en: 'No profile picture is available from that source.',
+    });
+  }
+  if (user.avatar_source === source) return;
+  db.prepare('UPDATE users SET avatar_source = ? WHERE id = ?').run(source, userId);
+  audit(userId, 'avatar-change', { source });
 }
 
 /** Wie ein Konto seine Daten sieht – dieselbe Form, in der es sie auch schickt. */

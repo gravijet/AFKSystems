@@ -662,9 +662,9 @@ export function drawSide() {
         </span>
       </a>
       <div class="side-user">
-        <a class="side-user-name" href="#/settings" title="${escapeHtml(state.me?.username || '')}">
+        <a class="side-user-name" href="#/settings" title="${escapeHtml(state.me?.display_name || state.me?.username || '')}">
           ${avatar(state.me, { size: 26, klass: 'side-avatar' })}
-          <span class="side-item-label">${escapeHtml(state.me?.username || '')}</span>
+          <span class="side-item-label">${escapeHtml(state.me?.display_name || state.me?.username || '')}</span>
         </a>
         ${themeSwitch()}
         <button class="side-icon-btn" id="logout" type="button"

@@ -355,6 +355,8 @@ async function overview(root) {
       )}
     </div>
 
+    ${attentionPanel(data.attention || {})}
+
     <div class="grid two">
       <section class="panel">
         <header><h3>${escapeHtml(tr('adm.client'))}</h3>
@@ -413,6 +415,37 @@ async function overview(root) {
       event.target.disabled = false;
     }
   });
+}
+
+/** Arbeitsfähige Hinweise: jede Zahl führt direkt zu der Liste, in der sie behoben wird. */
+function attentionPanel(info) {
+  const items = [
+    ['adm.attentionUnassigned', info.tickets_unassigned, '#/admin/tickets?status=open&assignment=unassigned'],
+    ['adm.attentionStale', info.tickets_stale, '#/admin/tickets?status=open&stale=1'],
+    ['adm.attentionAccountErrors', info.accounts_error, '#/admin/accounts'],
+    ['adm.attentionFailedLogins', info.failed_logins_24h, '#/admin/security'],
+    ['adm.attentionDeletions', info.pending_deletions, '#/admin/users?filter=leaving'],
+    ['adm.attentionExpiring', info.expiring_slots_7d, '#/admin/servers'],
+  ];
+  return `<section class="panel" style="margin-bottom:1.5rem">
+    <header><h3>${escapeHtml(tr('adm.attentionQueue'))}</h3>
+      ${
+        info.oldest_waiting_at
+          ? `<span class="small muted">${escapeHtml(
+              tr('adm.attentionOldest', { age: since(info.oldest_waiting_at) })
+            )}</span>`
+          : ''
+      }</header>
+    <div class="body"><div class="grid three" style="gap:.65rem">
+      ${items
+        .map(
+          ([label, count, href]) => `<a class="row spread note ${count ? 'warn' : ''}" href="${href}">
+            <span>${escapeHtml(tr(label))}</span><span class="pill ${count ? 'missing' : 'primary'}">${Number(count) || 0}</span>
+          </a>`
+        )
+        .join('')}
+    </div></div>
+  </section>`;
 }
 
 /**
@@ -866,10 +899,12 @@ async function staffTickets(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const status = params.get('status') || 'open';
   const priority = params.get('priority') || 'all';
+  const assignment = params.get('assignment') || 'all';
+  const stale = params.get('stale') === '1';
   const search = params.get('q') || '';
 
   const data = await api(
-    `/admin/tickets?status=${status}&priority=${priority}&q=${encodeURIComponent(search)}`
+    `/admin/tickets?status=${status}&priority=${priority}&assignment=${assignment}&stale=${stale ? 1 : 0}&q=${encodeURIComponent(search)}`
   );
 
   root.innerHTML = `
@@ -900,6 +935,13 @@ async function staffTickets(root) {
             )
             .join('')}
         </select>
+        <select id="tk-assignment" class="mini" style="max-width:13rem">
+          <option value="all" ${assignment === 'all' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentAll'))}</option>
+          <option value="mine" ${assignment === 'mine' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentMine'))}</option>
+          <option value="unassigned" ${assignment === 'unassigned' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentNone'))}</option>
+        </select>
+        <label class="row small"><input id="tk-stale" type="checkbox" ${stale ? 'checked' : ''}>
+          ${escapeHtml(tr('tk.stale'))}</label>
         <input id="tk-q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
           value="${escapeHtml(search)}" style="max-width:16rem">
       </div>
@@ -925,12 +967,15 @@ async function staffTickets(root) {
   const reload = debounce(() => {
     go(
       `/admin/tickets?status=${$('#tk-status').value}&priority=${$('#tk-priority').value}` +
+        `&assignment=${$('#tk-assignment').value}&stale=${$('#tk-stale').checked ? 1 : 0}` +
         `&q=${encodeURIComponent($('#tk-q').value.trim())}`
     );
     draw();
   }, 300);
   $('#tk-status').addEventListener('change', reload);
   $('#tk-priority').addEventListener('change', reload);
+  $('#tk-assignment').addEventListener('change', reload);
+  $('#tk-stale').addEventListener('change', reload);
   $('#tk-q').addEventListener('input', reload);
 
   $('#tk-new-for').addEventListener('click', () => ticketForCustomer());
@@ -964,7 +1009,7 @@ function staffRow(ticket) {
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
       </div>
       <div class="small muted truncate">
-        ${escapeHtml(ticket.username || '')}
+        ${escapeHtml(ticket.display_name || ticket.username || '')}
         ${ticket.assigned_name ? ` · ${escapeHtml(ticket.assigned_name)}` : ''}
       </div>
     </div>
@@ -1000,7 +1045,10 @@ async function ticketForCustomer() {
         label: tr('adm.users'),
         type: 'select',
         value: String(list[0]?.id || ''),
-        options: list.map((user) => ({ value: String(user.id), label: `${user.username} · ${user.email}` })),
+        options: list.map((user) => ({
+          value: String(user.id),
+          label: `${user.display_name || user.username} · ${user.email}`,
+        })),
       },
       { key: 'subject', label: tr('tk.subject'), required: true },
       {
@@ -1046,6 +1094,9 @@ async function users(root) {
           ['admins', tr('set.role.admin')],
           ['blocked', tr('adm.block')],
           ['unverified', tr('auth.verify.title')],
+          ['leaving', tr('adm.filterLeaving')],
+          ['dormant', tr('adm.filterDormant')],
+          ['account-errors', tr('adm.filterAccountErrors')],
         ]
           .map(
             ([value, label]) =>
@@ -1079,7 +1130,9 @@ async function users(root) {
             <td><input type="checkbox" class="pick" data-id="${user.id}"
               aria-label="${escapeHtml(user.username)}"></td>
             <td class="mono small muted">${user.id}</td>
-            <td><span class="row" style="gap:.4rem">${avatar(user, { size: 22 })}${escapeHtml(user.username)}
+            <td><span class="row" style="gap:.4rem">${avatar(user, { size: 22 })}<span>${escapeHtml(
+              user.display_name || user.username
+            )}${user.display_name && user.display_name !== user.username ? `<small class="muted mono"> · ${escapeHtml(user.username)}</small>` : ''}</span>
               ${user.role === 'admin' ? `<span class="pill primary">admin</span>` : ''}
               ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}
               ${
@@ -1215,13 +1268,13 @@ async function userDetail(root, id) {
       <div class="row" style="gap:.9rem;min-width:0">
         ${avatar(user, { size: 48 })}
         <div style="min-width:0">
-        <h2 style="font-size:1.4rem">${escapeHtml(user.username)}
+        <h2 style="font-size:1.4rem">${escapeHtml(user.display_name || user.username)}
           ${user.role === 'admin' ? '<span class="pill primary">admin</span>' : ''}
           ${(user.discord_roles || [])
             .map((role) => `<span class="pill">${escapeHtml(tr(`role.${role}`))}</span>`)
             .join('')}
           ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}</h2>
-        <p class="small muted mono">${escapeHtml(user.email)} · #${user.id} ·
+        <p class="small muted mono">@${escapeHtml(user.username)} · ${escapeHtml(user.email)} · #${user.id} ·
           ${escapeHtml(tr('common.status'))}: ${user.last_seen_at ? since(user.last_seen_at) : '–'}
           ${user.discord ? ` · Discord ${escapeHtml(user.discord.name || user.discord.id)}` : ''}</p>
         </div>

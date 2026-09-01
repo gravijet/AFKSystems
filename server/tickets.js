@@ -48,7 +48,7 @@
 import { db, audit } from './db.js';
 import { bad, notFound, forbidden, requireString } from './util.js';
 import * as files from './attachments.js';
-import { avatarOf } from './profile.js';
+import { avatarOf, displayNameOf as profileName } from './profile.js';
 import { isPayingUser } from './billing.js';
 import * as mail from './mail.js';
 import * as notify from './notify.js';
@@ -72,17 +72,19 @@ export const byChannel = (channelId) =>
 export function participants(ticketId) {
   return db
     .prepare(
-      `SELECT u.id, u.username, u.email, u.language, u.discord_id, u.discord_avatar, 1 AS owner FROM tickets t
+      `SELECT u.id, u.username, u.full_name, u.discord_name, u.google_name, u.email, u.language,
+              u.discord_id, u.discord_avatar, u.google_avatar, u.avatar_source, 1 AS owner FROM tickets t
          JOIN users u ON u.id = t.user_id WHERE t.id = ?
        UNION
-       SELECT u.id, u.username, u.email, u.language, u.discord_id, u.discord_avatar, 0 AS owner FROM ticket_users tu
+       SELECT u.id, u.username, u.full_name, u.discord_name, u.google_name, u.email, u.language,
+              u.discord_id, u.discord_avatar, u.google_avatar, u.avatar_source, 0 AS owner FROM ticket_users tu
          JOIN users u ON u.id = tu.user_id WHERE tu.ticket_id = ?
        ORDER BY owner DESC, u.username`
     )
     .all(ticketId, ticketId)
     // Das Bild statt des Bild-Kürzels: Wer diese Liste zeichnet, soll die Adresse von Discords
     // Bildserver nicht selbst zusammensetzen müssen – sonst stünde sie an drei Stellen im Panel.
-    .map(({ discord_avatar: hash, ...row }) => ({ ...row, avatar: avatarOf({ discord_id: row.discord_id, discord_avatar: hash }) }));
+    .map((row) => ({ ...row, display_name: profileName(row), avatar: avatarOf(row) }));
 }
 
 export const isParticipant = (ticketId, userId) =>
@@ -124,13 +126,13 @@ export function getForParticipant(id, user) {
  */
 export function addUser(ticket, userId, by) {
   if (ticket.user_id === userId) return participants(ticket.id);
-  const user = db.prepare('SELECT id, username, discord_id FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   if (!user) throw notFound('Diesen Nutzer gibt es nicht.', { en: 'No such user.' });
   db.prepare(
     `INSERT INTO ticket_users (ticket_id, user_id, added_by, created_at) VALUES (?, ?, ?, ?)
      ON CONFLICT(ticket_id, user_id) DO NOTHING`
   ).run(ticket.id, userId, by, Date.now());
-  system(ticket, `${user.username} was added to the ticket.`);
+  system(ticket, `${profileName(user)} was added to the ticket.`);
   audit(by, 'ticket-add-user', { ticket: ticket.id, user: userId });
   if (user.discord_id) {
     bridge.emit('ticket.access', { ticket_id: ticket.id, discord_id: user.discord_id, allow: true });
@@ -142,9 +144,9 @@ export function removeUser(ticket, userId, by) {
   if (ticket.user_id === userId) {
     throw bad('Der Ersteller lässt sich nicht entfernen.', { en: 'The author cannot be removed.' });
   }
-  const user = db.prepare('SELECT username, discord_id FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
   db.prepare('DELETE FROM ticket_users WHERE ticket_id = ? AND user_id = ?').run(ticket.id, userId);
-  if (user) system(ticket, `${user.username} was removed from the ticket.`);
+  if (user) system(ticket, `${profileName(user)} was removed from the ticket.`);
   audit(by, 'ticket-remove-user', { ticket: ticket.id, user: userId });
   if (user?.discord_id) {
     bridge.emit('ticket.access', { ticket_id: ticket.id, discord_id: user.discord_id, allow: false });
@@ -195,7 +197,10 @@ export function unpackMentions(value) {
 export function messages(ticketId, { staff = false } = {}) {
   const rows = db
     .prepare(
-      `SELECT m.*, u.username, u.discord_id AS author_discord_id, u.discord_avatar AS author_avatar
+      `SELECT m.*, u.username, u.full_name, u.discord_name, u.google_name,
+              u.discord_id AS author_discord_id, u.discord_avatar AS author_avatar,
+              u.google_avatar AS author_google_avatar, u.avatar_source AS author_avatar_source,
+              u.email AS author_email
          FROM ticket_messages m LEFT JOIN users u ON u.id = m.user_id
         WHERE m.ticket_id = ? ORDER BY m.id`
     )
@@ -208,13 +213,28 @@ export function messages(ticketId, { staff = false } = {}) {
   return visible.map((row) => {
     // Die zwei Discord-Spalten sind nur da, um daraus ein Bild zu bauen – sie selbst gehören
     // nicht in die Antwort. Deshalb werden sie hier ausgepackt und fallen gelassen.
-    const { author_discord_id: discordId, author_avatar: avatarHash, ...rest } = row;
+    const {
+      author_discord_id: discordId,
+      author_avatar: avatarHash,
+      author_google_avatar: googleAvatar,
+      author_avatar_source: avatarSource,
+      author_email: email,
+      ...rest
+    } = row;
     return {
       ...rest,
+      display_name: row.author_name || profileName(row),
       // Aufgelöst und nicht als Zeichenkette: Wer diese Liste liest, soll nicht selbst noch
       // einmal `JSON.parse` in ein `try` packen müssen.
       mentions: unpackMentions(row.mentions),
-      avatar: avatarOf({ discord_id: discordId, discord_avatar: avatarHash }),
+      avatar: avatarOf({
+        ...row,
+        email,
+        discord_id: discordId,
+        discord_avatar: avatarHash,
+        google_avatar: googleAvatar,
+        avatar_source: avatarSource,
+      }),
       files: attachments.get(row.id) || [],
     };
   });
@@ -232,7 +252,7 @@ export function listFor(user) {
     .all(user.id, user.id, user.id);
 }
 
-export function listAll({ status = null, priority = null, search = '' } = {}) {
+export function listAll({ status = null, priority = null, search = '', assignment = '', stale = false, staffId = null } = {}) {
   const where = [];
   const values = [];
   // Beide Werte kommen aus der Adresszeile und können damit alles sein – auch eine Liste
@@ -249,16 +269,26 @@ export function listAll({ status = null, priority = null, search = '' } = {}) {
     where.push('t.priority = ?');
     values.push(wantedPriority);
   }
+  if (assignment === 'unassigned') where.push('t.assigned_to IS NULL');
+  if (assignment === 'mine' && Number.isInteger(staffId)) {
+    where.push('t.assigned_to = ?');
+    values.push(staffId);
+  }
+  if (stale) {
+    // Ein Tag ohne Bewegung ist keine harte SLA, aber ein sehr brauchbarer Arbeitsfilter.
+    where.push("t.status = 'open' AND t.updated_at < ?");
+    values.push(Date.now() - 86_400_000);
+  }
   if (search) {
     where.push('(t.subject LIKE ? OR u.username LIKE ? OR u.email LIKE ? OR t.id = ?)');
     values.push(`%${search}%`, `%${search}%`, `%${search}%`, Number(search) || 0);
   }
   return db
     .prepare(
-      `SELECT t.*, u.username, u.email,
+      `SELECT t.*, u.username, u.full_name, u.discord_name, u.google_name, u.email,
               (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id) AS messages,
               (SELECT COUNT(*) FROM ticket_users tu WHERE tu.ticket_id = t.id) AS extra_users,
-              a.username AS assigned_name
+              COALESCE(NULLIF(a.full_name, ''), a.discord_name, a.google_name, a.username) AS assigned_name
          FROM tickets t JOIN users u ON u.id = t.user_id
          LEFT JOIN users a ON a.id = t.assigned_to
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -462,7 +492,7 @@ export const reply = db.transaction((ticket, user, body, {
     message_id: info.lastInsertRowid,
     role: isStaff ? 'staff' : 'user',
     internal,
-    author: authorName || user.username,
+    author: authorName || profileName(user),
     user_id: user.id,
     // Nachrichten aus Discord stehen dort bereits als Original. Die ID reist mit dem Ereignis
     // zurück zum Bot, damit er sie nicht noch einmal als Panel-Embed in denselben Kanal spiegelt.

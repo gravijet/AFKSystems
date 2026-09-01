@@ -138,7 +138,12 @@ function identityBody(me) {
     <div class="identity">
       ${avatar(me, { size: 64, klass: 'identity-avatar' })}
       <div class="grow" style="min-width:0">
-        <div class="identity-name">${escapeHtml(me.username)}</div>
+        <div class="identity-name">${escapeHtml(me.display_name || me.username)}</div>
+        ${
+          me.display_name && me.display_name !== me.username
+            ? `<div class="small muted mono">@${escapeHtml(me.username)}</div>`
+            : ''
+        }
         <div class="small muted truncate">${escapeHtml(me.email)}</div>
         <div class="row wrap" style="gap:.4rem;margin-top:.5rem">
           <span class="pill ${me.role === 'admin' ? 'primary' : ''}">${escapeHtml(
@@ -181,6 +186,30 @@ function identityBody(me) {
       nextChange > Date.now() ? ` ${tr('set.usernameNext', { date: date(nextChange) })}` : ''
     }</p>
 
+    <div class="row wrap" style="gap:.75rem;align-items:flex-end;margin-top:1rem">
+      <div class="field" style="max-width:18rem">
+        <label for="avatar-source">${escapeHtml(tr('set.avatarSource'))}</label>
+        <select id="avatar-source">
+          ${[
+            ['auto', 'set.avatarAuto', true],
+            ['discord', 'Discord', Boolean(me.avatar_choices?.discord)],
+            ['google', 'Google', Boolean(me.avatar_choices?.google)],
+            ['gravatar', 'Gravatar', Boolean(me.avatar_choices?.gravatar)],
+            ['initials', 'set.avatarInitials', true],
+          ]
+            .map(
+              ([value, label, available]) =>
+                `<option value="${value}" ${me.avatar_source === value ? 'selected' : ''} ${
+                  available ? '' : 'disabled'
+                }>${escapeHtml(label.includes('.') ? tr(label) : label)}</option>`
+            )
+            .join('')}
+        </select>
+        <span class="hint">${escapeHtml(tr('set.avatarHint'))}</span>
+      </div>
+      <button class="btn" id="save-avatar">${escapeHtml(tr('common.save'))}</button>
+    </div>
+
     <hr class="rule">
 
     <div class="row wrap" style="gap:1rem;align-items:flex-end">
@@ -197,6 +226,17 @@ function identityBody(me) {
 }
 
 function bindIdentity(me) {
+  $('#save-avatar').addEventListener('click', async () => {
+    try {
+      await api('/me', { method: 'PATCH', body: { avatar_source: $('#avatar-source').value } });
+      ok(tr('set.avatarSaved'));
+      await refresh({ profiles: false, accounts: false });
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
+
   $('#save-language').addEventListener('click', async () => {
     const next = $('#language').value;
     try {
