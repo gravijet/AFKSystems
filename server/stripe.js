@@ -175,8 +175,10 @@ export async function createCheckout({ user, pack, topup, lang = 'de' }) {
       locale: lang === 'de' ? 'de' : 'en',
       success_url: `${base}#/credits?paid=${topup.id}`,
       cancel_url: `${base}#/credits?cancelled=${topup.id}`,
-      // Die E-Mail ist schon bekannt – Stripe soll sie nicht ein zweites Mal abfragen.
-      customer_email: user.email,
+      // Die E-Mail ist schon bekannt – Stripe soll sie nicht ein zweites Mal abfragen. Wer eine
+      // eigene Adresse für Belege hinterlegt hat, bekommt die Zahlungsbestätigung von Stripe
+      // dorthin: Sie ist ein Belegdokument und gehört in dasselbe Postfach wie unser eigener.
+      customer_email: String(user.billing_email || '').trim() || user.email,
       client_reference_id: String(topup.id),
       metadata,
       payment_intent_data: {

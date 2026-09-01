@@ -21,7 +21,7 @@ export const VAT_NOTE_DE =
 export const VAT_NOTE_EN =
   'Exempt from VAT under the Austrian small-business scheme (§ 6 (1) 27 UStG).';
 
-export const PRIVACY_DE = `Stand: 31. August 2026
+export const PRIVACY_DE = `Stand: 1. September 2026
 
 ## 1. Verantwortlicher und Kontakt
 
@@ -29,12 +29,12 @@ AFKSystems ist der Verantwortliche für die Verarbeitung personenbezogener Daten
 
 ## 2. Welche Daten verarbeitet werden
 
-- Konto- und Profildaten: E-Mail-Adresse, Benutzername, Passwort nur als kryptografischer Hash, Sprache und Einstellungen.
+- Konto- und Profildaten: E-Mail-Adresse, Benutzername, Passwort nur als kryptografischer Hash, Sprache und Einstellungen. Freiwillig zusätzlich die Angaben, die auf einen Beleg gehören: bürgerlicher Name, Firmierung, Umsatzsteuer-Identifikationsnummer, Rechnungsanschrift, Telefonnummer, eine abweichende Adresse für Belege und die Zeitzone. Diese Angaben sind für die Nutzung des Dienstes nicht erforderlich; ohne sie trägt ein Beleg nur den Kontonamen.
 - Anmeldedaten: Sitzungskennung, Zeitpunkt, IP-Adresse und gekürzte Browser-/Geräteangabe. Sitzungskennungen liegen in einem HttpOnly-Cookie und sind für JavaScript nicht lesbar.
 - Verknüpfte Dienste: bei freiwilliger Nutzung die von Discord oder Google übermittelte Konto-ID, Name, E-Mail-Adresse, Profilbild und Status der Discord-Mitgliedschaft. AFKSystems erhält dabei niemals das Passwort des jeweiligen Anbieters.
 - Minecraft-Betriebsdaten: Kontoname und UUID, Zielserver, Version, Bot-Einstellungen, Befehle, Makros, Verbindungszustände und technische Protokolle. Für Microsoft-Konten wird die von Microsoft bereitgestellte Geräteanmeldung verwendet; Zugangsdaten werden nicht im Browser abgefragt.
 - Kommunikationsdaten: Ticketinhalte, Beteiligte, Status, Discord-Zuordnung, Chat- und Supportnachrichten sowie vom Dienst versandte E-Mails.
-- Abrechnungsdaten: Guthabenbewegungen, gebuchte Tarife und Zusätze, Zahlungsbetrag, Zahlungsart, Referenz und Status. Kartenzahlungen und die übrigen elektronischen Zahlarten werden von Stripe (Stripe Payments Europe, Limited) als Zahlungsdienstleister abgewickelt. Kartennummern und Sicherheitsmerkmale werden ausschließlich bei Stripe eingegeben und verarbeitet; AFKSystems erhält sie nicht. An AFKSystems zurück gemeldet werden die Kennung des Zahlungsvorgangs, der Betrag, die Währung, der Zahlungsstatus, die E-Mail-Adresse des Zahlenden und die Zuordnung zur jeweiligen Aufladung. Verkäufer der Leistung ist AFKSystems selbst und nicht Stripe.
+- Abrechnungsdaten: Guthabenbewegungen, gebuchte Tarife und Zusätze, Zahlungsbetrag, Zahlungsart, Referenz und Status. Zu jeder verbuchten Zahlung entsteht ein Beleg mit fortlaufender Nummer; die darauf gedruckten Angaben (Anschrift, Firmierung, Umsatzsteuerhinweis) werden im Moment der Buchung festgehalten und bleiben danach unverändert, weil ein Beleg ein Nachweis über einen bestimmten Zeitpunkt ist. Kartenzahlungen und die übrigen elektronischen Zahlarten werden von Stripe (Stripe Payments Europe, Limited) als Zahlungsdienstleister abgewickelt. Kartennummern und Sicherheitsmerkmale werden ausschließlich bei Stripe eingegeben und verarbeitet; AFKSystems erhält sie nicht. An AFKSystems zurück gemeldet werden die Kennung des Zahlungsvorgangs, der Betrag, die Währung, der Zahlungsstatus, die E-Mail-Adresse des Zahlenden und die Zuordnung zur jeweiligen Aufladung. Verkäufer der Leistung ist AFKSystems selbst und nicht Stripe.
 - Sicherheits- und Betriebsdaten: Audit-Ereignisse, Fehlermeldungen, Missbrauchsindikatoren sowie Server- und Prozessmetriken.
 
 ## 3. Zwecke und Rechtsgrundlagen
@@ -53,11 +53,11 @@ AFKSystems verwendet keine Werbe- oder Tracking-Cookies. Erforderlich sind ein H
 
 ## 6. Speicherdauer
 
-Kontodaten werden grundsätzlich während der Nutzung des Dienstes gespeichert. Sitzungen enden nach Ablauf, Abmeldung oder Widerruf. Technische Protokolle und Sicherheitsdaten werden nur so lange aufbewahrt, wie dies für Fehleranalyse, Sicherheit und Missbrauchsprävention erforderlich ist. Ticket- und Vertragsdaten bleiben für die Bearbeitung und mögliche Nachweise gespeichert. Zahlungs- und Buchungsdaten werden nach den anwendbaren handels-, steuer- oder verbraucherrechtlichen Fristen aufbewahrt. Danach werden Daten gelöscht oder anonymisiert, sofern keine offenen Ansprüche, Sicherheitsvorfälle oder gesetzlichen Pflichten entgegenstehen.
+Kontodaten werden grundsätzlich während der Nutzung des Dienstes gespeichert. Wird das Konto im Panel zur Löschung angemeldet, ruhen die Dienste sofort; die vollständige Löschung erfolgt nach einer Frist von vierzehn Tagen und kann bis dahin jederzeit im Panel widerrufen werden. Sitzungen enden nach Ablauf, Abmeldung oder Widerruf. Technische Protokolle und Sicherheitsdaten werden nur so lange aufbewahrt, wie dies für Fehleranalyse, Sicherheit und Missbrauchsprävention erforderlich ist. Ticket- und Vertragsdaten bleiben für die Bearbeitung und mögliche Nachweise gespeichert. Zahlungs- und Buchungsdaten werden nach den anwendbaren handels-, steuer- oder verbraucherrechtlichen Fristen aufbewahrt. Danach werden Daten gelöscht oder anonymisiert, sofern keine offenen Ansprüche, Sicherheitsvorfälle oder gesetzlichen Pflichten entgegenstehen.
 
 ## 7. Rechte
 
-Soweit das anwendbare Datenschutzrecht dies vorsieht, bestehen Rechte auf Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch. Eine Einwilligung kann jederzeit mit Wirkung für die Zukunft widerrufen werden. Außerdem kann eine Beschwerde bei der zuständigen Datenschutzaufsichtsbehörde eingereicht werden. Gesetzlich notwendige Daten oder Daten, die zur Erfüllung eines laufenden Vertrags erforderlich sind, können erst nach dessen Ende gelöscht werden.
+Soweit das anwendbare Datenschutzrecht dies vorsieht, bestehen Rechte auf Auskunft, Berichtigung, Löschung, Einschränkung, Datenübertragbarkeit und Widerspruch. Auskunft und Datenübertragbarkeit lassen sich ohne Anfrage ausüben: Unter Einstellungen → Deine Daten steht der vollständige Datenbestand des Kontos als maschinenlesbare Datei zum Herunterladen bereit, und dort wird auch die Löschung des Kontos angestoßen. Berichtigung erfolgt ebenfalls im Panel, indem die Angaben geändert werden. Eine Einwilligung kann jederzeit mit Wirkung für die Zukunft widerrufen werden. Außerdem kann eine Beschwerde bei der zuständigen Datenschutzaufsichtsbehörde eingereicht werden. Gesetzlich notwendige Daten oder Daten, die zur Erfüllung eines laufenden Vertrags erforderlich sind, können erst nach dessen Ende gelöscht werden.
 
 ## 8. Sicherheit und automatisierte Entscheidungen
 
@@ -67,7 +67,7 @@ AFKSystems verwendet unter anderem verschlüsselte HTTPS-Verbindungen, gehashte 
 
 Diese Erklärung wird angepasst, wenn sich Funktionen, Anbieter oder rechtliche Anforderungen ändern. Die jeweils aktuelle Fassung und ihr Stand werden auf dieser Seite veröffentlicht.`;
 
-export const PRIVACY_EN = `Last updated: 31 August 2026
+export const PRIVACY_EN = `Last updated: 1 September 2026
 
 ## 1. Controller and contact
 
@@ -75,12 +75,12 @@ AFKSystems is the controller for personal data processed by this service. AFKSys
 
 ## 2. Data we process
 
-- Account and profile data: email address, username, password only as a cryptographic hash, language and settings.
+- Account and profile data: email address, username, password only as a cryptographic hash, language and settings. Optionally, the details that belong on a receipt: legal name, company, VAT identification number, billing address, phone number, a separate address for receipts, and the time zone. These are not required to use the service; without them a receipt carries only the account name.
 - Sign-in data: session identifier, time, IP address and shortened browser/device information. Session identifiers are held in an HttpOnly cookie and cannot be read by JavaScript.
 - Linked services: when used voluntarily, the account ID, name, email address, avatar and Discord membership status supplied by Discord or Google. AFKSystems never receives the password used with those providers.
 - Minecraft operations: account name and UUID, destination server, version, bot settings, commands, macros, connection states and technical logs. Microsoft accounts use Microsoft's device sign-in flow; credentials are not requested in the browser.
 - Communications: ticket contents, participants, status, Discord mapping, chat and support messages, and emails sent by the service.
-- Billing data: credit movements, plans and add-ons, payment amount, method, reference and status. Card payments and the other electronic payment methods are processed by Stripe (Stripe Payments Europe, Limited) as payment service provider. Card numbers and security details are entered and processed at Stripe only; AFKSystems does not receive them. What is reported back to AFKSystems is the payment identifier, amount, currency, payment status, the payer's email address and which top-up it belongs to. AFKSystems, not Stripe, is the seller of the service.
+- Billing data: credit movements, plans and add-ons, payment amount, method, reference and status. Every settled payment produces a receipt with a sequential number; what is printed on it (address, company, VAT note) is recorded at the moment of settlement and stays unchanged afterwards, because a receipt is evidence about a particular point in time. Card payments and the other electronic payment methods are processed by Stripe (Stripe Payments Europe, Limited) as payment service provider. Card numbers and security details are entered and processed at Stripe only; AFKSystems does not receive them. What is reported back to AFKSystems is the payment identifier, amount, currency, payment status, the payer's email address and which top-up it belongs to. AFKSystems, not Stripe, is the seller of the service.
 - Security and operations: audit events, errors, abuse signals, and server or process metrics.
 
 ## 3. Purposes and legal bases
@@ -99,11 +99,11 @@ AFKSystems uses no advertising or tracking cookies. An HttpOnly session cookie i
 
 ## 6. Retention
 
-Account data is generally held while the service is used. Sessions end when they expire, the user signs out or they are revoked. Technical logs and security information are kept only as long as reasonably needed for diagnostics, security and abuse prevention. Ticket and contract data is retained for handling and possible evidence. Payment and accounting records are kept for the periods required by applicable commercial, tax or consumer law. Data is then deleted or anonymised unless an unresolved claim, security incident or legal obligation requires continued retention.
+Account data is generally held while the service is used. If the account is scheduled for deletion in the panel, the services stop immediately; full deletion follows after a grace period of fourteen days and can be cancelled in the panel at any time until then. Sessions end when they expire, the user signs out or they are revoked. Technical logs and security information are kept only as long as reasonably needed for diagnostics, security and abuse prevention. Ticket and contract data is retained for handling and possible evidence. Payment and accounting records are kept for the periods required by applicable commercial, tax or consumer law. Data is then deleted or anonymised unless an unresolved claim, security incident or legal obligation requires continued retention.
 
 ## 7. Rights
 
-Where applicable law provides, users have rights of access, correction, erasure, restriction, portability and objection. Consent can be withdrawn at any time for the future. A complaint may also be made to the competent data protection authority. Information required by law or needed to perform an active contract may be deleted only after that requirement ends.
+Where applicable law provides, users have rights of access, correction, erasure, restriction, portability and objection. Access and portability can be exercised without asking: Settings → Your data offers the account's complete record as a machine-readable file, and account deletion is started from the same place. Correction likewise happens in the panel, by changing the details. Consent can be withdrawn at any time for the future. A complaint may also be made to the competent data protection authority. Information required by law or needed to perform an active contract may be deleted only after that requirement ends.
 
 ## 8. Security and automated decisions
 
@@ -113,7 +113,7 @@ AFKSystems uses measures including encrypted HTTPS connections, hashed passwords
 
 This notice is updated when functions, providers or legal requirements change. The current version and its date are published on this page.`;
 
-export const TERMS_DE = `Stand: 31. August 2026
+export const TERMS_DE = `Stand: 1. September 2026
 
 ## 1. Geltung und Vertragspartner
 
@@ -155,7 +155,7 @@ AFKSystems bemüht sich um einen sicheren und zuverlässigen Betrieb, schuldet j
 
 ## 8. Sperrung und Beendigung
 
-Nutzer können Verlängerungen deaktivieren und die Löschung ihres Kontos über den Support verlangen. Noch laufende bezahlte Zeit bleibt vorbehaltlich einer gesetzlichen oder bestätigten Erstattung bis zum Ende verfügbar. AFKSystems darf Konten oder Bots bei Missbrauch, erheblichem Vertragsverstoß, Sicherheitsgefahr, behördlicher Anordnung oder ausstehender Zahlung vorübergehend sperren. Bei behebbaren Verstößen wird grundsätzlich Gelegenheit zur Abhilfe gegeben; bei akuter Gefahr ist eine sofortige Sperre zulässig.
+Nutzer können Verlängerungen deaktivieren und ihr Konto jederzeit selbst im Panel zur Löschung anmelden (Einstellungen → Deine Daten). Mit der Anmeldung enden die laufenden Bot-Dienste sofort; die Löschung selbst erfolgt nach vierzehn Tagen und kann bis dahin im Panel widerrufen werden. Noch nicht verbrauchtes Guthaben wird nicht ausgezahlt und verfällt mit der Löschung; ein gesetzlicher oder bestätigter Erstattungsanspruch bleibt davon unberührt und ist vor der Löschung über den Support geltend zu machen. AFKSystems darf Konten oder Bots bei Missbrauch, erheblichem Vertragsverstoß, Sicherheitsgefahr, behördlicher Anordnung oder ausstehender Zahlung vorübergehend sperren. Bei behebbaren Verstößen wird grundsätzlich Gelegenheit zur Abhilfe gegeben; bei akuter Gefahr ist eine sofortige Sperre zulässig.
 
 ## 9. Haftung
 
@@ -165,7 +165,7 @@ AFKSystems haftet uneingeschränkt, soweit dies gesetzlich zwingend ist, insbeso
 
 Es gilt das Recht am Sitz des Betreibers, ohne Verbrauchern den zwingenden Schutz ihres gewöhnlichen Aufenthaltsortes zu entziehen. Zuständigkeit und Streitbeilegung richten sich nach zwingendem Recht. AFKSystems darf diese Bedingungen aus sachlichem Grund für die Zukunft ändern, etwa wegen neuer Funktionen, Sicherheitsanforderungen oder Rechtsänderungen. Wesentliche Änderungen werden in geeigneter Form angekündigt. Ist eine Bestimmung unwirksam, bleiben die übrigen Bestimmungen wirksam.`;
 
-export const TERMS_EN = `Last updated: 31 August 2026
+export const TERMS_EN = `Last updated: 1 September 2026
 
 ## 1. Scope and contracting party
 
@@ -207,7 +207,7 @@ AFKSystems aims to operate securely and reliably but does not promise uninterrup
 
 ## 8. Suspension and termination
 
-Users may disable renewals and request account deletion through support. Remaining paid time stays available until expiry, subject to a statutory or approved refund. AFKSystems may temporarily suspend an account or bot for abuse, material breach, security risk, official order or unpaid charges. A curable breach will generally be given an opportunity to be remedied; an immediate suspension is permitted where there is an urgent risk.
+Users may disable renewals and may schedule their own account for deletion in the panel at any time (Settings → Your data). Scheduling it stops the running bot services immediately; the deletion itself happens after fourteen days and can be cancelled in the panel until then. Remaining credit is not paid out and expires with the deletion; a statutory or approved refund claim is unaffected and must be raised through support before the deletion. AFKSystems may temporarily suspend an account or bot for abuse, material breach, security risk, official order or unpaid charges. A curable breach will generally be given an opportunity to be remedied; an immediate suspension is permitted where there is an urgent risk.
 
 ## 9. Liability
 

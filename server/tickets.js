@@ -46,9 +46,9 @@
 //                           den Kunden eine Neuigkeit; schließt er selbst, weiß er es schon.
 
 import { db, audit } from './db.js';
-import { config } from './config.js';
 import { bad, notFound, forbidden, requireString } from './util.js';
 import * as files from './attachments.js';
+import { avatarOf } from './profile.js';
 import { isPayingUser } from './billing.js';
 import * as mail from './mail.js';
 import * as notify from './notify.js';
@@ -72,14 +72,17 @@ export const byChannel = (channelId) =>
 export function participants(ticketId) {
   return db
     .prepare(
-      `SELECT u.id, u.username, u.email, u.language, u.discord_id, 1 AS owner FROM tickets t
+      `SELECT u.id, u.username, u.email, u.language, u.discord_id, u.discord_avatar, 1 AS owner FROM tickets t
          JOIN users u ON u.id = t.user_id WHERE t.id = ?
        UNION
-       SELECT u.id, u.username, u.email, u.language, u.discord_id, 0 AS owner FROM ticket_users tu
+       SELECT u.id, u.username, u.email, u.language, u.discord_id, u.discord_avatar, 0 AS owner FROM ticket_users tu
          JOIN users u ON u.id = tu.user_id WHERE tu.ticket_id = ?
        ORDER BY owner DESC, u.username`
     )
-    .all(ticketId, ticketId);
+    .all(ticketId, ticketId)
+    // Das Bild statt des Bild-Kürzels: Wer diese Liste zeichnet, soll die Adresse von Discords
+    // Bildserver nicht selbst zusammensetzen müssen – sonst stünde sie an drei Stellen im Panel.
+    .map(({ discord_avatar: hash, ...row }) => ({ ...row, avatar: avatarOf({ discord_id: row.discord_id, discord_avatar: hash }) }));
 }
 
 export const isParticipant = (ticketId, userId) =>
@@ -151,10 +154,49 @@ export function removeUser(ticket, userId, by) {
 
 // ---------------------------------------------------------------- Lesen
 
+/**
+ * Die Erwähnungen einer Nachricht aus Discord, wie sie in der Datenbank landen.
+ *
+ * Discord schreibt Erwähnungen als Zahlen (`<@1538…>`); wer den Namen dazu kennt, ist der Bot.
+ * Er schickt ihn mit, und hier wird geprüft, was davon eine Auflösung sein kann: eine ID aus
+ * Ziffern, eine bekannte Art, ein Name, der in eine Zeile passt. Alles andere fällt weg – aus
+ * diesem Feld wird später HTML gebaut, und was hier ungeprüft hineinkäme, stünde dort ungeprüft
+ * wieder heraus.
+ *
+ * Höchstens fünfzig Einträge: Mehr Erwähnungen hat keine Nachricht, die ein Mensch geschrieben hat.
+ */
+const MENTION_KINDS = ['user', 'role', 'channel'];
+
+export function packMentions(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const out = {};
+  for (const [id, entry] of Object.entries(raw).slice(0, 50)) {
+    if (!/^\d{15,25}$/.test(String(id))) continue;
+    const kind = MENTION_KINDS.includes(entry?.type) ? entry.type : 'user';
+    const name = String(entry?.name || '').replace(/\s+/g, ' ').trim().slice(0, 100);
+    if (!name) continue;
+    const color = /^#[0-9a-fA-F]{6}$/.test(String(entry?.color || '')) ? String(entry.color) : undefined;
+    out[id] = color ? { type: kind, name, color } : { type: kind, name };
+  }
+  return Object.keys(out).length ? JSON.stringify(out) : null;
+}
+
+/** Und wieder heraus. Kaputtes JSON ist kein Grund, eine Nachricht nicht anzuzeigen. */
+export function unpackMentions(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function messages(ticketId, { staff = false } = {}) {
   const rows = db
     .prepare(
-      `SELECT m.*, u.username FROM ticket_messages m LEFT JOIN users u ON u.id = m.user_id
+      `SELECT m.*, u.username, u.discord_id AS author_discord_id, u.discord_avatar AS author_avatar
+         FROM ticket_messages m LEFT JOIN users u ON u.id = m.user_id
         WHERE m.ticket_id = ? ORDER BY m.id`
     )
     .all(ticketId);
@@ -163,7 +205,19 @@ export function messages(ticketId, { staff = false } = {}) {
   // die Nachrichten liest, hat sie automatisch – ohne einen zweiten Aufruf und ohne dass jemand
   // das Nachladen vergessen kann.
   const attachments = files.byMessage(ticketId, { staff });
-  return visible.map((row) => ({ ...row, files: attachments.get(row.id) || [] }));
+  return visible.map((row) => {
+    // Die zwei Discord-Spalten sind nur da, um daraus ein Bild zu bauen – sie selbst gehören
+    // nicht in die Antwort. Deshalb werden sie hier ausgepackt und fallen gelassen.
+    const { author_discord_id: discordId, author_avatar: avatarHash, ...rest } = row;
+    return {
+      ...rest,
+      // Aufgelöst und nicht als Zeichenkette: Wer diese Liste liest, soll nicht selbst noch
+      // einmal `JSON.parse` in ein `try` packen müssen.
+      mentions: unpackMentions(row.mentions),
+      avatar: avatarOf({ discord_id: discordId, discord_avatar: avatarHash }),
+      files: attachments.get(row.id) || [],
+    };
+  });
 }
 
 export function listFor(user) {
@@ -342,6 +396,7 @@ export const reply = db.transaction((ticket, user, body, {
   discordId = null,
   staff = null,
   files: fileIds = [],
+  mentions = null,
 } = {}) => {
   // Eine Antwort, die nur aus einem Screenshot besteht, ist eine Antwort. Ohne Anhang bleibt der
   // Text Pflicht – eine leere Nachricht sagt niemandem etwas.
@@ -359,10 +414,20 @@ export const reply = db.transaction((ticket, user, body, {
 
   const info = db
     .prepare(
-      `INSERT INTO ticket_messages (ticket_id, user_id, role, body, internal, author_name, discord_id, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      `INSERT INTO ticket_messages (ticket_id, user_id, role, body, internal, author_name, discord_id, mentions, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-    .run(ticket.id, user.id, isStaff ? 'staff' : 'user', text, internal ? 1 : 0, authorName, discordId, now);
+    .run(
+      ticket.id,
+      user.id,
+      isStaff ? 'staff' : 'user',
+      text,
+      internal ? 1 : 0,
+      authorName,
+      discordId,
+      packMentions(mentions),
+      now
+    );
   const attached = files.claim(chosen, {
     ticketId: ticket.id,
     messageId: info.lastInsertRowid,
@@ -494,32 +559,19 @@ export function setChannel(ticketId, channelId) {
 }
 
 // ---------------------------------------------------------------- Bescheid geben
-
-/** Das Team über ein neues Ticket informieren – Webhook und, wenn er läuft, der Bot. */
-export async function notifyStaff(ticket, user) {
-  const paying = isPayingUser(user.id);
-  return notify.staff({
-    title: `New ticket #${ticket.id}: ${ticket.subject}`,
-    url: `${config.publicUrl}/en/app#/admin/tickets/${ticket.id}`,
-    description: [
-      `**From** ${user.username}${paying ? ' · paying customer' : ''}`,
-      `**Priority** ${ticket.priority}`,
-      ticket.source === 'discord' ? '**Via** Discord' : null,
-    ]
-      .filter(Boolean)
-      .join('\n'),
-    color: ticket.priority === 'urgent' ? notify.COLORS.bad : notify.COLORS.info,
-  });
-}
-
-/** Das Team über eine Kundenantwort informieren. */
-export const notifyStaffReply = (ticket, user, body) =>
-  notify.staff({
-    title: `Reply to #${ticket.id}: ${ticket.subject}`,
-    url: `${config.publicUrl}/en/app#/admin/tickets/${ticket.id}`,
-    description: `**${user.username}**\n${String(body).slice(0, 400)}`,
-    color: notify.COLORS.warn,
-  });
+//
+// **Was hier nicht mehr steht: der Webhook ans Team.**
+//
+// Ein neues Ticket und jede Antwort darauf gingen früher zusätzlich an einen Discord-Webhook des
+// Betreibers. Dieselbe Nachricht stand zu diesem Zeitpunkt aber schon an drei Stellen: im Panel
+// als Ticket, mit einer Zahl daneben in der Seitenleiste des Teams, und – sobald der Bot läuft –
+// als eigener Kanal in Discord, in dem das Gespräch tatsächlich stattfindet. Die vierte Kopie in
+// einem Kanal, in dem man nicht antworten kann, war kein Hinweis mehr, sondern Rauschen; und ein
+// Kanal, der ständig rauscht, wird nicht mehr gelesen – auch dann nicht, wenn dort einmal etwas
+// steht, das wirklich niemand sonst sagt.
+//
+// Genau dafür ist der Webhook jetzt da: für den Zustand der Anlage (server/systemreport.js).
+// Ticketmeldungen bleiben, wo sie hingehören – im Panel und im Ticket-Kanal.
 
 /**
  * Alle Beteiligten außer einem benachrichtigen. Wer selbst geschrieben hat, bekommt keine Post

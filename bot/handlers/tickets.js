@@ -39,6 +39,40 @@ const ARCHIVE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const UPLOAD_LIMIT = [10, 10, 50, 100].map((mb) => mb * 1024 * 1024);
 const uploadLimit = (guild) => UPLOAD_LIMIT[guild?.premiumTier || 0] ?? UPLOAD_LIMIT[0];
 
+/**
+ * Wer hinter den Zahlen einer Nachricht steckt.
+ *
+ * Discord verschickt Erwähnungen als IDs: `<@1538…>` ist eine Person, `<#1538…>` ein Kanal,
+ * `<@&1538…>` eine Rolle. Im Discord-Client steht daran ein Name, weil der Client den Server
+ * kennt. **Das Panel kennt ihn nicht** – dort stand deshalb bisher die nackte Zahl mitten im Satz.
+ *
+ * Der Bot ist die einzige Stelle, die beides sieht, also löst er es hier auf und schickt die
+ * Zuordnung mit. Sie wird an der Nachricht gespeichert und nicht bei jedem Anzeigen neu geholt:
+ * Ein Kanal, der später umbenannt oder gelöscht wird, soll den Verlauf nicht rückwirkend ändern –
+ * genau wie in Discord selbst.
+ *
+ * `displayName` vor `username`: Im Ticket-Kanal steht der Servername der Person, und der Verlauf
+ * im Panel soll dasselbe sagen wie der Kanal daneben.
+ */
+export function resolveMentions(message) {
+  const out = {};
+  for (const [id, user] of message.mentions?.users ?? []) {
+    const member = message.guild?.members?.cache?.get(id);
+    out[id] = { type: 'user', name: member?.displayName || user.displayName || user.username };
+  }
+  for (const [id, role] of message.mentions?.roles ?? []) {
+    // `hexColor` ist bei einer Rolle ohne eigene Farbe `#000000` – das ist in Discord "keine
+    // Farbe" und nicht "schwarz". Ohne diese Unterscheidung stünde im Panel jede gewöhnliche
+    // Rolle in tiefem Schwarz, das auf dunklem Grund niemand mehr liest.
+    const color = role.hexColor && role.hexColor !== '#000000' ? role.hexColor : undefined;
+    out[id] = { type: 'role', name: role.name, ...(color ? { color } : {}) };
+  }
+  for (const [id, channel] of message.mentions?.channels ?? []) {
+    out[id] = { type: 'channel', name: channel?.name || 'channel' };
+  }
+  return out;
+}
+
 /** Eine Größe, wie sie ein Mensch liest. */
 const humanSize = (bytes) =>
   bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
@@ -467,6 +501,9 @@ export class Tickets {
           discord_user_id: message.author.id,
           author_name: message.member?.displayName || message.author.username,
           body: content,
+          // Wer hinter den Zahlen steckt. Siehe `resolveMentions` – ohne das steht im Panel
+          // `<@1538202840445485134>` statt „@Hugo“.
+          mentions: resolveMentions(message),
           attachments: files,
         },
       });

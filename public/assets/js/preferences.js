@@ -6,8 +6,15 @@
 // Werte bewusst im lokalen Speicher – aber je Nutzer getrennt, falls mehrere dasselbe Gerät
 // verwenden.
 
+/**
+ * Womit jemand anfängt, der noch nichts eingestellt hat.
+ *
+ * **Kompakt ist die Vorgabe.** Das Panel ist eine Arbeitsfläche und keine Broschüre: Wer hier ist,
+ * hat mehrere Serverplätze, eine Kontenliste, einen Chatverlauf und eine Übersicht offen und will
+ * davon so viel wie möglich gleichzeitig sehen. „Bequem“ bleibt einen Klick entfernt.
+ */
 const DEFAULTS = Object.freeze({
-  density: 'comfortable',
+  density: 'compact',
   motion: 'system',
   start: 'overview',
   favoriteServers: [],
@@ -23,6 +30,32 @@ const allowed = {
 };
 
 const keyOf = (userId) => `afk-preferences-${Number(userId) || 'guest'}`;
+
+/**
+ * Die Fassung dieses Speicherformats. Steht als `v` im gespeicherten Satz.
+ *
+ * 2 ist die erste, die nur noch Abweichungen speichert (siehe `thin`) – und die einmalige
+ * Bereinigung darunter hängt daran.
+ */
+const VERSION = 2;
+
+/**
+ * Der eine Umzug von Fassung 1 auf 2: ein `density: 'comfortable'` fällt weg.
+ *
+ * In Fassung 1 schrieb jeder Speichervorgang den **ganzen** Satz weg, also auch die Werte, die
+ * niemand gewählt hatte. Wer je einen Serverplatz mit dem Stern markiert hat, trug seitdem die
+ * damalige Vorgabe „bequem“ mit sich – und hätte die neue Vorgabe „kompakt“ nie zu sehen bekommen.
+ *
+ * Herausgenommen wird deshalb genau der eine Wert, der auch nebenbei entstanden sein kann: das
+ * alte „bequem“. Ein gespeichertes „kompakt“ bleibt stehen, denn das konnte nur durch einen Klick
+ * dorthin kommen. Wer „bequem“ wirklich wollte, stellt es einmal wieder ein – und ab dann bleibt
+ * es, weil es jetzt eine Abweichung von der Vorgabe ist und als solche gespeichert wird.
+ */
+function migrate(raw) {
+  if (!raw || typeof raw !== 'object' || raw.v >= VERSION) return raw;
+  const { density, ...rest } = raw;
+  return density === 'comfortable' ? rest : raw;
+}
 
 function clean(raw) {
   const next = { ...DEFAULTS };
@@ -41,16 +74,40 @@ function clean(raw) {
 
 export function preferences(userId) {
   try {
-    return clean(JSON.parse(localStorage.getItem(keyOf(userId)) || '{}'));
+    return clean(migrate(JSON.parse(localStorage.getItem(keyOf(userId)) || '{}')));
   } catch {
     return { ...DEFAULTS };
   }
 }
 
+/**
+ * Nur das, was von der Vorgabe abweicht – der Rest bleibt ungeschrieben.
+ *
+ * **Warum das wichtig ist.** Vorher landete bei jedem Schreibvorgang der *ganze* Satz im Speicher,
+ * also auch die Werte, die niemand angefasst hatte: Wer einmal einen Serverplatz mit dem Stern
+ * markiert hat, trug seitdem `density: 'comfortable'` mit sich herum, ohne das je gewählt zu
+ * haben. Eine geänderte Vorgabe hätte diese Leute nie erreicht – sie hatten ja einen Wert.
+ *
+ * So steht im Speicher nur, wofür sich jemand entschieden hat. Alles andere folgt DEFAULTS, auch
+ * dann noch, wenn sich DEFAULTS ändert.
+ */
+function thin(value) {
+  const out = { v: VERSION };
+  for (const [key, fallback] of Object.entries(DEFAULTS)) {
+    const current = value[key];
+    if (Array.isArray(fallback)) {
+      if (current.length) out[key] = current;
+    } else if (current !== fallback) {
+      out[key] = current;
+    }
+  }
+  return out;
+}
+
 function write(userId, value) {
   const next = clean(value);
   try {
-    localStorage.setItem(keyOf(userId), JSON.stringify(next));
+    localStorage.setItem(keyOf(userId), JSON.stringify(thin(next)));
   } catch {
     /* Im privaten Modus gilt die Wahl bis zum nächsten Neuladen über die DOM-Attribute weiter. */
   }

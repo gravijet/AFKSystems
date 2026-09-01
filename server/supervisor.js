@@ -18,6 +18,7 @@ import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
 import * as agents from './agents.js';
 import * as resources from './resources.js';
+import * as notify from './notify.js';
 import { featuresOf, isActive, gateCaps, freeAccess } from './billing.js';
 import { HttpError, codeUrl, MS_LINK } from './util.js';
 import { stripFormatting } from '../public/assets/js/chatlog.js';
@@ -283,6 +284,44 @@ const PATTERNS = [
 /** So lange darf ein Bot auf eine neue Microsoft-Anmeldung warten, bevor er aufgibt. */
 const AUTH_WAIT_MS = 10 * 60 * 1000;
 
+// ---------------------------------------------------------------- Wiederanlauf
+//
+// **Was von selbst zurückkommt und was nicht.**
+//
+// Der Client beendet sich nach einem Kick oder einem Netzabbruch; einen eigenen Reconnect hat er
+// nicht. Bis hierher hieß das: Ein Bot, der nachts um drei rausflog, war am Morgen aus, und der
+// Startwunsch war gleich mit gelöscht. Für einen Dienst, dessen ganzer Zweck es ist, dass jemand
+// im Spiel steht, war das die falsche Vorgabe.
+//
+// Es geht dabei nicht um "immer neu starten". Ein Server, der jeden Beitritt ablehnt – falsche
+// Adresse, falsche Version, Bann, Whitelist –, lehnt ihn auch beim zwanzigsten Mal ab; ein Panel,
+// das trotzdem weiterstartet, ist eine Neustartschleife im Minutentakt und für den Minecraft-Server
+// nicht von einem Angriff zu unterscheiden. Die Trennlinie ist deshalb genau die aus der Frage:
+// **war er vorher im Spiel?** War er es, ist das Aus eine Störung und die Verbindung kommt zurück.
+// War er es nie, ist es eine Absage, und die wiederholt sich nicht von selbst.
+//
+// Drei Größen halten das im Rahmen:
+//
+//   * `reconnect_delay` (Vorgabe 5 s) verdoppelt sich mit jedem Fehlversuch bis `max_backoff`
+//     (Vorgabe 60 s). Ein Server, der gerade neu startet, wird damit nicht bestürmt.
+//   * `RESTART_MAX_TRIES` beendet die Kette. Danach bleibt der Bot aus und der Kunde erfährt es –
+//     ein Wiederanlauf, der ewig scheitert, ist eine Störung, die niemandem gemeldet wird.
+//   * `RESTART_STABLE_MS`: Wer so lange im Spiel stand, hat die Kette hinter sich gelassen. Der
+//     nächste Ausfall fängt wieder bei Versuch eins an. Ohne diese Zeile wäre ein Bot, der einmal
+//     im Monat kurz die Verbindung verliert, nach acht Monaten "aufgegeben" – und ein Server, der
+//     im Minutentakt kickt, liefe trotzdem ewig weiter, weil jeder Versuch ja "online" war.
+//
+// Der Neustart nach einem **VPS-Neustart** braucht davon nichts: Der Wunsch (`wanted`) steht in
+// der Datenbank, `restoreAll()` löst ihn beim Hochfahren ein, und die systemd-Einheit fährt das
+// Panel hoch. Der Beitrag dieser Stelle dazu ist ein einziger: den Wunsch **stehen zu lassen**,
+// statt ihn beim Absturz zu löschen.
+
+/** So oft wird ein Bot nacheinander neu gestartet, bevor das Panel es aufgibt. */
+const RESTART_MAX_TRIES = 8;
+
+/** So lange muss ein Bot im Spiel gestanden haben, damit die Versuchskette wieder bei null steht. */
+const RESTART_STABLE_MS = 5 * 60 * 1000;
+
 /** Ab dieser Größe wird das Protokoll eines Bots umgelegt (siehe Bot#rotateLog). */
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
 
@@ -488,6 +527,15 @@ class Bot extends EventEmitter {
     this.chat = [];
     this.proc = null;
     this.build = null;
+    /**
+     * Welche Client-Datei dieser Lauf benutzt – die Fassung und der Abdruck vom Startzeitpunkt.
+     *
+     * Beides wird **einmal beim Start** festgehalten und danach nie mehr angefasst. Genau darin
+     * liegt der Sinn: Der Stundentakt tauscht die Datei auf der Platte aus, dieser Prozess läuft
+     * mit der alten weiter, und nur der Vergleich der beiden Abdrücke sagt, dass das so ist.
+     */
+    this.clientVersion = null;
+    this.clientStamp = null;
     this.menu = null;
     // Anzeigetafel und Menü als Daten. Sie kommen als gewöhnliche Textzeilen aus
     // dem Client; gesammelt werden sie nur, wenn das Panel gerade danach gefragt hat (siehe
@@ -511,6 +559,19 @@ class Bot extends EventEmitter {
     this.web = null;
     this.webNote = '';
     this.stopping = false;
+    // Seit wann dieser Lauf im Spiel steht – die eine Auskunft, an der der Wiederanlauf hängt.
+    // `null` heißt "noch nie", und das ist etwas anderes als "gerade nicht": Wer nie drin war,
+    // wird nicht neu gestartet (siehe die Erklärung bei RESTART_MAX_TRIES).
+    this.onlineSince = null;
+    this.stableTimer = null;
+    /**
+     * Der wartende Wiederanlauf, so wie das Panel ihn anzeigt: `{ tries, max, at }` oder `null`.
+     *
+     * Die Buchführung dazu führt der Supervisor (`Supervisor#retry`) – er kennt den Zeitgeber und
+     * überlebt den Bot. Was hier steht, ist nur die Auskunft **dieses** Bots über sich selbst, und
+     * die gehört in seinen `snapshot()`, ohne dass der dafür zurück in den Supervisor greifen muss.
+     */
+    this.retry = null;
     this.timers = new Set();
     this.buffers = { out: '', err: '' };
     /**
@@ -531,6 +592,21 @@ class Bot extends EventEmitter {
 
   get online() {
     return this.state === 'online';
+  }
+
+  /**
+   * Läuft dieser Bot mit einer Client-Datei, die es so nicht mehr gibt?
+   *
+   * Nur für **laufende** Bots eine sinnvolle Frage: Ein ausgeschalteter startet ohnehin mit dem,
+   * was gerade da liegt. Und nur, wenn beide Abdrücke bekannt sind – fehlt einer (die Bauform ist
+   * verschwunden, der Bot kommt aus einem Lauf vor dieser Änderung), ist die ehrliche Antwort
+   * „weiß ich nicht“, und die heißt hier „nein“: Ein Neustart, der aus einer Unsicherheit folgt,
+   * wirft einen Bot aus dem Spiel, ohne dass jemand etwas davon hat.
+   */
+  get outdated() {
+    if (!this.running || !this.clientStamp) return false;
+    const now = binaries.stampFor(this.build);
+    return Boolean(now) && now !== this.clientStamp;
   }
 
   get running() {
@@ -556,16 +632,19 @@ class Bot extends EventEmitter {
   /**
    * Soll dieser Bot den texturierten Viewer mitbringen?
    *
-   * Vier Bedingungen, und jede einzelne ist ein Nein: Die Live-Ansicht muss gebucht sein (`pov`
-   * kommt schon durch `gateCaps` gefiltert), die Bauform muss beide Optionen kennen (also
-   * mindestens Client 2.5.0), und für die Protokollversion dieses Serverplatzes muss eine
-   * Original-JAR bereitliegen. Fehlt eines davon, startet der Bot ohne `--pov-web` und die
-   * Live-Ansicht bleibt die farbige Voxelansicht.
+   * Drei Bedingungen, und jede einzelne ist ein Nein: Die Live-Ansicht muss gebucht sein (`pov`
+   * kommt schon durch `gateCaps` gefiltert), und die Bauform muss `--pov-web` samt
+   * `--pov-resources` kennen – also mindestens Client 2.5.0.
+   *
+   * **Die vierte Bedingung ist mit 2.6.0 weggefallen.** Bis dahin musste für die Protokollversion
+   * dieses Serverplatzes eine Original-JAR von Minecraft bereitliegen, sonst gab es keine
+   * Texturen; ab 2.6.0 sucht der Client sie selbst (eigene Ablage, vorhandene
+   * Minecraft-Installation, zuletzt Mojang). Eine hinterlegte Datei bleibt trotzdem der bessere
+   * Weg – siehe `args()` –, sie ist nur keine Voraussetzung mehr.
    */
   wantsWebView(caps) {
-    return Boolean(
-      caps.pov && caps.povweb && caps.povresources && resources.has(this.profile.mc_version)
-    );
+    if (!caps.pov || !caps.povweb || !caps.povresources) return false;
+    return resources.has(this.profile.mc_version) || Boolean(caps.povresourcesauto);
   }
 
   args(caps) {
@@ -588,6 +667,32 @@ class Bot extends EventEmitter {
     else args.push('--account', this.account.name);
 
     if (caps.events) args.push('--events');
+
+    // ---- Der Wiederanlauf gehört dem Panel ------------------------------------------------
+    //
+    // **Ab Client 2.6.0 verbindet sich der Client nach einem Kick von selbst neu.** Ohne diese
+    // Zeile gäbe es damit zwei Antworten auf dieselbe Frage – und die des Clients wäre die
+    // falsche, aus drei Gründen, von denen jeder für sich reicht:
+    //
+    //   1. **Der Kunde hat das Sagen.** Wer `auto_reconnect` abschaltet, will einen Bot, der aus
+    //      bleibt. Ein Client, der trotzdem weiter anklopft, macht aus dieser Einstellung eine
+    //      Anzeige ohne Wirkung.
+    //   2. **Zwischen zwei Versuchen wird gerechnet.** `Supervisor#start` prüft bei jedem Start
+    //      Laufzeit, Guthaben, Sperren, Kontogrenzen und die Discord-Mitgliedschaft des
+    //      Gratis-Tarifs. Ein Serverplatz, dessen Laufzeit mitten in der Nacht endet, würde vom
+    //      Client bis zum Morgen weiter verbunden – bezahlt hat ihn niemand mehr.
+    //   3. **Aufgeben muss sichtbar sein.** Nach acht erfolglosen Versuchen bekommt der Kunde eine
+    //      Nachricht (siehe `RESTART_MAX_TRIES`). Ein Client, der still weiterprobiert, hat
+    //      niemanden, der das meldet – und ein Bot, der seit zwei Tagen jede Minute abgewiesen
+    //      wird, ist für den Minecraft-Server nicht von einem Angriff zu unterscheiden.
+    //
+    // Deshalb: Der Prozess endet nach einem Abbruch, wie er es immer getan hat, und was danach
+    // passiert, entscheidet der Supervisor. Genau das empfehlen auch die Release-Notes zu 2.6.0
+    // jedem, der eine Aufsicht davor gesetzt hat.
+    //
+    // Kennt die Bauform die Option nicht (2.5.0 und älter), ist ohnehin alles wie bisher – und
+    // mitschicken dürfte man sie dann nicht: Eine unbekannte Option bricht den Start ab.
+    if (caps.noreconnect) args.push('--no-reconnect');
 
     // Proxy und Fake-Host darf nur, wessen Tarif das hergibt – sonst stünde im Panel eine
     // Einstellung, die für den Gratis-Platz nichts täte.
@@ -632,7 +737,7 @@ class Bot extends EventEmitter {
       if (caps.povfps) args.push('--pov-fps', String(POV_FPS));
 
       // Der texturierte Viewer. Er kommt **zusätzlich** zu den Zeilen oben, nicht statt ihrer:
-      // Fehlt die Original-JAR, bleibt die Voxelansicht, und dafür müssen die Einstellungen
+      // Kommt keine Textur zustande, bleibt die Voxelansicht, und dafür müssen die Einstellungen
       // dieser Ansicht schon in der Befehlszeile stehen.
       //
       // Auf einem Standort hängt die Datei nicht hier, sondern dort – deshalb setzt sie dort auch
@@ -640,10 +745,15 @@ class Bot extends EventEmitter {
       // Version; welchen Pfad seine JAR hat, weiß nur die andere Maschine.
       if (this.webPort && !this.remote) {
         const jar = resources.pathFor(profile.mc_version);
-        if (jar) {
-          args.push('--pov-web', `127.0.0.1:${this.webPort}`);
-          args.push('--pov-resources', jar);
-        }
+        // **Die hinterlegte Datei geht vor, auch wenn der Client sich selbst helfen könnte.**
+        // Sie liegt einmal auf dieser Maschine und gilt für alle. Die Selbsthilfe des Clients legt
+        // sie dagegen unter `XDG_CONFIG_HOME` ab, und das ist hier das Verzeichnis **eines
+        // Kunden** (siehe `userDir`): Bei dreißig Kunden mit Live-Ansicht wären das dreißigmal
+        // dieselben dreißig Megabyte und dreißig Downloads bei Mojang.
+        if (jar) args.push('--pov-web', `127.0.0.1:${this.webPort}`, '--pov-resources', jar);
+        // Ohne hinterlegte Datei: Ab 2.6.0 findet der Client selbst eine, also bekommt der Kunde
+        // seine Texturen trotzdem. Ohne `--pov-resources` gilt dort die Vorgabe `auto`.
+        else if (caps.povresourcesauto) args.push('--pov-web', `127.0.0.1:${this.webPort}`);
       }
     }
 
@@ -701,6 +811,8 @@ class Bot extends EventEmitter {
     if (this.proc) return this;
     const { command, file, build } = binaries.command(this.profile, this.plan);
     this.build = build;
+    this.clientVersion = binaries.versionOf(build);
+    this.clientStamp = binaries.stampFor(build);
     // `this.caps` erst nach `this.build` lesen – es hängt an der Bauform, die gerade gewählt wurde.
     const caps = this.caps;
 
@@ -717,6 +829,10 @@ class Bot extends EventEmitter {
 
     this.stopping = false;
     this.lastReason = null;
+    this.onlineSince = null;
+    // Das Warten ist vorbei – dieser Start **ist** der Versuch, auf den gewartet wurde. Die
+    // Versuchskette selbst läuft im Supervisor weiter, bis der Bot lange genug gestanden hat.
+    this.retry = null;
     // Gezeichnet wird erst auf Anforderung – auch bei `pov-afk-linux`, das von Haus aus sofort
     // loslegt: Dafür steht `--pov aus` in den Argumenten. Kann die Bauform diese Option nicht
     // (Client älter als 2.1.0), fängt sie trotzdem an, und dann muss das Panel ab der ersten
@@ -737,7 +853,18 @@ class Bot extends EventEmitter {
           userId: this.userId,
           // Die zwei Argumente für den texturierten Viewer setzt der Standort selbst ein – er
           // allein weiß, ob und wo seine Kopie der Minecraft-JAR liegt.
-          pov: this.webPort ? { port: this.webPort, mc: this.profile.mc_version } : null,
+          //
+          // `auto` ist die eine Auskunft, die er **nicht** selbst hat: ob diese Bauform sich ihre
+          // JAR notfalls selbst besorgen kann (Client 2.6.0). Der Standort ruft kein `--help` auf,
+          // er führt nur aus, was hier steht. Ohne diese Zeile bliebe seine Live-Ansicht ohne
+          // hinterlegte Datei bei der Voxelansicht, während sie hier texturiert wäre.
+          pov: this.webPort
+            ? {
+                port: this.webPort,
+                mc: this.profile.mc_version,
+                auto: Boolean(caps.povresourcesauto),
+              }
+            : null,
         });
       } catch (error) {
         // Hier endet der Start, bevor es einen Prozess gibt – `cleanup()` läuft also nie, und die
@@ -784,20 +911,25 @@ class Bot extends EventEmitter {
           ? 'Die Verbindung zum Standort ist abgerissen.'
           : this.lastReason || `Client beendet (${signal || `Code ${code}`})`;
       if (!this.stopping && code !== 0) this.lastError = reason;
+      // **Vor dem Aufräumen fragen, ob er im Spiel war.** `cleanup()` löscht die Antwort, und ohne
+      // sie ist jeder Ausfall gleich – der gekickte Bot wie der, den der Server nie hereingelassen
+      // hat. Genau dieser Unterschied entscheidet über den Wiederanlauf.
+      const wasOnline = this.onlineSince ? Date.now() - this.onlineSince : 0;
       this.push('system', reason);
       this.setState(this.stopping ? 'offline' : code === 0 ? 'offline' : 'error', reason);
       this.cleanup();
-      // Der neue Rust-Client beendet nach Kick oder Netzabbruch absichtlich die Sitzung. Das Panel
-      // respektiert das: kein versteckter Prozess-Neustart, sondern ein bewusster neuer Start.
-      //
-      // Ausnahme: `LINK` heißt, dass die Leitung zum Standort abgerissen ist. Das ist keine
-      // Entscheidung des Kunden und kein Ende der Sitzung im Spiel – der Wunsch bleibt stehen,
-      // und `restoreNode()` fährt den Bot wieder hoch, sobald der Standort zurück ist.
-      if (!this.stopping && signal !== 'LINK') {
-        db.prepare(
-          'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
-        ).run(this.profile.id, this.account.id);
-      }
+      // Gestoppt heißt gestoppt. Und `LINK` heißt, dass die Leitung zum Standort abgerissen ist:
+      // Das ist keine Entscheidung des Kunden und kein Ende der Sitzung im Spiel – der Wunsch
+      // bleibt stehen, und `restoreNode()` fährt den Bot wieder hoch, sobald der Standort zurück
+      // ist. Beides ist hier fertig.
+      if (this.stopping || signal === 'LINK') return;
+      // Der Client beendet sich nach Kick oder Netzabbruch von selbst. War der Bot vorher im
+      // Spiel, ist das eine Störung und keine Absage – dann bleibt der Wunsch stehen und der
+      // Wiederanlauf holt ihn zurück. Sonst wird der Wunsch gelöscht, so wie bisher.
+      if (this.supervisor.planRestart(this, { wasOnline })) return;
+      db.prepare(
+        'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
+      ).run(this.profile.id, this.account.id);
     });
 
     db.prepare(
@@ -809,6 +941,9 @@ class Bot extends EventEmitter {
 
   stop({ intended = true } = {}) {
     this.stopping = intended;
+    // Wer stoppt, meint es. Eine noch laufende Versuchskette würde den Bot Sekunden später wieder
+    // hochfahren – und der Knopf im Panel sähe aus, als hätte er nicht funktioniert.
+    if (intended) this.supervisor.cancelRestart(this.key);
     clearTimeout(this.authTimer);
     for (const timer of this.timers) clearInterval(timer);
     this.timers.clear();
@@ -851,6 +986,9 @@ class Bot extends EventEmitter {
     }
     this.proc = null;
     this.startedAt = null;
+    this.onlineSince = null;
+    clearTimeout(this.stableTimer);
+    this.stableTimer = null;
     this.auth = null;
     this.menu = null;
     this.views = { board: null, menu: null, inv: null, position: null, movement: null, pov: null };
@@ -1002,19 +1140,12 @@ class Bot extends EventEmitter {
         );
         break;
       case 'join': {
-        const first = this.state !== 'online';
-        this.setState('online', event.name || this.account.name);
+        const again = this.cameBack();
+        const first = this.markOnline(event.name);
         // `pov-afk-linux` beginnt gleich nach dem Beitritt von selbst zu zeichnen – erst jetzt
         // nimmt der Client örtliche Befehle an, und erst jetzt lässt sich die Größe setzen.
         if (this.povWanted) this.applyPovSize();
-        this.connections += 1;
-        db.prepare(
-          'UPDATE bots SET connections = connections + 1, state = ? WHERE profile_id = ? AND account_id = ?'
-        ).run('online', this.profile.id, this.account.id);
-        db.prepare('UPDATE mc_accounts SET connections = connections + 1 WHERE id = ?').run(
-          this.account.id
-        );
-        if (first) this.supervisor.macros.onJoin(this);
+        if (first) this.supervisor.macros.onJoin(this, { again });
         break;
       }
       case 'world':
@@ -1056,6 +1187,10 @@ class Bot extends EventEmitter {
           key: this.key,
           state: this.snapshot(),
         });
+        // Ein aufgehendes Fenster ist ein Ereignis, das der Client von sich aus meldet – damit
+        // lässt sich ein Menü bedienen, ohne dass jemand davor sitzt. Beim Schließen ist nichts
+        // aufgegangen, also gibt es auch nichts auszulösen.
+        if (this.menu) this.supervisor.macros.onMenu(this, this.menu.title);
         break;
       }
       // **Wohin ein Feld gehört, entscheidet die laufende Abfrage.** `:menu` und `:inv` schreiben
@@ -1179,16 +1314,8 @@ class Bot extends EventEmitter {
         this.setState('connecting', `${hit.match[1]}:${hit.match[2]}`);
         break;
       case 'online': {
-        const first = this.state !== 'online';
-        this.setState('online', hit.match[1]);
-        this.connections += 1;
-        db.prepare(
-          'UPDATE bots SET connections = connections + 1, state = ? WHERE profile_id = ? AND account_id = ?'
-        ).run('online', this.profile.id, this.account.id);
-        db.prepare('UPDATE mc_accounts SET connections = connections + 1 WHERE id = ?').run(
-          this.account.id
-        );
-        if (first) this.supervisor.macros.onJoin(this);
+        const again = this.cameBack();
+        if (this.markOnline(hit.match[1])) this.supervisor.macros.onJoin(this, { again });
         break;
       }
       case 'disconnected': {
@@ -1380,6 +1507,48 @@ class Bot extends EventEmitter {
       fs.appendFile(this.logFile, record, () => {});
     }
     this.supervisor.emit('bot-line', { userId: this.userId, key: this.key, entry });
+  }
+
+  /**
+   * Der Bot steht im Spiel – die Buchführung dazu.
+   *
+   * Sie stand zweimal da, einmal für `@event join` und einmal für die Textzeile älterer Bauformen,
+   * und die zweite Fassung hätte jede Ergänzung hier stillschweigend verpasst.
+   *
+   * `stableTimer` ist der Teil, der über den Wiederanlauf entscheidet: Steht der Bot lange genug,
+   * gilt die Versuchskette als überstanden und wird gelöscht. Das ist dieselbe Aussage wie "es
+   * läuft wieder" – nur eine, die ohne Zutun eines Menschen zustande kommt.
+   */
+  /**
+   * Ist das eine Wiederkehr und kein erster Beitritt?
+   *
+   * Die Antwort steht in der Datenbank und nicht im Speicher: Ein Bot, der nach einem Kick vom
+   * Wiederanlauf zurückgeholt wird, ist ein **neuer Prozess** mit einem neuen `Bot`-Objekt, und
+   * jede Zählung im Speicher fienge dort wieder bei null an. `bots.connections` zählt dagegen über
+   * alle Läufe hinweg – wer schon einmal drin war, kommt zurück und tritt nicht erstmals bei.
+   *
+   * **Vor `markOnline()` zu fragen** ist Absicht: Die Zeile darin zählt gerade diesen Beitritt mit.
+   */
+  cameBack() {
+    const row = db
+      .prepare('SELECT connections FROM bots WHERE profile_id = ? AND account_id = ?')
+      .get(this.profile.id, this.account.id);
+    return (row?.connections || 0) > 0;
+  }
+
+  markOnline(name) {
+    const first = this.state !== 'online';
+    this.setState('online', name || this.account.name);
+    if (!this.onlineSince) this.onlineSince = Date.now();
+    clearTimeout(this.stableTimer);
+    this.stableTimer = setTimeout(() => this.supervisor.cancelRestart(this.key), RESTART_STABLE_MS);
+    this.stableTimer.unref?.();
+    this.connections += 1;
+    db.prepare(
+      'UPDATE bots SET connections = connections + 1, state = ? WHERE profile_id = ? AND account_id = ?'
+    ).run('online', this.profile.id, this.account.id);
+    db.prepare('UPDATE mc_accounts SET connections = connections + 1 WHERE id = ?').run(this.account.id);
+    return first;
   }
 
   setState(state, detail = '') {
@@ -1623,6 +1792,11 @@ class Bot extends EventEmitter {
       connections: this.connections,
       last_error: this.lastError,
       build: this.build,
+      // Mit welcher Client-Fassung dieser Lauf gestartet ist, und ob sie inzwischen abgelöst
+      // wurde. Beides gehört in die Ansicht: „läuft“ und „läuft mit dem Client von letzter Woche“
+      // sind zwei verschiedene Auskünfte.
+      client_version: this.clientVersion,
+      outdated: this.outdated,
       menu: this.menu,
       // Ohne das Bild: ein Zustandswechsel wird bei laufender Live-Ansicht sonst zu einem
       // Datenpaket von zig Kilobyte. Bilder gehen ihren eigenen Weg (`bot-view`).
@@ -1634,6 +1808,9 @@ class Bot extends EventEmitter {
         movement: this.views.movement,
       },
       pov: this.povState(),
+      // Wartet gerade ein Wiederanlauf? Dann gehört das in die Anzeige: „Fehler“ allein sähe aus,
+      // als wäre der Bot endgültig aus, während er in Wahrheit gleich wiederkommt.
+      retry: this.retry,
       uptime: this.startedAt ? Date.now() - this.startedAt : 0,
       // Nur gesetzt, wenn der Client gerade auf eine neue Microsoft-Anmeldung wartet.
       auth: this.state === 'auth' ? this.auth : null,
@@ -1647,6 +1824,139 @@ class Supervisor extends EventEmitter {
     this.setMaxListeners(0);
     this.bots = new Map();
     this.macros = null; // wird von macros.js gesetzt
+    /**
+     * Wer gerade auf seinen nächsten Versuch wartet: key -> { tries, at, timer }.
+     *
+     * Absichtlich **nur im Speicher**. Was einen Neustart des Panels überleben muss, ist der
+     * Wunsch (`profile_accounts.wanted`), und der steht in der Datenbank; die Wartezeit dagegen
+     * gilt für diesen Lauf. Nach einem Neustart des Servers ist die richtige Wartezeit ohnehin
+     * keine – da soll alles sofort hochfahren, und genau das tut `restoreAll()`.
+     */
+    this.retry = new Map();
+  }
+
+  // ------------------------------------------------------------ Wiederanlauf
+  //
+  // Warum es ihn gibt und wo seine Grenzen liegen, steht oben bei `RESTART_MAX_TRIES`.
+
+  /**
+   * Ein Bot ist weg, ohne dass jemand ihn gestoppt hat. Kommt er von selbst zurück?
+   *
+   * Gibt `true` zurück, wenn ein Versuch liegt – dann bleibt der Startwunsch stehen. Bei `false`
+   * löscht der Aufrufer ihn, und der Bot bleibt aus, bis ein Mensch etwas tut.
+   */
+  planRestart(bot, { wasOnline = 0 } = {}) {
+    const chain = this.retry.get(bot.key);
+    // **Ohne laufende Kette braucht es einen Grund, überhaupt eine anzufangen: Er war im Spiel.**
+    // Wer es nie hinein geschafft hat, hat ein Problem, das ein zweiter Versuch nicht löst.
+    // Läuft die Kette dagegen schon, zählt sie weiter – dass *dieser* Versuch nicht bis ins Spiel
+    // kam, ist genau der Fall, für den es sie gibt.
+    if (!chain && !wasOnline) return false;
+    // Eine abgelaufene Microsoft-Anmeldung wiederholt sich nicht von selbst. Sie braucht einen
+    // Menschen mit einem Browser, und bis dahin wäre jeder Versuch nur ein weiterer Gerätecode.
+    if (bot.state === 'auth') return false;
+
+    // Frisch aus der Datenbank und nicht aus `bot.profile`: Wer den Schalter eben erst umgelegt
+    // hat, meint diesen Ausfall und nicht den nächsten.
+    const profile = db
+      .prepare('SELECT auto_reconnect, reconnect_delay, max_backoff FROM profiles WHERE id = ?')
+      .get(bot.profile.id);
+    if (!profile?.auto_reconnect) return false;
+
+    const tries = (chain?.tries || 0) + 1;
+    if (tries > RESTART_MAX_TRIES) {
+      this.cancelRestart(bot.key);
+      bot.push(
+        'error',
+        `Nach ${RESTART_MAX_TRIES} Versuchen aufgegeben. Der Bot bleibt aus, bis du ihn wieder startest.`
+      );
+      notify.botGaveUp(bot.userId, bot.account.name, bot.lastError || '');
+      return false;
+    }
+
+    const base = Math.max(1, profile.reconnect_delay || 5);
+    const cap = Math.max(base, profile.max_backoff || 60);
+    // Verdoppeln, bis die Obergrenze erreicht ist. `2 ** (tries - 1)` wächst schnell; deshalb
+    // steht die Obergrenze davor und nicht dahinter.
+    const seconds = Math.min(cap, base * 2 ** (tries - 1));
+    const entry = { tries, at: Date.now() + seconds * 1000, timer: null };
+    entry.timer = setTimeout(() => this.runRestart(bot.key), seconds * 1000);
+    entry.timer.unref?.();
+    this.retry.set(bot.key, entry);
+    bot.push('system', `Neuer Versuch in ${seconds} s (${tries}/${RESTART_MAX_TRIES}).`);
+    // Erst die Auskunft setzen, dann den Zustand: `setState` verschickt den Schnappschuss, und in
+    // dem soll schon stehen, der wievielte Versuch da wartet.
+    bot.retry = { tries, max: RESTART_MAX_TRIES, at: entry.at };
+    bot.setState('reconnecting', `Versuch ${tries}/${RESTART_MAX_TRIES}, in ${seconds} s`);
+    return true;
+  }
+
+  /** Der Versuch selbst. Klappt er nicht, legt der Ausgang des Prozesses den nächsten. */
+  runRestart(key) {
+    const entry = this.retry.get(key);
+    if (!entry) return;
+    entry.timer = null;
+    const [profileId, accountId] = key.split(':').map(Number);
+    // In der Wartezeit kann alles passiert sein: gestoppt, gelöscht, stillgelegt. Der Wunsch ist
+    // die Frage, die das beantwortet – wer ihn gelöscht hat, wollte keinen Bot mehr.
+    const wanted = db
+      .prepare('SELECT wanted FROM profile_accounts WHERE profile_id = ? AND account_id = ?')
+      .get(profileId, accountId);
+    if (!wanted?.wanted) return this.cancelRestart(key);
+    const context = this.context(profileId, accountId);
+    if (!context) return this.cancelRestart(key);
+    try {
+      this.start(context);
+    } catch (error) {
+      // Der Start ging gar nicht erst los – es gibt also keinen Prozess, dessen Ende den nächsten
+      // Versuch legen könnte. Manche Gründe vergehen von selbst (Standort weg, Anlage ausgelastet),
+      // andere nicht (Guthaben alle, Konto stillgelegt). Beide laufen hier in dieselbe Grenze:
+      // Es wird weiter versucht, aber nicht endlos.
+      const bot = this.get(profileId, accountId);
+      if (bot) {
+        bot.lastError = error.message;
+        bot.push('error', error.message);
+      }
+      if (entry.tries >= RESTART_MAX_TRIES) {
+        this.cancelRestart(key);
+        db.prepare(
+          'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
+        ).run(profileId, accountId);
+        notify.botGaveUp(context.user.id, context.account.name, error.message);
+        return;
+      }
+      const seconds = Math.min(
+        Math.max(1, context.profile.max_backoff || 60),
+        Math.max(1, context.profile.reconnect_delay || 5) * 2 ** entry.tries
+      );
+      entry.tries += 1;
+      entry.at = Date.now() + seconds * 1000;
+      entry.timer = setTimeout(() => this.runRestart(key), seconds * 1000);
+      entry.timer.unref?.();
+    }
+  }
+
+  /** Die Versuchskette dieses Bots beenden – gestoppt, aufgegeben oder lange genug gelaufen. */
+  cancelRestart(key) {
+    const bot = this.bots.get(key);
+    if (bot) bot.retry = null;
+    const entry = this.retry.get(key);
+    if (!entry) return false;
+    clearTimeout(entry.timer);
+    this.retry.delete(key);
+    return true;
+  }
+
+  /**
+   * Wartet dieser Bot gerade auf seinen nächsten Versuch?
+   *
+   * Der Takt „Bots wieder hochfahren“ läuft jede Minute und startet alles, was laufen soll und
+   * nicht läuft. Ohne diese Frage würde er die Wartezeit überholen – aus fünf Minuten Abstand
+   * würden sechzig Sekunden, und die ganze Bremse wäre umsonst.
+   */
+  waitingForRestart(key) {
+    const entry = this.retry.get(key);
+    return Boolean(entry?.timer && Date.now() < entry.at);
   }
 
   get(profileId, accountId) {
@@ -1657,6 +1967,63 @@ class Supervisor extends EventEmitter {
     return [...this.bots.values()]
       .filter((bot) => bot.userId === userId)
       .map((bot) => bot.snapshot());
+  }
+
+  // ------------------------------------------------------------ Neue Client-Fassung ausrollen
+  //
+  // Der Stundentakt holt jedes neue Release und legt die Datei hin. Damit läuft niemand
+  // automatisch mit dem neuen Client: Ein laufender Prozess hält seine Datei, und ein Bot, der seit
+  // drei Wochen im Spiel sitzt, sitzt dort mit dem Client von vor drei Wochen. Was hier steht, ist
+  // die Antwort darauf – und zwar eine, die jemand auslöst und nicht der Takt.
+  //
+  // **Warum das nicht von selbst passiert.** Ein Neustart wirft den Bot aus dem Spiel. Auf manchen
+  // Servern kostet das den Platz in einer Warteschlange, auf anderen eine Strafe für zu häufiges
+  // Beitreten, und wer gerade zusieht, sieht seinen Bot ohne erkennbaren Grund verschwinden.
+  // Diese Entscheidung gehört dem, dem der Serverplatz gehört; das Panel sagt ihm nur, dass sie
+  // ansteht.
+
+  /**
+   * Die laufenden Bots, unter denen die Client-Datei gewechselt hat.
+   *
+   * `userId` grenzt auf ein Konto ein, `profileId` auf einen Serverplatz. Ohne beides: alle, und
+   * das ist die Sicht der Verwaltung.
+   */
+  outdated({ userId = null, profileId = null } = {}) {
+    return [...this.bots.values()].filter(
+      (bot) =>
+        bot.outdated &&
+        (userId === null || bot.userId === userId) &&
+        (profileId === null || bot.profile.id === profileId)
+    );
+  }
+
+  /**
+   * Jeden davon neu starten – gestaffelt.
+   *
+   * **Der Abstand ist kein Schmuck.** Zwanzig Bots gleichzeitig neu zu starten heißt: zwanzig
+   * Minecraft-Clients, die im selben Augenblick beim selben Server anklopfen. Das sieht von dort
+   * aus wie ein Angriff, und die üblichen Schutzmaßnahmen (Verbindungsgrenze je Adresse,
+   * Beitrittssperre) treffen dann genau die Bots, die gerade wiederkommen wollten. Ein paar
+   * Sekunden dazwischen kosten nichts und ersparen das.
+   *
+   * Gibt zurück, wie viele angestoßen wurden. Fertig sind sie später – `reconnect` wartet auf das
+   * Ende des alten Prozesses und startet dann.
+   */
+  rolloutClient({ userId = null, profileId = null, spacingMs = 3000 } = {}) {
+    const due = this.outdated({ userId, profileId });
+    due.forEach((bot, index) => {
+      const run = () => {
+        // In der Zwischenzeit kann jemand den Bot von Hand gestoppt oder selbst neu gestartet
+        // haben. Dann ist hier nichts mehr zu tun – und ein Start gegen den Wunsch des Kunden
+        // wäre das Gegenteil von dem, was dieser Knopf verspricht.
+        if (!bot.running || !bot.outdated) return;
+        bot.push('system', 'Neue Client-Fassung – der Bot startet neu.');
+        this.reconnect(bot.profile.id, bot.account.id);
+      };
+      if (index === 0) run();
+      else setTimeout(run, index * spacingMs).unref?.();
+    });
+    return due.length;
   }
 
   runningCount(userId) {
@@ -1679,9 +2046,9 @@ class Supervisor extends EventEmitter {
   joinCommands(profileId, accountId) {
     const out = [];
     for (const macro of this.enabledMacros(profileId, accountId)) {
+      if (!clientCanTake(macro)) continue;
       const actions = JSON.parse(macro.actions || '[]');
       const settings = JSON.parse(macro.config || '{}');
-      if (!simpleChatMacro(actions)) continue;
       if (macro.event === 'join') {
         for (const action of actions) out.push(action.text);
       } else if (macro.event === 'timer' && settings.interval_sec) {
@@ -1701,9 +2068,9 @@ class Supervisor extends EventEmitter {
   clientMacros(profileId, accountId) {
     const out = [];
     for (const macro of this.enabledMacros(profileId, accountId)) {
+      if (!clientCanTake(macro)) continue;
       const actions = JSON.parse(macro.actions || '[]');
       const settings = JSON.parse(macro.config || '{}');
-      if (!simpleChatMacro(actions)) continue;
       let trigger = null;
       if (macro.event === 'world') trigger = 'world';
       else if (macro.event === 'death') trigger = 'death';
@@ -1738,6 +2105,16 @@ class Supervisor extends EventEmitter {
     if (this.runningCount(user.id) >= maxPerUser) {
       throw new HttpError(429, `Mehr als ${maxPerUser} Bots gleichzeitig gehen nicht.`, {
         en: `More than ${maxPerUser} bots at once is not possible.`,
+      });
+    }
+    // Ein Konto, das zur Löschung angemeldet ist, startet nichts mehr – auch nicht über den
+    // Wiederanlauf, einen Zeitplan oder einen Standort, der zurückkommt. Diese Prüfung steht
+    // deshalb **hier** und nicht an den vier Stellen, die einen Bot hochfahren: Eine davon wäre
+    // sonst irgendwann vergessen, und dann liefe auf einem gekündigten Konto weiter, was jeden
+    // Monat Geld kostet. Der Widerruf im Panel hebt sie sofort wieder auf.
+    if (user.delete_due_at) {
+      throw new HttpError(403, 'Dieses Konto ist zur Löschung angemeldet.', {
+        en: 'This account is scheduled for deletion.',
       });
     }
     if (profile.locked) {
@@ -1860,6 +2237,45 @@ class Supervisor extends EventEmitter {
     return bot.snapshot();
   }
 
+  /**
+   * Trennen und wiederkommen – derselbe Weg wie der Wiederanlauf, nur bewusst ausgelöst.
+   *
+   * Gebraucht wird das vom Macro-Schritt „Neu verbinden“: Es gibt Server, auf denen ein Bot nach
+   * einigen Stunden zwar noch verbunden ist, aber nichts mehr empfängt, und es gibt Unterserver,
+   * die man nur beim Beitritt wählen kann. Ein Client-Neustart ist dafür das einzige Mittel – der
+   * Client selbst kennt keinen Reconnect.
+   *
+   * **Der neue Start wartet auf das Ende des alten.** `Bot#start()` tut nichts, solange noch ein
+   * Prozess läuft; ein Start gleich nach dem `kill` wäre deshalb ein „Neu verbinden“, das trennt
+   * und nicht wiederkommt.
+   */
+  reconnect(profileId, accountId) {
+    const bot = this.get(profileId, accountId);
+    if (!bot?.proc) return false;
+    db.prepare('UPDATE profile_accounts SET wanted = 1 WHERE profile_id = ? AND account_id = ?').run(
+      profileId,
+      accountId
+    );
+    bot.proc.once('exit', () => {
+      // Eine Sekunde Luft: Der Minecraft-Server räumt die alte Sitzung nicht in dem Moment ab, in
+      // dem unser Prozess endet, und ein Beitritt in diese Lücke wird als "already logged in"
+      // abgewiesen.
+      setTimeout(() => {
+        const context = this.context(profileId, accountId);
+        if (!context) return;
+        try {
+          this.start(context);
+        } catch (error) {
+          bot.lastError = error.message;
+          bot.push('error', error.message);
+        }
+      }, 1000).unref?.();
+    });
+    bot.push('system', 'Neu verbinden ...');
+    bot.stop();
+    return true;
+  }
+
   /** Alle Bots eines Serverplatzes anhalten – etwa, wenn die Laufzeit abgelaufen ist. */
   stopProfile(profileId, reason = '', { keepWanted = true } = {}) {
     if (!keepWanted) {
@@ -1949,6 +2365,7 @@ class Supervisor extends EventEmitter {
     let started = 0;
     for (const row of rows) {
       if (this.get(row.profile_id, row.account_id)?.running) continue;
+      if (this.waitingForRestart(`${row.profile_id}:${row.account_id}`)) continue;
       const context = this.context(row.profile_id, row.account_id);
       if (!context) continue;
       if (context.user.blocked || context.profile.locked || context.account.suspended) continue;
@@ -1982,6 +2399,7 @@ class Supervisor extends EventEmitter {
     let started = 0;
     for (const row of rows) {
       if (this.get(row.profile_id, row.account_id)?.running) continue;
+      if (this.waitingForRestart(`${row.profile_id}:${row.account_id}`)) continue;
       const context = this.context(row.profile_id, row.account_id);
       if (!context) continue;
       if (
@@ -2013,6 +2431,7 @@ class Supervisor extends EventEmitter {
     let started = 0;
     for (const row of rows) {
       if (this.get(row.profile_id, row.account_id)?.running) continue;
+      if (this.waitingForRestart(`${row.profile_id}:${row.account_id}`)) continue;
       const context = this.context(row.profile_id, row.account_id);
       if (!context || !isActive(context.profile)) continue;
       if (context.user.blocked || context.profile.locked || context.account.suspended) continue;
@@ -2027,6 +2446,9 @@ class Supervisor extends EventEmitter {
   }
 
   shutdown() {
+    // Erst die Versuchsketten, dann die Prozesse: Sonst legte jedes Stoppen hier noch einen
+    // Versuch, der beim Herunterfahren nichts mehr zu suchen hat.
+    for (const key of [...this.retry.keys()]) this.cancelRestart(key);
     for (const bot of this.bots.values()) {
       if (bot.proc) bot.stop({ intended: true });
     }
@@ -2050,5 +2472,34 @@ function simpleChatMacro(actions) {
   );
 }
 
+/**
+ * Darf dieses Macro dem Client mitgegeben werden (`--cmd`, `--on`)?
+ *
+ * **Diese Frage muss an einer Stelle beantwortet werden.** Sie wird an zwei gestellt: hier, wenn
+ * die Startargumente gebaut werden, und in macros.js, wenn das Panel entscheidet, ob es selbst
+ * takten muss. Wären es zwei Antworten, liefe ein Macro, das die eine für den Client hält und die
+ * andere nicht, **doppelt** – einmal vom Client und einmal vom Panel, bei jedem Auslöser.
+ *
+ * Sperrzeit, Wahrscheinlichkeit, Streuung und Ausschluss kennt der Client nicht. Er schickte die
+ * Zeile stumpf jedes Mal und exakt im Takt – also genau das, was diese vier verhindern sollen.
+ * Wer eines davon gesetzt hat, hat es gemeint, und dann taktet das Panel.
+ */
+function clientCanTake(macro) {
+  if (Number(macro.cooldown_sec) > 0) return false;
+  if (Number(macro.chance ?? 100) < 100) return false;
+  let config;
+  try {
+    config = JSON.parse(macro.config || '{}');
+  } catch {
+    return false;
+  }
+  if (Number(config.jitter_sec) > 0 || config.exclude) return false;
+  try {
+    return simpleChatMacro(JSON.parse(macro.actions || '[]'));
+  } catch {
+    return false;
+  }
+}
+
 export const supervisor = new Supervisor();
-export { Bot, simpleChatMacro, parseEvent, parseView };
+export { Bot, simpleChatMacro, clientCanTake, parseEvent, parseView };

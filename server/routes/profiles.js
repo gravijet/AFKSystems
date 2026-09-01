@@ -10,6 +10,9 @@ import * as binaries from '../binaries.js';
 import * as billing from '../billing.js';
 import * as nodes from '../nodes.js';
 import * as roles from '../roles.js';
+import * as schedules from '../schedules.js';
+import * as mcping from '../mcping.js';
+import { timezoneOf } from '../profile.js';
 import { planView, addonView } from './core.js';
 import { mergeLines, stripFormatting } from '../../public/assets/js/chatlog.js';
 import { wrap, requireString, requireInt, bad, notFound, parseAddress, slugify, HttpError, langOf } from '../util.js';
@@ -71,6 +74,10 @@ function membersOf(profile) {
       uptime_sec: row.uptime_sec || 0,
       last_error: live ? live.lastError : row.bot_error,
       menu: live ? live.menu : null,
+      // Mit welcher Client-Fassung dieser Bot losgelaufen ist – und ob sie inzwischen abgelöst
+      // wurde. Ein Bot hält seine Datei; der Stundentakt tauscht sie unter ihm aus.
+      client_version: live ? live.clientVersion : null,
+      outdated: live ? live.outdated : false,
       // Ohne diese Zeile wüsste die Live-Ansicht nach jedem Neuladen nicht, welcher Weg gilt:
       // `refresh()` im Browser ersetzt den gemerkten Bot-Zustand durch genau diese Zeile.
       pov: live ? live.povState() : null,
@@ -105,9 +112,17 @@ function profileView(profile, lang = 'en') {
     // 0 heißt "was der Client für richtig hält" – 2 Chunks, in den POV-Bauformen 6.
     view_distance: profile.view_distance || 0,
     on_cooldown: profile.on_cooldown,
+    // Der Wiederanlauf: Fällt ein Bot aus, der im Spiel war, holt ihn das Panel zurück – siehe
+    // die Erklärung bei `RESTART_MAX_TRIES` in supervisor.js.
+    auto_reconnect: Boolean(profile.auto_reconnect),
+    reconnect_delay: profile.reconnect_delay,
+    max_backoff: profile.max_backoff,
     anti_afk: JSON.parse(profile.anti_afk || '{}'),
     color: profile.color,
     ordinal: profile.ordinal,
+    // Die eigene Notiz des Kunden zu diesem Platz. Sie geht mit, wo der Platz hingeht – und
+    // nirgendwo sonst hin.
+    note: profile.note || '',
     created_at: profile.created_at,
 
     plan: planView(plan, lang),
@@ -144,8 +159,12 @@ function profileView(profile, lang = 'en') {
 
     build,
     caps,
+    // Die Client-Fassung, die ein Start **jetzt** benutzen würde. Neben `member.client_version`
+    // ergibt das die ganze Auskunft: was liegt bereit, und womit läuft, was gerade läuft.
+    client_version: build ? binaries.versionOf(build) : null,
     accounts: members,
     online: members.filter((member) => member.online).length,
+    outdated: members.filter((member) => member.outdated).length,
     total: members.length,
   };
 }
@@ -232,6 +251,121 @@ router.get(
   })
 );
 
+/**
+ * Einen Serverplatz anlegen – der Weg, den „neu“ und „kopieren“ sich teilen.
+ *
+ * **Warum das eine Funktion ist.** Hier stehen die Prüfungen, an denen Geld hängt: Gibt es den
+ * Tarif noch, ist der Gratis-Platz frei, reicht das Guthaben, sind die Konten wirklich die des
+ * Kunden, passen sie in den Tarif. Ein zweiter Anlegeweg mit einer eigenen Abschrift davon wäre
+ * ein zweiter Ort, an dem eine dieser Zeilen fehlen kann – und die Lücke fiele erst auf, wenn
+ * jemand darüber einen Platz bekommt, den er nicht bezahlt hat.
+ *
+ * Gibt den fertigen Serverplatz zurück, wie er in der Datenbank steht.
+ */
+function createProfile(req, { name, host, port, version, planId, nodeId, accounts }) {
+  // Ohne Angabe: der kostenlose Platz, solange einer frei ist – sonst der günstigste bezahlte.
+  let plan = planId ? billing.planById(requireInt(planId, 'Tarif')) : null;
+  if (!plan) {
+    plan = billing.freeSlotAvailable(req.user.id) ? billing.freePlan() : billing.cheapestPaidPlan();
+  }
+  if (!plan) throw bad('Es ist kein Tarif eingerichtet.', { en: 'No plan is set up.' });
+  // `setPlan` prüft das auch – aber nur für bezahlte Tarife, denn für den Gratis-Platz wird es
+  // gar nicht erst aufgerufen. Ohne diese Zeile ließ sich ein abgeschalteter Gratis-Tarif über
+  // seine Nummer weiter buchen, obwohl der Betreiber ihn gerade aus dem Angebot genommen hat.
+  if (!plan.active) {
+    throw bad('Dieser Tarif wird nicht mehr angeboten.', { en: 'That plan is no longer offered.' });
+  }
+  if (plan.free_slot && !billing.freeSlotAvailable(req.user.id)) {
+    throw bad(
+      `Der kostenlose Serverplatz ist schon vergeben (${billing.freeSlots()} je Konto). Für weitere Server bitte einen bezahlten Tarif wählen.`,
+      {
+        en: `Your free server slot is taken (${billing.freeSlots()} per account). Pick a paid plan for another server.`,
+      }
+    );
+  }
+  if (!plan.free_slot && req.user.credits < plan.price_credits) {
+    throw new HttpError(
+      402,
+      `Zu wenig Guthaben: "${plan.name_de}" kostet ${plan.price_credits} Credits für 30 Tage.`,
+      { en: `Not enough credits: "${plan.name_en}" costs ${plan.price_credits} credits for 30 days.` }
+    );
+  }
+
+  // Die gewünschten Konten **vor** dem Anlegen prüfen: Beides – eine fremde Kontonummer und die
+  // Grenze des Tarifs – muss abgelehnt werden, bevor der Platz existiert und bezahlt ist. Die
+  // Grenze stand bisher nur in `POST /:id/accounts`; beim Anlegen ließ sich jede Zahl von Konten
+  // mitgeben, und der Gratis-Platz kam mit fünfundzwanzig Konten zur Welt, obwohl sein Tarif
+  // eines erlaubt. Auffallen konnte das erst beim Starten, mit einer Absage, die niemand mit dem
+  // Anlegen in Verbindung brachte.
+  const members = [...new Set(accountIds(accounts).map((raw) => ownedAccount(req, raw).id))];
+  if (members.length > plan.max_accounts) {
+    throw new HttpError(402, `Der Tarif erlaubt ${plan.max_accounts} Konto/Konten auf diesem Server.`, {
+      en: `This plan allows ${plan.max_accounts} account(s) on this server.`,
+    });
+  }
+
+  // Wo der Platz hin soll. Ohne Wunsch nimmt `pick` den ersten freien, den dieses Konto darf.
+  const node = nodes.pick(req.user, nodeId);
+
+  let slug = slugify(name);
+  let suffix = 1;
+  while (db.prepare('SELECT 1 FROM profiles WHERE user_id = ? AND slug = ?').get(req.user.id, slug)) {
+    slug = `${slugify(name)}-${++suffix}`;
+  }
+
+  const max = db.prepare('SELECT MAX(ordinal) AS m FROM profiles WHERE user_id = ?').get(req.user.id).m;
+  const info = db
+    .prepare(
+      `INSERT INTO profiles (user_id, name, slug, host, port, mc_version, plan_id, node_id, chat_limit, ordinal, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      req.user.id,
+      name,
+      slug,
+      host,
+      port,
+      version,
+      plan.id,
+      node.id,
+      plan.chat_limit,
+      (max ?? 0) + 1,
+      Date.now()
+    );
+
+  let profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(info.lastInsertRowid);
+  // Bezahlt wird erst, wenn der Platz steht – sonst müsste bei einem Fehler zurückgebucht werden.
+  if (!plan.free_slot) {
+    try {
+      profile = billing.setPlan(profile, plan);
+    } catch (error) {
+      db.prepare('DELETE FROM profiles WHERE id = ?').run(profile.id);
+      throw error;
+    }
+  }
+
+  for (const accountId of members) {
+    db.prepare(
+      'INSERT OR IGNORE INTO profile_accounts (profile_id, account_id, ordinal) VALUES (?, ?, 0)'
+    ).run(profile.id, accountId);
+  }
+  roles.changed(req.user.id);
+  audit(req.user.id, 'profile-create', { name, host, port, plan: plan.slug });
+  return profile;
+}
+
+/** Die Protokollversion prüfen: Was der Client nicht sprechen kann, gehört nicht an einen Platz. */
+function checkVersion(wanted) {
+  const version = String(wanted || binaries.state.defaultVersion);
+  if (binaries.state.versions.length && !binaries.state.versions.includes(version)) {
+    throw bad(
+      `Version "${version}" kann der Client nicht. Möglich: ${binaries.state.versions.join(', ')}`,
+      { en: `The client cannot speak "${version}". Available: ${binaries.state.versions.join(', ')}` }
+    );
+  }
+  return version;
+}
+
 router.post(
   '/',
   wrap((req, res) => {
@@ -239,105 +373,108 @@ router.post(
     const lang = langOf(req);
     const name = requireString(body.name, 'Name', { max: 40 });
     const { host, port } = parseAddress(body.address);
-    const version = String(body.mc_version || binaries.state.defaultVersion);
-    if (binaries.state.versions.length && !binaries.state.versions.includes(version)) {
-      throw bad(
-        `Version "${version}" kann der Client nicht. Möglich: ${binaries.state.versions.join(', ')}`,
-        {
-          en: `The client cannot speak "${version}". Available: ${binaries.state.versions.join(', ')}`,
-        }
-      );
-    }
-
-    // Ohne Angabe: der kostenlose Platz, solange einer frei ist – sonst der günstigste bezahlte.
-    let plan = body.plan_id ? billing.planById(requireInt(body.plan_id, 'Tarif')) : null;
-    if (!plan) {
-      plan = billing.freeSlotAvailable(req.user.id) ? billing.freePlan() : billing.cheapestPaidPlan();
-    }
-    if (!plan) throw bad('Es ist kein Tarif eingerichtet.', { en: 'No plan is set up.' });
-    // `setPlan` prüft das auch – aber nur für bezahlte Tarife, denn für den Gratis-Platz wird es
-    // gar nicht erst aufgerufen. Ohne diese Zeile ließ sich ein abgeschalteter Gratis-Tarif über
-    // seine Nummer weiter buchen, obwohl der Betreiber ihn gerade aus dem Angebot genommen hat.
-    if (!plan.active) {
-      throw bad('Dieser Tarif wird nicht mehr angeboten.', { en: 'That plan is no longer offered.' });
-    }
-    if (plan.free_slot && !billing.freeSlotAvailable(req.user.id)) {
-      throw bad(
-        `Der kostenlose Serverplatz ist schon vergeben (${billing.freeSlots()} je Konto). Für weitere Server bitte einen bezahlten Tarif wählen.`,
-        {
-          en: `Your free server slot is taken (${billing.freeSlots()} per account). Pick a paid plan for another server.`,
-        }
-      );
-    }
-    if (!plan.free_slot && req.user.credits < plan.price_credits) {
-      throw new HttpError(
-        402,
-        `Zu wenig Guthaben: "${plan.name_de}" kostet ${plan.price_credits} Credits für 30 Tage.`,
-        { en: `Not enough credits: "${plan.name_en}" costs ${plan.price_credits} credits for 30 days.` }
-      );
-    }
-
-    // Die gewünschten Konten **vor** dem Anlegen prüfen: Beides – eine fremde Kontonummer und die
-    // Grenze des Tarifs – muss abgelehnt werden, bevor der Platz existiert und bezahlt ist. Die
-    // Grenze stand bisher nur in `POST /:id/accounts`; beim Anlegen ließ sich jede Zahl von Konten
-    // mitgeben, und der Gratis-Platz kam mit fünfundzwanzig Konten zur Welt, obwohl sein Tarif
-    // eines erlaubt. Auffallen konnte das erst beim Starten, mit einer Absage, die niemand mit dem
-    // Anlegen in Verbindung brachte.
-    const members = [...new Set(accountIds(body.accounts).map((raw) => ownedAccount(req, raw).id))];
-    if (members.length > plan.max_accounts) {
-      throw new HttpError(402, `Der Tarif erlaubt ${plan.max_accounts} Konto/Konten auf diesem Server.`, {
-        en: `This plan allows ${plan.max_accounts} account(s) on this server.`,
-      });
-    }
-
-    // Wo der Platz hin soll. Ohne Wunsch nimmt `pick` den ersten freien, den dieses Konto darf.
-    const node = nodes.pick(req.user, body.node_id);
-
-    let slug = slugify(name);
-    let suffix = 1;
-    while (db.prepare('SELECT 1 FROM profiles WHERE user_id = ? AND slug = ?').get(req.user.id, slug)) {
-      slug = `${slugify(name)}-${++suffix}`;
-    }
-
-    const max = db.prepare('SELECT MAX(ordinal) AS m FROM profiles WHERE user_id = ?').get(req.user.id).m;
-    const info = db
-      .prepare(
-        `INSERT INTO profiles (user_id, name, slug, host, port, mc_version, plan_id, node_id, chat_limit, ordinal, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        req.user.id,
-        name,
-        slug,
-        host,
-        port,
-        version,
-        plan.id,
-        node.id,
-        plan.chat_limit,
-        (max ?? 0) + 1,
-        Date.now()
-      );
-
-    let profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(info.lastInsertRowid);
-    // Bezahlt wird erst, wenn der Platz steht – sonst müsste bei einem Fehler zurückgebucht werden.
-    if (!plan.free_slot) {
-      try {
-        profile = billing.setPlan(profile, plan);
-      } catch (error) {
-        db.prepare('DELETE FROM profiles WHERE id = ?').run(profile.id);
-        throw error;
-      }
-    }
-
-    for (const accountId of members) {
-      db.prepare(
-        'INSERT OR IGNORE INTO profile_accounts (profile_id, account_id, ordinal) VALUES (?, ?, 0)'
-      ).run(profile.id, accountId);
-    }
-    roles.changed(req.user.id);
-    audit(req.user.id, 'profile-create', { name, host, port, plan: plan.slug });
+    const profile = createProfile(req, {
+      name,
+      host,
+      port,
+      version: checkVersion(body.mc_version),
+      planId: body.plan_id,
+      nodeId: body.node_id,
+      accounts: body.accounts,
+    });
     res.json({ profile: profileView(profile, lang), balance: billing.balance(req.user.id) });
+  })
+);
+
+/**
+ * Denselben Serverplatz noch einmal – mit allem, was daran eingestellt ist.
+ *
+ * **Wofür.** Wer einen Platz eingerichtet hat, hat oft eine halbe Stunde investiert: fünfzehn
+ * Makros, ein Zeitplan, vier wiederkehrende Nachrichten, Wartezeiten, die auf genau diesen Server
+ * passen. Denselben Aufbau für einen zweiten Server brauchte bisher dieselbe halbe Stunde noch
+ * einmal, von Hand, mit den Tippfehlern, die dabei entstehen.
+ *
+ * **Was nicht mitkommt: die Minecraft-Konten.** Ein Konto kann nur an einer Stelle gleichzeitig im
+ * Spiel sein – kopiert stünde es auf zwei Plätzen, und der zweite Start würde von Mojang abgelehnt.
+ * Der Kopie fehlen deshalb die Konten, und das ist der eine Handgriff, der danach noch zu tun ist.
+ *
+ * Und was auch nicht mitkommt: die Zusätze. Sie sind bezahlt, je Platz, und eine Kopie, die
+ * ungefragt Zusätze mitbucht, bucht ungefragt Geld ab.
+ */
+router.post(
+  '/:id/copy',
+  wrap((req, res) => {
+    const source = ownedProfile(req);
+    const body = req.body || {};
+    const lang = langOf(req);
+    const name = requireString(body.name ?? `${source.name} (2)`, 'Name', { max: 40 });
+    const { host, port } =
+      body.address === undefined ? { host: source.host, port: source.port } : parseAddress(body.address);
+
+    const copy = createProfile(req, {
+      name,
+      host,
+      port,
+      version: checkVersion(body.mc_version ?? source.mc_version),
+      // Ohne Wunsch derselbe Tarif wie das Original. Ist das der Gratis-Platz und der ist schon
+      // vergeben, sagt `createProfile` das mit dem Satz, der auch sonst dort steht.
+      planId: body.plan_id ?? source.plan_id,
+      nodeId: body.node_id ?? source.node_id,
+      accounts: [],
+    });
+
+    // Die Einstellungen. Nur Spalten, die Verhalten beschreiben – nicht `paid_until`, nicht
+    // `suspended`, nicht `locked`: Die Kopie ist frisch bezahlt und hat keine Vorgeschichte.
+    const SETTINGS = [
+      'join_delay', 'chat_delay', 'on_cooldown', 'auto_reconnect', 'reconnect_delay', 'max_backoff',
+      'movement', 'antiafk_sec', 'sneak', 'view_distance', 'fake_host', 'anti_afk', 'color', 'note',
+    ];
+    // `chat_limit` gehört nicht dazu: Es ist vom Tarif gedeckelt, und die Kopie kann einen anderen
+    // haben. `createProfile` hat es schon auf das gesetzt, was dieser Tarif hergibt; ein höherer
+    // Wert vom Original würde eine Grenze überschreiben, die es aus gutem Grund gibt.
+    const carried = SETTINGS.filter((column) => source[column] !== undefined && source[column] !== null);
+    if (carried.length) {
+      db.prepare(`UPDATE profiles SET ${carried.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`).run(
+        ...carried.map((column) => source[column]),
+        copy.id
+      );
+    }
+
+    // Makros, Spam und Zeitpläne. Alle drei hängen an Konten, die es auf der Kopie nicht gibt –
+    // deshalb geht die Kontobindung überall verloren: Ein Makro für "alle Konten" ist auf der
+    // Kopie richtig, eines für Konto 12 zeigte dort ins Leere.
+    const copied = { macros: 0, spam: 0, schedules: 0 };
+    db.transaction(() => {
+      for (const row of db.prepare('SELECT * FROM macros WHERE profile_id = ?').all(source.id)) {
+        db.prepare(
+          `INSERT INTO macros (profile_id, name, event, config, actions, accounts, enabled,
+                               cooldown_sec, chance, created_at)
+           VALUES (?, ?, ?, ?, ?, '[]', ?, ?, ?, ?)`
+        ).run(copy.id, row.name, row.event, row.config, row.actions, row.enabled, row.cooldown_sec, row.chance, Date.now());
+        copied.macros += 1;
+      }
+      for (const row of db.prepare('SELECT * FROM spam WHERE profile_id = ?').all(source.id)) {
+        db.prepare(
+          `INSERT INTO spam (profile_id, message, interval_sec, accounts, enabled, created_at)
+           VALUES (?, ?, ?, '[]', ?, ?)`
+        ).run(copy.id, row.message, row.interval_sec, row.enabled, Date.now());
+        copied.spam += 1;
+      }
+      for (const row of db.prepare('SELECT * FROM profile_schedules WHERE profile_id = ?').all(source.id)) {
+        db.prepare(
+          `INSERT INTO profile_schedules (profile_id, account_id, action, minutes, days, active, note, created_at)
+           VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`
+        ).run(copy.id, row.action, row.minutes, row.days, row.active, row.note, Date.now());
+        copied.schedules += 1;
+      }
+    })();
+
+    audit(req.user.id, 'profile-copy', { from: source.id, to: copy.id, ...copied });
+    res.json({
+      profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(copy.id), lang),
+      copied,
+      balance: billing.balance(req.user.id),
+    });
   })
 );
 
@@ -375,6 +512,17 @@ router.patch(
         });
       }
       put('mc_version', version);
+    }
+    // Die eigene Notiz. Sie wird nicht ausgewertet, nur aufbewahrt – deshalb steht hier keine
+    // Prüfung außer der Länge. Steuerzeichen fallen weg, Zeilenumbrüche bleiben: Wer sich eine
+    // Liste notiert, meint die Umbrüche so.
+    if (body.note !== undefined) {
+      put(
+        'note',
+        String(body.note ?? '')
+          .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '')
+          .slice(0, 2000)
+      );
     }
     if (body.join_delay !== undefined) put('join_delay', requireInt(body.join_delay, 'Join-Delay', { max: 600 }));
     if (body.chat_delay !== undefined) {
@@ -457,6 +605,16 @@ router.patch(
     }
     if (body.on_cooldown !== undefined) {
       put('on_cooldown', requireInt(body.on_cooldown, 'Sperrzeit', { min: 1, max: 3600 }));
+    }
+    // Der Wiederanlauf steht **jedem** Tarif offen. Er ist keine Leistung, die Rechenzeit kostet,
+    // sondern die Entscheidung, einen Ausfall nicht als Kündigung zu lesen – und ein Gratis-Bot,
+    // der nach einem Serverneustart aus bleibt, ist genauso kaputt wie ein bezahlter.
+    if (body.auto_reconnect !== undefined) put('auto_reconnect', body.auto_reconnect ? 1 : 0);
+    if (body.reconnect_delay !== undefined) {
+      put('reconnect_delay', requireInt(body.reconnect_delay, 'Wartezeit', { min: 1, max: 3600 }));
+    }
+    if (body.max_backoff !== undefined) {
+      put('max_backoff', requireInt(body.max_backoff, 'Höchstwartezeit', { min: 5, max: 3600 }));
     }
     if (body.color !== undefined) put('color', String(body.color).slice(0, 20));
     if (body.anti_afk !== undefined) {
@@ -598,6 +756,55 @@ router.delete(
     }
     res.json({
       ...result,
+      profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id), langOf(req)),
+    });
+  })
+);
+
+/**
+ * Wie es dem Zielserver geht – MOTD, Spielerzahl, Version, Antwortzeit.
+ *
+ * **Wofür.** „Mein Bot kommt nicht rein“ hat zwei mögliche Ursachen, und die eine liegt nicht bei
+ * uns. Bis hierher stand im Panel nur „Verbindung abgelehnt“, und damit fing die Suche beim Konto
+ * an, ging über den Client und endete oft bei der Erkenntnis, dass der Minecraft-Server seit einer
+ * Stunde aus ist. Diese Zeile beantwortet das vorher.
+ *
+ * Ohne `fresh`-Schalter: Die Antwort kommt aus einem Zwischenspeicher von fünfzehn Sekunden
+ * (mcping.js). Ein Knopf, mit dem sich ein fremder Server aus unserem Netz beliebig oft anpingen
+ * lässt, wäre ein Werkzeug und keine Auskunft.
+ */
+router.get(
+  '/:id/status',
+  wrap(async (req, res) => {
+    const profile = ownedProfile(req);
+    res.json({ status: await mcping.status(profile.host, profile.port) });
+  })
+);
+
+/**
+ * Die laufenden Bots dieses Platzes auf die neue Client-Fassung heben.
+ *
+ * **Warum das ein Knopf ist und kein Automatismus.** Der Stundentakt lädt jedes neue Release und
+ * legt die Datei hin – laufende Bots merken davon nichts, sie halten ihre eigene. Sie dafür von
+ * selbst neu zu starten hieße: Ein Bot, der seit drei Wochen still im Spiel sitzt, verschwindet
+ * eines Nachmittags für zwanzig Sekunden, ohne dass jemand etwas getan hätte. Auf Servern mit
+ * Warteschlange oder Beitrittssperre ist das teuer, und niemand hätte es kommen sehen.
+ *
+ * Deshalb: Das Panel sagt, dass es eine neue Fassung gibt, und der Kunde entscheidet wann.
+ */
+router.post(
+  '/:id/client-update',
+  wrap((req, res) => {
+    const profile = notLocked(ownedProfile(req));
+    const restarted = supervisor.rolloutClient({ profileId: profile.id });
+    if (!restarted) {
+      throw bad('Hier läuft nichts mit einer alten Fassung.', {
+        en: 'Nothing here is running an old version.',
+      });
+    }
+    res.json({
+      ok: true,
+      restarted,
       profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(profile.id), langOf(req)),
     });
   })
@@ -797,6 +1004,54 @@ router.post(
         }
       }
     }, 1500).unref();
+    res.json({ ok: true });
+  })
+);
+
+// ---------------------------------------------------------------- Zeitpläne
+//
+// Bots zu festen Zeiten starten und stoppen. Die Zeiten stehen in der Zeitzone des Kontos – siehe
+// server/schedules.js. Ein stillgelegter Serverplatz lässt sich weiterhin **ansehen**, aber nicht
+// mehr ändern (`notLocked`), genau wie jede andere Einstellung daran.
+
+router.get(
+  '/:id/schedules',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const zone = timezoneOf(req.user);
+    res.json({
+      schedules: schedules.listFor(profile.id, zone),
+      // Die Zeitzone, in der diese Uhrzeiten gelten. Sie steht im Panel neben der Liste: Eine
+      // Uhrzeit ohne Zeitzone ist eine Behauptung, keine Angabe.
+      timezone: zone,
+      actions: schedules.ACTIONS,
+      max: schedules.MAX_PER_PROFILE,
+    });
+  })
+);
+
+router.post(
+  '/:id/schedules',
+  wrap((req, res) => {
+    const profile = notLocked(ownedProfile(req));
+    res.json({ schedule: schedules.create(profile, req.body || {}, req.user.id, timezoneOf(req.user)) });
+  })
+);
+
+router.patch(
+  '/:id/schedules/:scheduleId',
+  wrap((req, res) => {
+    const profile = notLocked(ownedProfile(req));
+    const id = requireInt(req.params.scheduleId, 'Zeitplan');
+    res.json({ schedule: schedules.update(profile, id, req.body || {}, req.user.id, timezoneOf(req.user)) });
+  })
+);
+
+router.delete(
+  '/:id/schedules/:scheduleId',
+  wrap((req, res) => {
+    const profile = notLocked(ownedProfile(req));
+    schedules.remove(profile, requireInt(req.params.scheduleId, 'Zeitplan'), req.user.id);
     res.json({ ok: true });
   })
 );
@@ -1171,7 +1426,9 @@ function cleanActions(input, caps) {
     }
     const action = { type };
     if (raw.delay) action.delay = requireInt(raw.delay, 'Verzögerung', { max: 3600 });
-    if (type === 'chat') {
+    // Ein Text, der mit ':' anfängt, wäre ein örtlicher Client-Befehl am Panel vorbei – für jeden
+    // Schritt, der Text ins Spiel schickt, dieselbe Sperre.
+    if (type === 'chat' || type === 'chat_random') {
       action.text = requireString(raw.text, 'Text', { max: 256 });
       if (action.text.trim().startsWith(':')) {
         throw bad('Nutze für örtliche Client-Befehle den passenden Macro-Schritt.', {
@@ -1179,24 +1436,79 @@ function cleanActions(input, caps) {
         });
       }
     }
+    if (type === 'notify') action.text = requireString(raw.text, 'Text', { max: 500 });
+    if (type === 'run') action.name = requireString(raw.name, 'Name des Macros', { max: 60 });
     if (type === 'wait') action.seconds = requireInt(raw.seconds, 'Sekunden', { min: 1, max: 3600 });
+    if (type === 'wait_random') {
+      action.min_seconds = requireInt(raw.min_seconds ?? 1, 'Von', { min: 1, max: 3600 });
+      action.max_seconds = requireInt(raw.max_seconds ?? action.min_seconds, 'Bis', { min: 1, max: 3600 });
+      if (action.max_seconds < action.min_seconds) {
+        throw bad('Die obere Grenze der Wartezeit liegt unter der unteren.', {
+          en: 'The upper bound of the wait is below the lower one.',
+        });
+      }
+    }
+    if (type === 'reconnect') {
+      action.seconds = requireInt(raw.seconds ?? 5, 'Pause', { min: 1, max: 600 });
+    }
     if (type === 'move') {
-      action.direction = ['vor', 'zurück', 'links', 'rechts'].includes(raw.direction)
-        ? raw.direction
-        : 'vor';
+      action.direction = WALK_DIRECTIONS.includes(raw.direction) ? raw.direction : 'vor';
       action.blocks = requireInt(raw.blocks ?? 1, 'Blöcke', { min: 1, max: 64 });
+    }
+    // Beim Springen ist "keine Richtung" eine gültige Antwort: dann springt der Bot auf der Stelle.
+    if (type === 'jump') {
+      action.direction = WALK_DIRECTIONS.includes(raw.direction) ? raw.direction : '';
     }
     if (type === 'look') {
       action.yaw = requireInt(raw.yaw ?? 0, 'Yaw', { min: -180, max: 180 });
       action.pitch = requireInt(raw.pitch ?? 0, 'Pitch', { min: -90, max: 90 });
     }
+    if (type === 'face') {
+      action.direction = pickOne(raw.direction, FACE_DIRECTIONS, 'Blickrichtung');
+    }
+    if (type === 'home') action.mode = pickOne(raw.mode, HOME_MODES, 'Heimatposition');
+    if (type === 'route') action.mode = pickOne(raw.mode, ROUTE_MODES, 'Wegpunkte');
+    if (type === 'sneak' || type === 'sprint') {
+      action.mode = pickOne(raw.mode, ['on', 'off', 'toggle'], 'Schalter');
+    }
+    if (type === 'antiafk') {
+      action.mode = pickOne(raw.mode, ['on', 'off', 'seconds'], 'Anti-AFK');
+      if (action.mode === 'seconds') {
+        action.seconds = requireInt(raw.seconds ?? 60, 'Sekunden', { min: 15, max: 3600 });
+      }
+    }
+    if (type === 'pov') action.mode = pickOne(raw.mode, ['live', 'stop'], 'Live-Ansicht');
     if (type === 'hand') action.slot = requireInt(raw.slot ?? 1, 'Feld', { min: 1, max: 9 });
     if (type === 'click') {
       action.slot = requireInt(raw.slot ?? 0, 'Feld', { min: 0, max: 100 });
       action.button = ['rechts', 'shift'].includes(raw.button) ? raw.button : '';
     }
+    if (type === 'slot_read') action.slot = requireInt(raw.slot ?? 0, 'Feld', { min: 0, max: 100 });
     return action;
   });
+}
+
+/** Die Auswahllisten der Schritte – dieselben Wörter, die der Client in `:help` nennt. */
+const WALK_DIRECTIONS = ['vor', 'zurück', 'links', 'rechts'];
+const FACE_DIRECTIONS = ['nord', 'ost', 'süd', 'west', 'nordost', 'südost', 'südwest', 'nordwest', 'um', 'gerade'];
+const HOME_MODES = ['go', 'set', 'on', 'off', 'clear'];
+const ROUTE_MODES = ['go', 'rec', 'stop', 'add', 'clear'];
+
+/**
+ * Einen Wert aus einer festen Liste nehmen – oder absagen.
+ *
+ * Bewusst **keine** stille Vorgabe wie bei den Richtungen oben: Dort ist "vor" eine sinnvolle
+ * Antwort auf einen fehlenden Wert, hier nicht. Wer `:home xyz` speichert und dafür stumm ein
+ * `:home go` bekommt, hat ein Macro, das etwas anderes tut, als er hingeschrieben hat.
+ */
+function pickOne(value, allowed, label) {
+  const wanted = String(value ?? allowed[0]);
+  if (!allowed.includes(wanted)) {
+    throw bad(`${label}: "${wanted}" gibt es nicht (${allowed.join(', ')}).`, {
+      en: `${label}: there is no "${wanted}" (${allowed.join(', ')}).`,
+    });
+  }
+  return wanted;
 }
 
 /**
@@ -1211,8 +1523,16 @@ function cleanConfig(input, event) {
   const config = {};
   if (event === 'timer') {
     config.interval_sec = requireInt(raw.interval_sec ?? 300, 'Intervall', { min: 5, max: 86_400 });
+    // Die Streuung darf den Takt nicht auffressen: Bei 30 s Takt und 30 s Streuung käme eine
+    // Wartezeit von null heraus, und das ist kein Takt mehr, sondern eine Schleife.
+    const jitter = requireInt(raw.jitter_sec ?? 0, 'Streuung', { min: 0, max: 3600 });
+    config.jitter_sec = Math.min(jitter, config.interval_sec - 1);
+  }
+  if (event === 'menu') {
+    if (raw.title) config.title = requireString(raw.title, 'Titel enthält', { max: 120 });
   }
   if (event === 'chat') {
+    if (raw.exclude) config.exclude = requireString(raw.exclude, 'Aber nicht, wenn', { max: 200 });
     if (raw.contains) config.contains = requireString(raw.contains, 'Chatzeile enthält', { max: 200 });
     if (raw.regex) {
       const pattern = requireString(raw.regex, 'Regulärer Ausdruck', { max: 200 });
@@ -1279,8 +1599,9 @@ router.post(
     }
     const info = db
       .prepare(
-        `INSERT INTO macros (profile_id, name, event, config, actions, accounts, enabled, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO macros
+           (profile_id, name, event, config, actions, accounts, enabled, cooldown_sec, chance, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         profile.id,
@@ -1290,6 +1611,8 @@ router.post(
         JSON.stringify(actions),
         JSON.stringify(accountIds(body.accounts).map(Number)),
         body.enabled === false ? 0 : 1,
+        requireInt(body.cooldown_sec ?? 0, 'Sperrzeit', { min: 0, max: 86_400 }),
+        requireInt(body.chance ?? 100, 'Wahrscheinlichkeit', { min: 1, max: 100 }),
         Date.now()
       );
     macroEngine.reload(profile.id);
@@ -1339,6 +1662,14 @@ router.patch(
       set.push('enabled = ?');
       values.push(body.enabled ? 1 : 0);
     }
+    if (body.cooldown_sec !== undefined) {
+      set.push('cooldown_sec = ?');
+      values.push(requireInt(body.cooldown_sec, 'Sperrzeit', { min: 0, max: 86_400 }));
+    }
+    if (body.chance !== undefined) {
+      set.push('chance = ?');
+      values.push(requireInt(body.chance, 'Wahrscheinlichkeit', { min: 1, max: 100 }));
+    }
     if (!set.length) throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
     values.push(macroId);
     db.prepare(`UPDATE macros SET ${set.join(', ')} WHERE id = ?`).run(...values);
@@ -1373,7 +1704,10 @@ router.post(
     for (const accountId of targets(req, profile)) {
       const bot = supervisor.get(profile.id, accountId);
       if (bot?.online) {
-        macroEngine.run(bot, macro);
+        // Ausdrücklich mit `force`: Sperrzeit und Wahrscheinlichkeit gehören zum Auslöser, und ein
+        // Klick auf "Ausprobieren" ist keiner. Sonst täte der Knopf bei einem Macro mit langer
+        // Sperrzeit nichts und meldete trotzdem Erfolg.
+        macroEngine.run(bot, macro, {}, { force: true });
         started += 1;
       }
     }

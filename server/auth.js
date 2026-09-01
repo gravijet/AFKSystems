@@ -1,12 +1,15 @@
 // Anmeldung: Sitzungen als zufälliges Token im HttpOnly-Cookie, Passwörter als scrypt-Hash.
 // Kein Zusatzpaket – die Sitzung steht in der Datenbank und lässt sich damit auch wieder entziehen.
 
+import { createHash } from 'node:crypto';
 import { db, audit, getSetting } from './db.js';
 import { config } from './config.js';
-import { token, hashPassword, verifyPassword, HttpError, bad } from './util.js';
+import { token, hashPassword, verifyPassword, deviceOf, HttpError, bad } from './util.js';
 import { grant, planOf, isPayingUser, monthlyCost, freeAccess } from './billing.js';
 import * as mail from './mail.js';
 import * as linkedRoles from './linked-roles.js';
+import * as profile from './profile.js';
+import * as logincode from './logincode.js';
 
 const COOKIE = 'afk_session';
 /** So oft höchstens wird "zuletzt gesehen" nachgeführt. */
@@ -212,6 +215,30 @@ export function login({ login: identifier, password }) {
   return user;
 }
 
+/**
+ * Stimmt dieses Passwort zu diesem Konto?
+ *
+ * Für die Stellen, an denen ein Passwort nicht geändert, sondern **bestätigt** wird: eine neue
+ * E-Mail-Adresse, eine Kontolöschung. Die Prüfung steht hier und nicht dort, damit es keine
+ * zweite Stelle gibt, an der ein `verifyPassword` mit einer eigenen Auslegung von "leer" steht.
+ */
+export const checkPassword = (user, password) =>
+  verifyPassword(String(password || ''), user.password_hash);
+
+/**
+ * Die Absage, wenn ein Passwort bestätigt werden soll und nicht stimmt.
+ *
+ * Der zweite Satz ist der wichtige. Wer sich **nur** über Discord oder Google anmeldet, hat hier
+ * nie eines gesetzt: Sein gespeicherter Hash gehört einem Zufallswert, den niemand kennt (siehe
+ * oauth.js). Ohne diesen Hinweis stünde so jemand vor einem Feld, in das er nichts eintragen kann,
+ * das je passt – und der Weg dorthin ("Passwort vergessen") liegt an einer Stelle, an der er ihn
+ * nicht sucht.
+ */
+export const wrongPassword = () =>
+  bad('Das Passwort stimmt nicht. Wer sich nur über Discord oder Google anmeldet, setzt sich zuerst über „Passwort vergessen“ eines.', {
+    en: 'That password is wrong. If you only ever sign in through Discord or Google, set one first via “Forgot password”.',
+  });
+
 export function changePassword(user, oldPassword, newPassword, repeat) {
   if (!verifyPassword(String(oldPassword || ''), user.password_hash)) {
     throw bad('Das alte Passwort stimmt nicht.', { en: 'The current password is wrong.' });
@@ -220,6 +247,12 @@ export function changePassword(user, oldPassword, newPassword, repeat) {
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
   // Andere Sitzungen fliegen raus, die aktuelle wird vom Aufrufer neu gesetzt.
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  // Und alle bekannten Browser mit. Der häufigste Grund für einen Passwortwechsel ist der
+  // Verdacht, dass jemand anderes das alte kennt – dann sitzt dieser andere womöglich an einem
+  // Browser, der hier als bekannt geführt wird, und käme mit dem nächsten Versuch ohne
+  // Anmeldecode herein. Das eigene Gerät ist mit dabei: Es meldet sich gleich neu an und ist
+  // damit sofort wieder bekannt.
+  logincode.forgetAll(user.id);
   audit(user.id, 'password-change');
   mail.sendTo(user, 'security', {
     title: user.language === 'en' ? 'Your password was changed' : 'Dein Passwort wurde geändert',
@@ -231,6 +264,150 @@ export function changePassword(user, oldPassword, newPassword, repeat) {
   });
 }
 
+// ---------------------------------------------------------------- Name und Adresse ändern
+
+/**
+ * Wie lange ein Benutzername stehen bleiben muss, bevor er wieder geändert werden darf.
+ *
+ * Er ist keine Anmeldung allein – er steht unter jeder Ticketantwort, in Discord und in den
+ * Protokollen der Verwaltung. Wer ihn stündlich wechselt, macht jeden Verlauf unlesbar und jede
+ * Rückfrage („wer war das?“) unbeantwortbar. Dreißig Tage sind lang genug dafür und kurz genug,
+ * dass ein Tippfehler im Namen nicht ein Jahr lang bleibt.
+ */
+export const USERNAME_PAUSE_MS = 30 * 86_400_000;
+
+export function changeUsername(user, wanted) {
+  const name = String(wanted || '').trim();
+  if (name === user.username) {
+    throw bad('Der Benutzername ist schon so.', { en: 'That is already the username.' });
+  }
+  if (!USERNAME.test(name)) {
+    throw bad('Benutzername: 3–24 Zeichen, nur Buchstaben, Ziffern, . _ und -', {
+      en: 'Username: 3–24 characters – letters, digits, . _ and - only.',
+    });
+  }
+  // `COLLATE NOCASE` **und** der Vergleich mit sich selbst: Wer nur die Groß-/Kleinschreibung
+  // ändern will ("hugo" -> "Hugo"), stieße sonst auf seinen eigenen Namen als "schon vergeben".
+  const taken = db
+    .prepare('SELECT id FROM users WHERE username = ? COLLATE NOCASE AND id != ?')
+    .get(name, user.id);
+  if (taken) throw bad('Dieser Benutzername ist schon vergeben.', { en: 'That username is taken.' });
+
+  const since = user.username_changed_at ? Date.now() - user.username_changed_at : Infinity;
+  if (since < USERNAME_PAUSE_MS) {
+    const days = Math.ceil((USERNAME_PAUSE_MS - since) / 86_400_000);
+    throw bad(`Der Benutzername lässt sich erst in ${days} Tag(en) wieder ändern.`, {
+      en: `The username can be changed again in ${days} day(s).`,
+    });
+  }
+
+  db.prepare('UPDATE users SET username = ?, username_changed_at = ? WHERE id = ?').run(
+    name,
+    Date.now(),
+    user.id
+  );
+  audit(user.id, 'username-change', { from: user.username, to: name });
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+}
+
+/** Wie lange der Bestätigungslink für eine neue E-Mail-Adresse gilt. */
+const EMAIL_CHANGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Eine neue E-Mail-Adresse **beantragen**. Sie gilt erst, wenn sie bestätigt wurde.
+ *
+ * Drei Dinge machen den Unterschied zwischen „geht“ und „sicher“:
+ *
+ *   1. **Das Passwort.** Die E-Mail-Adresse ist der Weg zurück ins Konto ("Passwort vergessen").
+ *      Wer sie ändern darf, ohne das Passwort zu kennen, übernimmt jedes Konto, an dessen offenem
+ *      Browser er einmal saß.
+ *   2. **Die Bestätigung an die neue Adresse.** Ein Tippfehler würde sonst das Konto aussperren:
+ *      Die alte Adresse wäre weg, die neue erreicht niemanden.
+ *   3. **Die Nachricht an die alte Adresse.** Sie ist die einzige Warnung, die ein Kunde bekommt,
+ *      wenn jemand anderes gerade dabei ist, ihm das Konto wegzunehmen.
+ */
+export async function requestEmailChange(user, wanted, password) {
+  if (!checkPassword(user, password)) throw wrongPassword();
+  const address = String(wanted || '').trim().toLowerCase();
+  if (!EMAIL.test(address)) {
+    throw bad('Das ist keine gültige E-Mail-Adresse.', { en: 'That is not a valid email address.' });
+  }
+  if (address === String(user.email || '').toLowerCase()) {
+    throw bad('Das ist schon die Adresse dieses Kontos.', { en: 'That is already this account’s address.' });
+  }
+  if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(address, user.id)) {
+    // Dieselbe Absage wie bei der Registrierung. Sie verrät, dass es diese Adresse gibt – das tut
+    // die Registrierung aber auch, und ohne sie liefe der Kunde in eine Bestätigung, die nie geht.
+    throw bad('Diese E-Mail-Adresse ist schon vergeben.', { en: 'That email address is taken.' });
+  }
+  if (!mail.configured()) {
+    throw bad('Ohne eingerichteten Postausgang lässt sich die Adresse nicht bestätigen.', {
+      en: 'Without a working mail server the new address cannot be confirmed.',
+    });
+  }
+  if (user.pending_email_at && Date.now() - user.pending_email_at < 60_000) {
+    throw bad('Gerade erst verschickt. Bitte eine Minute warten.', { en: 'Just sent. Please wait a minute.' });
+  }
+
+  const value = token(24);
+  db.prepare(
+    'UPDATE users SET pending_email = ?, pending_email_token = ?, pending_email_at = ? WHERE id = ?'
+  ).run(address, value, Date.now(), user.id);
+  audit(user.id, 'email-change-requested', { to: address });
+
+  // An die neue Adresse: der Link. An die alte: die Warnung. Beides geht nebenher hinaus – ein
+  // hängender Mailserver darf den Antrag nicht aufhalten, er steht schon in der Datenbank.
+  const url = `${config.publicUrl}/${user.language === 'de' ? 'de' : 'en'}/verify?email=${encodeURIComponent(value)}`;
+  mail.sendTo({ ...user, email: address }, 'email_change', { url, address }).catch(() => {});
+  mail
+    .sendTo(user, 'security', {
+      title: user.language === 'en' ? 'A new email address was requested' : 'Eine neue E-Mail-Adresse wurde beantragt',
+      text:
+        user.language === 'en'
+          ? `Someone asked to move this account to ${address}. It only takes effect once that address confirms it.`
+          : `Für dieses Konto wurde ${address} als neue Adresse beantragt. Sie gilt erst, wenn sie dort bestätigt wird.`,
+      detail: '',
+    })
+    .catch(() => {});
+  return address;
+}
+
+/** Den Bestätigungslink aus der Nachricht an die neue Adresse einlösen. */
+export function confirmEmailChange(rawToken) {
+  const value = String(rawToken || '').trim();
+  if (!value) return null;
+  const user = db.prepare('SELECT * FROM users WHERE pending_email_token = ?').get(value);
+  if (!user) return null;
+  const clear = () =>
+    db
+      .prepare('UPDATE users SET pending_email = NULL, pending_email_token = NULL, pending_email_at = NULL WHERE id = ?')
+      .run(user.id);
+  if (!user.pending_email || Date.now() - (user.pending_email_at || 0) > EMAIL_CHANGE_MS) {
+    clear();
+    return null;
+  }
+  // In der Zwischenzeit kann jemand anderes dieselbe Adresse registriert haben. Dann ist der
+  // Antrag hinfällig – und zwar mit einer Absage und nicht mit einem Datenbankfehler.
+  if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(user.pending_email, user.id)) {
+    clear();
+    throw bad('Diese E-Mail-Adresse ist inzwischen vergeben.', { en: 'That email address has since been taken.' });
+  }
+  db.prepare(
+    `UPDATE users SET email = pending_email, email_verified = 1,
+       pending_email = NULL, pending_email_token = NULL, pending_email_at = NULL
+     WHERE id = ?`
+  ).run(user.id);
+  audit(user.id, 'email-changed', { to: user.pending_email });
+  return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+}
+
+/** Einen laufenden Antrag zurückziehen – etwa nach einem Tippfehler in der neuen Adresse. */
+export function cancelEmailChange(userId) {
+  return db
+    .prepare('UPDATE users SET pending_email = NULL, pending_email_token = NULL, pending_email_at = NULL WHERE id = ?')
+    .run(userId).changes;
+}
+
 /**
  * Eine Anmeldung von einem Gerät, das dieses Konto noch nie benutzt hat.
  *
@@ -238,12 +415,17 @@ export function changePassword(user, oldPassword, newPassword, repeat) {
  * hat – und sie ist es wert: Wer eine solche Nachricht bekommt und nichts davon weiß, hat genau
  * die Information, die er braucht.
  *
- * Muss **vor** `createSession` laufen: danach gäbe es die neue Sitzung schon, und jedes Gerät
- * wäre bekannt.
+ * **Woran „neu“ hängt.** Früher an der Browserkennung: Gab es keine Sitzung mit genau diesem
+ * `User-Agent`, war das Gerät neu. Das schwieg bei jedem Fremden mit einem verbreiteten Browser
+ * und schrieb bei jedem Chrome-Update, obwohl niemand das Gerät gewechselt hatte. Jetzt zählt der
+ * Zufallswert im Gerätecookie (logincode.js) – dieselbe Auskunft, an der auch der Anmeldecode
+ * hängt, damit „neues Gerät“ nicht zweierlei bedeutet.
+ *
+ * Muss **vor** `logincode.remember` laufen: danach wäre jedes Gerät bekannt.
  */
 export function noticeNewDevice(user, req) {
   const agent = String(req.headers['user-agent'] || '').slice(0, 200);
-  if (db.prepare('SELECT 1 FROM sessions WHERE user_id = ? AND agent = ?').get(user.id, agent)) return;
+  if (logincode.isKnownDevice(user, req)) return;
   mail.sendTo(user, 'security', {
     title: user.language === 'en' ? 'New sign-in' : 'Neue Anmeldung',
     text:
@@ -334,6 +516,9 @@ export function applyReset(rawToken, password, repeat) {
     'UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?'
   ).run(hashPassword(password), user.id);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
+  // Wie beim Passwortwechsel: Wer zurücksetzt, hat den Zugang meist verloren oder fürchtet ihn
+  // verloren zu haben. Ein Browser, der bis eben als bekannt galt, ist danach keiner mehr.
+  logincode.forgetAll(user.id);
   audit(user.id, 'password-reset');
   return user;
 }
@@ -351,6 +536,9 @@ export function publicUser(user) {
     credits: user.credits,
     blocked: Boolean(user.blocked),
     email_verified: Boolean(user.email_verified),
+    // Ob dieses Konto bei einer Anmeldung von einem unbekannten Browser einen Code per E-Mail
+    // verlangt. Kommt mit `/me`, weil die Einstellungen es sonst einzeln nachholen müssten.
+    login_code: Boolean(user.login_code),
     theme: user.theme,
     language: user.language,
     chat_limit: user.chat_limit,
@@ -378,19 +566,81 @@ export function publicUser(user) {
     monthly_cost: monthlyCost(user.id),
     created_at: user.created_at,
     last_seen_at: user.last_seen_at,
+    // Name, Anschrift, Firmierung, Zeitzone – alles, was über den Anmeldenamen hinausgeht.
+    // Es kommt mit `/me` und nicht aus einem eigenen Aufruf: Das Panel holt `/me` ohnehin bei
+    // jedem Zustandswechsel, und die Einstellungen bräuchten sonst eine zweite Anfrage für
+    // Felder, die längst da sind.
+    profile: profile.profileOf(user),
+    // Eine noch nicht bestätigte neue Adresse. Bis sie bestätigt ist, gilt die alte – aber
+    // sichtbar muss sein, dass eine zweite unterwegs ist, sonst wartet jemand auf eine
+    // Bestätigungsmail, von der er nicht mehr weiß, wohin sie ging.
+    pending_email: user.pending_email || null,
+    username_changed_at: user.username_changed_at || null,
+    // Steht ein Löschtermin an, gehört er in jede Ansicht – nicht nur in die, in der er gesetzt
+    // wurde. Wer sein Konto zur Löschung angemeldet hat, soll das nicht vergessen können.
+    delete_due_at: user.delete_due_at || null,
+    avatar: profile.avatarOf(user),
   };
 }
+
 
 /** Abgelaufene Sitzungen wegräumen. Läuft im Stundentakt aus index.js. */
 export function cleanupSessions() {
   db.prepare('DELETE FROM sessions WHERE expires_at < ?').run(Date.now());
 }
 
-export function sessionsOf(userId) {
+/**
+ * Aus einem User-Agent das, was ein Mensch daran wiedererkennt: Browser und System.
+ *
+ * Steht in util.js und wird hier nur weitergereicht: Die bekannten Geräte (logincode.js) brauchen
+ * dieselbe Auskunft, und ein Import von dort nach hier wäre ein Kreis – auth.js braucht seinerseits
+ * das Vergessen der Geräte beim Passwortwechsel.
+ */
+export { deviceOf };
+
+/**
+ * Ein Kennzeichen für eine Sitzung, das **nicht** die Sitzung ist.
+ *
+ * Die Liste der offenen Sitzungen geht in den Browser, damit man eine davon beenden kann. Das
+ * Token selbst darf dabei nicht mitreisen: Es *ist* die Anmeldung, und eine Seite, die alle
+ * Token des Kontos im Speicher hält, verschenkt bei der ersten Lücke gleich jedes Gerät mit.
+ * Der Kurzabdruck reicht zum Wiederfinden und lässt sich nicht zurückrechnen.
+ */
+const sessionRef = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 16);
+
+export function sessionsOf(userId, currentToken = null) {
   return db
     .prepare('SELECT token, created_at, expires_at, ip, agent FROM sessions WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId)
-    .map((row) => ({ ...row, token: `${row.token.slice(0, 6)}…` }));
+    .map((row) => ({
+      ref: sessionRef(row.token),
+      created_at: row.created_at,
+      expires_at: row.expires_at,
+      ip: row.ip,
+      agent: row.agent,
+      device: deviceOf(row.agent),
+      current: Boolean(currentToken) && row.token === currentToken,
+    }));
+}
+
+/**
+ * Eine einzelne Sitzung beenden.
+ *
+ * Gesucht wird über den Kurzabdruck, und zwar **nur innerhalb der eigenen Sitzungen**: Damit ist
+ * ausgeschlossen, dass ein geratener Abdruck ein fremdes Gerät abmeldet. Die eigene Sitzung
+ * bleibt, wo sie ist – wer sich hier selbst abmeldet, drückt danach auf "Abmelden" und wundert
+ * sich, warum die Liste leer ist.
+ */
+export function endSession(userId, ref, exceptToken = null) {
+  const wanted = String(ref || '');
+  const row = db
+    .prepare('SELECT token FROM sessions WHERE user_id = ?')
+    .all(userId)
+    .find((entry) => sessionRef(entry.token) === wanted && entry.token !== exceptToken);
+  if (!row) return false;
+  db.prepare('DELETE FROM sessions WHERE token = ?').run(row.token);
+  audit(userId, 'session-revoked');
+  return true;
 }
 
 export { planOf };

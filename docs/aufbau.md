@@ -104,9 +104,51 @@ das, was es als Ereignis nicht gibt (die Microsoft-Anmeldung mitten im Lauf).
 ### Ende
 
 Der Rust-Client beendet sich nach einem Kick oder Verbindungsabbruch **absichtlich** mit
-Fehlerstatus. Das Panel respektiert das: kein versteckter Neustart, sondern `wanted = 0` und ein
-sichtbarer Zustand. Nur ein vom Server angeordneter Transfer auf einen Unterserver bleibt Teil
-derselben Sitzung – den befolgt der Client selbst.
+Fehlerstatus. Einen eigenen Reconnect hat er seit 2.6.0 zwar – das Panel schaltet ihn aber ab
+(`--no-reconnect`, siehe Abschnitt 3), weil es selbst die Aufsicht ist. Was danach passiert,
+entscheidet eine einzige Frage – **war der Bot vorher im Spiel?**
+
+* **Ja.** Dann ist das Aus eine Störung. Der Startwunsch (`wanted`) bleibt stehen, und der
+  Wiederanlauf holt den Bot zurück: erster Versuch nach `reconnect_delay`, danach verdoppelt sich
+  die Wartezeit bis `max_backoff`, höchstens acht Versuche hintereinander. Wer fünf Minuten
+  gestanden hat, fängt beim nächsten Ausfall wieder bei Versuch eins an; wer achtmal in Folge
+  scheitert, bleibt aus und der Kunde bekommt eine Nachricht.
+* **Nein.** Dann ist es eine Absage – falsche Adresse, falsche Version, Bann, Whitelist –, und die
+  wiederholt sich nicht von selbst: `wanted = 0` und ein sichtbarer Zustand, wie bisher.
+
+Damit deckt derselbe Mechanismus auch den **Neustart der ganzen Maschine** ab: `wanted` steht in
+der Datenbank, die systemd-Einheit fährt das Panel wieder hoch, und `restoreAll()` löst beim
+Hochfahren jeden offenen Wunsch ein. Abschalten lässt sich das je Serverplatz (`auto_reconnect`).
+
+Ein vom Server angeordneter Transfer auf einen Unterserver bleibt Teil derselben Sitzung – den
+befolgt der Client selbst, ohne dass hier etwas passiert.
+
+### Und wenn es am Zielserver liegt?
+
+„Absage“ heißt oft: Der Minecraft-Server ist aus. Das lässt sich fragen, ohne einen Bot dafür zu
+starten – `server/mcping.js` macht dieselbe Abfrage wie der Minecraft-Launcher für seine
+Serverliste (Server List Ping, `next state = 1`). Kein Beitritt, kein Konto, keine Anmeldung bei
+Mojang; für den Zielserver sieht es aus wie jemand mit offener Serverliste.
+
+Das Protokoll besteht dabei aus drei Dingen – VarInt, String, Paket mit Längenpräfix –, also
+dreißig Zeilen und keiner Bibliothek. Zurück kommt ein JSON-Block mit MOTD, Spielerzahl, Version
+und Serversymbol.
+
+Zwei Dinge daran sind wichtiger als das Protokoll:
+
+* **Ohne ausdrücklichen Port wird der SRV-Eintrag `_minecraft._tcp.<host>` aufgelöst.** Genau das
+  tut der Spielclient auch, und unter derselben Bedingung: `example.net:25566` meint diesen Port.
+  Ohne diese Auflösung fragte das Panel Port 25565 auf einer Adresse, an der niemand lauscht, und
+  meldete „offline“ für einen Server, der bestens läuft.
+* **Was von dort kommt, gehört einem Fremden.** Es ist die einzige Stelle im Panel, an der Daten von
+  einem beliebigen Server hereinkommen, den sich der Kunde selbst ausgesucht hat. Jedes Feld wird
+  einzeln herausgenommen und beschnitten, das Serversymbol muss ein `data:image/png` sein, die
+  Namensliste endet nach zwölf Einträgen, und der MOTD wird in dieselbe §-Schreibweise übersetzt,
+  die auch der Chat benutzt (`mcText`, siehe Abschnitt 4) – die Antwort einfach durchzureichen
+  hieße, jedem Serverbetreiber der Welt ein Feld in unserer Oberfläche zu geben.
+
+Der Zwischenspeicher hält fünfzehn Sekunden: Wer zehn Serverplätze auf demselben Minecraft-Server
+hat, fragte ihn sonst zehnmal in derselben Sekunde.
 
 ---
 
@@ -128,7 +170,27 @@ bewusst pipe-fähig gebaut, deshalb braucht es zwischen Panel und Client kein ei
 | Ultra | `ultra-afk-linux` | alles; Live-Ansicht mit `:pov live` zuschaltbar |
 
 Ab Client 2.5.0 bringen die beiden POV-Bauformen zusätzlich einen **texturierten Browser-Viewer**
-mit (`--pov-web`), der aus der Original-Client-JAR von Minecraft zeichnet (`--pov-resources`).
+mit (`--pov-web`), der aus der Original-Client-JAR von Minecraft zeichnet (`--pov-resources`). Ab
+2.6.0 findet der Client diese JAR selbst, wenn keine hinterlegt ist.
+
+### Zwei Optionen aus 2.6.0, die das Panel angehen
+
+**`--no-reconnect`.** Ab 2.6.0 verbindet sich der Client nach einem Kick von selbst neu. Das Panel
+ist aber selbst die Aufsicht, und zwei Antworten auf dieselbe Frage sind eine zu viel. Es schickt
+die Option deshalb immer mit, sobald die Bauform sie kennt. Der Grund steht ausführlich in
+`supervisor.js` bei `args()`; kurz: Ein abgeschaltetes `auto_reconnect` wäre sonst wirkungslos, ein
+Serverplatz liefe über das Ende seiner Laufzeit hinaus weiter, und das Aufgeben nach acht
+Fehlversuchen (samt Nachricht an den Kunden) fände nie statt.
+
+**`--pov-resources <jar|auto|aus>`.** Bis 2.5.0 war der Pfad Pflicht – ohne hinterlegte JAR keine
+Texturen. Ab 2.6.0 ist `auto` die Vorgabe: eigene Ablage, vorhandene Minecraft-Installation, zuletzt
+Mojang. Das Panel schickt seinen eigenen Pfad weiter mit, wenn es einen hat: Eine Datei unter
+`data/mc` gilt für alle Kunden dieser Maschine, die Selbsthilfe des Clients dagegen legt sie unter
+`XDG_CONFIG_HOME` ab – und das ist hier das Verzeichnis *eines* Kunden.
+
+Beide werden an der Schreibweise in `--help` erkannt und nicht an der Versionsnummer. `--pov-resources`
+allein reicht dafür nicht: Die Option gab es vorher auch, sie konnte nur weniger – erkannt wird
+deshalb die Werteliste `<jar|auto|aus>`.
 
 `server/binaries.js` lädt sie aus dem GitHub-Release `latest`, ruft für jede `--help` auf und merkt
 sich, **was sie wirklich kann**. Es steht nirgends im Code eine Liste von Fähigkeiten, die
@@ -144,6 +206,37 @@ Alle Rust-Bauformen sprechen Minecraft 1.21.1, 1.21.11, 26.1 und 26.2, gewählt 
 
 `buildFor()` sucht die passende Datei zum Tarif und fällt auf die nächstbeste zurück, wenn sie
 fehlt – ein vergessener Download legt damit keine Bots still.
+
+### Der Abdruck: wer läuft noch mit der alten Datei?
+
+Der Abgleich läuft im Stundentakt. Er tauscht die Dateien in `data/bin` aus – **unter laufenden
+Prozessen hindurch**, denn ein Prozess hält seine Datei offen und merkt davon nichts. Ohne eine
+eigene Buchführung stünde im Panel „Client 2.6.0“, während zwanzig Bots seit zwei Wochen 2.5.0 sind,
+samt der Fehler, wegen derer 2.6.0 gebaut wurde.
+
+`detect()` liest deshalb je Bauform einen **Abdruck**: `"<Größe>:<Änderungszeit>"`, dazu die
+Fassungsnummer aus `--help`. Ein Bot merkt sich beim Start beides (`Bot#clientStamp`,
+`Bot#clientVersion`) und fasst es nie wieder an. `Bot#outdated` vergleicht später den gemerkten mit
+dem aktuellen Abdruck.
+
+Warum nicht einfach die Fassungsnummer? Weil ein neuer Bau derselben Nummer daran nicht zu erkennen
+wäre – und genau der ist bei einem Release, das bei jedem Push neu gebaut wird, der Normalfall.
+Größe und Änderungszeit erkennen jede ausgetauschte Datei; die Nummer daneben macht den Abdruck für
+Menschen lesbar.
+
+Drei Antworten sind bewusst „nein“:
+
+* **Nicht laufende Bots.** Sie starten ohnehin mit dem, was jetzt daliegt.
+* **Kein gemerkter Abdruck.** „Weiß ich nicht“ heißt hier „nein“ – ein Neustart aus einer
+  Unsicherheit heraus wirft einen Bot ohne Gegenwert aus dem Spiel.
+* **Kein Automatismus.** `Supervisor#rolloutClient()` läuft nur, wenn ein Mensch darauf drückt: im
+  Serverplatz (`POST /api/profiles/:id/client-update`, nur dessen Bots) oder in der Verwaltung
+  (`POST /api/admin/client/rollout`, alle Konten). Beide staffeln die Neustarts – zwanzig Bots, die
+  gleichzeitig beim selben Minecraft-Server anklopfen, lösen dort dieselben Schutzmaßnahmen aus wie
+  ein Angriff.
+
+Kommt beim Abgleich eine neue Fassung an, meldet das der Systembericht von sich aus, mit der Zahl
+der Bots, die noch mit der alten laufen.
 
 ---
 
@@ -319,7 +412,75 @@ Google (`server/oauth.js` – ein Modul für beide). Wer sich über einen Anbiet
 kein Konto hat, bekommt eines; die Adresse kommt vom Anbieter.
 
 Sitzungen liegen in der Tabelle `sessions` und im HttpOnly-Cookie `afk_session`. Der Nutzer sieht
-seine offenen Sitzungen in den Einstellungen und kann sie einzeln beenden.
+seine offenen Sitzungen in den Einstellungen mit Gerät, Adresse und Zeitpunkt und kann sie einzeln
+beenden. **Das Token reist dabei nicht in den Browser** – die Liste nennt statt seiner einen
+Kurzabdruck (`sha256`, 16 Zeichen). Ein Token *ist* die Anmeldung; eine Seite, die alle Token eines
+Kontos im Speicher hält, verschenkt bei der ersten Lücke gleich jedes Gerät mit. Daneben stehen die
+letzten Anmeldeversuche an diesem Konto, die geglückten wie die gescheiterten.
+
+**Was über den Anmeldenamen hinausgeht** – bürgerlicher Name, Firmierung, USt-IdNr., Anschrift,
+Telefon, Zeitzone – steht in denselben Spalten von `users` und wird an genau einer Stelle geprüft
+(`server/profile.js`). Dieselbe Prüfung gilt für den Kunden, für die Verwaltung, für den Beleg und
+für die Bezahlseite; läge sie in der Route, hätten die anderen drei Stellen keine.
+
+Zwei Änderungen am Konto sind Abläufe und keine Formularfelder:
+
+* **Der Benutzername** hat eine Sperrfrist von 30 Tagen. Er steht unter jeder Ticketantwort, in
+  Discord und in den Protokollen – ein Name, der stündlich wechselt, macht jeden Verlauf unlesbar.
+* **Die E-Mail-Adresse** wird beantragt und nicht gesetzt: Passwort bestätigen, dann geht ein Link
+  an die **neue** Adresse und eine Warnung an die alte. Bis zur Bestätigung gilt die alte weiter
+  (`users.pending_email`), sonst sperrte ein Tippfehler das Konto aus.
+
+### Der Anmeldecode und die bekannten Browser
+
+`server/logincode.js` macht aus einer Anmeldung zwei Schritte, sobald der Browser neu ist. Der
+erste Schritt bleibt, was er war: `POST /api/auth/login` prüft das Passwort. Nur legt er dann keine
+Sitzung an, sondern gibt eine **Wartemarke** zurück – sechs Ziffern gehen per E-Mail hinaus, und
+erst `POST /api/auth/login/code` meldet an. Der Code liegt als scrypt-Hash in `login_challenges`,
+gilt fünfzehn Minuten und verträgt fünf Versuche.
+
+Was das leistet und was nicht, steht auch so im Panel: Ein gestohlenes Passwort allein reicht nicht
+mehr. Ein zweiter Faktor ist es trotzdem nicht – der Code geht an dieselbe Adresse, über die auch
+„Passwort vergessen“ läuft, und wer das Postfach hat, kam schon immer ins Konto. Ein Häkchen, das
+„Zwei-Faktor“ verspricht und dann eine E-Mail schickt, wäre eine Behauptung, die nicht stimmt.
+
+**Woran „neuer Browser“ hängt.** Nicht an der Browserkennung. Die war aus zwei Richtungen falsch:
+„Chrome auf Windows“ schicken Millionen zeichengleich (ein Fremder mit dem Passwort galt damit als
+bekannt), und sie ändert sich bei jeder Aktualisierung des Browsers (dasselbe Gerät wäre nach jedem
+Chrome-Update wieder fremd). Stattdessen steht ein Zufallswert in einem eigenen, 400 Tage
+langlebigen Cookie `afk_device`, und `known_devices` sagt, für welche Konten dieser Wert schon
+einmal durchgekommen ist. Das Cookie ist **kein Zugang**: Wer es stiehlt, hat die Auskunft, dass
+dieser Browser bekannt ist, und sonst nichts.
+
+`auth.noticeNewDevice()` hängt seither an derselben Auskunft – sonst hieße „neues Gerät“ im Panel
+zweierlei.
+
+Vier Bedingungen, und jede einzelne ist ein Nein: Der Kontoinhaber muss den Code wollen
+(`users.login_code`, Vorgabe **an**), es muss einen Postausgang geben, die Adresse des Kontos muss
+bestätigt sein, und der Browser darf nicht bekannt sein. **Und selbst dann sperrt er niemanden
+aus:** Geht die Nachricht nicht hinaus (ein fremder Mailserver antwortet nicht), gibt
+`logincode.start()` ein `null` zurück und die Anmeldung läuft ganz normal durch – das Passwort war
+ja richtig. Der Fehlschlag steht im Protokoll und in `audit`.
+
+Vier Wege melden ohne Code an und merken sich den Browser trotzdem: Registrierung, Discord, Google
+und der Bestätigungslink aus der Registrierungsmail. Bei allen vieren wurde mehr vorgewiesen als ein
+Passwort. Alle fünf Anmeldewege laufen deshalb durch **eine** Funktion (`signIn` in
+`routes/core.js`) – eine vergessene Zeile in einem von fünf wäre nicht aufgefallen: Der Weg
+funktioniert ja, er merkt sich nur das Gerät nicht, und der Kunde bekäme fortan bei jeder Anmeldung
+einen Code.
+
+Ein **Passwortwechsel und ein Zurücksetzen vergessen alle bekannten Browser**. Der Grund ist
+derselbe wie beim Wechsel selbst: Wer ihn vornimmt, glaubt oft, jemand anderes kenne das alte
+Passwort – und der sitzt vielleicht an einem Browser, der bis eben als bekannt geführt wurde. Der
+eigene ist mit dabei und wird gleich wieder gemerkt, weil er sich in derselben Anfrage belegt hat.
+
+**Ein Konto lässt sich mitnehmen und loswerden** (`server/account.js`): `GET /api/me/export` gibt
+alles als JSON-Datei heraus – ohne Passwort-Hash, Token und Bestätigungsmarken, denn das sind
+Schlüssel und keine Auskunft. `POST /api/me/delete` merkt das Konto zur Löschung vor: 14 Tage
+Frist, die Bots gehen sofort aus (der Supervisor lehnt jeden Start ab, solange `delete_due_at`
+steht), und ein Klick holt alles zurück. Nach Ablauf löscht die stündliche Aufgabe das Konto samt
+allem, was per `ON DELETE CASCADE` daran hängt, dazu die Dateien unter `data/users/<id>` und die
+Bot-Protokolle.
 
 **Minecraft-Konten:** Die Anmeldung läuft über den Microsoft-Gerätecode (`server/mslogin.js`). Das
 Passwort gibt der Kunde bei Microsoft ein, nicht bei uns. Was gespeichert wird, ist eine
@@ -348,6 +509,20 @@ Zwei Dinge, die unabhängig voneinander laufen:
 Die Leitung dazwischen ist `server/bridge.js` ↔ `bot/panel.js`, ein WebSocket unter
 `/api/bot/stream` mit gemeinsamem Geheimnis.
 
+**Erwähnungen.** Discord verschickt sie als Zahlen (`<@1538…>`, `<#1538…>`, `<@&1538…>`). Welcher
+Name dazugehört, weiß nur, wer den Server sieht – der Bot löst es beim Übernehmen einer Nachricht
+auf und schickt die Zuordnung mit; sie liegt danach an der Nachricht (`ticket_messages.mentions`)
+und nicht in einem Verzeichnis, das jemand aktuell halten müsste. Ein Kanal, der später umbenannt
+wird, ändert damit den Verlauf nicht. Gerendert wird in `public/assets/js/discord.js`: Erwähnungen,
+eigene Emoji, Zeitstempel und die üblichen Auszeichnungen. Text kommt dort durch genau eine Tür ins
+HTML (`escapeHtml`); alles andere wird vorher herausgenommen und als selbst gebautes Stück wieder
+eingesetzt.
+
+**Der Webhook des Betreibers** (`discord_system_webhook`) meldet **keine Tickets** mehr, sondern den
+Zustand der Anlage: einen Lagebericht im Takt und Warnungen sofort (`server/systemreport.js`). Ein
+Ticket steht ohnehin schon im Panel und in seinem eigenen Kanal; die dritte Kopie hat den Kanal nur
+unlesbar gemacht.
+
 Anleitung: **[docs/discord-bot.md](discord-bot.md)**.
 
 ---
@@ -364,18 +539,21 @@ Die wichtigsten Tabellen:
 
 | Tabelle | Inhalt |
 | --- | --- |
-| `users` | Konten, Guthaben, Rolle, Discord-/Google-Verknüpfung, E-Mail-Wünsche |
+| `users` | Konten, Guthaben, Rolle, Discord-/Google-Verknüpfung, E-Mail-Wünsche, Name und Rechnungsadresse, Zeitzone, Anmeldecode (`login_code`), angemeldete Löschung |
 | `sessions` | offene Anmeldungen |
-| `profiles` | Serverplätze: Adresse, Version, Tarif, Standort, Laufzeit |
+| `known_devices` | Browser, die den Anmeldecode schon beantwortet haben. Schlüssel ist der Zufallswert aus dem Cookie `afk_device`, nicht die Browserkennung |
+| `login_challenges` | offene Anmeldecodes, als scrypt-Hash, mit Frist und Versuchszähler |
+| `profiles` | Serverplätze: Adresse, Version, Tarif, Standort, Laufzeit, freie Notiz des Kunden |
 | `mc_accounts` | Minecraft-Konten je Nutzer |
 | `profile_accounts` | welches Konto auf welchem Platz sitzt (und ob es laufen soll) |
 | `bots` | Laufzeit-Statistik je Kombination |
 | `plans` / `addons` / `profile_addons` | Tarife und Zusätze |
-| `ledger` / `topups` / `vouchers` | jede Guthabenbewegung, Aufladungen, Gutscheine |
+| `ledger` / `topups` / `vouchers` | jede Guthabenbewegung, Aufladungen, Gutscheine; an der Aufladung hängt der Beleg (Nummer, Anschrift von damals, Steuerhinweis von damals) |
 | `nodes` / `node_users` | Standorte samt Token, Grenzen und letztem Zustand |
 | `proxies` | Ausgangsadressen |
-| `macros` / `spam` | Automatik je Serverplatz |
-| `tickets` / `ticket_messages` / `ticket_users` | Support |
+| `macros` / `spam` | Automatik je Serverplatz; an einem Macro hängen Sperrzeit (`cooldown_sec`) und Wahrscheinlichkeit (`chance`) |
+| `tickets` / `ticket_messages` / `ticket_users` | Support; `ticket_messages.mentions` löst die Discord-Zahlen zu Namen auf |
+| `profile_schedules` | Zeitpläne je Serverplatz: Uhrzeit, Wochentage, Aktion |
 | `mails` | jede verschickte Nachricht, mit Wortlaut |
 | `settings` | alles, was der Admin im Panel einstellt |
 | `audit` | wer was wann getan hat |
@@ -400,6 +578,8 @@ public/
     ui.js           Symbole, API-Aufrufe, Meldungen, Aussehen
     i18n.js         alle Texte, beide Sprachen – von Server und Browser genutzt
     chatlog.js      Chatzeilen zusammenlegen, §-Farben zerlegen – ebenfalls von beiden
+    countries.js    die Länder der Rechnungsadresse – ebenfalls von beiden
+    discord.js      Discord-Nachrichten als HTML: Erwähnungen mit Namen statt Zahlen
     shield.js       Inhaltsschutz (docs/schutz.md)
     views/          Übersicht, Konten, Server, Guthaben, Tickets, Proxys, Admin
   assets/css/app.css
@@ -485,6 +665,9 @@ meisten lassen sich von dort auch sofort anstoßen.
 | stündlich | `aufraeumen` | abgelaufene Sitzungen, alte Anmeldeversuche, Anhänge, tägliche Sicherung, Client-Release |
 | jede Minute | `gratis-plaetze` | Gratis-Plätze gegen die Discord-Mitgliedschaft prüfen |
 | jede Minute | `wiederanlauf` | hochfahren, was laufen soll und gerade nicht läuft |
+| jede Minute | `zeitplaene` | Zeitpläne der Serverplätze ausführen, in der Zeitzone des Kontos |
+| alle 5 Minuten | `systembericht` | Warnungen prüfen, den Lagebericht im eingestellten Takt schicken |
+| stündlich | `kontoloeschungen` | Konten löschen, deren Frist abgelaufen ist |
 | alle 30 Sekunden | `verbindungen` | tote WebSockets aussortieren, Standorte anpingen |
 | alle 15 Sekunden | `standort-eigen` | eigenen Maschinenzustand messen |
 

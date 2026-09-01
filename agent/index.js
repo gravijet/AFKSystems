@@ -400,10 +400,19 @@ function startJob(link, message) {
     return;
   }
 
-  // Der texturierte Viewer. Das Panel schickt Portnummer und Minecraft-Version; **den Pfad setzt
-  // dieser Rechner ein**, denn nur er weiß, wo seine Kopie der JAR liegt – und ob sie überhaupt
-  // schon angekommen ist. Fehlt sie, startet der Bot ohne beide Argumente: Dann bleibt die
-  // Live-Ansicht die farbige Voxelansicht, statt dass ein Viewer ohne Texturen ins Leere läuft.
+  // Der texturierte Viewer. Das Panel schickt Portnummer, Minecraft-Version und – seit Client
+  // 2.6.0 – ob diese Bauform sich ihre JAR notfalls selbst besorgen kann (`auto`). **Den Pfad
+  // setzt dieser Rechner ein**, denn nur er weiß, wo seine Kopie liegt und ob sie überhaupt schon
+  // angekommen ist.
+  //
+  // Drei Fälle, in dieser Reihenfolge:
+  //
+  //   1. **Die JAR liegt hier.** Sie geht vor: eine Datei für alle Kunden dieses Rechners.
+  //   2. **Sie liegt nicht hier, aber der Client kann sich selbst helfen.** Dann startet der
+  //      Viewer trotzdem; ohne `--pov-resources` gilt dort die Vorgabe `auto`, und der Client
+  //      sucht sich eine (eigene Ablage, Minecraft-Installation, zuletzt Mojang).
+  //   3. **Weder noch.** Kein `--pov-web`: Dann bleibt die farbige Voxelansicht, statt dass ein
+  //      Viewer ohne Texturen ins Leere läuft.
   const full = Array.isArray(args) ? args.map(String) : [];
   let povPort = null;
   const pov = message.pov;
@@ -412,6 +421,13 @@ function startJob(link, message) {
     if (fs.existsSync(jar)) {
       povPort = Number(pov.port);
       full.push('--pov-web', `127.0.0.1:${povPort}`, '--pov-resources', jar);
+    } else if (pov.auto) {
+      povPort = Number(pov.port);
+      full.push('--pov-web', `127.0.0.1:${povPort}`);
+      log(
+        `Keine Minecraft-Ressourcen für ${pov.mc} – der Client sucht sich selbst eine. ` +
+          'Eine hier hinterlegte JAR spart je Kunde einen eigenen Download.'
+      );
     } else {
       log(`Keine Minecraft-Ressourcen für ${pov.mc} – Bot startet ohne texturierte Ansicht.`);
     }

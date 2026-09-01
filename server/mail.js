@@ -383,6 +383,63 @@ const T = {
     },
   },
 
+  // Die Bestätigung an die **neue** Adresse. Sie gehört zur Kategorie "Konto" und damit zu dem,
+  // was sich nicht abbestellen lässt: Ohne diese Nachricht ließe sich die Adresse gar nicht
+  // wechseln, und wer sie abbestellt hätte, säße bei jedem Umzug fest.
+  email_change: {
+    category: 'account',
+    de: {
+      subject: () => `${config.brand}: neue E-Mail-Adresse bestätigen`,
+      title: () => 'Neue Adresse bestätigen',
+      lines: (v) => [
+        `Für dein Konto <b>${v.name}</b> wurde diese Adresse als neue E-Mail-Adresse eingetragen.`,
+        'Bestätige sie hier – bis dahin bleibt die alte Adresse in Kraft. Der Link gilt einen Tag.',
+        'Hast du das nicht beantragt, brauchst du nichts zu tun: Ohne Bestätigung ändert sich nichts.',
+      ],
+      action: (v) => ({ url: v.url, label: 'Adresse bestätigen' }),
+    },
+    en: {
+      subject: () => `${config.brand}: confirm your new email address`,
+      title: () => 'Confirm the new address',
+      lines: (v) => [
+        `This address was entered as the new email address for your account <b>${v.name}</b>.`,
+        'Confirm it here – until then the old address stays in charge. The link is valid for one day.',
+        'If you did not ask for this, do nothing: without a confirmation nothing changes.',
+      ],
+      action: (v) => ({ url: v.url, label: 'Confirm address' }),
+    },
+  },
+
+  // Konto löschen: der Termin steht, und bis dahin genügt ein Knopf. Die Nachricht ist die
+  // einzige Stelle, an der die Frist steht, wenn jemand sich danach nicht mehr anmeldet.
+  account_delete: {
+    category: 'account',
+    de: {
+      subject: () => `${config.brand}: Konto wird gelöscht`,
+      title: () => 'Dein Konto ist zur Löschung vorgemerkt',
+      lines: (v) => [
+        `Am <b>${v.due}</b> werden dein Konto und alles daran gelöscht: Serverplätze, Minecraft-Konten, Tickets, Guthaben.`,
+        'Bis dahin sind die Bots aus, aber nichts ist weg. Ein Klick im Panel holt alles zurück.',
+        v.credits > 0
+          ? `Achtung: Auf dem Konto liegen noch <b>${v.credits} Credits</b>. Sie verfallen mit der Löschung.`
+          : '',
+      ],
+      action: (v) => ({ url: `${v.base}/app#/settings`, label: 'Löschung widerrufen' }),
+    },
+    en: {
+      subject: () => `${config.brand}: your account is scheduled for deletion`,
+      title: () => 'Your account is scheduled for deletion',
+      lines: (v) => [
+        `On <b>${v.due}</b> your account and everything on it will be deleted: server slots, Minecraft accounts, tickets, credits.`,
+        'Until then the bots are off, but nothing is gone. One click in the panel brings it all back.',
+        v.credits > 0
+          ? `Note: there are still <b>${v.credits} credits</b> on the account. They expire with the deletion.`
+          : '',
+      ],
+      action: (v) => ({ url: `${v.base}/app#/settings`, label: 'Cancel the deletion' }),
+    },
+  },
+
   reset: {
     category: 'account',
     de: {
@@ -402,6 +459,45 @@ const T = {
         "If that wasn't you, ignore this message – nothing changes.",
       ],
       action: (v) => ({ url: v.url, label: 'Set password' }),
+    },
+  },
+
+  // **Der Anmeldecode.** Die einzige Vorlage, in der der Inhalt selbst der Schlüssel ist – überall
+  // sonst steht hier ein Link oder eine Auskunft. Deshalb drei Dinge anders als sonst:
+  //
+  //   * Der Code steht groß und für sich, mit Abstand zwischen den Ziffern. Er wird abgetippt,
+  //     oft von einem Telefon auf einen Rechner, und Ziffern in einer Reihe verliest man.
+  //   * Es gibt **keinen Knopf**. Ein Link in einer Nachricht, die den Zugang enthält, ist genau
+  //     das, was Phishing nachbaut – wer gelernt hat, hier nicht zu klicken, ist besser dran.
+  //   * Gerät und Adresse stehen dabei. Wer diese Nachricht bekommt, ohne sich anzumelden, soll
+  //     sofort sehen, dass jemand anderes sein Passwort kennt.
+  login_code: {
+    category: 'security',
+    de: {
+      subject: (v) => `${v.code} ist dein Anmeldecode für ${config.brand}`,
+      title: () => 'Dein Anmeldecode',
+      lines: (v) => [
+        `<b style="font-size:2rem;letter-spacing:.35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">${v.code}</b>`,
+        `Der Code gilt ${v.minutes} Minuten und nur für diese eine Anmeldung.`,
+        [v.device, v.ip].filter(Boolean).length
+          ? `Angefragt von: ${[v.device, v.ip].filter(Boolean).join(' · ')}`
+          : '',
+        'Hast du dich gerade nicht angemeldet, ändere bitte sofort dein Passwort – jemand anderes kennt es.',
+      ],
+      action: () => null,
+    },
+    en: {
+      subject: (v) => `${v.code} is your ${config.brand} sign-in code`,
+      title: () => 'Your sign-in code',
+      lines: (v) => [
+        `<b style="font-size:2rem;letter-spacing:.35em;font-family:ui-monospace,SFMono-Regular,Menlo,monospace">${v.code}</b>`,
+        `The code is valid for ${v.minutes} minutes and for this one sign-in only.`,
+        [v.device, v.ip].filter(Boolean).length
+          ? `Requested from: ${[v.device, v.ip].filter(Boolean).join(' · ')}`
+          : '',
+        "If you did not just sign in, change your password right away – somebody else knows it.",
+      ],
+      action: () => null,
     },
   },
 
@@ -700,9 +796,10 @@ export function render(user, kind, vars = {}) {
     '',
     // Nur die Auszeichnung der Vorlage entfernen, nicht alles zwischen spitzen Klammern: Ein
     // Ticketbetreff wie "<urgent> Server weg" verlor sonst genau das Wort, um das es ging. Die
-    // Vorlagen benutzen ausschließlich <b>; käme eine andere hinzu, stünde sie sichtbar in der
+    // Vorlagen benutzen ausschließlich <b>, mit oder ohne Attribute (der Anmeldecode steht in
+    // einem großgesetzten); käme eine andere Auszeichnung hinzu, stünde sie sichtbar in der
     // Textfassung – und das ist besser, als sie stillschweigend mitsamt Kundentext zu schlucken.
-    ...plainLines.map((line) => line.replace(/<\/?b>/g, '')),
+    ...plainLines.map((line) => line.replace(/<\/?b(?:\s[^>]*)?>/g, '')),
     action ? `\n${action.label}: ${action.url}` : '',
     `\n${FOOT[lang](HOST)}`,
   ].join('\n');

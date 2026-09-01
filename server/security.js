@@ -228,6 +228,28 @@ export function attempts(limit = 200) {
 }
 
 /**
+ * Die letzten Versuche an **einem** Konto – für den Kunden selbst.
+ *
+ * Gesucht wird über das, was eingetippt wurde: An einem Konto kann man sich mit der E-Mail-Adresse
+ * *oder* mit dem Benutzernamen anmelden, und beides steht so im Protokoll, wie es eingegeben
+ * wurde. Deshalb beide, ohne Rücksicht auf Groß- und Kleinschreibung.
+ *
+ * Zurück geht nur, was den Kunden angeht: Zeitpunkt, Adresse, Gerät und ob es geklappt hat. Was
+ * eingetippt wurde, bleibt weg – bei einem Fehlversuch steht dort oft die Adresse eines anderen
+ * Kontos, und die geht ihn nichts an.
+ */
+export function attemptsFor(user, limit = 25) {
+  return db
+    .prepare(
+      `SELECT created_at, ip, ok, reason FROM login_attempts
+        WHERE identifier = ? COLLATE NOCASE OR identifier = ? COLLATE NOCASE
+        ORDER BY id DESC LIMIT ?`
+    )
+    .all(String(user?.email || ''), String(user?.username || ''), Math.min(100, Math.max(1, limit)))
+    .map((row) => ({ ...row, ok: Boolean(row.ok) }));
+}
+
+/**
  * Auffällige Adressen der letzten Tage.
  *
  * Eine Liste von Einzelversuchen sagt wenig – dieselbe Adresse achtzigmal untereinander ist die

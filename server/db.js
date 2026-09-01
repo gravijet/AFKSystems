@@ -1029,6 +1029,263 @@ const migrations = [
       for (const row of seed) insert.run({ ...row, created_at: Date.now() });
     },
   },
+  {
+    // **Ein Konto war bisher eine E-Mail-Adresse und ein Benutzername.** Für einen Dienst, der
+    // Geld einnimmt, ist das zu wenig: Auf einen Beleg gehört, an wen geleistet wurde, und wer
+    // als Firma kauft, braucht seine Firmierung und seine Umsatzsteuer-Identifikationsnummer
+    // darauf. Bis hierher stand davon nichts irgendwo – auch nicht änderbar.
+    //
+    // Alles in `users` und nicht in einer zweiten Tabelle: Es ist genau **eine** Adresse je Konto,
+    // sie wird zusammen mit dem Konto gelesen und zusammen mit ihm gelöscht. Eine 1:1-Tabelle
+    // dafür wäre ein Join, der nie etwas anderes zurückgibt als eine Zeile.
+    //
+    // Leer statt NULL: Diese Felder werden angezeigt, verglichen und aneinandergehängt. `NULL`
+    // müsste an jeder dieser Stellen einzeln abgefangen werden, und "kein Straßenname" und
+    // "leerer Straßenname" sind hier dasselbe.
+    name: '019-persoenliche-daten-und-rechnungsadresse',
+    sql: `
+      ALTER TABLE users ADD COLUMN full_name     TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN company       TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN vat_id        TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN street        TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN street2       TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN postal_code   TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN city          TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN region        TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN country       TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN phone         TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN billing_email TEXT NOT NULL DEFAULT '';
+      -- Die Zeitzone des Kontos. Sie entscheidet, wann ein Zeitplan zuschlägt (siehe 023) und
+      -- was auf einem Beleg als Datum steht. Leer heißt: die des Servers.
+      ALTER TABLE users ADD COLUMN timezone      TEXT NOT NULL DEFAULT '';
+
+      -- Ein Benutzername ist im Panel eine Anzeige und in Discord ein Wiedererkennungsmerkmal.
+      -- Änderbar soll er sein, aber nicht beliebig oft: Wer sich alle zwei Minuten umbenennt,
+      -- macht jeden Verlauf unlesbar. Wann zuletzt, steht hier.
+      ALTER TABLE users ADD COLUMN username_changed_at INTEGER;
+
+      -- Eine neue E-Mail-Adresse gilt erst, wenn sie bestätigt wurde. Bis dahin steht sie hier
+      -- und die alte bleibt in Kraft – sonst sperrt ein Tippfehler das eigene Konto aus.
+      ALTER TABLE users ADD COLUMN pending_email       TEXT;
+      ALTER TABLE users ADD COLUMN pending_email_token TEXT;
+      ALTER TABLE users ADD COLUMN pending_email_at    INTEGER;
+      CREATE UNIQUE INDEX users_pending_email_token
+        ON users(pending_email_token) WHERE pending_email_token IS NOT NULL;
+    `,
+  },
+  {
+    // Discord schreibt Erwähnungen als Zahlen: `<@1538…>` ist eine Person, `<#1538…>` ein Kanal,
+    // `<@&1538…>` eine Rolle. Im Discord-Client steht daran ein Name, im Panel stand eine
+    // zwanzigstellige Zahl – und damit eine Nachricht, die niemand mehr lesen konnte.
+    //
+    // Auflösen kann das nur, wer den Discord-Server sieht: der Bot. Er schickt deshalb zu jeder
+    // übernommenen Nachricht mit, **welche Zahl welchen Namen hatte**, und zwar zum Zeitpunkt der
+    // Nachricht. Ein Kanal, der später umbenannt oder gelöscht wird, ändert damit den Verlauf
+    // nicht – genauso wenig, wie ein umbenannter Kanal eine alte Nachricht in Discord ändert.
+    name: '020-discord-erwaehnungen-am-beitrag',
+    sql: `
+      ALTER TABLE ticket_messages ADD COLUMN mentions TEXT;
+    `,
+  },
+  {
+    // Ein Beleg braucht eine Nummer, und diese Nummer darf sich nie wieder ändern. Ebenso wenig
+    // wie das, was darauf steht: Wer im Januar an eine Firma geliefert hat und im März umzieht,
+    // hat trotzdem im Januar an die alte Anschrift geliefert. Deshalb wird beim Verbuchen ein
+    // **Abzug** der Rechnungsdaten festgehalten und nicht auf das Konto verwiesen.
+    name: '021-belegnummern',
+    sql: `
+      ALTER TABLE topups ADD COLUMN receipt_no  TEXT;
+      ALTER TABLE topups ADD COLUMN billed_to   TEXT;   -- JSON: Name, Firma, Anschrift, USt-IdNr.
+      ALTER TABLE topups ADD COLUMN vat_note    TEXT;   -- der Satz, der damals galt
+      CREATE UNIQUE INDEX topups_receipt ON topups(receipt_no) WHERE receipt_no IS NOT NULL;
+    `,
+  },
+  {
+    // Ein Konto muss sich auch wieder abschaffen lassen, ohne dafür ein Ticket schreiben zu
+    // müssen. Sofort und unwiderruflich wäre allerdings die falsche Voreinstellung: Ein Klick im
+    // Ärger, ein fremder Browser, ein Kind am Rechner – und Konten, Serverplätze und Guthaben
+    // sind weg. Deshalb eine Frist: Der Wunsch steht an, die Bots gehen aus, und bis zum Stichtag
+    // genügt ein Knopf, um alles zurückzuholen.
+    name: '022-konto-loeschen-mit-frist',
+    sql: `
+      ALTER TABLE users ADD COLUMN delete_requested_at INTEGER;
+      ALTER TABLE users ADD COLUMN delete_due_at       INTEGER;
+      CREATE INDEX users_delete_due ON users(delete_due_at) WHERE delete_due_at IS NOT NULL;
+    `,
+  },
+  {
+    // Zeitpläne. Ein AFK-Bot soll oft nicht rund um die Uhr sitzen, sondern zu bestimmten Zeiten –
+    // nachts, während der Arbeit, an Wochentagen. Das ließ sich bisher nur von Hand machen, also
+    // gar nicht: Wer um 6 Uhr starten will, steht nicht um 6 Uhr auf, um auf einen Knopf zu drücken.
+    //
+    // Bewusst keine cron-Zeile: "Minute, Stunde, Tag, Monat, Wochentag" ist eine Sprache, die man
+    // lernen muss. Hier steht eine Uhrzeit, eine Auswahl von Wochentagen und was passieren soll.
+    // Die Zeitzone kommt vom Konto (019) – 6 Uhr heißt 6 Uhr dort, wo der Kunde wohnt, und nicht
+    // dort, wo zufällig der Server steht.
+    name: '023-zeitplaene',
+    sql: `
+      CREATE TABLE profile_schedules (
+        id         INTEGER PRIMARY KEY,
+        profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        -- NULL = alle Konten dieses Serverplatzes. Sonst genau dieses eine.
+        account_id INTEGER REFERENCES mc_accounts(id) ON DELETE CASCADE,
+        action     TEXT NOT NULL DEFAULT 'start',   -- start | stop | restart
+        minutes    INTEGER NOT NULL DEFAULT 0,      -- Minuten seit Mitternacht, Ortszeit des Kontos
+        days       TEXT NOT NULL DEFAULT '0,1,2,3,4,5,6',  -- 0 = Sonntag, wie Date#getDay
+        active     INTEGER NOT NULL DEFAULT 1,
+        note       TEXT NOT NULL DEFAULT '',
+        last_run_at INTEGER,
+        last_result TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX profile_schedules_profile ON profile_schedules(profile_id);
+      CREATE INDEX profile_schedules_active ON profile_schedules(active, minutes);
+    `,
+  },
+  {
+    // **Der Webhook des Teams meldete Tickets. Das war falsch herum.**
+    //
+    // Ein neues Ticket steht im Panel, in der Seitenleiste mit Zahl daneben, und – wenn der Bot
+    // läuft – als eigener Kanal in Discord, in dem das Gespräch stattfindet. Eine vierte Meldung
+    // desselben Vorgangs in einem fünften Kanal hat niemandem etwas gesagt, was er nicht schon
+    // wusste; sie hat nur dafür gesorgt, dass der Kanal ungelesen bleibt.
+    //
+    // Was dort **fehlte**, ist das, was sonst nirgends steht: wie es der Maschine geht. Deshalb
+    // heißt die Einstellung ab hier `discord_system_webhook`, und darin kommt der Zustand des
+    // Systems an. Der alte Wert zieht um – wer einen Webhook eingetragen hat, soll ihn nicht
+    // noch einmal eintragen müssen.
+    name: '024-systemwebhook-statt-ticketmeldungen',
+    run() {
+      const old = db.prepare("SELECT value FROM settings WHERE key = 'discord_staff_webhook'").get();
+      if (old) {
+        db.prepare(
+          `INSERT INTO settings (key, value) VALUES ('discord_system_webhook', ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+        ).run(old.value);
+        db.prepare("DELETE FROM settings WHERE key = 'discord_staff_webhook'").run();
+      }
+    },
+  },
+  {
+    // **Ein gelöschtes Konto nimmt seine Belege mit – und das darf es nicht.**
+    //
+    // `topups` und `ledger` hängen mit `ON DELETE CASCADE` am Konto. Für Serverplätze und Tickets
+    // ist das genau richtig; für Zahlungen ist es falsch, und zwar aus zwei Gründen:
+    //
+    //   * **Der Betreiber muss sie aufheben.** Eine ausgestellte Rechnung ist ein Beleg über einen
+    //     Umsatz; handels- und steuerrechtliche Aufbewahrungsfristen gelten für ihn und nicht für
+    //     das Konto. Genau das steht auch in der Datenschutzerklärung (legal.js) – ein Programm,
+    //     das etwas anderes tut, als dort steht, ist das schlimmere Problem.
+    //   * **Die Belegnummer bliebe nicht eindeutig.** Sie ist fortlaufend je Jahr und wird gezählt;
+    //     verschwinden Zeilen, zählt sie zurück und vergibt eine Nummer ein zweites Mal.
+    //
+    // Deshalb dieser Auszug: Beim Löschen eines Kontos wandern die **abgeschlossenen** Zahlungen
+    // hierher – ohne Fremdschlüssel, damit nichts sie mitnimmt. Was darin steht, ist genau das,
+    // was ohnehin auf dem Beleg gedruckt war und nicht mehr sein darf: Nummer, Betrag, Zahlart,
+    // Zeitpunkt und der Abzug der Rechnungsdaten von damals.
+    name: '025-belege-ueberleben-das-konto',
+    sql: `
+      CREATE TABLE receipt_archive (
+        id          INTEGER PRIMARY KEY,
+        receipt_no  TEXT NOT NULL UNIQUE,
+        former_user INTEGER,          -- die Nummer des gelöschten Kontos, für die Zuordnung
+        username    TEXT NOT NULL DEFAULT '',
+        provider    TEXT NOT NULL DEFAULT '',
+        amount_cent INTEGER NOT NULL DEFAULT 0,
+        credits     INTEGER NOT NULL DEFAULT 0,
+        status      TEXT NOT NULL DEFAULT 'paid',
+        billed_to   TEXT,             -- JSON, wie in topups
+        vat_note    TEXT,
+        created_at  INTEGER NOT NULL,
+        paid_at     INTEGER,
+        archived_at INTEGER NOT NULL
+      );
+    `,
+  },
+  {
+    // **Zwei Zahlen, die ein Macro von einem Automaten unterscheiden.**
+    //
+    // Ein Macro auf „Chat enthält X“ feuerte bisher bei jedem Treffer. Auf einem Server, der die
+    // Zeile im Sekundentakt schickt (Werbung, ein Plugin, das jeden Tick meldet), heißt das:
+    // derselbe Befehl im Sekundentakt. Das ist für den Server nicht von Spam zu unterscheiden, und
+    // der Bot fliegt dafür raus – ausgelöst von einer Einstellung, die ihn im Spiel halten sollte.
+    //
+    //   * `cooldown_sec` ist die Sperrzeit je Macro. 0 heißt "jedes Mal", wie bisher.
+    //   * `chance` ist die Wahrscheinlichkeit in Prozent. 100 heißt "immer", wie bisher. Darunter
+    //     wird aus einer Antwort, die auf die Millisekunde jedes Mal gleich kommt, eine, die
+    //     aussieht, als säße jemand davor.
+    //
+    // Beide Vorgaben sind genau das bisherige Verhalten: Kein bestehendes Macro ändert sich.
+    name: '026-macros-mit-sperrzeit-und-wahrscheinlichkeit',
+    sql: `
+      ALTER TABLE macros ADD COLUMN cooldown_sec INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE macros ADD COLUMN chance INTEGER NOT NULL DEFAULT 100;
+    `,
+  },
+  {
+    // **Der Anmeldecode und die Geräte, die ihn nicht mehr brauchen.**
+    //
+    // Bisher gab es an einer Anmeldung genau eine Frage: Stimmt das Passwort? Wer es kennt – aus
+    // einem Leck bei einem anderen Dienst, von einem Zettel, aus einem Browser, der es gespeichert
+    // hat – ist drin. Der Code per E-Mail macht daraus zwei Fragen, von denen die zweite nur
+    // beantworten kann, wer auch an das Postfach kommt.
+    //
+    // Drei Spalten, drei Aufgaben:
+    //
+    //   * `users.login_code` ist der Wunsch des Kontoinhabers. **Vorgabe: an.** Wer den Code nicht
+    //     will, schaltet ihn ab; die andere Richtung würde ihn niemand einschalten, der ihn nicht
+    //     ohnehin schon vermisst. Ohne eingerichteten Postausgang bleibt er wirkungslos, statt
+    //     jemanden auszusperren – siehe server/logincode.js.
+    //   * `known_devices` sind die Browser, die schon einmal durch diese Prüfung gekommen sind.
+    //     Der Schlüssel ist ein Zufallswert in einem eigenen, langlebigen Cookie und **nicht** die
+    //     Kennung des Browsers: "Chrome auf Windows" haben Millionen, und ein Merkmal, das
+    //     Millionen teilen, erkennt kein Gerät wieder.
+    //   * `login_challenges` ist der Code selbst, während er gilt. Gespeichert wird er als
+    //     scrypt-Hash wie ein Passwort: Wer die Datenbank liest (eine Sicherung, ein Export, ein
+    //     Blick über die Schulter), findet sechs Ziffern sonst im Klartext, und die sind in diesem
+    //     Moment der halbe Zugang zum Konto.
+    name: '027-anmeldecode-und-bekannte-geraete',
+    sql: `
+      ALTER TABLE users ADD COLUMN login_code INTEGER NOT NULL DEFAULT 1;
+
+      CREATE TABLE known_devices (
+        token      TEXT NOT NULL,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        agent      TEXT,
+        ip         TEXT,
+        created_at INTEGER NOT NULL,
+        last_at    INTEGER NOT NULL,
+        PRIMARY KEY (token, user_id)
+      );
+      CREATE INDEX idx_known_devices_user ON known_devices(user_id, last_at DESC);
+
+      CREATE TABLE login_challenges (
+        token      TEXT PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash  TEXT NOT NULL,
+        tries      INTEGER NOT NULL DEFAULT 0,
+        sent_at    INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        ip         TEXT,
+        agent      TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX idx_login_challenges_user ON login_challenges(user_id);
+    `,
+  },
+  {
+    // **Ein Notizfeld je Serverplatz.**
+    //
+    // Wer sechs Serverplätze hat, hat sechs Namen und keine Erinnerung: Warum steht auf diesem die
+    // Sichtweite auf 12? Wem gehört der Discord-Server, für den der hier läuft? Welcher Rang war
+    // noch mal nötig, damit das Makro funktioniert? Das stand bisher nirgends – Serverplätze haben
+    // Felder für alles, was ein Programm braucht, und keines für das, was ein Mensch braucht.
+    //
+    // Die Notiz gehört dem Kunden. Sie taucht in keiner Auswertung auf, sie wird nicht durchsucht,
+    // und der Bot bekommt sie nie zu sehen.
+    name: '028-notiz-je-serverplatz',
+    sql: `ALTER TABLE profiles ADD COLUMN note TEXT NOT NULL DEFAULT '';`,
+  },
 ];
 
 /**
@@ -1321,7 +1578,11 @@ const defaults = {
   discord_client_id: '',
   discord_client_secret: '',
   discord_login: 0, // 1 = Anmelden (und Registrieren) mit Discord erlaubt
-  discord_staff_webhook: '', // neue Tickets und Meldungen ans Team landen hier
+  // Der Zustand der Anlage als Discord-Nachricht: Auslastung, Standorte, Bots, Sicherungen,
+  // aufgefallene Aufgaben. **Keine Tickets** – die stehen im Panel und in ihrem eigenen Kanal.
+  discord_system_webhook: '',
+  // Wie oft der Lagebericht von selbst kommt, in Stunden. 0 = nur Warnungen, kein Bericht.
+  system_report_hours: 12,
   discord_invite: '', // öffentlicher Einladungslink, steht auf der Website
 
   // Der Discord-Bot (bot/). Er läuft als eigener Dienst und spricht über /api/bot mit dem Panel.
@@ -1391,6 +1652,13 @@ const defaults = {
   // Ein Ticket bleibt der bessere Weg (Verlauf, Zuordnung, Anhänge) – aber wer sein Passwort
   // verloren hat oder gar kein Konto anlegen konnte, hat sonst gar keinen.
   support_email: 'support@afksystems.de',
+
+  // Wer verkauft. Das steht auf jedem Beleg – und zwar als **Absender**, denn Verkäufer ist der
+  // Betreiber und nicht Stripe. Leer heißt: Es steht die Marke da und sonst nichts; ein Beleg
+  // ohne Absender ist keiner, deshalb gehört das ausgefüllt, bevor Geld hereinkommt.
+  company_name: '',
+  company_address: '', // mehrzeilig, eine Zeile je Zeile
+  company_vat_id: '',
 };
 
 

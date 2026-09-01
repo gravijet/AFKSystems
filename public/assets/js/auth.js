@@ -86,14 +86,117 @@ function showOauth(meta) {
 if (page === 'login') {
   api('/meta').then(showOauth).catch(() => {});
 
+  /** Die Marke der offenen Code-Abfrage. Sie lebt nur in dieser Seite und in diesem Tab. */
+  let challenge = null;
+
+  const done = (result) => {
+    if (result.verify_pending) return location.assign(url('/verify'));
+    location.assign(nextUrl(url('/app')));
+  };
+
   onSubmit(async () => {
     const result = await api('/auth/login', {
       method: 'POST',
       body: { login: $('#login').value, password: $('#password').value },
     });
-    if (result.verify_pending) return location.assign(url('/verify'));
-    location.assign(nextUrl(url('/app')));
+    // Kommt eine Marke zurück, war das Passwort richtig und die Anmeldung trotzdem nicht fertig:
+    // Dieser Browser ist neu, und der Code aus der E-Mail fehlt noch.
+    if (result.challenge) return askForCode(result);
+    done(result);
   });
+
+  /**
+   * Auf den zweiten Schritt umblenden.
+   *
+   * Das Passwortfeld wird dabei geleert. Es steht in einer Karte, die gleich unsichtbar ist, und
+   * ein Passwort, das im DOM einer Seite steht, die niemand mehr ansieht, ist ein Passwort, das
+   * dort ohne Grund liegt – etwa während der Kunde in seinem Postfach nachsieht.
+   */
+  function askForCode(result) {
+    challenge = result.challenge;
+    $('#password').value = '';
+    $('#login-card').classList.add('hide');
+    $('#oauth')?.classList.add('hide');
+    $('#code-card').classList.remove('hide');
+    if (result.email_hint) {
+      $('#code-lead').textContent = tr('auth.code.leadTo', { email: result.email_hint });
+    }
+    $('#code').value = '';
+    $('#code').focus();
+  }
+
+  const codeForm = $('#code-form');
+  const codeError = $('#code-error');
+  const showCodeError = (message) => {
+    codeError.textContent = message;
+    codeError.classList.remove('hide');
+  };
+
+  // Nur Ziffern ins Feld, und bei sechsen von selbst abschicken. Wer einen Code aus einer E-Mail
+  // einfügt, hat ihn oft mit einem Leerzeichen oder einem Bindestrich dabei; daran soll eine
+  // Anmeldung nicht scheitern.
+  $('#code')?.addEventListener('input', (event) => {
+    const cleaned = event.target.value.replace(/\D/g, '').slice(0, 6);
+    if (cleaned !== event.target.value) event.target.value = cleaned;
+    if (cleaned.length === 6) codeForm.requestSubmit();
+  });
+
+  codeForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = codeForm.querySelector('button[type="submit"]');
+    if (button.disabled) return;
+    const label = button.textContent;
+    codeError.classList.add('hide');
+    button.disabled = true;
+    button.textContent = tr('auth.working');
+    try {
+      done(await api('/auth/login/code', { method: 'POST', body: { challenge, code: $('#code').value } }));
+    } catch (problem) {
+      showCodeError(problem.message);
+      // Ist die Marke verfallen (abgelaufen oder fünfmal danebengetippt), führt kein Weg mehr
+      // über dieses Feld. Dann zurück zum Passwort, statt jemanden weiter tippen zu lassen.
+      if (problem.code === 'login-code-expired') backToPassword(problem.message);
+      else {
+        $('#code').value = '';
+        $('#code').focus();
+      }
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  });
+
+  $('#code-resend')?.addEventListener('click', async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    codeError.classList.add('hide');
+    try {
+      const result = await api('/auth/login/code/resend', { method: 'POST', body: { challenge } });
+      if (result.email_hint) {
+        $('#code-lead').textContent = tr('auth.code.leadTo', { email: result.email_hint });
+      }
+      button.textContent = tr('auth.code.resent');
+      // Der Knopf bleibt gesperrt: Der Server lässt ohnehin nur eine Nachricht je Minute durch,
+      // und ein Knopf, der beim zweiten Druck eine Absage bringt, sieht kaputt aus.
+    } catch (problem) {
+      showCodeError(problem.message);
+      button.disabled = false;
+    }
+  });
+
+  $('#code-back')?.addEventListener('click', () => backToPassword(''));
+
+  function backToPassword(message) {
+    challenge = null;
+    $('#code-card').classList.add('hide');
+    $('#login-card').classList.remove('hide');
+    // Die Anbieterknöpfe kommen nur zurück, wenn sie vorher da waren: `showOauth` hat dann
+    // mindestens einen von ihnen sichtbar gemacht. Ohne diese Frage stünde auf einem Panel ohne
+    // Discord und Google nach einem Abbruch ein leerer Kasten mit dem Wort „oder“ darin.
+    if (document.querySelector('#oauth a:not(.hide)')) $('#oauth')?.classList.remove('hide');
+    if (message) showError(message);
+    $('#password').focus();
+  }
 }
 
 // ---------------------------------------------------------------- Konto anlegen
@@ -189,7 +292,20 @@ if (page === 'reset') {
 if (page === 'verify') {
   const state = $('#state');
   const token = query.get('token') || '';
-  if (token) {
+  // Dieselbe Seite, zwei Marken: `token` bestätigt die Adresse eines frischen Kontos, `email` die
+  // **neue** Adresse eines bestehenden. Eine zweite Seite dafür hätte dieselben drei Zeilen und
+  // dieselbe Gestaltung – und einen zweiten Ort, an dem der Link falsch stehen kann.
+  const emailToken = query.get('email') || '';
+  if (emailToken) {
+    api('/auth/email/confirm', { method: 'POST', body: { token: emailToken } })
+      .then((result) => {
+        state.textContent = tr('auth.verify.mailMoved', { email: result.email });
+        $('#go').classList.remove('hide');
+      })
+      .catch((problem) => {
+        state.textContent = problem.message || tr('auth.verify.bad');
+      });
+  } else if (token) {
     api('/auth/verify', { method: 'POST', body: { token } })
       .then(() => {
         state.textContent = tr('auth.verify.ok');

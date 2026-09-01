@@ -20,6 +20,9 @@ registrierte Benutzer bekommt sie (oder wer in `ADMIN_EMAIL` steht).
 7. [Textbausteine für Tickets](#bausteine)
 8. [Rundmail](#rundmail)
 9. [Geld zurückgeben](#erstatten)
+10. [Systemmeldungen: der Webhook, der die Anlage meldet](#system)
+11. [Verkäufer und Belege](#belege)
+12. [Konten, die gelöscht werden sollen](#loeschungen)
 
 ---
 
@@ -97,6 +100,12 @@ Zwei Dinge nimmt die Datei ernst:
 
 Jede Ausfuhr steht im Protokoll: Wer alle Mailadressen mitnimmt, hinterlässt eine Spur.
 
+Ein siebter Knopf steht neben den Aufladungen und nur dann, wenn es etwas zu holen gibt: **Belege
+gelöschter Konten**. Wenn jemand sein Konto löscht, verschwindet alles mit ihm – nur die schon
+ausgestellten Rechnungen nicht, die müssen bleiben (§ 147 AO). Sie liegen danach in einer eigenen
+Tabelle, zu der kein Konto mehr gehört, also auch in keiner Liste des Panels. Diese Datei ist der
+einzige Weg dorthin: Belegnummer, Betrag, Datum und der Name, auf den die Rechnung lief.
+
 ---
 
 <a id="sicherheit"></a>
@@ -151,6 +160,19 @@ IPv6-Socket so, und eine Sperre, die das nicht erkennt, sperrt ins Leere.
 Alle offenen Sitzungen quer über alle Konten, mit Adresse, Gerät und Alter; einzeln abzumelden.
 **Der Sitzungsschlüssel steht nirgends** – er ist ein Passwortersatz, und eine Ansicht, die ihn
 zeigt, macht aus jedem Blick über die Schulter eine Übernahme.
+
+### Der Anmeldecode in dieser Liste
+
+Neben „falsches Passwort“ steht seit dem Anmeldecode auch **„falscher Code“**. Der Unterschied ist
+der wichtigste in dieser ganzen Ansicht: Bei „falsches Passwort“ hat jemand geraten. Bei „falscher
+Code“ hat jemand das Passwort **gekonnt** und ist an der zweiten Frage gescheitert – das heißt, das
+Passwort dieses Kontos ist in fremden Händen. Dieselbe Zeile sieht der Kunde in seinen eigenen
+Einstellungen, und dort steht sie im Klartext dabei.
+
+Einstellen lässt sich der Code nicht von hier: Er gehört dem Kontoinhaber (*Einstellungen →
+Sicherheit*), Vorgabe ist an. Ohne eingerichteten Postausgang bleibt er wirkungslos – dann kann
+kein Code hinausgehen, und die Anmeldung läuft wie eh und je. Dasselbe gilt, wenn eine einzelne
+Nachricht gerade nicht zugestellt werden kann; im Protokoll steht dann `login-code-failed`.
 
 ---
 
@@ -209,6 +231,24 @@ schließlich: muss ich wirklich eine Stunde warten, um zu sehen, ob es jetzt geh
 allen – wo der Takt die halbe Bedeutung ist (tote Verbindungen), wäre es ein Knopf ohne Wirkung.
 
 Zwei Läufe derselben Aufgabe überlappen nie. Bei der Abrechnung hieße das zweimal abbuchen.
+
+### Eine neue Client-Fassung ausrollen
+
+*Administration → Client.* Der stündliche Abgleich holt jedes neue Release und legt die Dateien hin;
+die Standorte holen sich dieselben. **Laufende Bots wechseln dabei nicht mit** – ein Prozess hält
+seine Datei offen und merkt von der Ablösung nichts.
+
+Steht oben im Kasten „*n* von *m* laufenden Bots halten noch die alte Client-Datei“, dann ist das
+genau so gemeint, mit der Aufschlüsselung darunter: welche Fassungen noch unterwegs sind und welche
+bereitliegt. **Alle neu starten** hebt sie alle auf die neue, mit fünf Sekunden Abstand zwischen den
+Neustarts – hundert Bots, die im selben Augenblick beim selben Minecraft-Server anklopfen, lösen
+dort dieselben Schutzmaßnahmen aus wie ein Angriff.
+
+Das ist bewusst ein Knopf und kein Takt. Ein Neustart wirft einen Bot aus dem Spiel; auf Servern mit
+Warteschlange kostet das den Platz darin, und der Kunde hat nicht darum gebeten. Er kann es auch
+selbst tun – im Reiter *Verbinden* seines Serverplatzes steht derselbe Hinweis mit einem Knopf, der
+nur seine eigenen Bots betrifft. Kommt eine neue Fassung an, meldet der Systembericht sie von sich
+aus in den Webhook (siehe Abschnitt 10).
 
 ---
 
@@ -281,3 +321,90 @@ deshalb ein paar Sekunden später und nicht sofort.
 Eine **Teilerstattung** nimmt gar keine Credits zurück: Wie viele das sein sollen, ist keine
 Rechenaufgabe, sondern eine Entscheidung. Alles Weitere zu Erstattungen und Streitfällen steht in
 [stripe.md, Abschnitt 8](stripe.md#erstattung).
+
+---
+
+<a id="system"></a>
+
+## 10. Systemmeldungen: der Webhook, der die Anlage meldet
+
+*Administration → System*, unter den Messwerten. Und – wenn ein Webhook hinterlegt ist – in dem
+Discord-Kanal, der darin steht.
+
+**Was sich geändert hat.** Der Webhook hieß einmal „Webhook fürs Team“ und meldete neue Tickets und
+jede Antwort darauf. Das war die vierte Kopie derselben Nachricht: Ein Ticket steht im Panel, in
+der Seitenleiste mit einer Zahl daneben und – sobald der Bot läuft – als eigener Kanal, in dem das
+Gespräch tatsächlich stattfindet. Ein Kanal, der ständig dasselbe wiederholt, wird nicht mehr
+gelesen; und dann steht dort irgendwann etwas Wichtiges, das niemand sieht.
+
+Hier kommt jetzt an, was **sonst nirgends** steht:
+
+| Art | Wann | Was drinsteht |
+| --- | --- | --- |
+| **Lagebericht** | im eingestellten Takt (Vorgabe: alle 12 Stunden) | CPU, Speicher, Platte, Standorte, laufende Bots, Konten, offene Tickets und Aufladungen, Client-Stand, letzte Sicherung, gescheiterte Aufgaben |
+| **Warnung** | sofort, höchstens einmal am Tag je Sache | Platte über 85 %, Speicher über 90 %, ein Standort meldet sich nicht, keine Client-Datei, eine wiederkehrende Aufgabe scheitert |
+| **Geld** | sofort | Betrag oder Konto einer Stripe-Zahlung passen nicht, Erstattung, Streitfall |
+| **Start** | beim Hochfahren | Version, Host, Adresse – wer nachts einen Neustart sieht, den niemand ausgelöst hat, weiß damit mehr als jeder Bericht am Morgen |
+
+Eingerichtet wird er unter *Einstellungen → Discord*:
+
+* **Webhook für Systemmeldungen** – die Adresse aus Discord (Kanal → Bearbeiten → Integrationen →
+  Webhooks). Verdeckt eingegeben, denn ein Webhook ist so gut wie ein Passwort.
+* **Lagebericht alle … Stunden** – `0` heißt: nur Warnungen, kein Bericht. Die Warnungen kommen
+  davon unabhängig.
+
+**Die Liste steht auch ohne Webhook da.** Sie ist die eigentliche Auskunft; der Webhook ist nur der
+Weg, auf dem sie jemanden erreicht, der gerade nicht hinsieht. Der Knopf **Bericht jetzt schicken**
+beantwortet die häufigste Frage an einen Webhook: Kommt da überhaupt etwas an?
+
+---
+
+<a id="belege"></a>
+
+## 11. Verkäufer und Belege
+
+*Administration → Einstellungen → Verkäufer und Belege.*
+
+Jede verbuchte Aufladung bekommt eine fortlaufende Belegnummer je Jahr (`AFK-2026-0001`) und ein
+Dokument, das der Kunde unter *Guthaben → Belege* öffnen und drucken kann. Der **Absender** darauf
+kommt aus diesen drei Feldern:
+
+| Feld | Was hineingehört |
+| --- | --- |
+| **Name des Verkäufers** | die Firmierung oder der Name, unter dem verkauft wird. Leer heißt: es steht die Marke da |
+| **Anschrift** | mehrzeilig, eine Zeile je Zeile – genau so steht sie auf dem Beleg |
+| **Eigene USt-IdNr.** | bei der Kleinunternehmerregelung meistens leer |
+
+**Bitte vor der ersten Zahlung ausfüllen.** Verkäufer ist der Betreiber und nicht Stripe; ein Beleg
+ohne Absender ist keiner. Der Umsatzsteuersatz darauf kommt aus *Einstellungen → Umsatzsteuer* und
+ist derselbe Satz wie auf der Preisseite und an der Kasse.
+
+**Was auf einem Beleg steht, ändert sich nie wieder.** Anschrift, Firmierung, USt-IdNr., der
+Steuerhinweis und die Sprache werden im Moment der Buchung festgehalten. Zieht der Kunde später um,
+ändert das den Beleg des Vorjahres nicht – sonst wäre eine Rechnung kein Dokument, sondern eine
+Ansicht auf den heutigen Stand.
+
+Belege aus der Zeit vor dieser Änderung haben keine Nummer und tauchen deshalb nicht in der Liste
+auf. Das ist ehrlicher, als ihnen nachträglich eine zu geben: Eine Belegnummer, die Monate nach der
+Zahlung vergeben wurde, ist keine fortlaufende Nummer mehr.
+
+---
+
+<a id="loeschungen"></a>
+
+## 12. Konten, die gelöscht werden sollen
+
+Ein Kunde kann sein Konto selbst löschen (*Einstellungen → Deine Daten*). Sofort passiert dabei
+nichts außer zweierlei: Die Bots gehen aus und lassen sich nicht wieder starten, und der Termin
+steht fest – **14 Tage** später.
+
+In der Nutzerliste steht an so einem Konto ein Papierkorb-Zeichen, auf seiner Seite ein roter
+Streifen mit dem Datum. Bis dahin genügt ein Klick des Kunden, um alles zurückzuholen; danach geht
+das Konto mit allem, was daran hängt: Serverplätze, Minecraft-Konten samt ihren Anmeldedateien,
+Tickets samt Anhängen, Protokolle, Guthaben.
+
+Ausgeführt wird das von der Aufgabe **Fällige Kontolöschungen ausführen** (*Betrieb → wiederkehrende
+Aufgaben*), stündlich. Wer nicht warten will, drückt dort auf „jetzt laufen“.
+
+**Ein Administrator kann sich hier nicht selbst löschen.** Sonst löscht sich der letzte, und danach
+kommt niemand mehr in die Verwaltung. Wer es wirklich will, gibt die Rolle vorher ab.

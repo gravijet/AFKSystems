@@ -117,6 +117,35 @@ export const DATASETS = {
       ['credits', (row) => row.credits],
       ['reference', (row) => row.reference],
       ['external_id', (row) => row.external_id],
+      ['receipt_no', (row) => row.receipt_no],
+    ],
+  },
+
+  /**
+   * Die Belege, deren Konto es nicht mehr gibt.
+   *
+   * Eine Aufladung geht mit dem Konto (`ON DELETE CASCADE`), ein ausgestellter Beleg nicht: Er
+   * ist ein Nachweis über einen Umsatz des Betreibers, und die Aufbewahrungsfrist dafür gehört
+   * ihm. Beim Löschen eines Kontos wandern sie deshalb ins Archiv (server/account.js) – und
+   * hier stehen sie zum Mitnehmen, sonst wären sie ein Datenbestand, den niemand je zu sehen
+   * bekommt.
+   */
+  receipts: {
+    label: { de: 'Belege gelöschter Konten', en: 'Receipts of deleted accounts' },
+    query: () => 'SELECT * FROM receipt_archive ORDER BY receipt_no',
+    columns: [
+      ['receipt_no', (row) => row.receipt_no],
+      ['created', (row) => time(row.created_at)],
+      ['paid', (row) => time(row.paid_at)],
+      ['archived', (row) => time(row.archived_at)],
+      ['former_user_id', (row) => row.former_user],
+      ['username', (row) => row.username],
+      ['provider', (row) => row.provider],
+      ['status', (row) => row.status],
+      ['amount_eur', (row) => money(row.amount_cent)],
+      ['credits', (row) => row.credits],
+      ['billed_to', (row) => row.billed_to],
+      ['vat_note', (row) => row.vat_note],
     ],
   },
 

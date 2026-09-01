@@ -153,8 +153,21 @@ export async function post(url, { embeds = [], content = '' } = {}) {
   }
 }
 
-/** Eine Meldung ans Team – über den Webhook aus den Einstellungen. */
-export const staff = (embed) => post(String(getSetting('discord_staff_webhook') || '').trim(), { embeds: [embed] });
+/**
+ * Der Webhook des Betreibers – der Kanal, in dem der **Zustand der Anlage** steht.
+ *
+ * Er hieß einmal „Webhook fürs Team“ und meldete neue Tickets und jede Antwort darauf. Das war
+ * falsch herum: Ein Ticket steht schon im Panel (mit Zahl an der Seitenleiste) und – wenn der Bot
+ * läuft – als eigener Kanal in Discord, in dem das Gespräch stattfindet. Eine dritte Meldung
+ * desselben Vorgangs in einem vierten Kanal hat niemandem etwas gesagt, was er nicht schon wusste;
+ * sie hat nur dafür gesorgt, dass dieser Kanal ungelesen blieb.
+ *
+ * Hier kommt jetzt an, was sonst nirgends steht: Auslastung, Standorte, Sicherungen, Aufgaben,
+ * die aus dem Tritt sind, und Zahlungen, die nicht zusammenpassen. Siehe server/systemreport.js.
+ */
+export const systemWebhook = () => String(getSetting('discord_system_webhook') || '').trim();
+
+export const system = (embed) => post(systemWebhook(), { embeds: [embed] });
 
 /** `text` ist entweder ein Text oder {de, en}. */
 const pick = (value, lang) =>
@@ -351,6 +364,35 @@ export const topupPaid = (userId, credits, balance) =>
 
 // ---------------------------------------------------------------- Konten und Bots
 
+/**
+ * Ein Macro hat etwas zu sagen.
+ *
+ * Der Grund für diesen Schritt: Ein Macro auf „Chat enthält *du wurdest gebannt*“ ist nur dann
+ * etwas wert, wenn es jemanden erreicht. Ohne ihn steht die Zeile im Chatverlauf, und gelesen wird
+ * sie, wenn ohnehin schon alles vorbei ist.
+ *
+ * **Der Text kommt vom Kunden** und steht deshalb in beiden Sprachen gleich da – ihn zu übersetzen
+ * hieße, ihn zu erfinden. Sperrzeit `state` und nicht `event`: Ein Macro, das im Minutentakt
+ * auslöst, soll nicht im Minutentakt eine Nachricht schicken; der Schlüssel enthält den Text, also
+ * kommt eine **andere** Meldung trotzdem sofort durch.
+ */
+export const macroSaid = (userId, profileName, text) => {
+  const body = String(text || '').slice(0, 500);
+  if (!body) return false;
+  return notify(
+    userId,
+    { de: `Macro auf "${profileName}"`, en: `Macro on "${profileName}"` },
+    { de: body, en: body },
+    {
+      key: `macro-${profileName}-${body.slice(0, 80)}`,
+      color: COLORS.info,
+      quiet: QUIET.state,
+      event: 'bot',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
+  );
+};
+
 export const accountBroken = (userId, name, reason) =>
   notify(
     userId,
@@ -451,6 +493,66 @@ export const planExpiring = (userId, name, days, missing) =>
       color: COLORS.warn,
       quiet: QUIET.daily,
       event: 'plan',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
+  );
+
+/**
+ * Ein Zeitplan hat nichts ausrichten können.
+ *
+ * Ohne diese Nachricht wäre ein Zeitplan ein Versprechen ohne Rückmeldung: Der Bot ist morgens
+ * nicht da, und der Grund (Guthaben reicht nicht, Konto stillgelegt, Standort weg) steht nur in
+ * einem Reiter, in den niemand sieht, solange er glaubt, es laufe.
+ *
+ * Sperrzeit: einmal am Tag je Serverplatz. Ein Zeitplan, der jeden Abend scheitert, ist **ein**
+ * Problem und keine sieben – und wer es behoben hat, will nicht am nächsten Morgen noch einmal
+ * daran erinnert werden.
+ */
+export const scheduleFailed = (userId, profileName, when, reason) =>
+  notify(
+    userId,
+    { de: `Zeitplan für "${profileName}" ging nicht`, en: `Schedule for "${profileName}" did not run` },
+    {
+      de: `Um ${when} sollte etwas passieren, es ging aber nicht:\n${String(reason).slice(0, 300)}`,
+      en: `Something was due at ${when} but could not be done:\n${String(reason).slice(0, 300)}`,
+    },
+    {
+      key: `schedule-${profileName}`,
+      color: COLORS.warn,
+      quiet: QUIET.daily,
+      event: 'plan',
+      url: `${config.publicUrl}/en/app#/servers`,
+    }
+  );
+
+/**
+ * Der Wiederanlauf hat es aufgegeben.
+ *
+ * Das ist die eine Meldung, die es ohne den Wiederanlauf nicht gäbe – und die einzige, die ihn
+ * ehrlich macht. Ein Panel, das im Stillen achtmal neu startet und dann im Stillen aufhört, sieht
+ * für den Kunden aus wie ein Bot, der irgendwann einfach weg war. Hier steht, dass es versucht
+ * wurde, wie oft, und woran es lag.
+ *
+ * Sperrzeit `state` und nicht `event`: Wer mehrere Bots auf demselben unerreichbaren Server hat,
+ * bekommt sonst für jeden dieselbe Nachricht.
+ */
+export const botGaveUp = (userId, name, reason) =>
+  notify(
+    userId,
+    { de: `Bot "${name}" kommt nicht zurück`, en: `Bot "${name}" is not coming back` },
+    {
+      de: `Mehrere Versuche hintereinander sind gescheitert. Der Bot bleibt aus, bis du ihn wieder startest.${
+        reason ? `\n${String(reason).slice(0, 300)}` : ''
+      }`,
+      en: `Several attempts in a row failed. The bot stays off until you start it again.${
+        reason ? `\n${String(reason).slice(0, 300)}` : ''
+      }`,
+    },
+    {
+      key: `bot-gaveup-${name}`,
+      color: COLORS.bad,
+      quiet: QUIET.state,
+      event: 'bot',
       url: `${config.publicUrl}/en/app#/servers`,
     }
   );
