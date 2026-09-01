@@ -1100,6 +1100,10 @@ export const S = {
   'tk.priority.normal': { en: 'Normal', de: 'Normal' },
   'tk.priority.high': { en: 'High', de: 'Hoch' },
   'tk.priority.urgent': { en: 'Urgent', de: 'Dringend' },
+  'tk.assignmentAll': { en: 'Any assignee', de: 'Alle Zuständigkeiten' },
+  'tk.assignmentMine': { en: 'Assigned to me', de: 'Mir zugewiesen' },
+  'tk.assignmentNone': { en: 'Not assigned', de: 'Nicht zugewiesen' },
+  'tk.stale': { en: 'Waiting over 24 h', de: 'Wartet über 24 h' },
   // Drei Zustände, und jeder sagt, wer am Zug ist. Ein vierter („Wartet auf dich“) stand hier
   // neben „Beantwortet“ und bedeutete dasselbe – siehe server/tickets.js.
   'tk.status.open': { en: 'Open', de: 'Offen' },
@@ -1354,6 +1358,17 @@ export const S = {
   'adm.ticketsWaiting': { en: '{n} waiting for us', de: '{n} warten auf uns' },
   'adm.revenueAll': { en: '{total} all time', de: '{total} insgesamt' },
   'adm.attention': { en: 'Needs a look', de: 'Braucht einen Blick' },
+  'adm.attentionQueue': { en: 'Operations queue', de: 'Betriebs-Warteschlange' },
+  'adm.attentionUnassigned': { en: 'Unassigned support tickets', de: 'Nicht zugewiesene Support-Tickets' },
+  'adm.attentionStale': { en: 'Tickets waiting over 24 hours', de: 'Tickets warten länger als 24 Stunden' },
+  'adm.attentionAccountErrors': { en: 'Accounts requiring reconnect', de: 'Konten brauchen eine neue Anmeldung' },
+  'adm.attentionFailedLogins': { en: 'Failed sign-ins today', de: 'Fehlgeschlagene Anmeldungen heute' },
+  'adm.attentionDeletions': { en: 'Scheduled account deletions', de: 'Vorgemerkte Kontolöschungen' },
+  'adm.attentionExpiring': { en: 'Slots expiring within 7 days', de: 'Serverplätze laufen binnen 7 Tagen ab' },
+  'adm.attentionOldest': { en: 'Oldest waiting: {age}', de: 'Älteste Wartezeit: {age}' },
+  'adm.filterLeaving': { en: 'Deletion scheduled', de: 'Löschung vorgemerkt' },
+  'adm.filterDormant': { en: 'Inactive for 90 days', de: 'Seit 90 Tagen inaktiv' },
+  'adm.filterAccountErrors': { en: 'Account errors', de: 'Kontofehler' },
 
   // Die To-do-Liste des Teams und die Diagramme darunter.
   'adm.todo': { en: 'What the team has to do', de: 'Was das Team zu tun hat' },
@@ -1720,9 +1735,17 @@ export const S = {
   'set.memberSince': { en: 'Member since', de: 'Dabei seit' },
   'set.changeUsername': { en: 'Change username', de: 'Benutzernamen ändern' },
   'set.usernameNote': {
-    en: 'Your username appears on every ticket reply and in Discord. It can be changed once every 30 days.',
-    de: 'Dein Benutzername steht unter jeder Ticketantwort und in Discord. Er lässt sich alle 30 Tage ändern.',
+    en: 'Your username is your unique sign-in name. Conversations use your full or linked display name. It can be changed once every 30 days.',
+    de: 'Dein Benutzername ist der eindeutige Anmeldename. In Gesprächen steht dein vollständiger oder verknüpfter Anzeigename. Er lässt sich alle 30 Tage ändern.',
   },
+  'set.avatarSource': { en: 'Profile picture', de: 'Profilbild' },
+  'set.avatarAuto': { en: 'Automatic (recommended)', de: 'Automatisch (empfohlen)' },
+  'set.avatarInitials': { en: 'Initials only', de: 'Nur Initialen' },
+  'set.avatarHint': {
+    en: 'Automatic prefers Discord, then Google and Gravatar. You can pin or disable a source here.',
+    de: 'Automatisch nimmt zuerst Discord, dann Google und Gravatar. Hier kannst du eine Quelle festlegen oder Bilder abschalten.',
+  },
+  'set.avatarSaved': { en: 'Profile picture changed.', de: 'Profilbild geändert.' },
   'set.usernameOk': { en: 'Username changed.', de: 'Benutzername geändert.' },
   'set.usernameNext': {
     en: 'Changeable again on {date}.',
@@ -1763,8 +1786,8 @@ export const S = {
   },
   'set.fullName': { en: 'Full name', de: 'Vollständiger Name' },
   'set.fullNameHint': {
-    en: 'What goes on a receipt. Not the same as the username.',
-    de: 'Was auf einem Beleg steht. Nicht dasselbe wie der Benutzername.',
+    en: 'Shown in tickets, emails and the panel, and used on receipts. Not the same as the username.',
+    de: 'Steht in Tickets, E-Mails und im Panel sowie auf Belegen. Nicht dasselbe wie der Benutzername.',
   },
   'set.phone': { en: 'Phone', de: 'Telefon' },
   'set.phoneHint': {

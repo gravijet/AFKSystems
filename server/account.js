@@ -63,8 +63,12 @@ export function exportFor(user) {
       blocked: Boolean(user.blocked),
       delete_due_at: user.delete_due_at || null,
       ...profile.profileOf(user),
+      display_name: profile.displayNameOf(user),
+      avatar_source: user.avatar_source || 'auto',
       discord: user.discord_id ? { id: user.discord_id, name: user.discord_name } : null,
-      google: user.google_id ? { id: user.google_id, email: user.google_email } : null,
+      google: user.google_id
+        ? { id: user.google_id, name: user.google_name, email: user.google_email }
+        : null,
       discord_webhook: user.discord_webhook || '',
       mail_prefs: mail.prefsOf(user),
     },

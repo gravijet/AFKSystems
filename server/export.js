@@ -51,7 +51,9 @@ export const DATASETS = {
   users: {
     label: { de: 'Nutzer', en: 'Users' },
     query: () => `
-      SELECT u.id, u.username, u.email, u.role, u.credits, u.blocked, u.email_verified,
+      SELECT u.id, u.username,
+             COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, u.username) AS display_name,
+             u.email, u.role, u.credits, u.blocked, u.email_verified,
              u.language, u.discord_id, u.discord_name, u.premium_until, u.created_at, u.last_seen_at,
              (SELECT COUNT(*) FROM profiles p WHERE p.user_id = u.id) AS profiles,
              (SELECT COUNT(*) FROM mc_accounts a WHERE a.user_id = u.id) AS accounts,
@@ -64,6 +66,7 @@ export const DATASETS = {
       ['email', (row) => row.email],
       ['role', (row) => row.role],
       ['credits', (row) => row.credits],
+      ['display_name', (row) => row.display_name],
       ['balance_eur', (row) => money(row.credits)],
       ['blocked', (row) => yes(row.blocked)],
       ['email_confirmed', (row) => yes(row.email_verified)],
@@ -178,7 +181,9 @@ export const DATASETS = {
   tickets: {
     label: { de: 'Tickets', en: 'Tickets' },
     query: () => `
-      SELECT t.*, u.username, a.username AS assignee,
+      SELECT t.*, u.username,
+             COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, u.username) AS display_name,
+             COALESCE(NULLIF(a.full_name, ''), a.discord_name, a.google_name, a.username) AS assignee,
              (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id) AS messages
         FROM tickets t
         LEFT JOIN users u ON u.id = t.user_id
@@ -192,6 +197,7 @@ export const DATASETS = {
       ['priority', (row) => row.priority],
       ['user_id', (row) => row.user_id],
       ['username', (row) => row.username],
+      ['display_name', (row) => row.display_name],
       ['assignee', (row) => row.assignee],
       ['source', (row) => row.source],
       ['messages', (row) => row.messages],

@@ -683,7 +683,11 @@ router.patch(
     // gehört (die geänderten **Feldnamen**, nicht die Anschrift selbst).
     const personal = profile.readChanges(body);
 
-    if (!fields.length && !Object.keys(personal).length) {
+    if (body.avatar_source !== undefined) {
+      profile.setAvatarSource(req.user.id, body.avatar_source);
+    }
+
+    if (!fields.length && !Object.keys(personal).length && body.avatar_source === undefined) {
       throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
     }
     if (fields.length) {
@@ -1135,6 +1139,7 @@ export const ticketView = (row) => ({
   updated_at: row.updated_at,
   closed_at: row.closed_at,
   username: row.username,
+  display_name: row.display_name || profile.displayNameOf(row),
   email: row.email,
 });
 
@@ -1308,7 +1313,7 @@ router.post(
     tickets.notifyParticipants(
       updated,
       'ticket_reply',
-      { preview: String(req.body?.body || '').slice(0, 160), author: req.user.username },
+      { preview: String(req.body?.body || '').slice(0, 160), author: profile.displayNameOf(req.user) },
       req.user.id
     );
     res.json({
@@ -1365,7 +1370,7 @@ router.post(
     bridge.emit('ticket.typing', {
       ticket_id: ticket.id,
       user_id: req.user.id,
-      name: req.user.username,
+      name: profile.displayNameOf(req.user),
       staff: false,
     });
     res.json({ ok: true });

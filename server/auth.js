@@ -532,6 +532,7 @@ export function publicUser(user) {
     id: user.id,
     email: user.email,
     username: user.username,
+    display_name: profile.displayNameOf(user),
     role: user.role,
     credits: user.credits,
     blocked: Boolean(user.blocked),
@@ -558,7 +559,9 @@ export function publicUser(user) {
     // auch nichts aufzufrischen, und der Punkt taucht nicht auf.
     linked_roles_available: Boolean(user.discord_id) && linkedRoles.fields().length > 0,
     free_access: free,
-    google: user.google_id ? { id: user.google_id, email: user.google_email } : null,
+    google: user.google_id
+      ? { id: user.google_id, name: user.google_name, email: user.google_email, avatar: user.google_avatar }
+      : null,
     mail_prefs: mail.prefsOf(user),
     paying,
     premium_until: user.premium_until || null,
@@ -580,6 +583,8 @@ export function publicUser(user) {
     // wurde. Wer sein Konto zur Löschung angemeldet hat, soll das nicht vergessen können.
     delete_due_at: user.delete_due_at || null,
     avatar: profile.avatarOf(user),
+    avatar_source: profile.AVATAR_SOURCES.includes(user.avatar_source) ? user.avatar_source : 'auto',
+    avatar_choices: profile.avatarChoices(user),
   };
 }
 

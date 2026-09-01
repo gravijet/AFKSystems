@@ -16,6 +16,7 @@ import * as attachments from '../attachments.js';
 import * as roles from '../roles.js';
 import * as billing from '../billing.js';
 import * as notify from '../notify.js';
+import * as profile from '../profile.js';
 import { roleMetadataFields } from '../oauth.js';
 import { bridge } from '../bridge.js';
 import { supervisor } from '../supervisor.js';
@@ -232,7 +233,15 @@ router.post(
 
 /** Ein Ticket so, wie der Bot es braucht. */
 function ticketView(ticket) {
-  const owner = db.prepare('SELECT id, username, discord_id FROM users WHERE id = ?').get(ticket.user_id);
+  const rawOwner = db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
+  const owner = rawOwner
+    ? {
+        id: rawOwner.id,
+        username: rawOwner.username,
+        display_name: profile.displayNameOf(rawOwner),
+        discord_id: rawOwner.discord_id,
+      }
+    : null;
   return {
     id: ticket.id,
     subject: ticket.subject,
@@ -260,7 +269,7 @@ router.get(
       messages: tickets.messages(ticket.id).map((message) => ({
         id: message.id,
         role: message.role,
-        author: message.author_name || message.username || null,
+        author: message.author_name || message.display_name || message.username || null,
         body: message.body,
         created_at: message.created_at,
         discord_id: message.discord_id,
@@ -401,7 +410,7 @@ router.post(
 
     // Ohne Text, aber mit Bild: das ist in Discord der Normalfall und hier eine gültige Antwort.
     const updated = tickets.reply(ticket, user, String(body.body || ''), {
-      authorName: body.author_name || user.username,
+      authorName: body.author_name || profile.displayNameOf(user),
       discordId: String(body.discord_id || '') || null,
       staff,
       files: fileIds,
@@ -412,7 +421,7 @@ router.post(
     tickets.notifyParticipants(
       updated,
       'ticket_reply',
-      { preview: String(body.body || '').slice(0, 160), author: user.username },
+      { preview: String(body.body || '').slice(0, 160), author: profile.displayNameOf(user) },
       user.id
     );
     res.json({ ok: true, ticket: ticketView(updated), files: fileIds.length, failed });

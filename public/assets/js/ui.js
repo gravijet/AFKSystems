@@ -412,17 +412,9 @@ export function mcText(raw) {
 // ---------------------------------------------------------------- Profilbilder
 //
 // Ein Gesicht neben einem Namen macht eine Liste lesbar – man sucht nicht mehr Buchstabe für
-// Buchstabe, sondern erkennt. Es gibt hier aber **kein fremdes Bild von irgendwoher**: Ein
-// Gravatar wäre die E-Mail-Adresse des Kunden, bei jedem Seitenaufruf an einen Dritten geschickt,
-// ohne dass ihn jemand gefragt hätte.
-//
-// Also zwei Fälle, und nur diese zwei:
-//
-//   * **Discord ist verknüpft** – dann steht dort dasselbe Bild wie im Support-Kanal. Es kommt vom
-//     Bildserver von Discord; die Content-Security-Policy erlaubt genau diesen einen Host.
-//   * **Sonst** zeichnet das Panel selbst: der erste Buchstabe auf einer Farbe, die aus dem Namen
-//     berechnet ist. Derselbe Name ergibt immer dieselbe Farbe – auf jedem Gerät, in jeder Liste,
-//     ohne dass irgendwo eine Farbe gespeichert werden müsste.
+// Buchstabe, sondern erkennt. Der Server entscheidet aus der Kontoeinstellung, ob die fertige URL
+// von Discord, Google oder Gravatar kommt. Fehlt sie (oder ist "Initialen" gewählt), zeichnet das
+// Panel selbst: der erste Buchstabe auf einer stabil aus dem Anzeigenamen berechneten Farbe.
 
 /**
  * Eine Zahl aus einem Text – klein, stabil, ohne Anspruch auf Kryptografie.
@@ -447,7 +439,7 @@ function hueOf(text) {
  * eigene Konto, ein Beteiligter an einem Ticket, eine Zeile in der Nutzerliste.
  */
 export function avatar(person, { size = 32, klass = '' } = {}) {
-  const name = String(person?.username || person?.name || '?');
+  const name = String(person?.display_name || person?.username || person?.name || '?');
   const letter = [...name][0]?.toUpperCase() || '?';
   const style = `--avatar-size:${size}px`;
   if (person?.avatar) {

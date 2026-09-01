@@ -1286,6 +1286,19 @@ const migrations = [
     name: '028-notiz-je-serverplatz',
     sql: `ALTER TABLE profiles ADD COLUMN note TEXT NOT NULL DEFAULT '';`,
   },
+  {
+    // Der Anmeldename ist eine technische Kennung, nicht die Anrede eines Menschen. Der echte
+    // Anzeigename existiert schon als `full_name`; hier kommt nur die Wahl hinzu, welches der
+    // bereits freiwillig verknüpften Profilbilder im Panel benutzt wird. Google-Name und -Bild
+    // wurden beim OAuth-Abruf bislang gelesen und danach weggeworfen – damit konnte die Auswahl
+    // "Google" nie angeboten werden.
+    name: '029-anzeigename-und-waehlbare-avatare',
+    sql: `
+      ALTER TABLE users ADD COLUMN google_name   TEXT;
+      ALTER TABLE users ADD COLUMN google_avatar TEXT;
+      ALTER TABLE users ADD COLUMN avatar_source TEXT NOT NULL DEFAULT 'auto';
+    `,
+  },
 ];
 
 /**

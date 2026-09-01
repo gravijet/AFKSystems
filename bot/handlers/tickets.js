@@ -54,7 +54,7 @@ const uploadLimit = (guild) => UPLOAD_LIMIT[guild?.premiumTier || 0] ?? UPLOAD_L
  * `displayName` vor `username`: Im Ticket-Kanal steht der Servername der Person, und der Verlauf
  * im Panel soll dasselbe sagen wie der Kanal daneben.
  */
-export function resolveMentions(message) {
+export async function resolveMentions(message) {
   const out = {};
   for (const [id, user] of message.mentions?.users ?? []) {
     const member = message.guild?.members?.cache?.get(id);
@@ -70,6 +70,50 @@ export function resolveMentions(message) {
   for (const [id, channel] of message.mentions?.channels ?? []) {
     out[id] = { type: 'channel', name: channel?.name || 'channel' };
   }
+
+  // Die Collections oben sind ein schneller Weg, aber kein vollständiger: Nach einem Neustart
+  // ist der Member-Cache leer, bei alten/weitergeleiteten Nachrichten fehlen Kanäle gelegentlich
+  // ganz. Die IDs stehen trotzdem zuverlässig im Rohtext. Alles, was noch keinen Namen hat, wird
+  // deshalb gezielt über Discord geholt. Pro ID genau ein Aufruf und höchstens fünfzig insgesamt –
+  // eine einzelne Nachricht darf den Bot nicht zur API-Schleuder machen.
+  const raw = String(message.content || '');
+  const wanted = [];
+  const take = (regex, type) => {
+    for (const match of raw.matchAll(regex)) {
+      if (!out[match[1]] && !wanted.some((entry) => entry.id === match[1])) {
+        wanted.push({ id: match[1], type });
+      }
+      if (wanted.length >= 50) return;
+    }
+  };
+  take(/<@!?(\d{15,25})>/g, 'user');
+  take(/<@&(\d{15,25})>/g, 'role');
+  take(/<#(\d{15,25})>/g, 'channel');
+
+  await Promise.all(
+    wanted.slice(0, 50).map(async ({ id, type }) => {
+      try {
+        if (type === 'user') {
+          const member = await message.guild?.members.fetch(id).catch(() => null);
+          const user = member?.user || (await message.client?.users.fetch(id).catch(() => null));
+          const name = member?.displayName || user?.displayName || user?.globalName || user?.username;
+          if (name) out[id] = { type, name };
+        } else if (type === 'role') {
+          const role = await message.guild?.roles.fetch(id).catch(() => null);
+          if (role?.name) {
+            const color = role.hexColor && role.hexColor !== '#000000' ? role.hexColor : undefined;
+            out[id] = { type, name: role.name, ...(color ? { color } : {}) };
+          }
+        } else {
+          const channel = await message.client?.channels.fetch(id).catch(() => null);
+          if (channel?.name) out[id] = { type, name: channel.name };
+        }
+      } catch {
+        // Gelöschte oder für den Bot unsichtbare Ziele bleiben ehrlich unbekannt. Der Fehler einer
+        // einzelnen Erwähnung darf die eigentliche Ticketnachricht nie verlieren.
+      }
+    })
+  );
   return out;
 }
 
@@ -344,7 +388,7 @@ export class Tickets {
     const options = {
       name: `ticket-${ticket.id}`,
       type: ChannelType.GuildText,
-      topic: `${ticket.subject} · ${ticket.owner?.username || ''} · ${ticket.url}`,
+      topic: `${ticket.subject} · ${ticket.owner?.display_name || ticket.owner?.username || ''} · ${ticket.url}`,
       permissionOverwrites: overwrites,
     };
     let channel = await guild.channels.create({ ...options, parent }).catch((error) => {
@@ -374,7 +418,7 @@ export class Tickets {
       .setTitle(`#${ticket.id} · ${ticket.subject}`)
       .setURL(ticket.url)
       .addFields(
-        { name: 'From', value: ticket.owner?.username || '–', inline: true },
+        { name: 'From', value: ticket.owner?.display_name || ticket.owner?.username || '–', inline: true },
         { name: 'Status', value: STATUS_LABEL[ticket.status] || ticket.status, inline: true }
       )
       .setFooter({
@@ -503,7 +547,7 @@ export class Tickets {
           body: content,
           // Wer hinter den Zahlen steckt. Siehe `resolveMentions` – ohne das steht im Panel
           // `<@1538202840445485134>` statt „@Hugo“.
-          mentions: resolveMentions(message),
+          mentions: await resolveMentions(message),
           attachments: files,
         },
       });

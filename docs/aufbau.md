@@ -418,18 +418,24 @@ Kurzabdruck (`sha256`, 16 Zeichen). Ein Token *ist* die Anmeldung; eine Seite, d
 Kontos im Speicher hält, verschenkt bei der ersten Lücke gleich jedes Gerät mit. Daneben stehen die
 letzten Anmeldeversuche an diesem Konto, die geglückten wie die gescheiterten.
 
-**Was über den Anmeldenamen hinausgeht** – bürgerlicher Name, Firmierung, USt-IdNr., Anschrift,
+**Was über den Anmeldenamen hinausgeht** – Anzeigename/bürgerlicher Name, Firmierung, USt-IdNr., Anschrift,
 Telefon, Zeitzone – steht in denselben Spalten von `users` und wird an genau einer Stelle geprüft
 (`server/profile.js`). Dieselbe Prüfung gilt für den Kunden, für die Verwaltung, für den Beleg und
 für die Bezahlseite; läge sie in der Route, hätten die anderen drei Stellen keine.
 
 Zwei Änderungen am Konto sind Abläufe und keine Formularfelder:
 
-* **Der Benutzername** hat eine Sperrfrist von 30 Tagen. Er steht unter jeder Ticketantwort, in
-  Discord und in den Protokollen – ein Name, der stündlich wechselt, macht jeden Verlauf unlesbar.
+* **Der Benutzername** hat eine Sperrfrist von 30 Tagen und bleibt die eindeutige Anmeldekennung.
+  Im Panel, in Tickets und E-Mails steht dagegen der selbst eingetragene Anzeigename, danach der
+  Name aus Discord/Google und nur als Rückfall der Benutzername.
 * **Die E-Mail-Adresse** wird beantragt und nicht gesetzt: Passwort bestätigen, dann geht ein Link
   an die **neue** Adresse und eine Warnung an die alte. Bis zur Bestätigung gilt die alte weiter
   (`users.pending_email`), sonst sperrte ein Tippfehler das Konto aus.
+
+Profilbilder folgen derselben eindeutigen Rangfolge: automatisch Discord, Google, Gravatar; in den
+Einstellungen lässt sich eine Quelle fest anheften oder mit „Initialen“ ganz abschalten. Google-
+Name und -Bild werden beim OAuth-Abgleich mit aktualisiert. Gravatar bekommt nur den üblichen
+MD5-Abdruck der normalisierten E-Mail-Adresse, nie die Adresse als Klartext.
 
 ### Der Anmeldecode und die bekannten Browser
 
@@ -513,7 +519,9 @@ Die Leitung dazwischen ist `server/bridge.js` ↔ `bot/panel.js`, ein WebSocket 
 Name dazugehört, weiß nur, wer den Server sieht – der Bot löst es beim Übernehmen einer Nachricht
 auf und schickt die Zuordnung mit; sie liegt danach an der Nachricht (`ticket_messages.mentions`)
 und nicht in einem Verzeichnis, das jemand aktuell halten müsste. Ein Kanal, der später umbenannt
-wird, ändert damit den Verlauf nicht. Gerendert wird in `public/assets/js/discord.js`: Erwähnungen,
+wird, ändert damit den Verlauf nicht. Fehlt die ID im Ereignis-Cache, lädt der Bot Person, Rolle
+oder Kanal gezielt über Discord nach; nur wirklich gelöschte/unsichtbare Ziele bleiben unbekannt.
+Gerendert wird in `public/assets/js/discord.js`: Erwähnungen,
 eigene Emoji, Zeitstempel und die üblichen Auszeichnungen. Text kommt dort durch genau eine Tür ins
 HTML (`escapeHtml`); alles andere wird vorher herausgenommen und als selbst gebautes Stück wieder
 eingesetzt.

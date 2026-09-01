@@ -28,7 +28,7 @@ const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const resources = await import('../server/resources.js');
 const tickets = await import('../server/tickets.js');
-const { Tickets } = await import('../bot/handlers/tickets.js');
+const { Tickets, resolveMentions } = await import('../bot/handlers/tickets.js');
 const { Bot, supervisor, simpleChatMacro, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
   await import('../server/supervisor.js');
 const { macros: macroEngine } = await import('../server/macros.js');
@@ -2552,6 +2552,67 @@ test('Discord messages are rendered with names instead of numbers, and nothing e
   assert.ok(!('color' in packed['153820284044548515']), 'eine Farbe, die keine ist, fällt weg');
   assert.equal(tickets.packMentions(null), null);
   assert.equal(tickets.unpackMentions('kein json'), null);
+});
+
+test('Discord mention names are fetched when the event cache is empty', async () => {
+  const userId = '123456789012345678';
+  const roleId = '223456789012345678';
+  const channelId = '323456789012345678';
+  const message = {
+    content: `<@${userId}> bitte in <#${channelId}> an <@&${roleId}>`,
+    mentions: { users: new Map(), roles: new Map(), channels: new Map() },
+    guild: {
+      members: { fetch: async (id) => (id === userId ? { displayName: 'Richtiger Name', user: {} } : null) },
+      roles: { fetch: async (id) => (id === roleId ? { name: 'Support', hexColor: '#206CFE' } : null) },
+    },
+    client: {
+      users: { fetch: async () => null },
+      channels: { fetch: async (id) => (id === channelId ? { name: 'hilfe' } : null) },
+    },
+  };
+
+  assert.deepEqual(await resolveMentions(message), {
+    [userId]: { type: 'user', name: 'Richtiger Name' },
+    [roleId]: { type: 'role', name: 'Support', color: '#206CFE' },
+    [channelId]: { type: 'channel', name: 'hilfe' },
+  });
+});
+
+test('display names and selectable avatar providers replace the login name without hiding it', () => {
+  const user = createUser({ username: 'login-name', email: 'avatar@example.test' });
+  db.prepare(
+    `UPDATE users SET full_name = ?, discord_name = ?, discord_id = ?, discord_avatar = ?,
+                      google_name = ?, google_avatar = ? WHERE id = ?`
+  ).run(
+    'Benjamin Berger',
+    'Discord Benjamin',
+    '123456789012345678',
+    'avatarhash',
+    'Google Benjamin',
+    'https://lh3.googleusercontent.com/a/example',
+    user.id
+  );
+  const fresh = () => db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
+
+  assert.equal(profile.displayNameOf(fresh()), 'Benjamin Berger');
+  assert.match(profile.avatarOf(fresh()), /^https:\/\/cdn\.discordapp\.com\/avatars\//);
+
+  profile.setAvatarSource(user.id, 'google');
+  assert.equal(profile.avatarOf(fresh()), 'https://lh3.googleusercontent.com/a/example');
+  profile.setAvatarSource(user.id, 'gravatar');
+  assert.match(profile.avatarOf(fresh()), /^https:\/\/www\.gravatar\.com\/avatar\/[a-f0-9]{32}/);
+  profile.setAvatarSource(user.id, 'initials');
+  assert.equal(profile.avatarOf(fresh()), null);
+  assert.throws(() => profile.setAvatarSource(user.id, 'somewhere-else'));
+
+  const shown = auth.publicUser(fresh());
+  assert.equal(shown.display_name, 'Benjamin Berger');
+  assert.equal(shown.username, 'login-name');
+  assert.equal(shown.avatar_source, 'initials');
+});
+
+test('going online is deliberately not a notification event', () => {
+  assert.equal('botOnline' in notify, false);
 });
 
 // ---------------------------------------------------------------- Zeitpläne

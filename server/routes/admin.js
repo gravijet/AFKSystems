@@ -75,6 +75,30 @@ admin.get(
       tickets: tickets.counts(),
       open_tickets: db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE status != 'closed'").get().n,
       unread_tickets: tickets.openForStaff(),
+      attention: {
+        tickets_unassigned: db
+          .prepare("SELECT COUNT(*) AS n FROM tickets WHERE status = 'open' AND assigned_to IS NULL")
+          .get().n,
+        tickets_stale: db
+          .prepare("SELECT COUNT(*) AS n FROM tickets WHERE status = 'open' AND updated_at < ?")
+          .get(day).n,
+        oldest_waiting_at: db
+          .prepare("SELECT MIN(updated_at) AS at FROM tickets WHERE status = 'open'")
+          .get().at || null,
+        accounts_error: db.prepare("SELECT COUNT(*) AS n FROM mc_accounts WHERE status = 'error'").get().n,
+        failed_logins_24h: db
+          .prepare('SELECT COUNT(*) AS n FROM login_attempts WHERE ok = 0 AND created_at > ?')
+          .get(day).n,
+        pending_deletions: db
+          .prepare('SELECT COUNT(*) AS n FROM users WHERE delete_due_at IS NOT NULL')
+          .get().n,
+        expiring_slots_7d: db
+          .prepare(
+            `SELECT COUNT(*) AS n FROM profiles p JOIN plans pl ON pl.id = p.plan_id
+              WHERE pl.free_slot = 0 AND p.suspended = 0 AND p.paid_until > ? AND p.paid_until < ?`
+          )
+          .get(Date.now(), Date.now() + 7 * 86_400_000).n,
+      },
       nodes: nodes.list({ includeInactive: true }).length,
       client: clientState(),
       mail: {
@@ -358,16 +382,17 @@ admin.get(
       lang === 'de' ? 'Nutzer' : 'Users',
       db
         .prepare(
-          `SELECT id, username, email, credits, blocked, role FROM users
-            WHERE id = ? OR username LIKE ? ESCAPE '\\' OR email LIKE ? ESCAPE '\\'
-               OR discord_name LIKE ? ESCAPE '\\' OR discord_id = ?
+          `SELECT id, username, full_name, discord_name, google_name, email, credits, blocked, role FROM users
+            WHERE id = ? OR username LIKE ? ESCAPE '\\' OR full_name LIKE ? ESCAPE '\\'
+               OR email LIKE ? ESCAPE '\\' OR discord_name LIKE ? ESCAPE '\\'
+               OR google_name LIKE ? ESCAPE '\\' OR discord_id = ?
             ORDER BY (id = ?) DESC, last_seen_at DESC LIMIT ?`
         )
-        .all(id ?? -1, like, like, like, raw, id ?? -1, SEARCH_LIMIT)
+        .all(id ?? -1, like, like, like, like, like, raw, id ?? -1, SEARCH_LIMIT)
         .map((row) => ({
           id: row.id,
-          title: row.username,
-          sub: row.email,
+          title: profile.displayNameOf(row),
+          sub: `${row.email} · @${row.username}`,
           route: `/admin/users/${row.id}`,
           tags: [row.role === 'admin' ? 'admin' : '', row.blocked ? 'blocked' : ''].filter(Boolean),
           value: formatCredits(row.credits, lang),
@@ -559,6 +584,7 @@ const userRow = (row) => ({
   id: row.id,
   email: row.email,
   username: row.username,
+  display_name: profile.displayNameOf(row),
   role: row.role,
   credits: row.credits,
   blocked: Boolean(row.blocked),
@@ -598,12 +624,20 @@ admin.get(
     const where = [];
     const values = [];
     if (search) {
-      where.push('(u.username LIKE ? OR u.email LIKE ? OR u.discord_name LIKE ?)');
-      values.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      where.push('(u.username LIKE ? OR u.full_name LIKE ? OR u.email LIKE ? OR u.discord_name LIKE ? OR u.google_name LIKE ?)');
+      values.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     if (filter === 'admins') where.push("u.role = 'admin'");
     if (filter === 'blocked') where.push('u.blocked = 1');
     if (filter === 'unverified') where.push('u.email_verified = 0');
+    if (filter === 'leaving') where.push('u.delete_due_at IS NOT NULL');
+    if (filter === 'dormant') {
+      where.push('(u.last_seen_at IS NULL OR u.last_seen_at < ?)');
+      values.push(Date.now() - 90 * 86_400_000);
+    }
+    if (filter === 'account-errors') {
+      where.push("EXISTS (SELECT 1 FROM mc_accounts a WHERE a.user_id = u.id AND a.status = 'error')");
+    }
     if (filter === 'paying') {
       where.push(
         `EXISTS (SELECT 1 FROM profiles p JOIN plans pl ON pl.id = p.plan_id
@@ -1373,6 +1407,9 @@ admin.get(
         // also blieb der Filter im Panel wirkungslos.
         priority: req.query.priority === undefined ? null : String(req.query.priority),
         search: String(req.query.q || '').trim(),
+        assignment: String(req.query.assignment || ''),
+        stale: req.query.stale === '1',
+        staffId: req.user.id,
       }),
       statuses: tickets.STATUSES,
       priorities: tickets.PRIORITIES,
@@ -1392,7 +1429,13 @@ admin.get(
       participants: tickets.participants(ticket.id),
       user: owner ? userRow(owner) : null,
       paying: owner ? billing.isPayingUser(owner.id) : false,
-      staff: db.prepare("SELECT id, username FROM users WHERE role = 'admin' ORDER BY username").all(),
+      staff: db
+        .prepare(
+          `SELECT id, username,
+                  COALESCE(NULLIF(full_name, ''), discord_name, google_name, username) AS display_name
+             FROM users WHERE role = 'admin' ORDER BY display_name`
+        )
+        .all(),
       me: req.user.id,
     });
   })
@@ -1426,7 +1469,7 @@ admin.post(
       files: req.body?.files,
     });
     // Interne Notizen sieht nur das Team – dafür gibt es keine Post an den Kunden.
-    if (!internal) tickets.notifyUser(updated, req.body?.body || '', req.user.username);
+    if (!internal) tickets.notifyUser(updated, req.body?.body || '', profile.displayNameOf(req.user));
     res.json({
       ticket: ticketView(updated),
       messages: tickets.messages(ticket.id, { staff: true }),
@@ -1441,7 +1484,7 @@ admin.post(
     bridge.emit('ticket.typing', {
       ticket_id: ticket.id,
       user_id: req.user.id,
-      name: req.user.username,
+      name: profile.displayNameOf(req.user),
       staff: true,
     });
     res.json({ ok: true });
@@ -3150,7 +3193,7 @@ admin.post(
       source: 'staff',
       staffPriority: true,
     });
-    tickets.notifyParticipants(ticket, 'ticket_opened', { by: req.user.username }, null);
+    tickets.notifyParticipants(ticket, 'ticket_opened', { by: profile.displayNameOf(req.user) }, null);
     bridge.emit('ticket.created', { ticket_id: ticket.id, source: 'staff', user_id: owner.id });
     audit(req.user.id, 'admin-ticket-create', { ticket: ticket.id, owner: id }, req.ip);
     res.json({ ticket: ticketView(ticket) });

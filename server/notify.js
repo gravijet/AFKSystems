@@ -410,20 +410,6 @@ export const accountBroken = (userId, name, reason) =>
     }
   );
 
-export const botOnline = (userId, profile, account) =>
-  notify(
-    userId,
-    { de: `Bot "${account}" ist im Spiel`, en: `Bot "${account}" is in game` },
-    { de: `Auf "${profile}".`, en: `On "${profile}".` },
-    {
-      key: `online-${profile}-${account}`,
-      color: COLORS.ok,
-      quiet: QUIET.state,
-      event: 'bot',
-      url: `${config.publicUrl}/en/app#/servers`,
-    }
-  );
-
 export const lowBalance = (userId, credits) =>
   notify(
     userId,
