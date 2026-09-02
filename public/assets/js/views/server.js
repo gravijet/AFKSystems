@@ -9,9 +9,8 @@ import {
   $, $$, ok, fail, toast, confirmDialog, formDialog, debounce, copy,
 } from '../ui.js';
 import { mergeLines, stripFormatting, WINDOW_MS } from '../chatlog.js';
-import { state, appbar, refresh, draw, drawSide, profileById, tabsFor, linesOf } from '../app.js';
+import { state, appbar, refresh, draw, drawSide, profileById, tabsFor, linesOf, ensureMeta } from '../app.js';
 import { noAccounts, accountPicker, commandRunner, anyOnline, itemSlot } from './parts.js';
-import { tabPov, tabInventory } from './live.js';
 import {
   preferences,
   setPreference,
@@ -154,6 +153,9 @@ function card(profile) {
 }
 
 export async function newProfile() {
+  // Von der Übersicht aus ist die große Metadaten-Antwort noch nicht geladen. Erst der bewusste
+  // Klick auf „Serverplatz anlegen“ braucht Tarife und Client-Versionen.
+  await ensureMeta();
   const plans = state.meta.plans || [];
   const freeLeft = state.stats?.free_slots_left ?? 0;
   const options = plans
@@ -349,8 +351,10 @@ async function renderProfile(root, route) {
     movement: tabMovement,
     board: tabBoard,
     menu: tabMenu,
-    inventory: tabInventory,
-    pov: tabPov,
+    // Der Live-Viewer ist ein eigener, großer Baustein (Bildabruf, Vollbild, Inventarraster,
+    // Eingabesteuerung). Für die Serverliste und den normalen Chat wird davon kein Byte gebraucht.
+    inventory: async (...args) => (await import('./live.js')).tabInventory(...args),
+    pov: async (...args) => (await import('./live.js')).tabPov(...args),
     macros: tabMacros,
     schedule: tabSchedule,
     proxies: tabProxies,

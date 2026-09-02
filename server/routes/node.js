@@ -65,23 +65,26 @@ export function tryNodeToken(ip, req) {
   const now = Date.now();
   const key = String(ip || 'unknown');
   const recent = (failures.get(key) || []).filter((at) => now - at < FAIL_WINDOW_MS);
+  // Wie beim Discord-Bot: Falsche Versuche werden gebremst, ein richtiges 256-Bit-Token bleibt
+  // aber auch danach gültig. Sonst könnten zwanzig fremde Verbindungen einen ganzen Standort und
+  // damit alle Bots darauf aus der Ferne aussperren.
+  const node = nodeByToken(req);
+  if (node) {
+    failures.delete(key);
+    return { status: 'ok', node };
+  }
   if (recent.length >= FAIL_MAX) {
     failures.set(key, recent);
     return { status: 'throttled', node: null };
   }
-  const node = nodeByToken(req);
-  if (!node) {
-    recent.push(now);
-    failures.set(key, recent);
-    if (failures.size > 5_000) {
-      for (const [entry, times] of failures) {
-        if (!times.some((at) => now - at < FAIL_WINDOW_MS)) failures.delete(entry);
-      }
+  recent.push(now);
+  failures.set(key, recent);
+  if (failures.size > 5_000) {
+    for (const [entry, times] of failures) {
+      if (!times.some((at) => now - at < FAIL_WINDOW_MS)) failures.delete(entry);
     }
-    return { status: 'wrong', node: null };
   }
-  failures.delete(key);
-  return { status: 'ok', node };
+  return { status: 'wrong', node: null };
 }
 
 router.use((req, res, next) => {

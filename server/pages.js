@@ -50,8 +50,6 @@ export const escape = (text) =>
 export function render(name, lang, vars = {}) {
   const values = {
     lang,
-    altLang: lang === 'de' ? 'en' : 'de',
-    altLangName: lang === 'de' ? 'English' : 'Deutsch',
     brand: config.brand,
     year: String(new Date().getFullYear()),
     origin: config.publicUrl,
@@ -74,9 +72,6 @@ export function render(name, lang, vars = {}) {
     ogLocale: lang === 'de' ? 'de_DE' : 'en_GB',
     enCurrent: lang === 'en' ? 'aria-current="true"' : '',
     deCurrent: lang === 'de' ? 'aria-current="true"' : '',
-    languageSwitchLabel: t('common.switchLanguage', lang, {
-      language: lang === 'de' ? 'English' : 'Deutsch',
-    }),
     ...vars,
   };
   // Nur laden, wenn die Bedienungssperre wirklich aktiv ist. Dann bleibt das Skript bewusst im

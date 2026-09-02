@@ -2392,19 +2392,21 @@ test('a password needs more than twelve characters to be one', () => {
   assert.doesNotThrow(() => auth.checkPasswordPair('Weizenfeld-Kartoffel-7', 'Weizenfeld-Kartoffel-7', identity));
 });
 
-test('a location token cannot be guessed without limit', async () => {
+test('a location token cannot be guessed without limit or locked out by strangers', async () => {
   const { tryNodeToken } = await import('../server/routes/node.js');
   const nodes = await import('../server/nodes.js');
   const node = nodes.create({ name: 'Bremse', kind: 'agent' }, null);
   const withToken = (value) => ({ headers: { authorization: `Bearer ${value}` } });
   const ip = '203.0.113.77';
 
-  // Zwanzig Fehlversuche je Adresse und Viertelstunde – danach ist zu, und zwar auch für das
-  // richtige Token: Sonst wäre die Bremse ein Orakel, das "fast richtig" von "falsch" trennt.
+  // Zwanzig Fehlversuche je Adresse und Viertelstunde – danach bleiben weitere falsche Werte zu.
   for (let attempt = 0; attempt < 20; attempt += 1) {
     assert.equal(tryNodeToken(ip, withToken(`falsch-${attempt}-${'x'.repeat(20)}`)).status, 'wrong');
   }
-  assert.equal(tryNodeToken(ip, withToken(node.token)).status, 'throttled');
+  assert.equal(tryNodeToken(ip, withToken(`noch-falsch-${'x'.repeat(20)}`)).status, 'throttled');
+  // Das echte, zufällige Token bleibt gültig. Sonst könnten Fremde mit zwanzig Verbindungen den
+  // ganzen Standort und alle Bots darauf aussperren, ohne das Token zu kennen.
+  assert.equal(tryNodeToken(ip, withToken(node.token)).status, 'ok');
   // Eine andere Adresse hat ihren eigenen Zähler und kommt weiterhin herein.
   const other = tryNodeToken('203.0.113.78', withToken(node.token));
   assert.equal(other.status, 'ok');
@@ -2412,6 +2414,38 @@ test('a location token cannot be guessed without limit', async () => {
   // Und ein geglückter Versuch löscht den Zähler dieser Adresse wieder.
   assert.equal(tryNodeToken('203.0.113.78', withToken('zu-kurz')).status, 'wrong');
   assert.equal(tryNodeToken('203.0.113.78', withToken(node.token)).status, 'ok');
+});
+
+test('a location stops taking server slots at its disk limit', async () => {
+  const nodes = await import('../server/nodes.js');
+  const node = nodes.create(
+    { name: 'Plattengrenze', kind: 'agent', max_cpu_percent: 100, max_mem_percent: 100, max_disk_percent: 90 },
+    null
+  );
+  db.prepare('UPDATE nodes SET stats = ? WHERE id = ?').run(
+    JSON.stringify({
+      cpu_percent: 20,
+      memory: { percent: 30 },
+      disk: { percent: 90, used: 90, total: 100 },
+    }),
+    node.id
+  );
+  assert.equal(nodes.isFull(nodes.byId(node.id)), true);
+
+  db.prepare('UPDATE nodes SET max_disk_percent = 91 WHERE id = ?').run(node.id);
+  assert.equal(nodes.isFull(nodes.byId(node.id)), false);
+});
+
+test('wrong bot secrets cannot lock the real Discord bot out', async () => {
+  const { tryBotSecret } = await import('../server/routes/bot.js');
+  const secret = `richtiger-bot-schluessel-${'x'.repeat(32)}`;
+  const ip = '203.0.113.79';
+  setSetting('discord_bot_secret', secret);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    assert.equal(tryBotSecret(ip, `falsch-${attempt}-${'x'.repeat(24)}`), 'wrong');
+  }
+  assert.equal(tryBotSecret(ip, `noch-falsch-${'x'.repeat(24)}`), 'throttled');
+  assert.equal(tryBotSecret(ip, secret), 'ok');
 });
 
 /**
@@ -2430,7 +2464,7 @@ const fakeReq = (res = null, agent = 'Mozilla/5.0 (Windows NT 10.0) Chrome/131.0
   ip: '198.51.100.7',
 });
 
-test('the sign-in code only asks unknown browsers, and a password change makes every browser unknown', () => {
+test('the sign-in code fails closed and only asks unknown browsers', async () => {
   const user = () => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   const { id } = createUser({ username: 'codefall' });
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword('passwort123'), id);
@@ -2442,6 +2476,18 @@ test('the sign-in code only asks unknown browsers, and a password change makes e
 
   setSetting('smtp_host', 'localhost');
   assert.equal(logincode.required(user(), fakeReq()), true);
+
+  // Ein eingeschalteter zweiter Schritt darf bei einem kaputten Postausgang nicht unbemerkt auf
+  // das Passwort allein zurückfallen. Port 1 auf Loopback lehnt sofort ab und hält den Test lokal.
+  setSetting('smtp_host', '127.0.0.1');
+  setSetting('smtp_port', 1);
+  await assert.rejects(
+    () => logincode.start(user(), fakeReq()),
+    (error) => error?.status === 503 && error?.code === 'login-code-delivery'
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM login_challenges WHERE user_id = ?').get(id).n, 0);
+  setSetting('smtp_host', 'localhost');
+  setSetting('smtp_port', 587);
 
   // Abgeschaltet: nie.
   db.prepare('UPDATE users SET login_code = 0 WHERE id = ?').run(id);
@@ -2895,6 +2941,7 @@ test('the browser gets one language of the texts, and it really is a module', as
 
   assert.equal(fileFor('de'), 'i18n.de.js');
   assert.equal(fileFor('en'), 'i18n.en.js');
+  assert.equal(fileFor('de', 'auth'), 'i18n.auth.de.js');
   assert.equal(fileFor('kl'), 'i18n.en.js', 'eine unbekannte Sprache fällt auf die Vorgabe zurück');
 
   const german = ask('/assets/v/jetzt/js/i18n.de.js', { 'accept-encoding': 'identity' });
@@ -2920,6 +2967,17 @@ test('the browser gets one language of the texts, and it really is a module', as
   const englishModule = await import(`data:text/javascript,${encodeURIComponent(english.sent.toString())}`);
   assert.equal(englishModule.LANG, 'en');
   assert.equal(englishModule.t('nav.dashboard'), t('nav.dashboard', 'en'));
+
+  // Formulare bekommen nur ihre wenigen Laufzeittexte. Panel-Beschriftungen dort mitzuliefern
+  // wäre Transfer und Parse-Arbeit für Inhalte, die auf diesen Seiten gar nicht existieren.
+  const authGerman = ask('/assets/v/jetzt/js/i18n.auth.de.js', { 'accept-encoding': 'identity' });
+  assert.equal(authGerman.passed, false);
+  const authSource = authGerman.sent.toString();
+  const authModule = await import(`data:text/javascript,${encodeURIComponent(authSource)}`);
+  assert.equal(authModule.t('auth.working'), t('auth.working', 'de'));
+  assert.equal(authModule.t('common.error'), t('common.error', 'de'));
+  assert.equal(authModule.t('nav.dashboard'), 'nav.dashboard');
+  assert.ok(authGerman.sent.length < german.sent.length / 4);
 
   // Gepackt kommt es kleiner heraus – und entpackt ist es dasselbe.
   const packed = ask('/assets/v/jetzt/js/i18n.de.js', { 'accept-encoding': 'br, gzip' });
@@ -3222,10 +3280,12 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
 
   const englishHome = await (await fetch(`${base}/en`)).text();
   const germanHome = await (await fetch(`${base}/de`)).text();
-  assert.match(englishHome, /class="language-switch" href="\/de"[^>]*aria-label="Switch to Deutsch"/);
-  assert.match(englishHome, /<span>Deutsch<\/span>/);
-  assert.match(germanHome, /class="language-switch" href="\/en"[^>]*aria-label="Zu English wechseln"/);
-  assert.match(germanHome, /<span>English<\/span>/);
+  assert.match(englishHome, /class="language-picker" role="group" aria-label="Language"/);
+  assert.match(englishHome, /href="\/de"[^>]*data-language="de"[^>]*>Deutsch<\/a>/);
+  assert.match(englishHome, /href="\/en"[^>]*data-language="en" aria-current="true">English<\/a>/);
+  assert.match(germanHome, /class="language-picker" role="group" aria-label="Sprache"/);
+  assert.match(germanHome, /href="\/de"[^>]*data-language="de" aria-current="true">Deutsch<\/a>/);
+  assert.match(germanHome, /href="\/en"[^>]*data-language="en"[^>]*>English<\/a>/);
   assert.match(germanHome, /class="site-menu-toggle"[^>]*aria-expanded="false"/);
   assert.match(germanHome, /class="site-menu" id="site-menu"/);
   assert.doesNotMatch(germanHome, /\/js\/shield\.js/);
@@ -3255,6 +3315,20 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   ).json();
   assert.deepEqual(Object.keys(headerMeta).sort(), ['registration_open', 'user']);
   assert.equal(headerMeta.user.id, user.id);
+  const panelMeta = await (
+    await fetch(`${base}/api/meta?scope=panel`, { headers: { cookie: `afk_session=${USER_TOKEN}` } })
+  ).json();
+  assert.deepEqual(Object.keys(panelMeta).sort(), ['announcements', 'discord_invite']);
+  const authMeta = await (
+    await fetch(`${base}/api/meta?scope=auth`, { headers: { cookie: `afk_session=${USER_TOKEN}` } })
+  ).json();
+  assert.deepEqual(Object.keys(authMeta).sort(), ['mail_ready', 'oauth', 'registration_open', 'user']);
+  assert.equal(authMeta.user.id, user.id);
+  const fullMeta = await (
+    await fetch(`${base}/api/meta`, { headers: { cookie: `afk_session=${USER_TOKEN}` } })
+  ).json();
+  assert.ok(fullMeta.plans.length > 0);
+  assert.ok(JSON.stringify(panelMeta).length < JSON.stringify(fullMeta).length / 4);
   const stylesheetPath = englishHome.match(/href="([^"]+\/css\/app\.css)"/)?.[1];
   assert.ok(stylesheetPath);
   // Inhaltsschutz: einzeln aufgerufen kommt die Datei nicht heraus, als Stylesheet einer Seite

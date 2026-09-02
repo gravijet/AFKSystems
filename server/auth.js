@@ -299,6 +299,16 @@ export function register({ email, username, password, password2, language = 'en'
 
   // Der Erste ist Admin – oder wer in ADMIN_EMAIL steht.
   const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
+  // Auf einem leeren Produktionssystem darf nicht der erste Besucher allein durch Schnelligkeit
+  // Administrator werden. Die Entwicklung behält den bequemen ersten Admin; live muss die
+  // vorgesehene Adresse ausdrücklich in ADMIN_EMAIL stehen.
+  if (count === 0 && process.env.NODE_ENV === 'production' && !config.adminEmail) {
+    throw new HttpError(
+      503,
+      'Die Registrierung ist noch nicht sicher eingerichtet. ADMIN_EMAIL fehlt.',
+      { en: 'Registration has not been securely configured yet. ADMIN_EMAIL is missing.' }
+    );
+  }
   const role = count === 0 || (config.adminEmail && config.adminEmail === mailAddress) ? 'admin' : 'user';
   const needsVerification = mail.verifyRequired() && role !== 'admin';
   const verificationToken = needsVerification ? token(24) : null;

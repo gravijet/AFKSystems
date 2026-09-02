@@ -34,6 +34,14 @@ export const router = express.Router();
 
 // ---------------------------------------------------------------- Metadaten
 
+/** Nur die sichtbaren Ankündigungen, bereits in der Sprache dieser Anfrage. */
+function visibleAnnouncements(lang) {
+  return db
+    .prepare('SELECT * FROM announcements WHERE active = 1 ORDER BY id DESC LIMIT 5')
+    .all()
+    .map((row) => announcementView(row, lang));
+}
+
 router.get(
   '/meta',
   wrap((req, res) => {
@@ -48,6 +56,28 @@ router.get(
         // Guthaben, Profil, Mail-Einstellungen und Discord-Zustand unnötig neu berechnen.
         user: req.user ? { id: req.user.id } : null,
         registration_open: registrationOpen,
+      });
+    }
+    // Anmelde-, Registrierungs- und Wiederherstellungsseiten brauchen nur diese vier Werte. Vor
+    // allem die Tarif- und Macro-Beschreibungen der vollständigen Panel-Antwort gehören nicht auf
+    // den kritischen Weg eines Passwortformulars.
+    if (req.query.scope === 'auth') {
+      return res.json({
+        registration_open: registrationOpen,
+        mail_ready: mail.configured(),
+        oauth: oauth.state(),
+        user: req.user ? auth.publicUser(req.user) : null,
+      });
+    }
+    // Für das erste Bild im Panel reichen die zwei Dinge, die im Rahmen selbst vorkommen. Die
+    // vollständige Antwort enthält zusätzlich Tarife, Zusätze, Client-Fähigkeiten, Macro-Felder,
+    // Zahlungswege und Mail-Kategorien. Das alles schon für die Übersicht zu berechnen, als JSON
+    // zu übertragen und im Browser zu parsen war Arbeit für Bedienelemente, die dort nicht stehen.
+    // app.js holt die vollständige Fassung erst vor einer Ansicht, die sie tatsächlich benutzt.
+    if (req.query.scope === 'panel') {
+      return res.json({
+        discord_invite: safeUrl(getSetting('discord_invite')) || '',
+        announcements: visibleAnnouncements(lang),
       });
     }
     const caps = binaries.anyCaps();
@@ -71,10 +101,7 @@ router.get(
       maintenance_text: String(getSetting('maintenance_text') || ''),
       // Alle sichtbaren Ankündigungen, neueste zuerst. Bisher kam nur eine mit – gab es zwei,
       // sah niemand die zweite, und im Panel stand nirgends, dass es sie überhaupt gibt.
-      announcements: db
-        .prepare('SELECT * FROM announcements WHERE active = 1 ORDER BY id DESC LIMIT 5')
-        .all()
-        .map((row) => announcementView(row, lang)),
+      announcements: visibleAnnouncements(lang),
       versions: binaries.state.versions,
       default_version: binaries.state.defaultVersion,
       client_version: binaries.state.clientVersion,
@@ -253,23 +280,20 @@ router.post(
     // Antwort nicht, und mehr bekommt der Aufrufer auch nicht: keine Sitzung, kein Cookie, kein
     // Konto. Zurück geht nur eine Wartemarke und die halb verdeckte Adresse, an die der Code ging.
     //
-    // Kommt von `logincode.start` ein `null`, ging die Nachricht nicht hinaus (kein Postausgang,
-    // ein fremder Server antwortet nicht). Dann meldet diese Anmeldung ganz normal an: Das
-    // Passwort war richtig, und ein klemmender Mailserver darf niemanden aus seinem Konto
-    // aussperren. Warum das so herum entschieden ist, steht in server/logincode.js.
+    // Kann die Nachricht nicht hinaus, schlägt die Anmeldung geschlossen fehl. Ein ausdrücklich
+    // aktivierter zweiter Schritt darf bei einer Störung nicht still auf reines Passwort
+    // zurückfallen; `logincode.start` entfernt die unbrauchbare Marke und liefert eine 503.
     if (logincode.required(user, req)) {
       const challenge = await logincode.start(user, req);
-      if (challenge) {
-        // Die Nachricht über das neue Gerät bleibt hier aus. Der Code **ist** sie: Sie ginge an
-        // dieselbe Adresse, im selben Moment, über denselben Vorgang – zwei Nachrichten über eine
-        // Anmeldung, die noch gar nicht stattgefunden hat.
-        return res.json({
-          challenge: challenge.token,
-          expires_at: challenge.expires_at,
-          email_hint: challenge.hint,
-          tries: logincode.MAX_TRIES,
-        });
-      }
+      // Die Nachricht über das neue Gerät bleibt hier aus. Der Code **ist** sie: Sie ginge an
+      // dieselbe Adresse, im selben Moment, über denselben Vorgang – zwei Nachrichten über eine
+      // Anmeldung, die noch gar nicht stattgefunden hat.
+      return res.json({
+        challenge: challenge.token,
+        expires_at: challenge.expires_at,
+        email_hint: challenge.hint,
+        tries: logincode.MAX_TRIES,
+      });
     }
 
     // Vor `signIn`: danach wäre dieses Gerät bekannt (siehe auth.noticeNewDevice).

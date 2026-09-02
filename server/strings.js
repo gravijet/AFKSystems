@@ -28,13 +28,14 @@ import { LANGS, DEFAULT_LANG, S } from '../public/assets/js/i18n.js';
  * eine: sie steht im ausgelieferten HTML, und ein Wechsel lädt die Seite neu. Ein Argument, das
  * nichts mehr bewirkt, wäre eine Einladung, `t('…', 'en')` zu schreiben und Englisch zu erwarten.
  */
-function moduleFor(lang) {
+function moduleFor(lang, scope = '') {
   const table = {};
   for (const key of Object.keys(S)) {
+    if (scope === 'auth' && !key.startsWith('auth.') && key !== 'common.error') continue;
     const text = S[key][lang] ?? S[key][DEFAULT_LANG];
     if (text !== undefined) table[key] = text;
   }
-  return `// Aus i18n.js für "${lang}" erzeugt – siehe server/strings.js.
+  return `// Aus i18n.js für "${lang}"${scope ? ` (${scope})` : ''} erzeugt – siehe server/strings.js.
 export const LANG = ${JSON.stringify(lang)};
 export const LANGS = ${JSON.stringify(LANGS)};
 export const DEFAULT_LANG = ${JSON.stringify(DEFAULT_LANG)};
@@ -72,11 +73,12 @@ const BROTLI_QUALITY = 10;
  * Gepackt wird beim Hochfahren und nicht je Anfrage – aus demselben Grund wie bei den Dateien auf
  * der Platte (siehe assets.js).
  */
+const variants = LANGS.flatMap((lang) => ['', 'auth'].map((scope) => ({ lang, scope })));
 const bundles = new Map(
-  LANGS.map((lang) => {
-    const body = Buffer.from(moduleFor(lang), 'utf8');
+  variants.map(({ lang, scope }) => {
+    const body = Buffer.from(moduleFor(lang, scope), 'utf8');
     return [
-      lang,
+      scope ? `${scope}.${lang}` : lang,
       {
         identity: body,
         br: zlib.brotliCompressSync(body, {
@@ -93,7 +95,8 @@ const bundles = new Map(
 );
 
 /** Der Dateiname, unter dem die Texte einer Sprache stehen. Relativ zu js/, wie ui.js sie sucht. */
-export const fileFor = (lang) => `i18n.${LANGS.includes(lang) ? lang : DEFAULT_LANG}.js`;
+export const fileFor = (lang, scope = '') =>
+  `i18n.${scope ? `${scope}.` : ''}${LANGS.includes(lang) ? lang : DEFAULT_LANG}.js`;
 
 /** Wie groß die Texte einer Sprache über die Leitung sind – für den Startbericht. */
 export const sizeOf = (lang) => bundles.get(LANGS.includes(lang) ? lang : DEFAULT_LANG).br.length;
@@ -111,14 +114,14 @@ export const sizeOf = (lang) => bundles.get(LANGS.includes(lang) ? lang : DEFAUL
  */
 export function handler({ cacheControl, current }) {
   return (req, res, next) => {
-    const match = /^\/assets(?:\/v\/([A-Za-z0-9_-]{1,64}))?\/js\/i18n\.([a-z]{2})\.js$/.exec(req.path);
+    const match = /^\/assets(?:\/v\/([A-Za-z0-9_-]{1,64}))?\/js\/i18n(?:\.(auth))?\.([a-z]{2})\.js$/.exec(req.path);
     if (!match) return next();
-    const [, version, lang] = match;
-    const bundle = bundles.get(lang);
+    const [, version, scope = '', lang] = match;
+    const bundle = bundles.get(scope ? `${scope}.${lang}` : lang);
     if (!bundle) return next();
 
     res.setHeader('Content-Type', 'text/javascript; charset=UTF-8');
-    res.setHeader('Cache-Control', cacheControl(`i18n.${lang}.js`, current(version)));
+    res.setHeader('Cache-Control', cacheControl(fileFor(lang, scope), current(version)));
     res.setHeader('ETag', bundle.etag);
     res.setHeader('Vary', 'Accept-Encoding');
     if (req.headers['if-none-match'] === bundle.etag) return res.status(304).end();
