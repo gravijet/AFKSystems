@@ -35,6 +35,7 @@ import * as agents from './agents.js';
 import * as security from './security.js';
 import * as logincode from './logincode.js';
 import * as totp from './totp.js';
+import * as heads from './heads.js';
 import * as backup from './backup.js';
 import * as account from './account.js';
 import * as schedules from './schedules.js';
@@ -71,10 +72,15 @@ const CONTENT_SECURITY_POLICY = [
   "form-action 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  // Minecraft-Köpfe kommen von Minotar, Profilbilder verknüpfter Konten von Discords Bildserver.
-  // Ohne diese eng begrenzten Ausnahmen blockiert der Browser sie trotz korrekter API-Antwort
-  // mit der Content-Security-Policy. Beides sind reine Bildhosts – kein Skript, kein Rahmen.
-  "img-src 'self' data: https://minotar.net https://cdn.discordapp.com https://gravatar.com https://*.gravatar.com https://*.googleusercontent.com",
+  // Profilbilder verknüpfter Konten kommen von Discord, Google und Gravatar. Ohne diese eng
+  // begrenzten Ausnahmen blockiert der Browser sie trotz korrekter API-Antwort mit der
+  // Content-Security-Policy. Es sind reine Bildhosts – kein Skript, kein Rahmen.
+  //
+  // **Minotar steht hier nicht mehr.** Die Minecraft-Köpfe holt seit heads.js dieser Server und
+  // liefert sie unter `/api/heads/…` aus; der Browser des Kunden spricht mit niemandem sonst.
+  // Damit ist die Zeile hier auch eine Zusicherung: Was ein Kunde beim Öffnen seiner Kontenliste
+  // an Fremde schickt, ist genau das, was er selbst verknüpft hat.
+  "img-src 'self' data: https://cdn.discordapp.com https://gravatar.com https://*.gravatar.com https://*.googleusercontent.com",
   "font-src 'self'",
   `connect-src 'self' ${websocketOrigin}`,
   "media-src 'none'",
@@ -1188,6 +1194,9 @@ jobs.every(
     logincode.cleanup();
     // Und angefangene Einrichtungen der Zwei-Faktor-Anmeldung, die nie bestätigt wurden.
     totp.cleanup();
+    // Köpfe von Konten, die es längst nicht mehr gibt. Sie kosten nichts als Platz, aber der
+    // Zwischenspeicher soll nicht ewig alles behalten, was einmal jemand angelegt hat.
+    heads.cleanup();
     // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
     // fällt an der jüngsten Datei – ein Neustart um drei Uhr nachts vergisst so keinen Tag.
     const made = backup.dailyTick();

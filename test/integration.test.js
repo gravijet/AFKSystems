@@ -2691,6 +2691,59 @@ test('two-factor sign-in is stored sealed, spent once, and password reset cannot
   assert.ok(auth.applyReset('reset-danach', 'nochmalpasswort123', 'nochmalpasswort123'));
 });
 
+/**
+ * Die Minecraft-Köpfe kommen über diesen Server – und nichts davon geht ins Netz, wenn es
+ * nicht muss.
+ *
+ * Geprüft wird hier ohne Netz, und das ist Absicht: Ein Test, der einen fremden Bildserver
+ * braucht, ist ein Test, der bei dessen Wartungsfenster rot wird. Was hier zählt, sind die drei
+ * Entscheidungen, die dieses Modul trifft, bevor es überhaupt jemanden fragt.
+ */
+test('Minecraft heads are served from here, never from the customer browser', async () => {
+  const heads = await import('../server/heads.js');
+  const { paths } = await import('../server/config.js');
+
+  // Was als Name durchgeht. Alles andere landet nie in einer Adresse zu einem fremden Host.
+  for (const good of ['Steve', 'a', 'ein_langer_name', '0123456789abcdef', 'f84c6a79-0a4e-45e0-879b-cd49ebd4c4e2', 'f84c6a790a4e45e0879bcd49ebd4c4e2']) {
+    assert.equal(heads.valid(good), true, good);
+  }
+  for (const bad of ['', '../../etc/passwd', 'a b', 'zu-lang-fuer-minecraft', 'Steve/../x', 'Ünicode', 'a'.repeat(17)]) {
+    assert.equal(heads.valid(bad), false, bad);
+  }
+
+  // Die Adresse zeigt auf diese Maschine und auf sonst nichts.
+  assert.equal(heads.urlFor('Steve'), '/api/heads/Steve.png');
+  assert.equal(heads.urlFor('../x'), '/api/heads/..%2Fx.png');
+  assert.equal(heads.urlFor(null), '/api/heads/.png');
+
+  // Ein unmöglicher Name fragt gar nicht erst nach: Zurück kommt sofort der neutrale Kopf, und
+  // zwar als echtes PNG – ein `src`, das kaputt ist, sieht aus wie ein kaputtes Panel.
+  const nothing = await heads.headFor('../../etc/passwd');
+  assert.equal(nothing.fresh, false);
+  assert.equal(nothing.body.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+
+  // Was auf der Platte liegt, wird von dort geliefert – ohne jede Anfrage nach draußen.
+  // Der Dateiname ist der Abdruck des kleingeschriebenen Namens; `Steve` und `steve` sind
+  // derselbe Kopf, und das entscheidet dieses Modul und nicht das Dateisystem.
+  const png = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('abgelegt')]);
+  const file = path.join(
+    paths.heads,
+    `${crypto.createHash('sha256').update('cachetest').digest('hex').slice(0, 32)}.png`
+  );
+  fs.mkdirSync(paths.heads, { recursive: true });
+  fs.writeFileSync(file, png);
+  const cached = await heads.headFor('CacheTest');
+  assert.equal(cached.fresh, true);
+  assert.deepEqual(cached.body, png);
+
+  // Und eine Datei, die über ihre Zeit ist, wird nicht einfach weggeworfen: Solange der fremde
+  // Host nichts Besseres liefert, ist ein alter Kopf besser als gar keiner.
+  const old = Date.now() - 40 * 86_400_000;
+  fs.utimesSync(file, old / 1000, old / 1000);
+  assert.equal(heads.cleanup(), 1);
+  assert.equal(fs.existsSync(file), false);
+});
+
 test('the sign-in code fails closed and only asks unknown browsers', async () => {
   const user = () => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   const { id } = createUser({ username: 'codefall' });

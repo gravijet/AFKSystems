@@ -432,6 +432,15 @@ Zwei Änderungen am Konto sind Abläufe und keine Formularfelder:
   an die **neue** Adresse und eine Warnung an die alte. Bis zur Bestätigung gilt die alte weiter
   (`users.pending_email`), sonst sperrte ein Tippfehler das Konto aus.
 
+**Minecraft-Köpfe** kommen über diesen Server (`server/heads.js`, `/api/heads/<name>.png`) und
+nicht aus dem Browser des Kunden. Vorher stand die Adresse des Skin-Dienstes direkt im `src`, und
+damit schickte jeder Kunde bei jedem Seitenaufruf den Namen seines Minecraft-Kontos und seine
+IP-Adresse zu einem Fremden – während ein paar Zeilen weiter Gravatar ausdrücklich nur einen
+Abdruck bekommt. Der Server holt das Bild einmal, legt es unter `data/heads/` ab und liefert es
+fortan von dort; ist der Skin-Dienst aus, kommt der alte Kopf aus dem Zwischenspeicher und im
+Zweifel eine ruhige graue Fläche statt eines zerbrochenen Bildsymbols. `img-src` in der
+Content-Security-Policy nennt den fremden Host seither nicht mehr.
+
 Profilbilder folgen derselben eindeutigen Rangfolge: automatisch Discord, Google, Gravatar; in den
 Einstellungen lässt sich eine Quelle fest anheften oder mit „Initialen“ ganz abschalten. Google-
 Name und -Bild werden beim OAuth-Abgleich mit aktualisiert. Gravatar bekommt nur den üblichen
@@ -773,6 +782,7 @@ eine unbehandelte Ausnahme beendete in Node den Prozess – mit ihm jeden laufen
   data/backups/             die täglichen Sicherungen davon
   data/bin/                 die Client-Dateien
   data/mc/                  die Minecraft-Ressourcen (eine JAR je Version)
+  data/heads/               die Minecraft-Köpfe, einmal geholt (server/heads.js)
   data/users/<id>/          die Microsoft-Anmeldungen
   data/logs/                ein Protokoll je Bot (wird bei 5 MB umgelegt)
   .env                      Umgebung (Port, GitHub-Token, Bankdaten)

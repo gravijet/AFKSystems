@@ -15,6 +15,7 @@ import * as tickets from '../tickets.js';
 import * as roles from '../roles.js';
 import * as linkedRoles from '../linked-roles.js';
 import * as nodes from '../nodes.js';
+import * as heads from '../heads.js';
 import * as agents from '../agents.js';
 import * as metrics from '../metrics.js';
 import * as stripe from '../stripe.js';
@@ -2991,7 +2992,7 @@ admin.get(
           since: live ? live.since : null,
           pid: live?.proc?.pid || null,
           views: live ? live.views : null,
-          head: `https://minotar.net/helm/${encodeURIComponent(row.uuid || row.name)}/64.png`,
+          head: heads.urlFor(row.uuid || row.name),
         };
       });
 
