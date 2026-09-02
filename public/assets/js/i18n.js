@@ -343,7 +343,6 @@ export const S = {
   'footer.legal': { en: 'Legal', de: 'Rechtliches' },
   'footer.privacy': { en: 'Privacy', de: 'Datenschutz' },
   'footer.terms': { en: 'Terms', de: 'Nutzungsbedingungen' },
-  'footer.imprint': { en: 'Legal notice', de: 'Impressum' },
   'footer.support': { en: 'Support', de: 'Support' },
   'footer.disclaimer': {
     en: 'Not an official Minecraft product. Not approved by or associated with Mojang or Microsoft.',
@@ -2217,8 +2216,8 @@ export const S = {
   // ---------------------------------------------------------------- Textbausteine und Rundmail
   'adm.templates': { en: 'Canned replies', de: 'Textbausteine' },
   'tmpl.lead': {
-    en: 'The four sentences a support desk writes every day. Written once, they read the same for every customer.',
-    de: 'Die vier Sätze, die ein Support jeden Tag schreibt. Einmal geschrieben, lesen sie sich für jeden Kunden gleich.',
+    en: 'Ready-to-send replies in German and English. In a ticket, one click sends the customer\'s language.',
+    de: 'Versandfertige Antworten auf Deutsch und Englisch. Im Ticket verschickt ein Klick die Sprache des Kunden.',
   },
   'tmpl.titleDe': { en: 'Subject (German)', de: 'Titel (deutsch)' },
   'tmpl.titleEn': { en: 'Subject (English)', de: 'Titel (englisch)' },
@@ -2232,10 +2231,11 @@ export const S = {
   },
   'tmpl.insert': { en: 'Canned reply', de: 'Textbaustein' },
   'tmpl.insertHint': {
-    en: 'Inserted where the cursor is – what you already wrote stays.',
-    de: 'Wird dort eingefügt, wo der Zeiger steht – Geschriebenes bleibt stehen.',
+    en: 'The customer language is selected automatically and the reply is sent with one click.',
+    de: 'Die Kundensprache wird automatisch gewählt und die Antwort mit einem Klick verschickt.',
   },
   'tmpl.none': { en: 'No canned replies yet.', de: 'Noch keine Textbausteine.' },
+  'tmpl.sent': { en: 'Canned reply sent.', de: 'Schnellantwort gesendet.' },
 
   'bc.title': { en: 'Round mail', de: 'Rundmail' },
   'bc.lead': {
@@ -2671,19 +2671,6 @@ export const S = {
   // ---------------------------------------------------------------- Rechtliches
   'legal.privacy.title': { en: 'Privacy notice', de: 'Datenschutzerklärung' },
   'legal.terms.title': { en: 'Terms of use', de: 'Nutzungsbedingungen' },
-  'legal.imprint.title': { en: 'Legal notice', de: 'Impressum' },
-  // Die Überschriften des zusammengesetzten Impressums. Der Text darunter kommt nicht von hier,
-  // sondern aus den Einstellungen des Betreibers – erfunden wird an dieser Stelle nichts.
-  'legal.imprint.provider': { en: 'Service provider', de: 'Diensteanbieter' },
-  'legal.imprint.contact': { en: 'Contact', de: 'Kontakt' },
-  'legal.imprint.vat': { en: 'VAT identification number', de: 'Umsatzsteuer-Identifikationsnummer' },
-  'legal.imprint.subject': { en: 'Business activity', de: 'Unternehmensgegenstand' },
-  'legal.imprint.subjectText': {
-    en: 'Operation of the {brand} platform: hosted Minecraft AFK clients, the panel that controls them, and the support belonging to it.',
-    de: 'Betrieb der Plattform {brand}: gehostete Minecraft-AFK-Clients, das Panel, das sie steuert, und der zugehörige Support.',
-  },
-  'legal.imprint.mail': { en: 'Email', de: 'E-Mail' },
-  'legal.imprint.discord': { en: 'Discord', de: 'Discord' },
   // Nur relevant, wenn auch die Systemvorgabe einmal fehlen sollte.
   'legal.placeholder.privacy': {
     en: 'This page still has to be filled in by the operator. A privacy notice is mandatory as soon as personal data is processed – and this service processes it.',
@@ -2692,12 +2679,6 @@ export const S = {
   'legal.placeholder.terms': {
     en: 'This page still has to be filled in by the operator. Until then no terms of use have been agreed.',
     de: 'Diese Seite muss der Betreiber noch ausfüllen. Bis dahin sind keine Nutzungsbedingungen vereinbart.',
-  },
-  // Hier gibt es bewusst keine Systemvorgabe: Ein Impressum besteht aus Name und Anschrift des
-  // Betreibers, und die kann niemand außer ihm selbst eintragen.
-  'legal.placeholder.imprint': {
-    en: 'This page still has to be filled in by the operator. A legal notice needs the provider\'s name and postal address – enter them under Administration → Settings → Seller and receipts, and this page fills itself.',
-    de: 'Diese Seite muss der Betreiber noch ausfüllen. Ein Impressum braucht Namen und Anschrift des Anbieters – eingetragen unter Administration → Einstellungen → Verkäufer und Belege, füllt sich diese Seite von selbst.',
   },
 
   'error.404.title': { en: 'Nothing here', de: 'Hier ist nichts' },

@@ -603,7 +603,7 @@ function statsPanels(stats) {
         note: tr('ov.chart.total'),
         chart: chart.hbars(
           (stats.top_slots || []).map((row) => ({
-            label: `${row.label} · ${row.username}`,
+            label: `${row.label} · ${row.display_name}`,
             value: row.seconds,
           })),
           { format: hours, color: chart.SERIES[2] }
@@ -728,7 +728,7 @@ async function system(root) {
             .map(
               (entry) => `<tr data-server="${entry.profile_id}" style="cursor:pointer">
                 <td>${escapeHtml(entry.name)}</td>
-                <td class="small"><a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.username || '')}</a></td>
+                <td class="small"><a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.display_name || `#${entry.user_id}`)}</a></td>
                 <td class="small muted">${entry.bots}</td>
                 <td class="mono small">${entry.cpu_percent.toFixed(1)} %</td>
                 <td class="mono small">${bytes(entry.rss)}</td>
@@ -1013,7 +1013,7 @@ function staffRow(ticket) {
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
       </div>
       <div class="small muted truncate">
-        ${escapeHtml(ticket.display_name || ticket.username || '')}
+        ${escapeHtml(ticket.display_name || `#${ticket.user_id}`)}
         ${ticket.assigned_name ? ` · ${escapeHtml(ticket.assigned_name)}` : ''}
       </div>
     </div>
@@ -1051,7 +1051,7 @@ async function ticketForCustomer() {
         value: String(list[0]?.id || ''),
         options: list.map((user) => ({
           value: String(user.id),
-          label: `${user.display_name || user.username} · ${user.email}`,
+          label: `${user.display_name || `#${user.id}`} · ${user.email}`,
         })),
       },
       { key: 'subject', label: tr('tk.subject'), required: true },
@@ -1121,7 +1121,7 @@ async function users(root) {
         [
           { html: `<input type="checkbox" id="pick-all" aria-label="${escapeHtml(tr('adm.bulk.all'))}">` },
           '#',
-          tr('auth.register.username'),
+          tr('set.fullName'),
           tr('auth.register.email'),
           tr('common.credits'),
           tr('bill.monthly'),
@@ -1132,11 +1132,11 @@ async function users(root) {
         data.users.map(
           (user) => `<tr data-user="${user.id}" style="cursor:pointer">
             <td><input type="checkbox" class="pick" data-id="${user.id}"
-              aria-label="${escapeHtml(user.username)}"></td>
+              aria-label="${escapeHtml(user.display_name || `#${user.id}`)}"></td>
             <td class="mono small muted">${user.id}</td>
             <td><span class="row" style="gap:.4rem">${avatar(user, { size: 22 })}<span>${escapeHtml(
-              user.display_name || user.username
-            )}${user.display_name && user.display_name !== user.username ? `<small class="muted mono"> · ${escapeHtml(user.username)}</small>` : ''}</span>
+              user.display_name || `#${user.id}`
+            )}</span>
               ${user.role === 'admin' ? `<span class="pill primary">admin</span>` : ''}
               ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}
               ${
@@ -1272,7 +1272,7 @@ async function userDetail(root, id) {
       <div class="row" style="gap:.9rem;min-width:0">
         ${avatar(user, { size: 48 })}
         <div style="min-width:0">
-        <h2 style="font-size:1.4rem">${escapeHtml(user.display_name || user.username)}
+        <h2 style="font-size:1.4rem">${escapeHtml(user.display_name || `#${user.id}`)}
           ${user.role === 'admin' ? '<span class="pill primary">admin</span>' : ''}
           ${(user.discord_roles || [])
             .map((role) => `<span class="pill">${escapeHtml(tr(`role.${role}`))}</span>`)
@@ -1283,7 +1283,7 @@ async function userDetail(root, id) {
             // dieses Konto einen zweiten Faktor hat. Der Support soll sie nicht erraten müssen.
             user.totp ? `<span class="pill ok">${escapeHtml(tr('adm.totpOn'))}</span>` : ''
           }</h2>
-        <p class="small muted mono">@${escapeHtml(user.username)} · ${escapeHtml(user.email)} · #${user.id} ·
+        <p class="small muted mono">${escapeHtml(user.email)} · #${user.id} ·
           ${escapeHtml(tr('common.status'))}: ${user.last_seen_at ? since(user.last_seen_at) : '–'}
           ${user.discord ? ` · Discord ${escapeHtml(user.discord.name || user.discord.id)}` : ''}</p>
         </div>
@@ -1506,7 +1506,7 @@ async function userDetail(root, id) {
     const answer = await formDialog(
       tr('adm.sendMail'),
       [
-        { type: 'note', key: 'note', label: `${user.username} · ${user.email}` },
+        { type: 'note', key: 'note', label: `${user.display_name || `#${user.id}`} · ${user.email}` },
         { key: 'subject', label: tr('tk.subject'), required: true },
         { key: 'body', label: tr('tk.message'), type: 'textarea', required: true },
         {
@@ -1535,7 +1535,7 @@ async function userDetail(root, id) {
     const answer = await formDialog(
       tr('adm.openTicket'),
       [
-        { type: 'note', key: 'note', label: user.username },
+        { type: 'note', key: 'note', label: user.display_name || `#${user.id}` },
         { key: 'subject', label: tr('tk.subject'), required: true },
         {
           key: 'priority',
@@ -1660,7 +1660,7 @@ async function servers(root) {
         (profile) => `<tr data-open="${profile.id}" style="cursor:pointer">
           <td class="mono small muted">${profile.id}</td>
           <td>${escapeHtml(profile.name)}</td>
-          <td class="small"><a href="#/admin/users/${profile.user_id}">${escapeHtml(profile.username)}</a></td>
+          <td class="small"><a href="#/admin/users/${profile.user_id}">${escapeHtml(profile.display_name || `#${profile.user_id}`)}</a></td>
           <td class="mono small">${escapeHtml(profile.address)}</td>
           <td class="small">${escapeHtml(profile.plan || '–')}</td>
           <td class="small muted">${profile.paid_until ? date(profile.paid_until) : '–'}</td>
@@ -1718,7 +1718,7 @@ async function serverDetail(root, id) {
           ${profile.locked ? `<span class="pill missing">${escapeHtml(tr('adm.locked'))}</span>` : ''}
           ${profile.suspended ? `<span class="pill missing">${escapeHtml(tr('adm.billingSuspended'))}</span>` : ''}</h2>
         <p class="small muted mono">${escapeHtml(profile.address)} · MC ${escapeHtml(profile.mc_version)} ·
-          <a href="#/admin/users/${data.owner?.id}">${escapeHtml(data.owner?.username || '')}</a></p>
+          <a href="#/admin/users/${data.owner?.id}">${escapeHtml(data.owner?.display_name || `#${data.owner?.id}`)}</a></p>
       </div>
       <div class="row wrap">
         <a class="btn btn-sm" href="#/admin/servers">${escapeHtml(tr('common.back'))}</a>
@@ -2011,7 +2011,7 @@ async function accounts(root) {
       [tr('adm.users'), tr('ov.col.account'), tr('adm.servers'), tr('common.status'), tr('common.created'), ''],
       data.accounts.map(
         (account) => `<tr>
-          <td class="small"><a href="#/admin/users/${account.user_id}">${escapeHtml(account.username || '')}</a></td>
+          <td class="small"><a href="#/admin/users/${account.user_id}">${escapeHtml(account.display_name || `#${account.user_id}`)}</a></td>
           <td><span class="strong">${escapeHtml(account.name || '')}</span>
             <span class="small muted"> · ${escapeHtml(accountKindLabel(account.kind))}</span></td>
           <td class="small">${
@@ -2625,7 +2625,7 @@ async function topups(root) {
       data.topups.map(
         (topup) => `<tr>
           <td class="mono small muted">${topup.id}</td>
-          <td class="small"><a href="#/admin/users/${topup.user_id}">${escapeHtml(topup.username)}</a></td>
+          <td class="small"><a href="#/admin/users/${topup.user_id}">${escapeHtml(topup.display_name || `#${topup.user_id}`)}</a></td>
           <td class="small">${escapeHtml(topup.provider)}</td>
           <td class="mono">${credits(topup.credits)} <span class="small muted">${euro(topup.amount_cent)}</span></td>
           <td class="mono small">${escapeHtml(topup.reference || '–')}</td>
@@ -2695,7 +2695,7 @@ async function topups(root) {
             ],
           },
         ],
-        { submit: tr('adm.refund'), note: `#${topup.id} · ${topup.username} · ${euro(topup.amount_cent)}` }
+        { submit: tr('adm.refund'), note: `#${topup.id} · ${topup.display_name || `#${topup.user_id}`} · ${euro(topup.amount_cent)}` }
       );
       if (!answer) return;
       const result = await send(
@@ -2849,7 +2849,7 @@ async function proxies(root) {
       value: String(proxy.assigned_to || ''),
       options: [
         { value: '', label: '–' },
-        ...userList.users.map((user) => ({ value: String(user.id), label: user.username })),
+        ...userList.users.map((user) => ({ value: String(user.id), label: user.display_name || `#${user.id}` })),
       ],
     },
     { key: 'note', label: tr('adm.note'), value: proxy.note || '' },
@@ -3872,8 +3872,8 @@ async function mails(root) {
             <td class="small muted mono">${datetime(mail.created_at)}</td>
             <td class="small">${escapeHtml(mail.recipient)}
               ${
-                mail.username
-                  ? `<a class="small muted" href="#/admin/users/${mail.user_id}">${escapeHtml(mail.username)}</a>`
+                mail.display_name
+                  ? `<a class="small muted" href="#/admin/users/${mail.user_id}">${escapeHtml(mail.display_name)}</a>`
                   : ''
               }</td>
             <td class="small">${escapeHtml(mail.subject)}</td>
@@ -3934,7 +3934,7 @@ async function ledger(root) {
       data.entries.map(
         (row) => `<tr>
           <td class="small muted mono">${datetime(row.created_at)}</td>
-          <td class="small"><a href="#/admin/users/${row.user_id}">${escapeHtml(row.username)}</a></td>
+          <td class="small"><a href="#/admin/users/${row.user_id}">${escapeHtml(row.display_name || `#${row.user_id}`)}</a></td>
           <td class="small">${escapeHtml(row.kind)} ${
             row.note ? `<span class="muted">· ${escapeHtml(row.note)}</span>` : ''
           }</td>
@@ -3992,7 +3992,7 @@ async function audit(root) {
                     <span class="log-when small muted mono">${datetime(entry.created_at)}</span>
                     <span class="log-who">${
                       entry.user_id
-                        ? `<a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.username || `#${entry.user_id}`)}</a>`
+                        ? `<a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.display_name || `#${entry.user_id}`)}</a>`
                         : '<span class="muted">System</span>'
                     }</span>
                     <span class="log-action mono">${escapeHtml(entry.action)}</span>
@@ -4154,7 +4154,7 @@ async function security(root) {
         [tr('adm.users'), tr('sec.address'), tr('sec.device'), tr('sec.since'), ''],
         data.sessions.map(
           (session) => `<tr>
-            <td class="small"><a href="#/admin/users/${session.user_id}">${escapeHtml(session.username)}</a>
+            <td class="small"><a href="#/admin/users/${session.user_id}">${escapeHtml(session.display_name || `#${session.user_id}`)}</a>
               ${session.role === 'admin' ? '<span class="pill primary">admin</span>' : ''}</td>
             <td class="mono small muted">${escapeHtml(session.ip || '–')}</td>
             <td class="small muted truncate" style="max-width:22rem">${escapeHtml(session.agent || '–')}</td>
@@ -4282,7 +4282,7 @@ async function ops(root) {
                 ${bot.build ? `<span class="small muted"> · ${escapeHtml(bot.build)}</span>` : ''}</td>
               <td class="small"><a href="#/admin/servers/${bot.profile_id}">${escapeHtml(bot.profile)}</a>
                 <span class="muted mono"> ${escapeHtml(bot.port ? `${bot.host}:${bot.port}` : bot.host)}</span></td>
-              <td class="small"><a href="#/admin/users/${bot.user_id}">${escapeHtml(bot.username || '')}</a></td>
+              <td class="small"><a href="#/admin/users/${bot.user_id}">${escapeHtml(bot.display_name || `#${bot.user_id}`)}</a></td>
               <td class="small muted">${escapeHtml(bot.node || tr('ops.here'))}</td>
               <td>${stateBadge(bot.state, bot.detail || '')}
                 ${bot.last_error ? `<span class="small muted">${escapeHtml(bot.last_error)}</span>` : ''}</td>
@@ -4393,9 +4393,9 @@ function interval(ms) {
 
 const TEMPLATE_FIELDS = [
   { key: 'title_de', label: 'tmpl.titleDe', required: true },
-  { key: 'title_en', label: 'tmpl.titleEn' },
+  { key: 'title_en', label: 'tmpl.titleEn', required: true },
   { key: 'body_de', label: 'tmpl.bodyDe', type: 'textarea', required: true },
-  { key: 'body_en', label: 'tmpl.bodyEn', type: 'textarea' },
+  { key: 'body_en', label: 'tmpl.bodyEn', type: 'textarea', required: true },
   { key: 'category', label: 'tk.category' },
   { key: 'sort', label: 'common.order', type: 'number' },
 ];

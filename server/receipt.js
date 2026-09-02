@@ -22,6 +22,7 @@ import * as vat from './vat.js';
 import { addressLines } from '../public/assets/js/countries.js';
 import { escapeHtml } from '../public/assets/js/discord.js';
 import { formatDay, formatEuro } from './util.js';
+import { billingName } from './profile.js';
 
 /** Wie das Geld auf dem Beleg steht – in der Sprache des Belegs, immer mit zwei Nachkommastellen. */
 const money = (cent, lang) => formatEuro(cent, lang);
@@ -68,11 +69,19 @@ export const byId = (id, userId = null) =>
 function billedTo(topup, user) {
   try {
     const parsed = JSON.parse(topup.billed_to || 'null');
-    if (parsed && typeof parsed === 'object') return parsed;
+    if (parsed && typeof parsed === 'object') {
+      return {
+        ...parsed,
+        // Ältere Abzüge kannten nur die Anmeldekennung. Sie bleibt gespeichert, wird aber nicht
+        // mehr auf dem Beleg ausgegeben; vorhandener bürgerlicher/Firmenname bleibt eingefroren.
+        account_name:
+          parsed.account_name || parsed.company || parsed.full_name || `Konto #${Number(user?.id) || '–'}`,
+      };
+    }
   } catch {
     /* kaputtes JSON ist kein Grund, den Beleg nicht auszustellen */
   }
-  return { username: user?.username || '', email: user?.email || '' };
+  return { account_name: billingName(user), email: user?.email || '' };
 }
 
 /**
@@ -208,7 +217,7 @@ export function html(topup, user, fallbackLang = 'de') {
       ${
         address.length
           ? `<address>${address.map((line) => escapeHtml(line)).join('<br>')}</address>`
-          : `<address>${escapeHtml(to.username || '')}</address>`
+          : `<address>${escapeHtml(to.account_name || '')}</address>`
       }
       ${to.vat_id ? `<div class="small muted">${escapeHtml(t('USt-IdNr.', 'VAT ID'))} ${escapeHtml(to.vat_id)}</div>` : ''}
       ${to.email ? `<div class="small muted">${escapeHtml(to.email)}</div>` : ''}
@@ -216,7 +225,7 @@ export function html(topup, user, fallbackLang = 'de') {
     <div>
       <div class="label">${escapeHtml(t('Zahlung', 'Payment'))}</div>
       <div>${escapeHtml(methodName(topup.provider, lang))}</div>
-      <div class="small muted">${escapeHtml(t('Konto', 'Account'))} ${escapeHtml(to.username || '')}</div>
+      <div class="small muted">${escapeHtml(t('Konto', 'Account'))} ${escapeHtml(to.account_name || '')}</div>
       ${
         topup.external_id
           ? `<div class="small muted">${escapeHtml(t('Vorgang', 'Reference'))} ${escapeHtml(topup.external_id)}</div>`

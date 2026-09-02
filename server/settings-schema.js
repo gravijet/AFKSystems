@@ -137,11 +137,11 @@ export const GROUPS = [
     icon: 'shield',
     de: {
       title: 'Rechtstexte',
-      text: 'Datenschutz und Nutzungsbedingungen: Ohne eigenen Text gilt die ausführliche Vorgabe aus dem System. Das Impressum hat keine Vorgabe – es baut sich aus den Verkäuferangaben, weil Name und Anschrift nur von dir kommen können.',
+      text: 'Datenschutz und Nutzungsbedingungen: Ohne eigenen Text gilt die ausführliche Vorgabe aus dem System.',
     },
     en: {
       title: 'Legal texts',
-      text: 'Privacy and terms: the complete system default is used when no custom text is stored. The legal notice has no default – it is assembled from the seller details, because only you can supply a name and address.',
+      text: 'Privacy and terms: the complete system default is used when no custom text is stored.',
     },
   },
 ];
@@ -823,32 +823,6 @@ export const SETTINGS = [
     type: 'textarea',
     de: { label: 'Nutzungsbedingungen (Englisch)', help: 'Leer lassen, um die englische Systemvorgabe zu verwenden.' },
     en: { label: 'Terms (English)', help: 'Leave empty to use the English system default.' },
-  },
-  {
-    key: 'legal_imprint',
-    group: 'legal',
-    type: 'textarea',
-    de: {
-      label: 'Impressum (Deutsch)',
-      help: 'Leer lassen: dann wird das Impressum aus Verkäufername, Anschrift, Kontaktadresse und USt-IdNr. gebaut. Hier steht nur, was darüber hinausgeht – Firmenbuchnummer, Kammer, Aufsichtsbehörde, Streitbeilegung. Was hier steht, ersetzt die gebaute Fassung vollständig.',
-    },
-    en: {
-      label: 'Legal notice (German)',
-      help: 'Leave empty and the notice is assembled from seller name, address, contact email and VAT ID. Use this only for what goes beyond that – company register number, chamber, supervisory authority, dispute resolution. Anything entered here replaces the assembled version entirely.',
-    },
-  },
-  {
-    key: 'legal_imprint_en',
-    group: 'legal',
-    type: 'textarea',
-    de: {
-      label: 'Impressum (Englisch)',
-      help: 'Leer lassen, um die gebaute Fassung bzw. den deutschen Text zu verwenden.',
-    },
-    en: {
-      label: 'Legal notice (English)',
-      help: 'Leave empty to use the assembled version, or the German text.',
-    },
   },
 ];
 

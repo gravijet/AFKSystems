@@ -274,8 +274,15 @@ async function create() {
 
 async function one(root, id, { staff, backHash }) {
   const base = staff ? `/admin/tickets/${id}` : `/tickets/${id}`;
-  const data = await api(base);
+  const [data, templateData] = await Promise.all([
+    api(base),
+    staff ? api('/admin/ticket-templates') : Promise.resolve({ templates: [] }),
+  ]);
   const ticket = data.ticket;
+  const templates = templateData.templates || [];
+  // Die Sprache des Empfängers entscheidet, nicht die Sprache des Administrators. So geht auch
+  // aus einem englisch eingestellten Admin-Panel eine deutsche Antwort an einen deutschen Kunden.
+  const customerLanguage = data.user?.language === 'en' ? 'en' : 'de';
   let messages = data.messages;
   let participants = data.participants || [];
   // Große Verläufe starten mit der jüngsten, lesbaren Seite. Ältere Nachrichten bleiben mit
@@ -318,6 +325,22 @@ async function one(root, id, { staff, backHash }) {
                <input type="file"> sieht in jedem Browser anders aus und in keinem gut. -->
           <input id="reply-files" type="file" multiple hidden>
           <div class="attach-list" id="attach-list" hidden></div>
+          ${
+            staff && templates.length
+              ? `<div class="row wrap" id="quick-replies" style="margin-top:.6rem">
+                  ${templates
+                    .map(
+                      (entry) => `<button class="btn btn-sm btn-ghost" data-quick-reply="${entry.id}"
+                        title="${escapeHtml(
+                          (customerLanguage === 'en' ? entry.body_en : entry.body_de) || entry.body_de
+                        )}">${icon('message')} ${escapeHtml(
+                          (customerLanguage === 'en' ? entry.title_en : entry.title_de) || entry.title_de
+                        )}</button>`
+                    )
+                    .join('')}
+                </div>`
+              : ''
+          }
           <div class="row spread wrap" style="margin-top:.6rem">
             <span class="small muted reply-compose-meta">
               <span>${escapeHtml(tr('tk.writeHint'))}</span>
@@ -329,9 +352,7 @@ async function one(root, id, { staff, backHash }) {
               )}">${icon('plus')} ${escapeHtml(tr('tk.files'))}</button>
               ${
                 staff
-                  ? `<button class="btn btn-sm" id="templates" title="${escapeHtml(tr('tmpl.insertHint'))}">
-                      ${icon('message')} ${escapeHtml(tr('tmpl.insert'))}</button>
-                     <button class="btn btn-sm" id="internal" title="${escapeHtml(tr('tk.internalHint'))}">
+                  ? `<button class="btn btn-sm" id="internal" title="${escapeHtml(tr('tk.internalHint'))}">
                       ${icon('shield')} ${escapeHtml(tr('tk.internalNote'))}</button>`
                   : ''
               }
@@ -384,7 +405,7 @@ async function one(root, id, { staff, backHash }) {
                           (person) =>
                             `<option value="${person.id}" ${
                               ticket.assigned_to === person.id ? 'selected' : ''
-                            }>${escapeHtml(person.display_name || person.username)}</option>`
+                            }>${escapeHtml(person.display_name || `#${person.id}`)}</option>`
                         )
                         .join('')}
                     </select>
@@ -393,7 +414,7 @@ async function one(root, id, { staff, backHash }) {
                     data.user
                       ? `<hr class="rule">
                          <a class="row spread" href="#/admin/users/${data.user.id}">
-                           <span class="row">${icon('user')} ${escapeHtml(data.user.display_name || data.user.username)}</span>${icon('arrow')}</a>
+                           <span class="row">${icon('user')} ${escapeHtml(data.user.display_name || `#${data.user.id}`)}</span>${icon('arrow')}</a>
                          <div class="small muted">${escapeHtml(data.user.email)}
                            ${data.paying ? `<span class="pill primary">${escapeHtml(tr('adm.paying'))}</span>` : ''}</div>`
                       : ''
@@ -465,12 +486,12 @@ async function one(root, id, { staff, backHash }) {
       ? tr('tk.internal')
       : message.role === 'staff'
         ? tr('tk.staff')
-        : message.author_name || message.display_name || message.username || tr('tk.you');
+        : message.author_name || message.display_name || tr('tk.you');
     return `<article class="chat-msg ${message.role} ${mine ? 'mine' : ''} ${
       message.internal ? 'internal' : ''
     }">
       <header>
-        ${avatar({ username: who, avatar: message.avatar }, { size: 22 })}
+        ${avatar({ display_name: who, avatar: message.avatar }, { size: 22 })}
         <span class="strong">${escapeHtml(who)}</span>
         ${message.role === 'staff' && !message.internal ? `<span class="pill primary">${escapeHtml(tr('tk.staff'))}</span>` : ''}
         ${message.discord_id ? `<span class="pill">${icon('discord')}</span>` : ''}
@@ -495,7 +516,7 @@ async function one(root, id, { staff, backHash }) {
         .map(
           (person) => `<div class="row spread">
             <span class="row" style="gap:.5rem;min-width:0">${avatar(person, { size: 24 })}
-              <span class="truncate">${escapeHtml(person.display_name || person.username)}</span>
+              <span class="truncate">${escapeHtml(person.display_name || `#${person.id}`)}</span>
               ${person.owner ? `<span class="pill">${escapeHtml(tr('tk.author'))}</span>` : ''}</span>
             ${
               staff && !person.owner
@@ -697,63 +718,40 @@ async function one(root, id, { staff, backHash }) {
   $('#send').addEventListener('click', () => send(false));
   $('#internal')?.addEventListener('click', () => send(true));
 
-  /**
-   * Einen Textbaustein einfügen.
-   *
-   * Eingefügt wird an der Stelle, an der der Zeiger steht, und nicht anstelle des Geschriebenen:
-   * Wer schon zwei Sätze getippt hat und dann einen Baustein holt, will beides – sonst wäre der
-   * Knopf ein Papierkorb mit Umweg.
-   *
-   * Die Platzhalter setzt der Browser ein, weil Kunde und Ticket hier ohnehin auf dem Bildschirm
-   * stehen. Ein Baustein bleibt damit ein Text und wird nie zu einer Vorlage, die der Server
-   * rendern muss.
-   */
-  $('#templates')?.addEventListener('click', async () => {
-    let list = [];
-    try {
-      list = (await api('/admin/ticket-templates')).templates;
-    } catch (error) {
-      return fail(error);
-    }
-    if (!list.length) {
-      toast(tr('tmpl.none'), '');
-      return;
-    }
-    const answer = await formDialog(
-      tr('tmpl.insert'),
-      [
-        {
-          key: 'id',
-          label: tr('adm.templates'),
-          type: 'select',
-          value: String(list[0].id),
-          options: list.map((entry) => ({
-            value: String(entry.id),
-            label: `${(state.me?.language === 'en' ? entry.title_en : entry.title_de) || entry.title_de}${
-              entry.category && entry.category !== 'general' ? ` · ${entry.category}` : ''
-            }`,
-          })),
-        },
-      ],
-      { submit: tr('tmpl.insert'), note: tr('tmpl.insertHint') }
-    );
-    if (!answer) return;
-    const chosen = list.find((entry) => String(entry.id) === String(answer.id));
-    if (!chosen) return;
-    const text = (state.me?.language === 'en' ? chosen.body_en : chosen.body_de) || chosen.body_de;
-    const filled = text
-      .replaceAll('{name}', data.user?.username || '')
-      .replaceAll('{ticket}', `#${ticket.id}`)
-      .replaceAll('{subject}', ticket.subject || '');
-    const at = input.selectionStart ?? input.value.length;
-    const before = input.value.slice(0, at);
-    const after = input.value.slice(input.selectionEnd ?? at);
-    input.value = `${before}${before && !before.endsWith('\n') ? '\n' : ''}${filled}${after}`;
-    input.focus();
-    input.selectionStart = input.selectionEnd = input.value.length - after.length;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    api(`/admin/ticket-templates/${chosen.id}/used`, { method: 'POST' }).catch(() => {});
-  });
+  // Schnellantworten sind genau das: Die richtige Kundensprache wird automatisch gewählt und ein
+  // Klick verschickt die Antwort. Ein bereits beantwortetes oder geschlossenes Ticket wird vom
+  // normalen Antwortweg wieder geöffnet; die Bausteine bleiben deshalb in jedem Zustand sichtbar.
+  $$('[data-quick-reply]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const chosen = templates.find((entry) => entry.id === Number(button.dataset.quickReply));
+      if (!chosen || button.disabled) return;
+      const text = (customerLanguage === 'en' ? chosen.body_en : chosen.body_de) || chosen.body_de;
+      const body = text
+        .replaceAll('{name}', data.user?.display_name || '')
+        .replaceAll('{ticket}', `#${ticket.id}`)
+        .replaceAll('{subject}', ticket.subject || '');
+      button.disabled = true;
+      try {
+        const result = await api(`/admin/tickets/${id}/reply`, {
+          method: 'POST',
+          body: { body, internal: false, files: [], after: messages.at(-1)?.id || 0 },
+        });
+        mergeMessages(result.messages);
+        Object.assign(ticket, result.ticket);
+        paint();
+        paintStatus(result.ticket.status);
+        await Promise.allSettled([
+          api(`/admin/ticket-templates/${chosen.id}/used`, { method: 'POST' }),
+          refresh({ profiles: false, accounts: false }),
+        ]);
+        ok(tr('tmpl.sent'));
+      } catch (error) {
+        fail(error);
+      } finally {
+        button.disabled = false;
+      }
+    })
+  );
 
   // Enter schickt ab, Shift+Enter macht eine neue Zeile – wie in jedem Chat.
   input.addEventListener('keydown', (event) => {
@@ -823,7 +821,7 @@ async function one(root, id, { staff, backHash }) {
       .filter((user) => !known.has(user.id))
       .map((user) => ({
         value: String(user.id),
-        label: `${user.display_name || user.username} · ${user.email}`,
+        label: `${user.display_name || `#${user.id}`} · ${user.email}`,
       }));
     if (!options.length) return toast(tr('tk.addNoneLeft'));
     const answer = await formDialog(

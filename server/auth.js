@@ -144,9 +144,10 @@ export function attachUser(req, _res, next) {
       req.sessionToken = value;
       req.sessionStorageToken = sessionStorageToken;
       if (impersonatorId) {
-        req.impersonator = db
-          .prepare('SELECT id, username FROM users WHERE id = ?')
-          .get(impersonatorId);
+        const impersonator = db.prepare('SELECT * FROM users WHERE id = ?').get(impersonatorId);
+        req.impersonator = impersonator
+          ? { id: impersonator.id, display_name: profile.displayNameOf(impersonator) }
+          : null;
         req.parentToken = parentToken;
       }
       // Nur alle paar Minuten schreiben. Diese Middleware läuft vor allem anderen, also auch für

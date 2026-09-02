@@ -1390,6 +1390,73 @@ const migrations = [
       ALTER TABLE login_challenges ADD COLUMN kind TEXT NOT NULL DEFAULT 'mail';
     `,
   },
+  {
+    // Mehr direkt nutzbare Schnellantworten für die häufigsten Supportfälle. Jede steht bewusst
+    // vollständig in beiden Sprachen da: Beim Anklicken entscheidet die Sprache des Kunden, nicht
+    // die Oberfläche des Administrators. Der Titel schützt bestehende, selbst angelegte Bausteine
+    // davor, bei einem Update doppelt aufzutauchen.
+    name: '033-mehr-zweisprachige-ticketantworten',
+    run() {
+      const seed = [
+        {
+          title_de: 'Standortstörung',
+          title_en: 'Location outage',
+          body_de: 'Hallo {name},\n\nder zuständige Standort ist gerade ausgefallen. Dein Bot wird automatisch auf einen Ersatzstandort verschoben. Du musst nichts tun; wir überwachen den Wechsel.',
+          body_en: 'Hi {name},\n\nthe assigned location is currently down. Your bot is being moved to a replacement location automatically. You do not need to do anything; we are monitoring the switch.',
+          category: 'incident',
+          sort: 50,
+        },
+        {
+          title_de: 'Minecraft-Konto neu verbinden',
+          title_en: 'Reconnect Minecraft account',
+          body_de: 'Hallo {name},\n\ndie gespeicherte Microsoft-Anmeldung ist abgelaufen. Öffne im Panel bitte Minecraft-Konten, wähle das betroffene Konto und verbinde es erneut. Danach kannst du den Bot wieder starten.',
+          body_en: 'Hi {name},\n\nthe stored Microsoft sign-in has expired. In the panel, open Minecraft accounts, select the affected account and connect it again. You can then start the bot again.',
+          category: 'account',
+          sort: 60,
+        },
+        {
+          title_de: 'Minecraft-Version prüfen',
+          title_en: 'Check Minecraft version',
+          body_de: 'Hallo {name},\n\nder Zielserver und dein Serverplatz verwenden unterschiedliche Minecraft-Versionen. Stell beim Serverplatz bitte dieselbe Version ein, die der Zielserver verlangt, und starte danach erneut.',
+          body_en: 'Hi {name},\n\nthe target server and your server slot use different Minecraft versions. Set the server slot to the version required by the target server, then start it again.',
+          category: 'configuration',
+          sort: 70,
+        },
+        {
+          title_de: 'Beleg und Zahlung',
+          title_en: 'Receipt and payment',
+          body_de: 'Hallo {name},\n\ndeine Belege findest du im Panel unter Guthaben. Nach jeder erfolgreichen Zahlung schicken wir den Beleg zusätzlich an deine hinterlegte Rechnungsadresse. Nenne uns bitte die Belegnummer, falls dort etwas fehlt.',
+          body_en: 'Hi {name},\n\nyou can find your receipts under Credits in the panel. After every successful payment we also email the receipt to your saved billing address. Please tell us the receipt number if anything is missing.',
+          category: 'billing',
+          sort: 80,
+        },
+        {
+          title_de: 'Bitte jetzt testen',
+          title_en: 'Please test now',
+          body_de: 'Hallo {name},\n\nwir haben die Ursache behoben. Bitte teste es jetzt noch einmal und antworte in {ticket}, falls weiterhin eine Fehlermeldung erscheint.',
+          body_en: 'Hi {name},\n\nwe have fixed the cause. Please try again now and reply in {ticket} if you still see an error message.',
+          category: 'general',
+          sort: 90,
+        },
+        {
+          title_de: 'Ticket wird geschlossen',
+          title_en: 'Ticket will be closed',
+          body_de: 'Hallo {name},\n\nwir haben keine weitere Rückmeldung erhalten und schließen {ticket} daher. Eine neue Antwort öffnet das Ticket automatisch wieder.',
+          body_en: 'Hi {name},\n\nwe have not received another reply, so we are closing {ticket}. A new reply will reopen the ticket automatically.',
+          category: 'general',
+          sort: 100,
+        },
+      ];
+      const exists = db.prepare('SELECT 1 FROM ticket_templates WHERE title_de = ? OR title_en = ?');
+      const insert = db.prepare(
+        `INSERT INTO ticket_templates (title_de, title_en, body_de, body_en, category, sort, created_at)
+         VALUES (@title_de, @title_en, @body_de, @body_en, @category, @sort, @created_at)`
+      );
+      for (const row of seed) {
+        if (!exists.get(row.title_de, row.title_en)) insert.run({ ...row, created_at: Date.now() });
+      }
+    },
+  },
 ];
 
 /**

@@ -169,22 +169,23 @@ export const hasAddress = (user) =>
 export const billingName = (user) =>
   String(user?.company || '').trim() ||
   String(user?.full_name || '').trim() ||
-  String(user?.username || '').trim();
+  `Konto #${Number(user?.id) || '–'}`;
 
 /**
  * Der Name eines Menschen in Gesprächen und Oberflächen.
  *
  * `username` bleibt die eindeutige Anmeldekennung. Wo ein Mensch angesprochen oder als Absender
  * gezeigt wird, gilt dagegen der selbst eingetragene Name, danach der Name eines freiwillig
- * verknüpften Kontos und erst ganz zuletzt die Kennung. Diese eine Funktion verhindert, dass
+ * verknüpften Kontos. Die Anmeldekennung bleibt außerhalb von Anmeldung und Kontoverwaltung
+ * unsichtbar; fehlt ein echter Name, steht dort eine neutrale Kontonummer. So verhindert diese
+ * eine Funktion, dass
  * Ticket, Mail und Administration jeweils eine andere Rangfolge erfinden.
  */
 export const displayNameOf = (user) =>
   String(user?.full_name || '').trim() ||
   String(user?.discord_name || '').trim() ||
   String(user?.google_name || '').trim() ||
-  String(user?.username || '').trim() ||
-  '–';
+  `Konto #${Number(user?.id) || '–'}`;
 
 /**
  * Der Abzug fürs Archiv: Was auf dem Beleg dieser Aufladung stehen wird, so wie es **heute** ist.
@@ -195,7 +196,7 @@ export const displayNameOf = (user) =>
  */
 export function billingSnapshot(user) {
   const snapshot = {
-    username: String(user?.username || ''),
+    account_name: billingName(user),
     email: String(user?.billing_email || user?.email || ''),
     // **Die Sprache gehört dazu.** Ein Beleg ist ein Dokument aus einem Moment, und der Satz zur
     // Umsatzsteuer darauf ist genau der, der damals galt – in genau der Sprache, in der er galt.
