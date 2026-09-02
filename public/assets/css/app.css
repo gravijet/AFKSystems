@@ -851,32 +851,47 @@ body.site {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: color-mix(in oklab, var(--background) 84%, transparent);
-  backdrop-filter: blur(16px) saturate(1.2);
+  background: color-mix(in oklab, var(--background) 90%, transparent);
+  backdrop-filter: blur(18px) saturate(1.25);
   box-shadow: inset 0 -1px 0 var(--line);
 }
 .site-head > .page {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
+  display: flex;
   align-items: center;
-  gap: 1.25rem;
-  min-height: 4.25rem;
-  padding-block: 0.65rem;
+  gap: clamp(1.25rem, 2.5vw, 2.5rem);
+  min-height: 4.75rem;
+  padding-block: 0.7rem;
+}
+.site-head .brand {
+  flex: none;
+  font-size: 1.05rem;
+}
+.site-head .brand .logo {
+  width: 2.1rem;
+  height: 2.1rem;
 }
 
 .site-menu {
-  display: contents;
+  display: flex;
+  align-items: center;
+  gap: clamp(1rem, 2vw, 2rem);
+  min-width: 0;
+  flex: 1;
 }
 .site-menu-toggle {
   display: none;
 }
-.mobile-language-picker {
+.site-head .mobile-language-picker {
   display: none;
 }
 .site-links {
   display: flex;
-  justify-content: center;
+  align-items: center;
   gap: 0.35rem;
+  padding: 0.25rem;
+  border-radius: var(--r-xl);
+  background: color-mix(in oklab, var(--surface) 76%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-2);
@@ -891,18 +906,51 @@ body.site {
   color: var(--text);
 }
 .site-links a[aria-current] {
-  background: color-mix(in srgb, var(--primary) 10%, transparent);
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line-soft);
   color: var(--primary-text);
 }
 
 .site-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
+  margin-left: auto;
+  flex: none;
 }
 .head-auth {
   display: inline-flex;
   gap: 0.4rem;
+  margin-left: 0.35rem;
+  padding-left: 0.75rem;
+  border-left: 1px solid var(--line);
+}
+
+/* Zwischen großem Tablet und breitem Desktop bleibt dieselbe ruhige Ein-Zeilen-Navigation,
+   nur die beiden am wenigsten wichtigen Beschriftungen werden kürzer. Die mobile Kopfleiste
+   beginnt weiterhin unverändert unter 940 px. */
+@media (min-width: 940px) and (max-width: 1140px) {
+  .site-head > .page {
+    gap: 1rem;
+    padding-inline: 1.25rem;
+  }
+  .site-menu {
+    gap: 0.75rem;
+  }
+  .head-discord span,
+  .site-actions > .language-picker > .icon {
+    display: none;
+  }
+  .site-actions > .language-picker a {
+    width: 2rem;
+    padding-inline: 0;
+    font-size: 0;
+  }
+  .site-actions > .language-picker a::after {
+    content: attr(lang);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+  }
 }
 
 @media (max-width: 939px) {
@@ -914,6 +962,11 @@ body.site {
   }
   .site-head .brand {
     min-width: 0;
+    font-size: inherit;
+  }
+  .site-head .brand .logo {
+    width: 1.85rem;
+    height: 1.85rem;
   }
   .site-menu-toggle {
     display: inline-flex;
@@ -931,7 +984,7 @@ body.site {
     font-weight: 700;
     cursor: pointer;
   }
-  .mobile-language-picker {
+  .site-head .mobile-language-picker {
     display: inline-flex;
     min-height: 2.65rem;
   }
@@ -1008,6 +1061,7 @@ body.site {
   .site-actions {
     flex-wrap: wrap;
     gap: 0.5rem;
+    margin-left: 0;
   }
   .site-actions .head-discord,
   .site-actions .language-picker,
@@ -1032,6 +1086,9 @@ body.site {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     width: 100%;
+    margin-left: 0;
+    padding-left: 0;
+    border-left: 0;
   }
   .head-auth .btn {
     min-height: 2.75rem;
