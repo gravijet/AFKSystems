@@ -815,7 +815,7 @@ class Bot extends EventEmitter {
     return db.prepare('SELECT * FROM nodes WHERE id = ?').get(this.profile.node_id) || null;
   }
 
-  start() {
+  start({ excludeNodeIds = [] } = {}) {
     if (this.proc) return this;
     const { command, file, build } = binaries.command(this.profile, this.plan);
     this.build = build;
@@ -826,7 +826,23 @@ class Bot extends EventEmitter {
 
     // **Wohin, bevor womit.** Der Standort steht schon vor den Argumenten fest, denn er entscheidet
     // mit: Der Pfad zur Minecraft-JAR gilt nur auf der Maschine, auf der der Bot wirklich läuft.
-    const node = this.node();
+    const assignedNode = this.node();
+    const node = this.supervisor.runtimeNode(this.profile, this.userId, {
+      file,
+      excludeNodeIds,
+    });
+    if (!node) {
+      const message = assignedNode
+        ? `Der Standort "${assignedNode.name}" ist nicht verfügbar und es gibt gerade keinen erreichbaren Ersatzstandort.`
+        : 'Es gibt gerade keinen erreichbaren Standort.';
+      this.setState('error', message);
+      this.lastError = message;
+      throw new HttpError(503, message, {
+        en: assignedNode
+          ? `Location "${assignedNode.name}" is unavailable and no replacement location is reachable right now.`
+          : 'No location is reachable right now.',
+      });
+    }
     this.nodeId = node?.id || null;
     this.remote = node?.kind === 'agent';
     this.webPort = this.wantsWebView(caps) ? takeWebPort() : null;
@@ -880,6 +896,21 @@ class Bot extends EventEmitter {
         // ist, hätte den ganzen Bereich aufgebraucht, ohne dass ein einziger Bot lief.
         if (this.webPort) usedWebPorts.delete(this.webPort);
         this.webPort = null;
+        const attempted = [...new Set([...excludeNodeIds.map(Number), node.id])];
+        const fallback = this.supervisor.runtimeNode(this.profile, this.userId, {
+          file,
+          excludeNodeIds: attempted,
+        });
+        this.supervisor.emit('node-start-failed', {
+          nodeId: node.id,
+          nodeName: node.name,
+          error: error.message,
+          fallbackName: fallback?.name || null,
+        });
+        if (fallback) {
+          this.push('system', `Standort "${node.name}" ist ausgefallen – Wechsel zu "${fallback.name}".`);
+          return this.start({ excludeNodeIds: attempted });
+        }
         this.setState('error', error.message);
         this.lastError = error.message;
         throw new HttpError(503, error.message, {
@@ -904,10 +935,36 @@ class Bot extends EventEmitter {
     this.proc.stdout.on('data', (chunk) => this.feed('out', chunk));
     this.proc.stderr.on('data', (chunk) => this.feed('err', chunk));
     this.proc.on('error', (error) => {
+      const failedNode = node;
+      const attempted = [...new Set([...excludeNodeIds.map(Number), failedNode.id])];
+      this.cleanup();
+      if (this.remote && this.wanted()) {
+        const fallback = this.supervisor.runtimeNode(this.profile, this.userId, {
+          file,
+          excludeNodeIds: attempted,
+        });
+        this.supervisor.emit('node-start-failed', {
+          nodeId: failedNode.id,
+          nodeName: failedNode.name,
+          error: error.message,
+          fallbackName: fallback?.name || null,
+        });
+        if (fallback) {
+          this.push(
+            'system',
+            `Start auf "${failedNode.name}" fehlgeschlagen – Wechsel zu "${fallback.name}".`
+          );
+          try {
+            this.start({ excludeNodeIds: attempted });
+            return;
+          } catch (fallbackError) {
+            error = fallbackError;
+          }
+        }
+      }
       this.lastError = error.message;
       this.push('error', `Start fehlgeschlagen: ${error.message}`);
       this.setState('error', error.message);
-      this.cleanup();
     });
     this.proc.on('exit', (code, signal) => {
       // Sagt der Server, warum er getrennt hat, dann ist **das** der Grund. Der Rust-Client endet
@@ -2335,11 +2392,66 @@ class Supervisor extends EventEmitter {
     return { profile, account, user, plan: featuresOf(profile) };
   }
 
+  /**
+   * Die Maschine für diesen konkreten Lauf.
+   *
+   * Der Serverplatz bleibt seinem gewünschten Standort zugeordnet; nur der Prozess darf
+   * vorübergehend woanders laufen. So springt ein ausgefallener Agent auf einen erreichbaren
+   * Ersatz, ohne dass eine Störung die Konfiguration des Kunden dauerhaft umschreibt.
+   */
+  runtimeNode(profile, userId, { file = '', excludeNodeIds = [] } = {}) {
+    const assigned = profile.node_id
+      ? db.prepare('SELECT * FROM nodes WHERE id = ?').get(profile.node_id)
+      : db.prepare("SELECT * FROM nodes WHERE kind = 'local' ORDER BY id LIMIT 1").get();
+    // `egress` und der lokale Standort laufen beide auf dieser Maschine. Nur ein entfernter
+    // Agent kann ausfallen und braucht daher eine andere Ausführungsmaschine.
+    if (!assigned || assigned.kind !== 'agent') return assigned;
+
+    const excluded = new Set(excludeNodeIds.map(Number));
+    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+    const candidates = [
+      assigned,
+      ...db
+        .prepare(
+          `SELECT * FROM nodes
+            WHERE active = 1 AND kind IN ('local', 'agent') AND id != ?
+            ORDER BY sort, id`
+        )
+        .all(assigned.id),
+    ];
+
+    for (const node of candidates) {
+      if (!node.active || excluded.has(node.id)) continue;
+      if (
+        user?.role !== 'admin' &&
+        node.access !== 'all' &&
+        !db.prepare('SELECT 1 FROM node_users WHERE node_id = ? AND user_id = ?').get(node.id, userId)
+      )
+        continue;
+      if (node.max_bots > 0 && this.runningOnNode(node.id) >= node.max_bots) continue;
+
+      if (node.kind === 'agent') {
+        if (!agents.isOnline(node.id)) continue;
+        const info = agents.info(node.id);
+        const wantedFile = path.basename(String(file || ''));
+        if (wantedFile && info?.binaries?.length && !info.binaries.includes(wantedFile)) continue;
+        const stats = agents.stats(node.id);
+        if (stats) {
+          if (node.max_cpu_percent > 0 && (stats.cpu_percent ?? 0) >= node.max_cpu_percent) continue;
+          if (node.max_mem_percent > 0 && (stats.memory?.percent ?? 0) >= node.max_mem_percent) continue;
+          if (node.max_disk_percent > 0 && (stats.disk?.percent ?? 0) >= node.max_disk_percent) continue;
+        }
+      }
+      return node;
+    }
+    return null;
+  }
+
   /** Wie viele Bots gerade auf einem Standort laufen – für die Auslastungsanzeige und die Grenze. */
   runningOnNode(nodeId) {
     let count = 0;
     for (const bot of this.bots.values()) {
-      if (bot.running && bot.profile.node_id === nodeId) count += 1;
+      if (bot.running && bot.nodeId === nodeId) count += 1;
     }
     return count;
   }

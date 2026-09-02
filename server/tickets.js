@@ -239,7 +239,7 @@ export function messages(ticketId, { staff = false, before = null, after = null,
     } = row;
     return {
       ...rest,
-      display_name: row.author_name || profileName(row),
+      display_name: row.user_id ? profileName(row) : row.author_name || 'Konto',
       // Aufgelöst und nicht als Zeichenkette: Wer diese Liste liest, soll nicht selbst noch
       // einmal `JSON.parse` in ein `try` packen müssen.
       mentions: unpackMentions(row.mentions),
@@ -304,7 +304,7 @@ export function listAll({ status = null, priority = null, search = '', assignmen
       `SELECT t.*, u.username, u.full_name, u.discord_name, u.google_name, u.email,
               (SELECT COUNT(*) FROM ticket_messages m WHERE m.ticket_id = t.id) AS messages,
               (SELECT COUNT(*) FROM ticket_users tu WHERE tu.ticket_id = t.id) AS extra_users,
-              COALESCE(NULLIF(a.full_name, ''), a.discord_name, a.google_name, a.username) AS assigned_name
+              COALESCE(NULLIF(a.full_name, ''), a.discord_name, a.google_name, 'Konto #' || a.id) AS assigned_name
          FROM tickets t JOIN users u ON u.id = t.user_id
          LEFT JOIN users a ON a.id = t.assigned_to
         ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
@@ -315,7 +315,8 @@ export function listAll({ status = null, priority = null, search = '', assignmen
                  t.updated_at DESC
         LIMIT 300`
     )
-    .all(...values);
+    .all(...values)
+    .map((row) => ({ ...row, display_name: profileName(row) }));
 }
 
 /**

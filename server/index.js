@@ -434,7 +434,6 @@ app.get('/sitemap.xml', (req, res) => {
     ...(Number(getSetting('registration_open')) && config.registrationOpen ? ['/register'] : []),
     '/privacy',
     '/terms',
-    '/imprint',
   ];
   const urls = pages.LANGS.flatMap((lang) =>
     paths_.map(
@@ -514,7 +513,6 @@ const PAGES = {
   verify: { view: 'verify', title: 'auth.verify.title', noindex: true },
   privacy: { view: 'legal', legal: 'privacy' },
   terms: { view: 'legal', legal: 'terms' },
-  imprint: { view: 'legal', legal: 'imprint' },
 };
 
 /** Eine feste Seite bauen: Kopfdaten, dazu was die Seite an Beweglichem braucht. */
@@ -567,7 +565,6 @@ for (const [from, to] of Object.entries({
   '/register.html': 'register',
   '/datenschutz.html': 'privacy',
   '/agb.html': 'terms',
-  '/impressum.html': 'imprint',
 })) {
   app.get(from, (req, res) => res.redirect(301, `/${pages.langFor(req)}/${to}`));
 }
@@ -868,6 +865,33 @@ agents.events.on('node-online', ({ nodeId }) => {
     const started = supervisor.restoreNode(nodeId);
     if (started) console.log(`[standort ${nodeId}] ${started} Bot(s) wieder gestartet.`);
   }, 4000).unref();
+});
+
+// Kurze Netzruckler (etwa während eines Panel-Deployments) sollen keinen Standortwechsel
+// auslösen. Bleibt die Leitung dagegen zehn Sekunden weg, übernehmen erreichbare Ersatzstandorte
+// und die Administratoren erfahren es sofort über Discord und E-Mail.
+agents.events.on('node-offline', ({ nodeId }) => {
+  setTimeout(() => {
+    if (agents.isOnline(nodeId)) return;
+    const node = nodes.byId(nodeId);
+    if (!node) return;
+    const started = supervisor.restoreNode(nodeId);
+    const fallback = started
+      ? [...supervisor.bots.values()].find(
+          (bot) => bot.running && bot.profile.node_id === nodeId && bot.nodeId !== nodeId
+        )
+      : null;
+    void systemreport.locationFailure({
+      nodeName: node.name,
+      error: 'Die Verbindung zum Standort ist abgerissen.',
+      fallbackName: fallback ? nodes.byId(fallback.nodeId)?.name || null : null,
+    });
+    if (started) console.log(`[standort ${nodeId}] ${started} Bot(s) auf Ersatzstandort gestartet.`);
+  }, 10_000).unref();
+});
+
+supervisor.on('node-start-failed', (failure) => {
+  void systemreport.locationFailure(failure);
 });
 
 supervisor.on('bot-line', ({ userId, key, entry }) => push(userId, { type: 'line', key, entry }));

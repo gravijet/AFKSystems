@@ -285,7 +285,8 @@ export function sessions(limit = 200) {
   return db
     .prepare(
       `SELECT s.rowid AS id, s.user_id, s.created_at, s.expires_at, s.ip, s.agent,
-              u.username, u.role
+              COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name,
+              u.role
          FROM sessions s JOIN users u ON u.id = s.user_id
         WHERE s.expires_at > ?
         ORDER BY s.created_at DESC LIMIT ?`

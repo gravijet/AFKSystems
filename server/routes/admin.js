@@ -227,7 +227,9 @@ admin.get(
       // --- Bestenlisten -------------------------------------------------------------------
       top_slots: db
         .prepare(
-          `SELECT p.name AS label, u.username, COALESCE(SUM(b.uptime_sec), 0) AS seconds
+          `SELECT p.name AS label,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name,
+                  COALESCE(SUM(b.uptime_sec), 0) AS seconds
              FROM profiles p JOIN users u ON u.id = p.user_id
         LEFT JOIN bots b ON b.profile_id = p.id
             GROUP BY p.id HAVING seconds > 0 ORDER BY seconds DESC LIMIT 8`
@@ -235,7 +237,8 @@ admin.get(
         .all(),
       top_customers: db
         .prepare(
-          `SELECT u.username AS label, COALESCE(SUM(t.amount_cent), 0) AS cent
+          `SELECT COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS label,
+                  COALESCE(SUM(t.amount_cent), 0) AS cent
              FROM users u JOIN topups t ON t.user_id = u.id AND t.status = 'paid'
             GROUP BY u.id ORDER BY cent DESC LIMIT 8`
         )
@@ -271,14 +274,16 @@ admin.get(
       ...snapshot,
       profiles: [...perProfile.values()].map((entry) => {
         const row = db
-          .prepare('SELECT p.name, p.user_id, u.username FROM profiles p JOIN users u ON u.id = p.user_id WHERE p.id = ?')
+          .prepare(`SELECT p.name, p.user_id,
+                    COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+                     FROM profiles p JOIN users u ON u.id = p.user_id WHERE p.id = ?`)
           .get(entry.profile_id);
         return {
           ...entry,
           disk: metrics.diskOfProfile(entry.profile_id),
           name: row?.name || `#${entry.profile_id}`,
           user_id: row?.user_id,
-          username: row?.username,
+          display_name: row?.display_name,
         };
       }),
     });
@@ -393,7 +398,7 @@ admin.get(
         .map((row) => ({
           id: row.id,
           title: profile.displayNameOf(row),
-          sub: `${row.email} · @${row.username}`,
+          sub: row.email,
           route: `/admin/users/${row.id}`,
           tags: [row.role === 'admin' ? 'admin' : '', row.blocked ? 'blocked' : ''].filter(Boolean),
           value: formatCredits(row.credits, lang),
@@ -405,7 +410,9 @@ admin.get(
       lang === 'de' ? 'Serverplätze' : 'Server slots',
       db
         .prepare(
-          `SELECT p.id, p.name, p.host, p.port, p.suspended, p.locked, u.username FROM profiles p
+          `SELECT p.id, p.name, p.host, p.port, p.suspended, p.locked,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+             FROM profiles p
              JOIN users u ON u.id = p.user_id
             WHERE p.id = ? OR p.name LIKE ? ESCAPE '\\' OR p.host LIKE ? ESCAPE '\\'
             ORDER BY (p.id = ?) DESC, p.id DESC LIMIT ?`
@@ -414,7 +421,7 @@ admin.get(
         .map((row) => ({
           id: row.id,
           title: row.name,
-          sub: `${row.port ? `${row.host}:${row.port}` : row.host} · ${row.username}`,
+          sub: `${row.port ? `${row.host}:${row.port}` : row.host} · ${row.display_name}`,
           route: `/admin/servers/${row.id}`,
           tags: [row.suspended ? 'suspended' : '', row.locked ? 'locked' : ''].filter(Boolean),
           value: supervisor.runningOnProfile(row.id) ? 'online' : '',
@@ -426,7 +433,9 @@ admin.get(
       lang === 'de' ? 'Accounts' : 'Accounts',
       db
         .prepare(
-          `SELECT a.id, a.name, a.kind, a.status, a.suspended, a.user_id, u.username FROM mc_accounts a
+          `SELECT a.id, a.name, a.kind, a.status, a.suspended, a.user_id,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+             FROM mc_accounts a
              JOIN users u ON u.id = a.user_id
             WHERE a.name LIKE ? ESCAPE '\\' OR a.uuid LIKE ? ESCAPE '\\'
             ORDER BY a.name LIMIT ?`
@@ -435,7 +444,7 @@ admin.get(
         .map((row) => ({
           id: row.id,
           title: row.name,
-          sub: `${row.kind} · ${row.username}`,
+          sub: `${row.kind} · ${row.display_name}`,
           // Ein Account hat keine eigene Seite; er gehört zu seinem Nutzer, und dort steht er.
           route: `/admin/users/${row.user_id}`,
           tags: [row.suspended ? 'suspended' : '', row.status === 'error' ? 'error' : ''].filter(Boolean),
@@ -448,7 +457,9 @@ admin.get(
       lang === 'de' ? 'Tickets' : 'Tickets',
       db
         .prepare(
-          `SELECT t.id, t.subject, t.status, t.priority, u.username FROM tickets t
+          `SELECT t.id, t.subject, t.status, t.priority,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+             FROM tickets t
              JOIN users u ON u.id = t.user_id
             WHERE t.id = ? OR t.subject LIKE ? ESCAPE '\\'
                OR EXISTS (SELECT 1 FROM ticket_messages m WHERE m.ticket_id = t.id AND m.body LIKE ? ESCAPE '\\')
@@ -458,7 +469,7 @@ admin.get(
         .map((row) => ({
           id: row.id,
           title: `#${row.id} ${row.subject}`,
-          sub: row.username,
+          sub: row.display_name,
           route: `/admin/tickets/${row.id}`,
           tags: [row.status, row.priority === 'urgent' || row.priority === 'high' ? row.priority : ''].filter(Boolean),
           value: '',
@@ -507,7 +518,9 @@ admin.get(
       lang === 'de' ? 'Aufladungen' : 'Top-ups',
       db
         .prepare(
-          `SELECT t.id, t.amount_cent, t.credits, t.status, t.provider, t.reference, u.username FROM topups t
+          `SELECT t.id, t.amount_cent, t.credits, t.status, t.provider, t.reference,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+             FROM topups t
              JOIN users u ON u.id = t.user_id
             WHERE t.id = ? OR t.reference LIKE ? ESCAPE '\\' OR t.external_id LIKE ? ESCAPE '\\'
             ORDER BY (t.id = ?) DESC, t.id DESC LIMIT ?`
@@ -516,7 +529,7 @@ admin.get(
         .map((row) => ({
           id: row.id,
           title: `#${row.id} ${formatCredits(row.credits, lang)}`,
-          sub: `${row.provider} · ${row.username}`,
+          sub: `${row.provider} · ${row.display_name}`,
           route: '/admin/topups',
           tags: [row.status],
           value: '',
@@ -770,7 +783,7 @@ admin.patch(
           }
         );
       }
-      billing.move(id, delta, 'admin', String(body.note || `durch ${req.user.username}`).slice(0, 200));
+      billing.move(id, delta, 'admin', String(body.note || `durch ${profile.displayNameOf(req.user)}`).slice(0, 200));
       audit(req.user.id, 'admin-credits', { user: id, delta });
     }
     if (body.role !== undefined) {
@@ -904,7 +917,7 @@ admin.post(
     if (action === 'credits' && (!Number.isFinite(delta) || delta === 0)) {
       throw bad('Betrag fehlt.', { en: 'Amount missing.' });
     }
-    const note = String(body.note || `durch ${req.user.username}`).slice(0, 200);
+    const note = String(body.note || `durch ${profile.displayNameOf(req.user)}`).slice(0, 200);
 
     const done = [];
     const skipped = [];
@@ -915,11 +928,11 @@ admin.post(
         continue;
       }
       if (id === req.user.id && (action === 'block' || action === 'logout')) {
-        skipped.push({ id, reason: 'self', username: user.username });
+        skipped.push({ id, reason: 'self', display_name: profile.displayNameOf(user) });
         continue;
       }
       if (action === 'credits' && delta < 0 && user.credits + delta < 0) {
-        skipped.push({ id, reason: 'negative', username: user.username });
+        skipped.push({ id, reason: 'negative', display_name: profile.displayNameOf(user) });
         continue;
       }
       switch (action) {
@@ -941,7 +954,7 @@ admin.post(
           db.prepare('UPDATE users SET email_verified = 1, verify_token = NULL WHERE id = ?').run(id);
           break;
         case 'stop-bots':
-          supervisor.stopUser(id, `Von ${req.user.username} gestoppt.`);
+          supervisor.stopUser(id, `Von ${profile.displayNameOf(req.user)} gestoppt.`);
           break;
         case 'credits':
           billing.move(id, delta, 'admin', note);
@@ -974,7 +987,7 @@ admin.post(
   '/users/:id/stop-bots',
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Benutzer');
-    supervisor.stopUser(id, `Von ${req.user.username} gestoppt.`);
+    supervisor.stopUser(id, `Von ${profile.displayNameOf(req.user)} gestoppt.`);
     res.json({ ok: true });
   })
 );
@@ -1175,7 +1188,9 @@ admin.get(
     res.json({
       vouchers: db
         .prepare(
-          `SELECT v.*, u.username AS created_by_name FROM vouchers v
+          `SELECT v.*,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS created_by_name
+             FROM vouchers v
              LEFT JOIN users u ON u.id = v.created_by ORDER BY v.created_at DESC LIMIT 300`
         )
         .all(),
@@ -1223,7 +1238,9 @@ admin.get(
     res.json({
       topups: db
         .prepare(
-          `SELECT t.*, u.username, u.email FROM topups t JOIN users u ON u.id = t.user_id
+          `SELECT t.*, u.email,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+             FROM topups t JOIN users u ON u.id = t.user_id
             ORDER BY t.status = 'open' DESC, t.id DESC LIMIT 300`
         )
         .all(),
@@ -1243,7 +1260,7 @@ admin.post(
     // bucht auch das nicht ein zweites Mal.
     const topup = billing.settleTopup(
       requireInt(req.params.id, 'Aufladung'),
-      `bestätigt von ${req.user.username}`,
+      `bestätigt von ${profile.displayNameOf(req.user)}`,
       { force: Boolean(req.body?.force) }
     );
     audit(req.user.id, 'topup-settle', { id: topup.id, force: Boolean(req.body?.force) }, req.ip);
@@ -1313,7 +1330,8 @@ admin.get(
     res.json({
       proxies: db
         .prepare(
-          `SELECT p.*, u.username AS assigned_name,
+          `SELECT p.*,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS assigned_name,
                   (SELECT COUNT(*) FROM profile_accounts pa WHERE pa.proxy_id = p.id) AS in_use
              FROM proxies p LEFT JOIN users u ON u.id = p.assigned_to ORDER BY p.id`
         )
@@ -1454,7 +1472,7 @@ admin.get(
       staff: db
         .prepare(
           `SELECT id, username,
-                  COALESCE(NULLIF(full_name, ''), discord_name, google_name, username) AS display_name
+                  COALESCE(NULLIF(full_name, ''), discord_name, google_name, 'Konto #' || id) AS display_name
              FROM users WHERE role = 'admin' ORDER BY display_name`
         )
         .all(),
@@ -1559,7 +1577,7 @@ admin.post(
       mail.sendTo(added, 'ticket_opened', {
         id: ticket.id,
         subject: ticket.subject,
-        by: req.user.username,
+        by: profile.displayNameOf(req.user),
       });
     }
     res.json({ participants });
@@ -1584,7 +1602,9 @@ admin.get(
     res.json({
       announcements: db
         .prepare(
-          `SELECT a.*, u.username AS created_by_name FROM announcements a
+          `SELECT a.*,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS created_by_name
+             FROM announcements a
              LEFT JOIN users u ON u.id = a.created_by ORDER BY a.id DESC LIMIT 50`
         )
         .all()
@@ -1859,8 +1879,8 @@ admin.post(
     }
     lastBotCommand = Date.now();
 
-    if (action === 'restart') bridge.emit('bot.restart', { by: req.user.username });
-    else bridge.emit('discord.config', { by: req.user.username, keys: [] });
+    if (action === 'restart') bridge.emit('bot.restart', { by: profile.displayNameOf(req.user) });
+    else bridge.emit('discord.config', { by: profile.displayNameOf(req.user), keys: [] });
 
     audit(req.user.id, `admin-bot-${action}`, null, req.ip);
     res.json({ ok: true, action });
@@ -1901,7 +1921,9 @@ admin.get(
     res.json({
       mails: db
         .prepare(
-          `SELECT m.*, u.username FROM mails m LEFT JOIN users u ON u.id = m.user_id
+          `SELECT m.*,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+             FROM mails m LEFT JOIN users u ON u.id = m.user_id
             ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
             ORDER BY m.id DESC LIMIT 200`
         )
@@ -2040,12 +2062,12 @@ admin.get(
     // das sonst fünfzig Abfragen für zwei verschiedene Antworten.
     const nodeNames = new Map(nodes.list({ includeInactive: true }).map((node) => [node.id, node.name]));
     const users = new Map(
-      db.prepare('SELECT id, username FROM users').all().map((row) => [row.id, row.username])
+      db.prepare('SELECT * FROM users').all().map((row) => [row.id, profile.displayNameOf(row)])
     );
     const rows = [...supervisor.bots.values()].map((bot) => ({
       ...bot.snapshot(),
       user_id: bot.userId,
-      username: users.get(bot.userId),
+      display_name: users.get(bot.userId),
       profile: bot.profile.name,
       host: bot.profile.host,
       port: bot.profile.port,
@@ -2080,7 +2102,8 @@ admin.get(
     const accounts = db
       .prepare(
         `SELECT a.id, a.user_id, a.name, a.kind, a.uuid, a.status, a.last_error,
-                a.connections, a.suspended, a.suspend_reason, a.created_at, u.username
+                a.connections, a.suspended, a.suspend_reason, a.created_at,
+                COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
            FROM mc_accounts a JOIN users u ON u.id = a.user_id
           ORDER BY a.id DESC LIMIT 1000`
       )
@@ -2162,7 +2185,9 @@ admin.get(
     res.json({
       profiles: db
         .prepare(
-          `SELECT p.*, u.username, pl.name_de, pl.name_en, pl.price_credits, pl.free_slot
+          `SELECT p.*,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name,
+                  pl.name_de, pl.name_en, pl.price_credits, pl.free_slot
              FROM profiles p JOIN users u ON u.id = p.user_id LEFT JOIN plans pl ON pl.id = p.plan_id
             ORDER BY p.id DESC LIMIT 500`
         )
@@ -2170,7 +2195,7 @@ admin.get(
         .map((row) => ({
           id: row.id,
           user_id: row.user_id,
-          username: row.username,
+          display_name: row.display_name,
           name: row.name,
           address: row.port ? `${row.host}:${row.port}` : row.host,
           mc_version: row.mc_version,
@@ -2374,7 +2399,9 @@ admin.get(
     }
     const entries = db
       .prepare(
-        `SELECT a.*, u.username FROM audit a LEFT JOIN users u ON u.id = a.user_id
+        `SELECT a.*,
+                COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+           FROM audit a LEFT JOIN users u ON u.id = a.user_id
           ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
           ORDER BY a.id DESC LIMIT 300`
       )
@@ -2400,7 +2427,9 @@ admin.get(
     res.json({
       entries: db
         .prepare(
-          `SELECT l.*, u.username FROM ledger l JOIN users u ON u.id = l.user_id
+          `SELECT l.*,
+                  COALESCE(NULLIF(u.full_name, ''), u.discord_name, u.google_name, 'Konto #' || u.id) AS display_name
+             FROM ledger l JOIN users u ON u.id = l.user_id
             ORDER BY l.id DESC LIMIT 300`
         )
         .all(),
@@ -2447,9 +2476,9 @@ admin.post(
     const body = req.body || {};
     const values = {
       title_de: requireString(body.title_de, 'Titel', { max: 120 }),
-      title_en: String(body.title_en || body.title_de || '').slice(0, 120),
+      title_en: requireString(body.title_en, 'Titel', { max: 120 }),
       body_de: requireString(body.body_de, 'Text', { max: 4000 }),
-      body_en: String(body.body_en || body.body_de || '').slice(0, 4000),
+      body_en: requireString(body.body_en, 'Text', { max: 4000 }),
       category: String(body.category || 'general').slice(0, 40),
       sort: Number(body.sort) || 0,
       created_at: Date.now(),
@@ -2474,6 +2503,9 @@ admin.patch(
     const body = req.body || {};
     for (const field of TEMPLATE_FIELDS) {
       if (body[field] === undefined) continue;
+      if (['title_de', 'title_en', 'body_de', 'body_en'].includes(field)) {
+        requireString(body[field], field, { max: field.startsWith('title_') ? 120 : 4000 });
+      }
       db.prepare(`UPDATE ticket_templates SET ${field} = ? WHERE id = ?`).run(
         String(body[field]).slice(0, 4000),
         id
@@ -3089,7 +3121,7 @@ admin.post(
     const action = req.params.action;
     const rows = db.prepare('SELECT account_id FROM profile_accounts WHERE profile_id = ?').all(id);
     if (action === 'stop') {
-      supervisor.stopProfile(id, `Von ${req.user.username} gestoppt.`, { keepWanted: false });
+      supervisor.stopProfile(id, `Von ${profile.displayNameOf(req.user)} gestoppt.`, { keepWanted: false });
     } else {
       for (const row of rows) {
         if (action === 'restart') supervisor.stop(id, row.account_id, { keepWanted: true });

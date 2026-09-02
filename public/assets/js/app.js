@@ -715,9 +715,9 @@ export function drawSide() {
         </span>
       </a>
       <div class="side-user">
-        <a class="side-user-name" href="#/settings" title="${escapeHtml(state.me?.display_name || state.me?.username || '')}">
+        <a class="side-user-name" href="#/settings" title="${escapeHtml(state.me?.display_name || '')}">
           ${avatar(state.me, { size: 26, klass: 'side-avatar' })}
-          <span class="side-item-label">${escapeHtml(state.me?.display_name || state.me?.username || '')}</span>
+          <span class="side-item-label">${escapeHtml(state.me?.display_name || '')}</span>
         </a>
         ${themeSwitch()}
         <button class="side-icon-btn" id="logout" type="button"
@@ -1184,7 +1184,7 @@ function banner() {
   bar.id = 'impersonate';
   bar.className = 'impersonate';
   bar.innerHTML = `<span>${escapeHtml(
-    tr('adm.viewingAs', { user: state.me?.username || '', admin: state.impersonator.username })
+    tr('adm.viewingAs', { user: state.me?.display_name || '', admin: state.impersonator.display_name || '' })
   )}</span><button class="btn btn-sm" id="impersonate-back">${escapeHtml(tr('adm.backToAdmin'))}</button>`;
   document.body.prepend(bar);
   $('#impersonate-back').addEventListener('click', async () => {

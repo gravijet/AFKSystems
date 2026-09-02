@@ -849,11 +849,12 @@ export function settleTopup(topupId, note = '', { force = false } = {}) {
   if (!already) {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(topup.user_id);
     if (user) {
-      mail.sendTo(user, 'topup', {
+      mail.sendTo({ ...user, email: user.billing_email || user.email }, 'topup', {
         credits: topup.credits,
         amount_cent: topup.amount_cent,
         balance,
-      });
+        receipt: topup.receipt_no,
+      }, { force: true });
       // Und über Discord, wenn ein Webhook hinterlegt ist. Zwischen dem Bezahlen bei Stripe und der
       // Gutschrift liegen Sekunden bis Minuten – wer in dieser Zeit nicht im Panel sitzt, erfährt
       // sonst gar nicht, dass sein Geld angekommen ist.

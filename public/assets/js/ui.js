@@ -467,11 +467,11 @@ function hueOf(text) {
 /**
  * Das Bild neben einem Namen.
  *
- * `person` ist alles, was einen `username` (oder `name`) und vielleicht ein `avatar` hat – das
+ * `person` ist alles, was einen sichtbaren Namen und vielleicht ein `avatar` hat – das
  * eigene Konto, ein Beteiligter an einem Ticket, eine Zeile in der Nutzerliste.
  */
 export function avatar(person, { size = 32, klass = '' } = {}) {
-  const name = String(person?.display_name || person?.username || person?.name || '?');
+  const name = String(person?.display_name || person?.name || '?');
   const letter = [...name][0]?.toUpperCase() || '?';
   const style = `--avatar-size:${size}px`;
   if (person?.avatar) {

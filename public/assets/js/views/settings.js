@@ -138,12 +138,7 @@ function identityBody(me) {
     <div class="identity">
       ${avatar(me, { size: 64, klass: 'identity-avatar' })}
       <div class="grow" style="min-width:0">
-        <div class="identity-name">${escapeHtml(me.display_name || me.username)}</div>
-        ${
-          me.display_name && me.display_name !== me.username
-            ? `<div class="small muted mono">@${escapeHtml(me.username)}</div>`
-            : ''
-        }
+        <div class="identity-name">${escapeHtml(me.display_name || '')}</div>
         <div class="small muted truncate">${escapeHtml(me.email)}</div>
         <div class="row wrap" style="gap:.4rem;margin-top:.5rem">
           <span class="pill ${me.role === 'admin' ? 'primary' : ''}">${escapeHtml(
@@ -160,8 +155,6 @@ function identityBody(me) {
     </div>
 
     <dl class="facts">
-      <div><dt>${escapeHtml(tr('auth.register.username'))}</dt>
-        <dd class="mono">${escapeHtml(me.username)}</dd></div>
       <div><dt>${escapeHtml(tr('auth.register.email'))}</dt>
         <dd class="mono truncate">${escapeHtml(me.email)}</dd></div>
       <div><dt>${escapeHtml(tr('set.memberSince'))}</dt><dd>${date(me.created_at)}</dd></div>

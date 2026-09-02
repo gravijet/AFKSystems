@@ -828,9 +828,7 @@ select {
 body.site {
   background: var(--background);
   color: var(--text);
-  /* Damit die Fußzeile auch auf einer kurzen Seite unten steht und nicht in der Mitte endet.
-     Sichtbar wurde es am Impressum, solange es nur den Hinweis trägt: Kopfleiste, drei Zeilen,
-     Fuß – und darunter ein Viertel Bildschirm leer. `main` nimmt jetzt den Rest. */
+  /* Damit die Fußzeile auch auf einer kurzen Seite unten steht und nicht in der Mitte endet. */
   display: flex;
   min-height: 100dvh;
   flex-direction: column;

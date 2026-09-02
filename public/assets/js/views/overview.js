@@ -44,7 +44,7 @@ export async function render(root) {
 
   root.innerHTML = `
     ${appbar(
-      tr('dash.hello', { name: state.me.display_name || state.me.username }),
+      tr('dash.hello', { name: state.me.display_name || '' }),
       `<a class="btn btn-sm" href="#/accounts">${icon('plus')} ${escapeHtml(tr('ov.connectAccount'))}</a>
        <button class="btn btn-primary btn-sm" id="new-profile-2">${icon('server')} ${escapeHtml(tr('dash.newServer'))}</button>`,
       tr('dash.subtitle')

@@ -23,6 +23,7 @@ import os from 'node:os';
 import { db, getSetting } from './db.js';
 import { config } from './config.js';
 import * as notify from './notify.js';
+import * as mail from './mail.js';
 import * as metrics from './metrics.js';
 import * as nodes from './nodes.js';
 import * as binaries from './binaries.js';
@@ -329,6 +330,38 @@ export async function findAlerts() {
 export const alertText = (value, lang = 'en') =>
   value && typeof value === 'object' ? value[lang] ?? value.en ?? '' : String(value ?? '');
 
+/** Eine Betriebswarnung an Discord und zwingend an die E-Mail-Adressen aller Administratoren. */
+async function deliverAlert(alert) {
+  const tasks = [];
+  if (notify.systemWebhook()) {
+    tasks.push(
+      notify.system({
+        title: `${config.brand} · ${alertText(alert.title, 'en')}`,
+        description: alertText(alert.text, 'en'),
+        color: alert.color,
+        url: `${config.publicUrl}/en/app#/admin/system`,
+      })
+    );
+  }
+  if (mail.configured()) {
+    const admins = db.prepare("SELECT * FROM users WHERE role = 'admin' AND blocked = 0").all();
+    for (const admin of admins) {
+      tasks.push(
+        mail.sendTo(
+          admin,
+          'system_alert',
+          {
+            title: alertText(alert.title, admin.language === 'en' ? 'en' : 'de'),
+            text: alertText(alert.text, admin.language === 'en' ? 'en' : 'de'),
+          },
+          { force: true }
+        )
+      );
+    }
+  }
+  await Promise.allSettled(tasks);
+}
+
 /**
  * Dasselbe, aber mit Post: Jede Warnung geht einmal am Tag hinaus, nicht öfter.
  *
@@ -338,22 +371,37 @@ export const alertText = (value, lang = 'en') =>
  */
 export async function sendAlerts() {
   const found = await findAlerts();
-  if (!notify.systemWebhook()) return found;
   for (const alert of found) {
     if (!once(alert.key)) continue;
-    // Nacheinander und ohne Abbruch: Discord nimmt nur eine begrenzte Zahl Nachrichten je
-    // Sekunde, und eine Warnung, die nicht durchkommt, darf die nächste nicht verschlucken.
+    // Nacheinander und ohne Abbruch: Externe Dienste nehmen nur eine begrenzte Zahl Nachrichten
+    // je Sekunde, und eine Warnung, die nicht durchkommt, darf die nächste nicht verschlucken.
     // eslint-disable-next-line no-await-in-loop
-    await notify.system({
-      // Discord bleibt englisch – das ist die Hauptsprache dieses Dienstes, und in einem Kanal
-      // mit mehreren Zuschauern wäre die Sprache eines einzelnen Kontos die falsche Wahl.
-      title: `${config.brand} · ${alertText(alert.title, 'en')}`,
-      description: alertText(alert.text, 'en'),
-      color: alert.color,
-      url: `${config.publicUrl}/en/app#/admin/system`,
-    });
+    await deliverAlert(alert);
   }
   return found;
+}
+
+/** Einen konkreten Standortfehler sofort melden; der normale Takt bleibt als Sicherheitsnetz. */
+export async function locationFailure({ nodeName, error = '', fallbackName = null }) {
+  const alert = {
+    key: `node:${nodeName}`,
+    title: {
+      de: `Standort "${nodeName}" ist ausgefallen`,
+      en: `Location "${nodeName}" failed`,
+    },
+    text: {
+      de: fallbackName
+        ? `${error || 'Der Start ist fehlgeschlagen.'}\nErsatzstandort "${fallbackName}" übernimmt automatisch.`
+        : `${error || 'Der Standort ist nicht erreichbar.'}\nEs steht gerade kein Ersatzstandort zur Verfügung.`,
+      en: fallbackName
+        ? `${error || 'The start failed.'}\nReplacement location "${fallbackName}" is taking over automatically.`
+        : `${error || 'The location is not reachable.'}\nNo replacement location is currently available.`,
+    },
+    color: notify.COLORS.bad,
+  };
+  if (!once(alert.key)) return false;
+  await deliverAlert(alert);
+  return true;
 }
 
 /**

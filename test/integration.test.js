@@ -814,6 +814,20 @@ test('mail templates never put customer text into the HTML unescaped', async () 
   // Und der Rahmen der Nachricht steht weiterhin: die Vorlage darf ihre eigenen Auszeichnungen
   // behalten, geschützt wird nur, was eingesetzt wird.
   assert.ok(message.html.includes('<p style='));
+
+  const receiptMail = mail.render(user, 'topup', {
+    amount_cent: 500,
+    credits: 500,
+    balance: 900,
+    receipt: 'AFK-2026-0042',
+  });
+  assert.match(receiptMail.text, /AFK-2026-0042/);
+  const alertMail = mail.render(user, 'system_alert', {
+    title: 'Standort ausgefallen',
+    text: 'Xeon 1 übernimmt.',
+  });
+  assert.match(alertMail.subject, /system alert/i);
+  assert.match(alertMail.text, /Xeon 1 übernimmt/);
 });
 
 test('new Rust build selection covers all released feature combinations', () => {
@@ -2455,6 +2469,26 @@ test('a location stops taking server slots at its disk limit', async () => {
   assert.equal(nodes.isFull(nodes.byId(node.id)), false);
 });
 
+test('an offline agent location falls back to an eligible local location without moving the slot', async () => {
+  const nodes = await import('../server/nodes.js');
+  const user = createUser();
+  const assigned = nodes.create({ name: 'Ausgefallener Standort', kind: 'agent', access: 'all' }, null);
+  const slot = createProfile(user, billing.planBySlug('premium'));
+  db.prepare('UPDATE profiles SET node_id = ? WHERE id = ?').run(assigned.id, slot.id);
+  const current = db.prepare('SELECT * FROM profiles WHERE id = ?').get(slot.id);
+
+  const replacement = supervisor.runtimeNode(current, user.id, { file: 'afk-linux' });
+  assert.equal(replacement.kind, 'local');
+  assert.equal(current.node_id, assigned.id, 'die feste Zuordnung bleibt unverändert');
+  assert.equal(
+    supervisor.runtimeNode(current, user.id, {
+      file: 'afk-linux',
+      excludeNodeIds: [assigned.id, replacement.id],
+    }),
+    null
+  );
+});
+
 test('wrong bot secrets cannot lock the real Discord bot out', async () => {
   const { tryBotSecret } = await import('../server/routes/bot.js');
   const secret = `richtiger-bot-schluessel-${'x'.repeat(32)}`;
@@ -3094,6 +3128,9 @@ test('display names and selectable avatar providers replace the login name witho
   assert.equal(shown.display_name, 'Benjamin Berger');
   assert.equal(shown.username, 'login-name');
   assert.equal(shown.avatar_source, 'initials');
+
+  const unnamed = createUser({ username: 'not-visible' });
+  assert.equal(profile.displayNameOf(unnamed), `Konto #${unnamed.id}`);
 });
 
 test('going online is deliberately not a notification event', () => {
@@ -3718,33 +3755,10 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.match(privacy, /Art\. 6 Abs\. 1 lit\. b DSGVO/);
   const terms = await (await fetch(`${base}/en/terms`)).text();
   assert.match(terms, /<h2>5\. Prices, credits and renewal<\/h2>/);
-  // Das Impressum hat als einzige Rechtsseite keine Systemvorgabe – Name und Anschrift kann nur
-  // der Betreiber eintragen. Ohne sie sagt die Seite genau das, statt ein halbes Impressum zu
-  // zeigen, das die Pflicht nicht erfüllt.
-  const emptyImprint = await fetch(`${base}/de/imprint`);
-  assert.equal(emptyImprint.status, 200);
-  assert.match(await emptyImprint.text(), /Diese Seite muss der Betreiber noch ausfüllen/);
-  assert.ok(staffTodos('de').some((row) => row.key === 'staff-imprint'));
-
-  setSetting('company_name', 'Beispiel Betrieb e.U.');
-  setSetting('company_address', 'Musterstraße 1\n1010 Wien\nÖsterreich');
-  setSetting('company_vat_id', 'ATU12345678');
-  const imprint = await (await fetch(`${base}/de/imprint`)).text();
-  assert.match(imprint, /<h2>Diensteanbieter<\/h2>/);
-  assert.match(imprint, /Beispiel Betrieb e\.U\.<br \/>Musterstraße 1<br \/>1010 Wien/);
-  assert.match(imprint, /<h2>Umsatzsteuer-Identifikationsnummer<\/h2><p>ATU12345678<\/p>/);
-  // Dieselben Angaben, dieselbe Seite, andere Überschriften.
-  assert.match(await (await fetch(`${base}/en/imprint`)).text(), /<h2>Service provider<\/h2>/);
-  // Und wer mehr braucht als die vier Blöcke, schreibt es selbst – dann gilt nur sein Text.
-  setSetting('legal_imprint', '## Firmenbuch\n\nFN 123456a, Handelsgericht Wien');
-  const own = await (await fetch(`${base}/de/imprint`)).text();
-  assert.match(own, /<h2>Firmenbuch<\/h2>/);
-  assert.doesNotMatch(own, /Diensteanbieter/);
-  assert.ok(!staffTodos('de').some((row) => row.key === 'staff-imprint'));
-  for (const key of ['company_name', 'company_address', 'company_vat_id', 'legal_imprint']) {
-    setSetting(key, '');
-  }
-  assert.match(await (await fetch(`${base}/sitemap.xml`)).text(), /\/de\/imprint<\/loc>/);
+  // Die entfernte Impressumsseite verschwindet aus Route, Fuß und Sitemap.
+  const imprint = await fetch(`${base}/de/imprint`);
+  assert.equal(imprint.status, 404);
+  assert.doesNotMatch(await (await fetch(`${base}/sitemap.xml`)).text(), /\/imprint<\/loc>/);
 
   // Die Sprache in der Adresse schlägt Cookie und Browsereinstellung. Für die bekannten Seiten war
   // das immer so – ihre Route liest sie selbst aus dem Pfad. Die Fehlerseite kam aber woanders her
@@ -4032,7 +4046,7 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   // einzige ehrliche Auskunft darüber, welcher davon seinen Platz verdient.
   const templates = await api(base, '/api/admin/ticket-templates', { token: ADMIN_TOKEN });
   assert.equal(templates.response.status, 200);
-  assert.ok(templates.data.templates.length >= 4);
+  assert.ok(templates.data.templates.length >= 10);
   const first = templates.data.templates[0];
   assert.match(first.body_de, /\{name\}/);
   await api(base, `/api/admin/ticket-templates/${first.id}/used`, { token: ADMIN_TOKEN, method: 'POST' });
@@ -4043,11 +4057,22 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const ownTemplate = await api(base, '/api/admin/ticket-templates', {
     token: ADMIN_TOKEN,
     method: 'POST',
-    body: { title_de: 'Eigener Baustein', body_de: 'Hallo {name}, alles klar.' },
+    body: {
+      title_de: 'Eigener Baustein',
+      title_en: 'Own canned reply',
+      body_de: 'Hallo {name}, alles klar.',
+      body_en: 'Hi {name}, all sorted.',
+    },
   });
   assert.equal(ownTemplate.response.status, 200);
-  // Fehlt die englische Fassung, gilt die deutsche für beide – besser ein fremder Satz als keiner.
-  assert.equal(ownTemplate.data.template.body_en, 'Hallo {name}, alles klar.');
+  assert.equal(ownTemplate.data.template.body_en, 'Hi {name}, all sorted.');
+  // Eine einsprachige Vorlage wird abgewiesen: Sonst bekäme ein englischer Kunde deutschen Text.
+  const oneLanguage = await api(base, '/api/admin/ticket-templates', {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { title_de: 'Nur deutsch', body_de: 'Hallo {name}.' },
+  });
+  assert.equal(oneLanguage.response.status, 400);
   const templateAsUser = await api(base, '/api/admin/ticket-templates', { token: USER_TOKEN });
   assert.equal(templateAsUser.response.status, 403);
 
@@ -4137,7 +4162,9 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const securityView = await api(base, '/api/admin/security', { token: ADMIN_TOKEN });
   assert.equal(securityView.response.status, 200);
   assert.equal(securityView.data.ips[0].failed, 11);
-  assert.ok(securityView.data.sessions.some((session) => session.username === admin.username));
+  assert.ok(
+    securityView.data.sessions.some((session) => session.display_name === admin.discord_name)
+  );
   // Sitzungsschlüssel sind Passwortersatz und haben in einer Ansicht nichts verloren.
   assert.ok(!JSON.stringify(securityView.data.sessions).includes(ADMIN_TOKEN));
 

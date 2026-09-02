@@ -239,8 +239,7 @@ function ticketView(ticket) {
   const rawOwner = db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
   const owner = rawOwner
     ? {
-        id: rawOwner.id,
-        username: rawOwner.username,
+      id: rawOwner.id,
         display_name: profile.displayNameOf(rawOwner),
         discord_id: rawOwner.discord_id,
       }
@@ -272,7 +271,7 @@ router.get(
       messages: tickets.messages(ticket.id).map((message) => ({
         id: message.id,
         role: message.role,
-        author: message.author_name || message.display_name || message.username || null,
+        author: message.author_name || message.display_name || null,
         body: message.body,
         created_at: message.created_at,
         discord_id: message.discord_id,

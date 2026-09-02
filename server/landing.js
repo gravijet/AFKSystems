@@ -385,61 +385,12 @@ function legalHtml(raw) {
     .join('');
 }
 
-/**
- * Das Impressum – gebaut aus dem, was der Betreiber ohnehin schon eingetragen hat.
- *
- * Für Datenschutz und Bedingungen gibt es eine Systemvorgabe, weil dort steht, was dieser Dienst
- * technisch tut: das ist für jeden Betreiber dasselbe. Ein Impressum besteht dagegen aus Namen und
- * Anschrift einer bestimmten Person oder Firma – eine Vorgabe dafür wäre entweder erfunden oder
- * die Anschrift von jemand anderem. Beides ist schlimmer als eine leere Seite.
- *
- * Also wird zusammengesetzt, was schon dasteht: Verkäufername und Anschrift stehen für die Belege
- * in den Einstellungen, die Kontaktadresse steht im Fuß jeder Seite, die Umsatzsteuernummer auf
- * jeder Rechnung. Ohne Anschrift kommt hier bewusst nichts heraus – der Aufrufer zeigt dann den
- * Hinweis, dass die Seite noch auszufüllen ist, statt ein halbes Impressum, das die Pflicht nicht
- * erfüllt und so tut, als täte es das.
- *
- * Wer etwas anderes braucht (Firmenbuchnummer, Aufsichtsbehörde, Kammer, ein Wort zur
- * Streitbeilegung), trägt unter *Recht* seinen eigenen Text ein; dann gilt nur der.
- */
-function imprintText(lang) {
-  const address = String(getSetting('company_address') || '')
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-  if (!address.length) return '';
-
-  const name = String(getSetting('company_name') || '').trim() || config.brand;
-  const blocks = [`## ${t('legal.imprint.provider', lang)}`, [name, ...address].join('\n')];
-
-  const contact = [];
-  const mail = String(getSetting('support_email') || '').trim();
-  if (/^[^\s<>"@]+@[^\s<>"@]+\.[^\s<>"@]+$/.test(mail)) {
-    contact.push(`${t('legal.imprint.mail', lang)}: ${mail}`);
-  }
-  const invite = safeUrl(getSetting('discord_invite'));
-  if (invite) contact.push(`${t('legal.imprint.discord', lang)}: ${invite}`);
-  if (contact.length) blocks.push(`## ${t('legal.imprint.contact', lang)}`, contact.join('\n'));
-
-  const vatId = String(getSetting('company_vat_id') || '').trim();
-  if (vatId) blocks.push(`## ${t('legal.imprint.vat', lang)}`, vatId);
-
-  blocks.push(
-    `## ${t('legal.imprint.subject', lang)}`,
-    t('legal.imprint.subjectText', lang, { brand: config.brand })
-  );
-  return blocks.join('\n\n');
-}
-
-/** Für die Rechtseiten: eigener Text, sonst Systemvorgabe bzw. das gebaute Impressum. */
+/** Für die Rechtseiten: eigener Text, sonst Systemvorgabe. */
 export function legalVars(kind, lang) {
   const custom =
     String(getSetting(lang === 'en' ? `legal_${kind}_en` : `legal_${kind}`) || '') ||
     String(getSetting(`legal_${kind}`) || '');
-  const fallback =
-    kind === 'imprint'
-      ? imprintText(lang)
-      : LEGAL_DEFAULTS[kind]?.[lang] || LEGAL_DEFAULTS[kind]?.de || '';
+  const fallback = LEGAL_DEFAULTS[kind]?.[lang] || LEGAL_DEFAULTS[kind]?.de || '';
   const raw = custom.trim() || fallback;
   const body = raw ? legalHtml(raw) : `<p class="note warn">${escape(t(`legal.placeholder.${kind}`, lang))}</p>`;
   return {

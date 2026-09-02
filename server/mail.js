@@ -12,6 +12,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import nodemailer from 'nodemailer';
 import { db, getSetting } from './db.js';
 import { config, ROOT } from './config.js';
@@ -117,7 +119,7 @@ export function wants(user, category) {
 let cached = null;
 let cachedKey = '';
 
-function transport() {
+async function transport() {
   const settings = {
     host: String(getSetting('smtp_host') || '').trim(),
     port: Number(getSetting('smtp_port')) || 587,
@@ -127,10 +129,17 @@ function transport() {
   };
   const key = JSON.stringify(settings);
   if (cached && cachedKey === key) return cached;
+  // Der eingetragene Mailhost veröffentlicht IPv4 und IPv6, nahm SMTP über IPv6 zeitweise aber
+  // nicht an. Den Host deshalb vor Nodemailer ausdrücklich über IPv4 auflösen. Die ursprüngliche
+  // Adresse bleibt als TLS-Servername erhalten, damit die Zertifikatsprüfung weiterhin stimmt.
+  const host = isIP(settings.host) === 4
+    ? settings.host
+    : (await lookup(settings.host, { family: 4 })).address;
   cached = nodemailer.createTransport({
-    host: settings.host,
+    host,
     port: settings.port,
     secure: settings.secure,
+    tls: { servername: settings.host },
     auth: settings.user ? { user: settings.user, pass: settings.pass } : undefined,
     connectionTimeout: 15_000,
     greetingTimeout: 10_000,
@@ -174,7 +183,7 @@ export async function send({ to, subject, text, html, kind = 'mail', userId = nu
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   );
   try {
-    await transport().sendMail({
+    await (await transport()).sendMail({
       from: sender(),
       replyTo: replyTo(),
       to,
@@ -224,7 +233,7 @@ function logoAttachment(html) {
 /** Verbindung prüfen, ohne etwas zu verschicken – für den Knopf im Admin-Bereich. */
 export async function verifyConnection() {
   if (!configured()) throw new Error('Es ist kein SMTP-Server hinterlegt.');
-  await transport().verify();
+  await (await transport()).verify();
   return true;
 }
 
@@ -514,6 +523,22 @@ const T = {
     },
   },
 
+  system_alert: {
+    category: 'security',
+    de: {
+      subject: (v) => `${config.brand}: Systemwarnung – ${v.title}`,
+      title: (v) => v.title,
+      lines: (v) => [v.text, 'Diese Nachricht geht an alle Administratoren, weil der Betrieb betroffen ist.'],
+      action: (v) => ({ url: `${v.base}/app#/admin/system`, label: 'Systemstatus öffnen' }),
+    },
+    en: {
+      subject: (v) => `${config.brand}: system alert – ${v.title}`,
+      title: (v) => v.title,
+      lines: (v) => [v.text, 'This message goes to every administrator because service operation is affected.'],
+      action: (v) => ({ url: `${v.base}/app#/admin/system`, label: 'Open system status' }),
+    },
+  },
+
   // Diese Nachricht ist der **Beleg** über die Aufladung – deshalb steht darin, was auf einen
   // Beleg gehört: Leistung, Betrag und wie es um die Umsatzsteuer steht. Der Satz dazu kommt aus
   // `vat.js` und ist derselbe wie auf der Preisseite und an der Kasse. Bei der
@@ -526,6 +551,7 @@ const T = {
       title: () => 'Guthaben ist da',
       lines: (v) => [
         `Deine Aufladung über ${money(v.amount_cent, 'de')} ist angekommen.`,
+        v.receipt ? `Belegnummer: <b>${v.receipt}</b>` : '',
         `Leistung: <b>${v.credits} Credits</b> Guthaben bei ${config.brand}.`,
         `Gesamtbetrag: <b>${money(v.amount_cent, 'de')}</b>`,
         vat.note('de'),
@@ -538,6 +564,7 @@ const T = {
       title: () => 'Your credits arrived',
       lines: (v) => [
         `Your top-up of ${money(v.amount_cent, 'en')} came through.`,
+        v.receipt ? `Receipt number: <b>${v.receipt}</b>` : '',
         `Item: <b>${v.credits} credits</b> of ${config.brand} balance.`,
         `Total: <b>${money(v.amount_cent, 'en')}</b>`,
         vat.note('en'),

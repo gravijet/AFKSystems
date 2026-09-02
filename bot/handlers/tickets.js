@@ -58,7 +58,7 @@ export async function resolveMentions(message) {
   const out = {};
   for (const [id, user] of message.mentions?.users ?? []) {
     const member = message.guild?.members?.cache?.get(id);
-    out[id] = { type: 'user', name: member?.displayName || user.displayName || user.username };
+    out[id] = { type: 'user', name: member?.displayName || user.displayName || `Konto ${id}` };
   }
   for (const [id, role] of message.mentions?.roles ?? []) {
     // `hexColor` ist bei einer Rolle ohne eigene Farbe `#000000` – das ist in Discord "keine
@@ -393,7 +393,7 @@ export class Tickets {
     const options = {
       name: `ticket-${ticket.id}`,
       type: ChannelType.GuildText,
-      topic: `${ticket.subject} · ${ticket.owner?.display_name || ticket.owner?.username || ''} · ${ticket.url}`,
+      topic: `${ticket.subject} · ${ticket.owner?.display_name || ''} · ${ticket.url}`,
       permissionOverwrites: overwrites,
     };
     let channel = await guild.channels.create({ ...options, parent }).catch((error) => {
@@ -423,7 +423,7 @@ export class Tickets {
       .setTitle(`#${ticket.id} · ${ticket.subject}`)
       .setURL(ticket.url)
       .addFields(
-        { name: 'From', value: ticket.owner?.display_name || ticket.owner?.username || '–', inline: true },
+        { name: 'From', value: ticket.owner?.display_name || '–', inline: true },
         { name: 'Status', value: STATUS_LABEL[ticket.status] || ticket.status, inline: true }
       )
       .setFooter({
@@ -550,7 +550,7 @@ export class Tickets {
         body: {
           discord_id: message.id,
           discord_user_id: message.author.id,
-          author_name: message.member?.displayName || message.author.username,
+          author_name: message.member?.displayName || message.author.globalName || 'Discord-Nutzer',
           body: content,
           // Wer hinter den Zahlen steckt. Siehe `resolveMentions` – ohne das steht im Panel
           // `<@000000000000000000>` statt „@Hugo“.
