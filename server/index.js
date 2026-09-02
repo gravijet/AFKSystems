@@ -474,9 +474,6 @@ function maintenanceGuard(req, res, next) {
 
 const NOINDEX = '<meta name="robots" content="noindex, nofollow" />';
 
-/** Was die Anmeldeseiten zum ersten Bild brauchen. Die Texte kommen in pages.preload dazu. */
-const AUTH_MODULES = ['auth.js', 'ui.js', 'chatlog.js'];
-
 const PAGES = {
   '': { view: 'landing', vars: landing.homeVars },
   features: {
@@ -492,14 +489,22 @@ const PAGES = {
     vars: landing.pricingVars,
   },
   faq: { view: 'faq', title: 'faq.title', description: 'meta.faq.description' },
-  // Die fünf Anmeldeseiten teilen sich ein Modul (auth.js), und das zieht ui.js und die Texte
-  // nach. Ohne diese Ansage findet der Browser sie erst, wenn er auth.js gelesen hat – ausgerechnet
-  // auf der Seite, die für die meisten Besucher die erste mit JavaScript ist.
-  login: { view: 'login', title: 'auth.login.title', noindex: true, modules: AUTH_MODULES },
-  register: { view: 'register', title: 'auth.register.title', modules: AUTH_MODULES },
-  forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true, modules: AUTH_MODULES },
-  reset: { view: 'reset', title: 'auth.reset.title', noindex: true, modules: AUTH_MODULES },
-  verify: { view: 'verify', title: 'auth.verify.title', noindex: true, modules: AUTH_MODULES },
+  // **Hier ausdrücklich keine Ladehinweise für JavaScript.** Es lag nahe, den Anmeldeseiten
+  // dieselben `modulepreload`-Zeilen zu geben wie dem Dashboard – gemessen war es falsch: Auf einer
+  // gedrosselten Leitung (1,6 Mbit/s, 150 ms Umlauf) kam das erste Bild dadurch 108 ms **später**,
+  // weil das vorgezogene JavaScript dem Stylesheet die Bandbreite wegnimmt, und das Stylesheet ist
+  // es, worauf das erste Bild wartet.
+  //
+  // Auf dieser Seite bringt das nichts ein: Das Formular kommt fertig vom Server, und das Skript
+  // wird erst beim Absenden gebraucht – Sekunden später, in denen jemand seine Zugangsdaten
+  // eintippt. Im Dashboard liegt es andersherum (siehe renderApp): Dort ist das erste Bild nur ein
+  // Platzhalter, und die 80 ms, die es später kommt, sparen eine halbe Sekunde, bis wirklich etwas
+  // dasteht.
+  login: { view: 'login', title: 'auth.login.title', noindex: true },
+  register: { view: 'register', title: 'auth.register.title' },
+  forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true },
+  reset: { view: 'reset', title: 'auth.reset.title', noindex: true },
+  verify: { view: 'verify', title: 'auth.verify.title', noindex: true },
   privacy: { view: 'legal', legal: 'privacy' },
   terms: { view: 'legal', legal: 'terms' },
 };
@@ -517,7 +522,6 @@ function renderPage(slug, lang) {
     ...landing.commonVars(lang),
   };
   if (entry.noindex) vars.robotsTag = NOINDEX;
-  if (entry.modules) vars.resourceHints = pages.preload(lang, entry.modules);
   if (entry.title) vars.title = `${pages.t(entry.title, lang)} – ${config.brand}`;
   if (entry.description) vars.description = pages.t(entry.description, lang);
   if (entry.legal) Object.assign(vars, landing.legalVars(entry.legal, lang));
@@ -887,6 +891,12 @@ supervisor.on('bot-view', ({ userId, key, kind, view }) => push(userId, { type: 
  */
 for (const type of ['ticket.message', 'ticket.status', 'ticket.typing', 'ticket.created']) {
   bridge.on(type, (message) => {
+    // **Zuerst: sieht überhaupt jemand zu?** Was hier folgt, sind drei Abfragen – das Ticket, das
+    // Team, die Beteiligten –, und am Ende steht `push`, das ohne offene Leitung nichts tut. Zu
+    // diesen Ereignissen gehört auch „schreibt gerade …“, das beim Tippen laufend kommt: Ein
+    // Support-Mitarbeiter, der eine Antwort schreibt, während niemand das Panel offen hat, löste
+    // damit im Sekundentakt Arbeit aus, deren Ergebnis nirgendwo hinging.
+    if (!sockets.size) return;
     const ticket = tickets.byId(message.ticket_id);
     if (!ticket) return;
     const payload = { ...message, type: 'ticket', event: type.split('.')[1] };
