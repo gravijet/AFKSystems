@@ -2796,6 +2796,19 @@ body.site {
   font-weight: 300;
 }
 
+/*
+ * Der Hinweiskasten – die Stelle, an der fremder Text ins Panel kommt.
+ *
+ * Darin steht, was schiefging: die Meldung eines Mailservers, die Absage von Stripe, die Adresse,
+ * unter der GitHub nicht antwortet. Solche Zeichenketten haben keine Leerzeichen, an denen sich
+ * umbrechen ließe, und ohne `overflow-wrap` schob eine einzige Adresse die ganze Seite über den
+ * Rand: Auf einem Handy war die Verwaltung des Clients dann um hundertdreißig Pixel verschoben,
+ * und zwar quer über alles, nicht nur in diesem Kasten.
+ *
+ * `anywhere` statt `break-word`, weil `break-word` erst greift, wenn eine Zeile sonst überliefe –
+ * bei der Berechnung der Mindestbreite eines Flex-Kastens zählt es nicht mit, und genau diese
+ * Mindestbreite war hier das Problem.
+ */
 .note {
   display: flex;
   gap: 0.7rem;
@@ -2805,6 +2818,8 @@ body.site {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--info) 30%, transparent);
   color: var(--text);
   font-size: 0.875rem;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 .note .icon {
   width: 1.05rem;
@@ -5708,6 +5723,8 @@ body.dash .main > .grid > .panel {
   .appbar > .row:first-child {
     min-height: 2.75rem;
   }
+  /* Die Werkzeugleiste steht auf dem Handy unter dem Titel und scrollt seitlich. Sie ist
+     linksbündig – warum das keine Geschmacksfrage ist, steht bei `.appbar-actions` weiter oben. */
   .appbar-actions {
     flex-wrap: nowrap !important;
     width: 100%;
@@ -5811,6 +5828,25 @@ body.dash .main > .grid > .panel {
     max-width: 100%;
     overscroll-behavior-inline: contain;
     -webkit-overflow-scrolling: touch;
+  }
+  /*
+   * Die Leiste für Massenaktionen bekommt auf dem Handy eine eigene Zeile.
+   *
+   * Sie besteht aus drei Teilen: Zähler, Aktionen, „Auswahl aufheben“. Der mittlere trägt `grow`,
+   * und `grow` heißt `flex: 1; min-width: 0` – ein Kasten also, der auf null schrumpfen darf.
+   * Genau das tat er: Zähler und Abbruchknopf nahmen die Zeile ein, für die Aktionen blieben
+   * sieben Pixel, und weil ein Kasten von sieben Pixeln „passt“, brach die Zeile nie um. Die
+   * sechs Knöpfe standen dann nebeneinander bis zweihundert Pixel außerhalb des Bildschirms und
+   * schoben die ganze Seite mit.
+   *
+   * `flex-basis: 100%` beendet das an der Wurzel: Die Aktionen sind eine eigene Zeile, und
+   * innerhalb davon brechen die Knöpfe wie vorgesehen um.
+   */
+  .bulk #bulk-actions {
+    flex: 1 0 100%;
+  }
+  .bulk #bulk-count {
+    min-width: 0;
   }
   .table th,
   .table td {
@@ -6289,9 +6325,24 @@ textarea {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Globale Werkzeuge in jeder Kopfzeile. */
-.appbar-actions {
-  justify-content: flex-end;
+/* Globale Werkzeuge in jeder Kopfzeile.
+ *
+ * Rechtsbündig, aber **nur solange die Zeile nicht scrollt**. Auf dem Handy steht sie unter dem
+ * Titel und ist ein Kasten mit `overflow-x: auto` (siehe die Regel bei max-width: 640px), und in
+ * einem solchen Kasten ist `flex-end` eine Falle: Was nicht mehr hineinpasst, ragt über den
+ * **linken** Rand hinaus, und dorthin lässt sich nicht scrollen. Auf einem Serverplatz standen
+ * damit die Suche und die Glocke vollständig außerhalb des Bildschirms – über hundert Pixel weit
+ * und ohne jede Möglichkeit, sie zu erreichen. Die Glocke ist der einzige Weg zu den
+ * Benachrichtigungen.
+ *
+ * Deshalb steht die Regel in einer eigenen Abfrage und nicht als Vorgabe mit einer Ausnahme
+ * darunter: Eine Ausnahme müsste im Stylesheet **hinter** der Vorgabe stehen, um zu greifen, und
+ * das ist eine Bedingung, die beim nächsten Verschieben eines Blocks stillschweigend wegfällt.
+ */
+@media (min-width: 641px) {
+  .appbar-actions {
+    justify-content: flex-end;
+  }
 }
 .appbar-search kbd {
   padding: 0.05rem 0.35rem;
