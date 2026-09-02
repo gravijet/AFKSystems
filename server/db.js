@@ -1317,6 +1317,28 @@ const migrations = [
       ALTER TABLE users ADD COLUMN avatar_source TEXT NOT NULL DEFAULT 'auto';
     `,
   },
+  {
+    /**
+     * „Wer ist Administrator?“ – ohne jedes Konto durchzusehen.
+     *
+     * Diese Frage steht in der Live-Verteilung **jedes** Ticket-Ereignisses, und dazu gehört auch
+     * „schreibt gerade …“, das beim Tippen laufend gesendet wird. Sie war die einzige Abfrage im
+     * laufenden Betrieb, die dafür die ganze Kontentabelle las: Alles andere im Panel sucht über
+     * einen Schlüssel, dafür sorgen schon die `UNIQUE`-Bedingungen des Schemas, die SQLite als
+     * Index anlegt.
+     *
+     * Ein Feld mit zwei Werten ist sonst ein schlechter Index. Hier nicht: Gefragt wird immer nach
+     * dem **seltenen**, und weil in der Abfrage nur `id` und `role` vorkommen, beantwortet SQLite
+     * sie vollständig aus dem Index, ohne eine einzige Kontozeile anzufassen.
+     *
+     * (Geprüft und **nicht** angelegt wurde `profiles(plan_id)` für den Minutentakt der
+     * Gratis-Plätze: Er wird dadurch nur um ein Sechstel schneller, und auch das erst, wenn die
+     * Datenbank Statistiken hat – die Zeit steckt nicht im Finden der Zeilen, sondern im Lesen.
+     * Ein Index, der bei jedem Schreibvorgang mitgepflegt werden will, muss mehr einbringen.)
+     */
+    name: '030-wer-ist-administrator',
+    sql: `CREATE INDEX users_role ON users(role);`,
+  },
 ];
 
 /**
