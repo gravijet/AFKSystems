@@ -38,7 +38,14 @@ export const S = {
   'common.on': { en: 'Yes', de: 'Ja' },
   'common.back': { en: 'Back', de: 'Zurück' },
   'common.loading': { en: 'Loading …', de: 'Wird geladen …' },
+  // "Noch nichts." ist der leere Zustand einer **Liste** – ein ganzer Satz mit Punkt. Als
+  // Beschriftung eines Feldes oder eines Auswahleintrags war er falsch: In einem Aufklappmenü
+  // stand damit "Noch nichts." für "kein Proxy", obwohl es welche gab.
   'common.none': { en: 'None yet.', de: 'Noch nichts.' },
+  /** Kein Wert ausgewählt – die Beschriftung eines Eintrags, kein Satz. */
+  'common.nothing': { en: 'None', de: 'Keiner' },
+  /** Der Wert steht nicht fest. */
+  'common.unknown': { en: 'Unknown', de: 'Unbekannt' },
   'common.copied': { en: 'Copied.', de: 'Kopiert.' },
   'common.copy': { en: 'Copy', de: 'Kopieren' },
   'common.open': { en: 'Open', de: 'Öffnen' },
@@ -705,6 +712,12 @@ export const S = {
   'srv.startAll': { en: 'Start all', de: 'Alle starten' },
   'srv.stopAll': { en: 'Stop all', de: 'Alle stoppen' },
   'srv.addAccounts': { en: 'Add accounts', de: 'Konten hinzufügen' },
+  // Warum gerade nichts hinzuzufügen ist. Hier stand "Noch nichts." – ein Satz, der auf die
+  // Frage "warum passiert nichts?" nicht antwortet.
+  'srv.addNoneLeft': {
+    en: 'Every Minecraft account you have is already on this server.',
+    de: 'Alle deine Minecraft-Konten sitzen schon auf diesem Server.',
+  },
   'srv.noAccounts': { en: 'No account on this server yet.', de: 'Noch kein Konto auf diesem Server.' },
   'srv.pickAccounts': { en: 'Which accounts?', de: 'Welche Konten?' },
   'srv.remove': { en: 'Take off this server', de: 'Von diesem Server nehmen' },
@@ -1217,9 +1230,11 @@ export const S = {
   'set.passwordOld': { en: 'Current password', de: 'Aktuelles Passwort' },
   'set.passwordNew': { en: 'New password', de: 'Neues Passwort' },
   'set.passwordNew2': { en: 'Repeat new password', de: 'Neues Passwort wiederholen' },
+  // Zwölf, nicht acht. Hier stand acht, das Eingabefeld verlangte zwölf und `checkPasswordPair()`
+  // auch – wer neun Zeichen eintippte, bekam eine Absage für eine Regel, die nirgends stand.
   'set.passwordHint': {
-    en: 'At least 8 characters. All other sessions are signed out.',
-    de: 'Mindestens 8 Zeichen. Alle anderen Sitzungen werden abgemeldet.',
+    en: 'At least 12 characters. All other sessions are signed out.',
+    de: 'Mindestens 12 Zeichen. Alle anderen Sitzungen werden abgemeldet.',
   },
   'set.passwordOk': { en: 'Password changed.', de: 'Passwort geändert.' },
   'set.sessions': { en: 'Sessions', de: 'Sitzungen' },
@@ -1486,6 +1501,10 @@ export const S = {
     de: 'Von wo dieser Serverplatz ins Netz geht. Jeder Standort hat seine eigene Adresse.',
   },
   'nd.change': { en: 'Change location', de: 'Standort wechseln' },
+  'nd.noneLeft': {
+    en: 'There is no other location to move to.',
+    de: 'Es gibt keinen anderen Standort, auf den umgezogen werden könnte.',
+  },
   'nd.changeHint': {
     en: 'Running bots restart – the address is set when they start.',
     de: 'Laufende Bots starten neu – die Adresse steht beim Start fest.',
@@ -1943,6 +1962,10 @@ export const S = {
     de: 'Diese kommen ohne Code herein. Abmelden entfernt keinen davon – vergessen schon.',
   },
   'set.deviceCurrent': { en: 'this browser', de: 'dieser Browser' },
+  // Wenn sich aus der Browserkennung nichts herauslesen lässt. Hier stand `common.none` – und
+  // das heißt "Noch nichts.": In einer Liste, die gerade einen Eintrag zeigt, ist das nicht nur
+  // der falsche Satz, sondern das Gegenteil dessen, was dasteht.
+  'set.deviceUnknown': { en: 'Unknown device', de: 'Unbekanntes Gerät' },
   'set.deviceLastSeen': { en: 'last here {when}', de: 'zuletzt hier {when}' },
   'set.deviceForget': { en: 'Forget', de: 'Vergessen' },
   'set.deviceForgotten': {
@@ -2025,6 +2048,10 @@ export const S = {
   'tk.unknownMention': { en: 'unknown', de: 'unbekannt' },
   'tk.spoilerShow': { en: 'Spoiler – click to show', de: 'Spoiler – zum Anzeigen klicken' },
   'tk.addPerson': { en: 'Add someone', de: 'Jemanden dazuholen' },
+  'tk.addNoneLeft': {
+    en: 'Everyone who could be added is already on this ticket.',
+    de: 'Alle, die dazukommen könnten, sind schon an diesem Ticket.',
+  },
   'tk.removePerson': { en: 'Remove', de: 'Entfernen' },
   'tk.author': { en: 'Author', de: 'Ersteller' },
   'tk.typing': { en: '{name} is writing …', de: '{name} schreibt …' },

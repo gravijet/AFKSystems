@@ -825,7 +825,7 @@ async function one(root, id, { staff, backHash }) {
         value: String(user.id),
         label: `${user.display_name || user.username} · ${user.email}`,
       }));
-    if (!options.length) return toast(tr('common.none'));
+    if (!options.length) return toast(tr('tk.addNoneLeft'));
     const answer = await formDialog(
       tr('tk.addPerson'),
       [{ key: 'user_id', label: tr('adm.users'), type: 'select', value: options[0].value, options }],
