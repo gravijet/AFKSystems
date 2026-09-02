@@ -10,6 +10,7 @@ import * as mail from './mail.js';
 import * as linkedRoles from './linked-roles.js';
 import * as profile from './profile.js';
 import * as logincode from './logincode.js';
+import * as totp from './totp.js';
 
 const COOKIE = 'afk_session';
 /** So oft höchstens wird "zuletzt gesehen" nachgeführt. */
@@ -648,7 +649,7 @@ export async function requestReset(email) {
   await mail.sendReset(user, value);
 }
 
-export function applyReset(rawToken, password, repeat) {
+export function applyReset(rawToken, password, repeat, code = null) {
   const candidates = capabilityCandidates('password-reset', rawToken);
   const user = candidates.length
     ? db.prepare('SELECT * FROM users WHERE reset_token IN (?, ?) AND reset_expires > ?').get(
@@ -663,6 +664,24 @@ export function applyReset(rawToken, password, repeat) {
   if (user.blocked) {
     throw new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' });
   }
+
+  // **Der zweite Faktor gilt auch hier.** Das ist der Punkt, an dem sich entscheidet, ob die
+  // Zwei-Faktor-Anmeldung etwas bedeutet oder nur so heißt: Ohne diese Frage bliebe das Postfach
+  // ein Generalschlüssel – Link anfordern, Passwort setzen, drin. Genau das ist die Schwäche, die
+  // der Anmeldecode an sich selbst benennt (siehe logincode.js), und sie hier stehen zu lassen
+  // hieße, den stärkeren Faktor an der schwächsten Stelle vorbeizuführen.
+  //
+  // Ein Wiederherstellungscode zählt genauso: Wer sein Telefon **und** sein Passwort verloren
+  // hat, kommt über den Zettel zurück, den er beim Einrichten bekommen hat.
+  if (totp.enabled(user)) {
+    if (!totp.verify(user, code)) {
+      throw bad('Für dieses Konto ist die Zwei-Faktor-Anmeldung eingeschaltet. Bitte den Code aus der App eingeben.', {
+        en: 'This account has two-factor sign-in switched on. Please enter the code from your app.',
+        code: 'totp-required',
+      });
+    }
+  }
+
   checkPasswordPair(password, repeat, { username: user.username, email: user.email });
   db.prepare(
     'UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?'
@@ -692,6 +711,9 @@ export function publicUser(user) {
     // Ob dieses Konto bei einer Anmeldung von einem unbekannten Browser einen Code per E-Mail
     // verlangt. Kommt mit `/me`, weil die Einstellungen es sonst einzeln nachholen müssten.
     login_code: Boolean(user.login_code),
+    // Ob die Zwei-Faktor-Anmeldung scharf ist. Nur das – das Geheimnis verlässt den Server genau
+    // einmal, beim Einrichten, und danach nie wieder (siehe totp.js).
+    totp: Boolean(user.totp_enabled_at && user.totp_secret),
     theme: user.theme,
     language: user.language,
     chat_limit: user.chat_limit,

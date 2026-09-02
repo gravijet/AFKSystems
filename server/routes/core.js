@@ -21,6 +21,7 @@ import * as stripe from '../stripe.js';
 import * as vat from '../vat.js';
 import * as security from '../security.js';
 import * as logincode from '../logincode.js';
+import * as totp from '../totp.js';
 import * as profile from '../profile.js';
 import * as account from '../account.js';
 import * as roles from '../roles.js';
@@ -276,6 +277,23 @@ router.post(
     }
     security.record({ ip: req.ip, identifier, ok: true });
 
+    // **Der zweite Schritt aus der App.** Er geht dem Anmeldecode vor, und zwar immer: Wer eine
+    // Authenticator-App eingerichtet hat, hat einen Faktor, der nicht am Postfach hängt. Beides
+    // nacheinander abzufragen brächte keine Sicherheit dazu – der schwächere Schritt liegt schon
+    // im stärkeren –, es wären nur zwei Formulare statt einem.
+    //
+    // Und anders als der Anmeldecode fragt er **bei jeder Anmeldung**, nicht nur bei unbekannten
+    // Browsern. Ein Konto, das an bekannten Geräten nur nach dem Passwort fragt, hat einen Faktor.
+    if (totp.enabled(user)) {
+      const challenge = logincode.startPending(user, req, 'totp');
+      return res.json({
+        challenge: challenge.token,
+        kind: 'totp',
+        expires_at: challenge.expires_at,
+        tries: logincode.MAX_TRIES,
+      });
+    }
+
     // **Der zweite Schritt, wenn dieser Browser neu ist.** Das Passwort stimmt – mehr sagt diese
     // Antwort nicht, und mehr bekommt der Aufrufer auch nicht: keine Sitzung, kein Cookie, kein
     // Konto. Zurück geht nur eine Wartemarke und die halb verdeckte Adresse, an die der Code ging.
@@ -290,6 +308,7 @@ router.post(
       // Anmeldung, die noch gar nicht stattgefunden hat.
       return res.json({
         challenge: challenge.token,
+        kind: 'mail',
         expires_at: challenge.expires_at,
         email_hint: challenge.hint,
         tries: logincode.MAX_TRIES,
@@ -346,6 +365,82 @@ router.post(
   })
 );
 
+/**
+ * Den zweiten Faktor einlösen – sechs Ziffern aus der App oder ein Wiederherstellungscode.
+ *
+ * Derselbe Aufbau wie beim Anmeldecode, und aus denselben Gründen: Die Marke allein ist keine
+ * Anmeldung, sie zählt ihre fünf Versuche mit, und der Verbrauch steht im selben Protokoll wie
+ * die Passwortversuche. Wer beliebig viele Marken beschaffen kann (er kennt ja das Passwort),
+ * hätte sonst beliebig viele Fünferpakete.
+ *
+ * Ein **Wiederherstellungscode** wird hier genauso eingelöst wie ein Code aus der App. Er ist der
+ * Weg für ein verlorenes Telefon, und ein Weg, der nur mit Hilfe eines Administrators funktioniert,
+ * macht den Administrator zum zweiten Faktor.
+ */
+router.post(
+  '/auth/login/totp',
+  wrap((req, res) => {
+    // Beim Anmelden mit Passwort steht die Marke im Rumpf. Kommt der Kunde von Discord oder
+    // Google zurück, gab es dort keinen Rumpf – dann liegt sie in einem kurzlebigen Cookie.
+    // **Nicht in der Adresse:** Die steht im Verlauf, im Referrer und in jedem Proxy-Protokoll.
+    const marker = String(req.body?.challenge || '') || auth.readCookie(req, LOGIN_COOKIE) || '';
+    const identifier = logincode.identifierFor(marker, 'totp');
+    if (security.tooMany(req.ip, identifier)) {
+      security.record({ ip: req.ip, identifier, ok: false, reason: 'throttled' });
+      throw new HttpError(429, 'Zu viele Fehlversuche. Bitte in einer Viertelstunde noch einmal versuchen.', {
+        en: 'Too many failed attempts. Please try again in fifteen minutes.',
+      });
+    }
+
+    const expired = () =>
+      new HttpError(410, 'Diese Anmeldung gilt nicht mehr. Bitte noch einmal anfangen.', {
+        en: 'This sign-in is no longer valid. Please start again.',
+        code: 'login-code-expired',
+      });
+
+    const user = logincode.pendingUser(marker, 'totp');
+    if (!user) throw expired();
+    // Zwischen dem Passwort und dem Code liegen Minuten. In dieser Zeit kann ein Konto gesperrt
+    // worden sein – dann ist der richtige Code die richtige Antwort auf eine Frage, die niemand
+    // mehr stellt.
+    if (user.blocked) {
+      throw new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' });
+    }
+
+    // Der Zähler steht **vor** der Prüfung: Wer abbricht, weil ihm das Ergebnis nicht gefällt,
+    // hat seinen Versuch trotzdem verbraucht.
+    const left = logincode.countTry(marker, 'totp');
+    if (left === null) throw expired();
+
+    const result = totp.verify(user, req.body?.code, req.ip);
+    if (!result) {
+      security.record({ ip: req.ip, identifier, ok: false, reason: 'totp' });
+      if (left <= 0) {
+        logincode.finishPending(marker, 'totp');
+        res.clearCookie(LOGIN_COOKIE, { path: '/api/auth' });
+        throw expired();
+      }
+      throw bad(`Dieser Code stimmt nicht. Noch ${left} Versuch(e).`, {
+        en: `That code is wrong. ${left} attempt(s) left.`,
+        code: 'totp-wrong',
+      });
+    }
+
+    logincode.finishPending(marker, 'totp');
+    res.clearCookie(LOGIN_COOKIE, { path: '/api/auth' });
+    security.record({ ip: req.ip, identifier, ok: true, reason: 'totp' });
+    signIn(res, user, req, result.kind === 'recovery' ? 'login-totp-recovery' : 'login-totp');
+    res.json({
+      user: auth.publicUser(user),
+      verify_pending: mail.verifyRequired() && !user.email_verified,
+      // Wer einen Wiederherstellungscode verbraucht hat, soll erfahren, wie viele noch da sind –
+      // sonst merkt er es erst, wenn keiner mehr übrig ist.
+      recovery_used: result.kind === 'recovery',
+      recovery_left: result.kind === 'recovery' ? result.left : null,
+    });
+  })
+);
+
 /** Noch einmal schicken – dieselbe Marke, ein frischer Code, dieselbe Frist. */
 router.post(
   '/auth/login/code/resend',
@@ -368,6 +463,25 @@ router.post(
   wrap((req, res) => {
     const user = auth.verifyEmail(req.body?.token);
     if (!user) throw bad('Dieser Link gilt nicht mehr.', { en: 'This link is no longer valid.', code: 'verify-invalid' });
+
+    // **Auch dieser Weg ist eine Anmeldung.** Er ist damit dieselbe Tür wie das Anmeldeformular
+    // (siehe die Sperrprüfung in `verifyEmail`) – und wer einen zweiten Faktor eingeschaltet hat,
+    // hat gesagt, dass durch diese Tür niemand ohne das Gerät kommt. Ein Bestätigungslink, der
+    // daran vorbeiführte, wäre der Weg vorbei, den ein Postfachzugang eröffnet, und genau den
+    // soll die Zwei-Faktor-Anmeldung schließen. Die Adresse ist trotzdem bestätigt: Das ist die
+    // Auskunft dieses Links, und die hängt nicht am zweiten Faktor.
+    if (totp.enabled(user)) {
+      const challenge = logincode.startPending(user, req, 'totp');
+      res.cookie(LOGIN_COOKIE, challenge.token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        secure: config.publicUrl.startsWith('https'),
+        maxAge: logincode.CODE_MS,
+        path: '/api/auth',
+      });
+      return res.json({ verified: true, totp: true, lang: user.language || langOf(req) });
+    }
+
     // Wer diesen Link öffnet, hat das Postfach – also genau das, wonach der Anmeldecode fragt.
     // Ein Code obendrauf wäre dieselbe Frage ein zweites Mal.
     signIn(res, user, req, 'login-verify');
@@ -405,7 +519,7 @@ router.post(
 router.post(
   '/auth/reset',
   wrap((req, res) => {
-    auth.applyReset(req.body?.token, req.body?.password, req.body?.password2);
+    auth.applyReset(req.body?.token, req.body?.password, req.body?.password2, req.body?.code);
     res.json({ ok: true });
   })
 );
@@ -436,6 +550,20 @@ const PROVIDER = /^(discord|google)$/;
 
 /** Das Merkmal, das Start und Rückweg einer Anmeldung an denselben Browser bindet. */
 const OAUTH_COOKIE = 'afk_oauth';
+
+/**
+ * Die halbfertige Anmeldung, wenn nach Discord oder Google noch der zweite Faktor fehlt.
+ *
+ * Beim Anmelden mit Passwort reist die Wartemarke im Rumpf der Antwort. Von einem Anbieter kommt
+ * der Kunde aber über eine Weiterleitung zurück, und da gibt es keinen Rumpf. Die Marke in die
+ * Adresse zu hängen wäre der naheliegende Weg und der falsche: Adressen stehen im Verlauf des
+ * Browsers, im Referrer der nächsten Anfrage und in jedem Protokoll dazwischen.
+ *
+ * Das Cookie ist **kein Zugang**. Es sagt „das Passwort bzw. der Anbieter war in Ordnung“ und
+ * nichts weiter; ohne den Code aus der App öffnet es gar nichts, es gilt fünfzehn Minuten, und
+ * eingelöst wird es genau einmal.
+ */
+const LOGIN_COOKIE = 'afk_login';
 
 router.get(
   '/auth/:provider/start',
@@ -473,6 +601,24 @@ router.get(
       const result = await oauth.callback({ code: req.query.code, state: req.query.state, binding });
       if (result.action === 'login' || result.action === 'created') {
         const user = db.prepare('SELECT * FROM users WHERE id = ?').get(result.userId);
+
+        // **Die Zwei-Faktor-Anmeldung gilt auch hier.** Wer sie eingeschaltet hat, hat gesagt:
+        // In dieses Konto kommt nur, wer das Gerät hat. Ein übernommenes Discord-Konto wäre sonst
+        // der Weg daran vorbei – und zwar ausgerechnet der bequemste, denn er braucht nicht
+        // einmal das Passwort. Der Anbieter hat festgestellt, *wer* da sitzt; der zweite Faktor
+        // beantwortet eine andere Frage.
+        if (totp.enabled(user)) {
+          const challenge = logincode.startPending(user, req, 'totp');
+          res.cookie(LOGIN_COOKIE, challenge.token, {
+            httpOnly: true,
+            sameSite: 'lax',
+            secure: config.publicUrl.startsWith('https'),
+            maxAge: logincode.CODE_MS,
+            path: '/api/auth',
+          });
+          return res.redirect(`/${user.language || lang}/login?step=totp`);
+        }
+
         // Kein Anmeldecode: Discord und Google haben soeben selbst festgestellt, wer da sitzt –
         // und das mit ihren eigenen zweiten Faktoren. Eine weitere Frage über einen dritten Kanal
         // brächte keine Sicherheit dazu, sie brächte nur einen Schritt dazu. Gemerkt wird der
@@ -907,6 +1053,125 @@ router.delete(
     // eigene Sitzung mitgenommen und den Kunden vor die Anmeldeseite gestellt.
     const gone = auth.endOtherSessions(req.user.id, req.sessionStorageToken);
     res.json({ ok: true, ended: gone, sessions: auth.sessionsOf(req.user.id, req.sessionToken) });
+  })
+);
+
+// ---------------------------------------------------------------- Zwei-Faktor-Anmeldung
+//
+// Fünf Endpunkte, und alle fünf verlangen mehr als eine offene Sitzung. Der Grund steht in
+// totp.js: Eine Zwei-Faktor-Anmeldung, die sich mit einer geliehenen Sitzung ein- oder
+// ausschalten lässt, schützt nichts. Deshalb:
+//
+//   * **Einrichten beginnen** – Passwort. Was zurückkommt, ist das Geheimnis im Klartext.
+//   * **Scharf schalten** – ein Code aus der App. Ohne Probe stünde jemand vor einem Feld, das
+//     er nie richtig ausfüllen kann.
+//   * **Neue Wiederherstellungscodes** – Passwort und ein gültiger Code.
+//   * **Abschalten** – Passwort und ein gültiger Code.
+//
+// Wer sich über Discord oder Google angemeldet hat, hat hier kein Passwort. Für den tritt der
+// gültige Code an dessen Stelle: Er hat das Gerät, und mehr fragt das Panel bei ihm nie ab.
+
+/**
+ * Das Passwort noch einmal.
+ *
+ * Wer sich nur über Discord oder Google anmeldet, hat hier keines – `auth.wrongPassword()` sagt
+ * das und nennt den Weg dorthin ("Passwort vergessen"). Dieselbe Antwort wie bei der
+ * Adressänderung und der Kontolöschung; eine eigene Auslegung an dieser Stelle wäre eine
+ * Sonderregel für die Funktion, die am wenigsten Sonderregeln verträgt.
+ */
+function confirmPassword(req) {
+  if (!auth.checkPassword(req.user, req.body?.password)) throw auth.wrongPassword();
+}
+
+/** Das frisch gelesene Konto – nach einer Änderung steht in `req.user` noch der alte Stand. */
+const freshUser = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+
+/** Und der laufende Code – für alles, was eine eingeschaltete Zwei-Faktor-Anmeldung anrührt. */
+function confirmTotp(req) {
+  if (!totp.enabled(req.user)) {
+    throw bad('Für dieses Konto ist die Zwei-Faktor-Anmeldung nicht eingeschaltet.', {
+      en: 'Two-factor sign-in is not switched on for this account.',
+    });
+  }
+  if (!totp.verify(req.user, req.body?.code, req.ip)) {
+    throw bad('Dieser Code stimmt nicht.', { en: 'That code is wrong.', code: 'totp-wrong' });
+  }
+}
+
+router.get(
+  '/me/totp',
+  auth.requireUser,
+  wrap((req, res) => res.json(totp.statusOf(req.user)))
+);
+
+router.post(
+  '/me/totp/start',
+  auth.requireUser,
+  wrap((req, res) => {
+    if (totp.enabled(req.user)) {
+      throw bad('Die Zwei-Faktor-Anmeldung ist schon eingeschaltet.', {
+        en: 'Two-factor sign-in is already switched on.',
+      });
+    }
+    confirmPassword(req);
+    res.json(totp.begin(req.user, { issuer: config.brand }));
+  })
+);
+
+router.post(
+  '/me/totp/enable',
+  auth.requireUser,
+  wrap((req, res) => {
+    if (totp.enabled(req.user)) {
+      throw bad('Die Zwei-Faktor-Anmeldung ist schon eingeschaltet.', {
+        en: 'Two-factor sign-in is already switched on.',
+      });
+    }
+    const codes = totp.enable(req.user, req.body?.code, req.ip);
+    // Eine Nachricht darüber gehört zur Kategorie "Sicherheit": Wer sie bekommt, ohne es getan zu
+    // haben, weiß in derselben Minute, dass jemand anders in seinem Konto sitzt.
+    const english = req.user.language === 'en';
+    mail
+      .sendTo(req.user, 'security', {
+        title: english ? 'Two-factor sign-in is on' : 'Die Zwei-Faktor-Anmeldung ist an',
+        text: english
+          ? 'From now on, signing in to this account needs a code from your authenticator app.'
+          : 'Eine Anmeldung an diesem Konto braucht ab sofort einen Code aus deiner Authenticator-App.',
+        detail: '',
+      })
+      .catch(() => {});
+    res.json({ ok: true, recovery: codes, status: totp.statusOf(freshUser(req.user.id)) });
+  })
+);
+
+router.post(
+  '/me/totp/recovery',
+  auth.requireUser,
+  wrap((req, res) => {
+    confirmPassword(req);
+    confirmTotp(req);
+    res.json({ recovery: totp.newRecoveryCodes(req.user.id) });
+  })
+);
+
+router.delete(
+  '/me/totp',
+  auth.requireUser,
+  wrap((req, res) => {
+    confirmPassword(req);
+    confirmTotp(req);
+    totp.disable(req.user.id, req.ip);
+    const english = req.user.language === 'en';
+    mail
+      .sendTo(req.user, 'security', {
+        title: english ? 'Two-factor sign-in is off' : 'Die Zwei-Faktor-Anmeldung ist aus',
+        text: english
+          ? 'This account is protected by its password alone again. If that was not you, change the password now.'
+          : 'Dieses Konto ist wieder allein durch sein Passwort geschützt. Warst du das nicht, ändere sofort dein Passwort.',
+        detail: '',
+      })
+      .catch(() => {});
+    res.json({ ok: true, status: totp.statusOf(freshUser(req.user.id)) });
   })
 );
 

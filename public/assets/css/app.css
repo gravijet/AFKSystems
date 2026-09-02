@@ -1960,6 +1960,14 @@ body.site {
      letzten. Der halbe Abstand als Einzug gleicht das aus. */
   text-indent: 0.4em;
 }
+/* Elf Zeichen statt sechs: Ein Wiederherstellungscode braucht bei derselben Größe mehr Platz,
+   als ein Telefon im Hochformat hat. Kleiner und enger gesetzt passt er in dieselbe Karte. */
+.code-input-wide {
+  font-size: 1.25rem;
+  letter-spacing: 0.18em;
+  text-indent: 0.18em;
+  text-transform: uppercase;
+}
 .form-error {
   margin: 0;
   font-size: 0.8125rem;
@@ -2922,6 +2930,60 @@ dialog footer {
   gap: 0.6rem;
   padding: 1rem 1.25rem;
   box-shadow: inset 0 1px 0 var(--line-soft);
+}
+
+/* ---------------------------------------------------------------- Zwei-Faktor-Anmeldung */
+
+dialog.totp-dialog {
+  width: min(30rem, calc(100vw - 2rem));
+}
+
+/*
+ * Der QR-Code.
+ *
+ * **Immer auf Weiß, auch im Dunkelmodus.** Ein Leser sucht dunkle Module auf hellem Grund; die
+ * Farben zu tauschen, weil die Seite gerade dunkel ist, macht das Bild für die Hälfte der Apps
+ * unlesbar. Der weiße Rahmen darum ist die vorgeschriebene Ruhezone – ohne sie findet ein Leser
+ * die drei Sucher nicht.
+ */
+.totp-qr {
+  display: grid;
+  place-items: center;
+  padding: 0.75rem;
+  border-radius: var(--r-xl);
+  background: #ffffff;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.totp-qr svg {
+  width: min(15rem, 60vw);
+  height: auto;
+  display: block;
+}
+
+/* Zehn Codes, zweispaltig, monospace: So stehen sie untereinander wie auf einem Zettel, und
+   abgetippt wird von oben nach unten. */
+.recovery-codes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 1rem;
+  margin: 0;
+  padding: 0.9rem 1rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  list-style: none;
+  font-family: var(--mono);
+  font-size: 0.9375rem;
+  letter-spacing: 0.04em;
+  /* Zum Kopieren mit der Maus: Der Text darf ausgewählt werden, auch wo der Inhaltsschutz sonst
+     zugreift (siehe shield.js) – das hier ist der einzige Ort, an dem man ihn braucht. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+@media (max-width: 420px) {
+  .recovery-codes {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* ---------------------------------------------------------------- Massenaktionen

@@ -19,6 +19,16 @@
               <label for="password2">{{auth.register.password2}}</label>
               <input id="password2" name="password2" type="password" autocomplete="new-password" required minlength="12" maxlength="256" />
             </div>
+            <!-- Der zweite Faktor, wenn das Konto ihn hat. Er steht erst da, wenn der Server
+                 danach fragt: Vorher wüsste diese Seite nicht, für welches Konto die Marke gilt,
+                 und ein Feld, das bei allen anderen leer bleiben muss, ist eine Frage, die
+                 aussieht wie eine Pflicht. -->
+            <div class="field hide" id="totp-field">
+              <label for="code">{{auth.totp.label}}</label>
+              <input id="code" name="code" type="text" autocomplete="one-time-code"
+                     spellcheck="false" autocapitalize="characters" maxlength="11" class="code-input code-input-wide" />
+              <span class="hint">{{auth.totp.resetHint}}</span>
+            </div>
             <p id="error" class="form-error hide" role="alert"></p>
             <button class="btn btn-primary btn-block" type="submit">{{auth.reset.submit}}</button>
           </form>

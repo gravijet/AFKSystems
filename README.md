@@ -336,7 +336,7 @@ deshalb alles, was zu einem Konto gehört, in sechs Reitern statt in vier Käste
 | **Konto** | Bild, Benutzername, E-Mail-Adresse, Sprache, verknüpfte Konten (Discord, Google) |
 | **Persönliche Daten** | Name, Telefon, Zeitzone – und die Rechnungsadresse samt Firmierung und USt-IdNr. |
 | **Nachrichten** | welche E-Mails kommen, was der eigene Discord-Webhook meldet, und was schon verschickt wurde |
-| **Sicherheit** | Passwort, Anmeldecode, bekannte Browser, angemeldete Geräte, die letzten Anmeldeversuche |
+| **Sicherheit** | Passwort, Zwei-Faktor-Anmeldung, Anmeldecode, bekannte Browser, angemeldete Geräte, die letzten Anmeldeversuche |
 | **Darstellung** | Farbschema, Abstände, Bewegung, Startseite – alles nur auf **diesem** Gerät |
 | **Deine Daten** | alles herunterladen oder das Konto löschen |
 
@@ -348,6 +348,23 @@ Drei Dinge daran sind keine Formularfelder, sondern Abläufe:
 * **Die E-Mail-Adresse** braucht das Passwort und eine **Bestätigung an der neuen Adresse**. Bis
   dahin bleibt die alte in Kraft; ein Tippfehler sperrt also niemanden aus. Die alte Adresse bekommt
   dabei eine Nachricht – sie ist die einzige Warnung, wenn jemand anderes gerade ein Konto übernimmt.
+* **Die Zwei-Faktor-Anmeldung** (Einstellungen → Sicherheit) ist der zweite Faktor, der der
+  Anmeldecode ausdrücklich nicht ist: sechs Ziffern aus einer Authenticator-App, gerechnet nach
+  RFC 6238 aus einem Geheimnis, das nur auf dem Gerät des Kunden und – verschlüsselt – in der
+  Datenbank liegt. Eingerichtet wird sie mit dem Passwort, einem QR-Code und einer Probe: Erst
+  wenn die App einen richtigen Code liefert, geht sie scharf. Wer sie einschaltet, bekommt einmal
+  zehn **Wiederherstellungscodes** – der Weg zurück, wenn das Telefon weg ist. Sie gilt an allen
+  drei Türen, und die dritte ist die wichtige:
+
+  | Wo | Was |
+  | --- | --- |
+  | Anmeldung mit Passwort | jedes Mal, nicht nur bei neuen Browsern |
+  | Anmeldung über Discord oder Google | ebenso – sonst wäre ein übernommenes Discord-Konto der Weg vorbei |
+  | Passwort zurücksetzen | ebenso – sonst bliebe das Postfach ein Generalschlüssel |
+
+  Ist sie an, fragt der Anmeldecode nicht mehr: Der stärkere Schritt enthält den schwächeren, und
+  zwei Formulare hintereinander bringen keine Sicherheit dazu. Das Panel schreibt das auch so
+  hin, statt einen Schalter stehen zu lassen, der nichts mehr tut.
 * **Der Anmeldecode** (Einstellungen → Sicherheit) macht aus einer Anmeldung zwei Fragen. Stimmt das
   Passwort und ist der Browser einer, den dieses Konto noch nie benutzt hat, kommt keine Sitzung,
   sondern eine Wartemarke: sechs Ziffern per E-Mail, fünfzehn Minuten gültig, fünf Versuche.
@@ -731,6 +748,8 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | --- | --- |
 | Anmeldung | `POST /auth/register`, `/auth/login`, `/auth/logout`, `/auth/verify`, `/auth/forgot`, `/auth/reset` |
 | Anmeldung: Code | `POST /auth/login/code` (Marke + sechs Ziffern), `POST /auth/login/code/resend`. `/auth/login` antwortet mit `{challenge, email_hint}` statt einer Sitzung, wenn der Browser neu ist |
+| Anmeldung: Zwei-Faktor | `POST /auth/login/totp` (Marke + sechs Ziffern **oder** ein Wiederherstellungscode). `/auth/login` antwortet mit `{challenge, kind:'totp'}`; nach Discord/Google steht die Marke stattdessen im Cookie `afk_login` |
+| Eigenes: Zwei-Faktor | `GET /me/totp` (Zustand), `POST /me/totp/start` (Passwort → Geheimnis, otpauth-Adresse, QR als SVG), `POST /me/totp/enable` (Code → zehn Wiederherstellungscodes), `POST /me/totp/recovery` (neue Codes), `DELETE /me/totp` (Passwort **und** Code) |
 | Discord/Google | `GET /auth/:provider/start` (`mode=link\|login\|verify`), `/auth/:provider/callback`, `DELETE /auth/:provider` |
 | Eigenes | `GET/PATCH /me` (samt Name, Anschrift, Firmierung, USt-IdNr., Zeitzone), `POST /me/password`, `GET /me/mails`, `/me/discord-test` |
 | Eigenes: Name und Adresse | `POST /me/username`, `POST/DELETE /me/email`, `POST /auth/email/confirm` (ohne Anmeldung – der Link geht an die neue Adresse) |

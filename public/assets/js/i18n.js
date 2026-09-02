@@ -384,6 +384,27 @@ export const S = {
   'auth.code.resent': { en: 'Sent again', de: 'Noch einmal geschickt' },
   'auth.code.back': { en: 'Back', de: 'Zurück' },
 
+  // Der zweite Faktor aus der Authenticator-App. Anders als beim Anmeldecode steht hier nirgends
+  // "wir haben dir geschrieben" – es geht nichts hinaus, und genau das ist der Unterschied.
+  'auth.totp.title': { en: 'Two-factor sign-in', de: 'Zwei-Faktor-Anmeldung' },
+  'auth.totp.lead': {
+    en: 'Enter the six-digit code from your authenticator app.',
+    de: 'Gib den sechsstelligen Code aus deiner Authenticator-App ein.',
+  },
+  'auth.totp.label': { en: 'Code from the app', de: 'Code aus der App' },
+  'auth.totp.submit': { en: 'Sign in', de: 'Anmelden' },
+  'auth.totp.lost': { en: 'No access to the app?', de: 'Kein Zugriff auf die App?' },
+  'auth.totp.useApp': { en: 'Use the app after all', de: 'Doch die App benutzen' },
+  'auth.totp.recoveryLabel': { en: 'Recovery code', de: 'Wiederherstellungscode' },
+  'auth.totp.recoveryLead': {
+    en: 'Enter one of the recovery codes you saved when you set this up. Each one works once.',
+    de: 'Gib einen der Wiederherstellungscodes ein, die du beim Einrichten gespeichert hast. Jeder gilt einmal.',
+  },
+  'auth.totp.resetHint': {
+    en: 'Six digits from the app, or one of your recovery codes.',
+    de: 'Sechs Ziffern aus der App – oder einer deiner Wiederherstellungscodes.',
+  },
+
   'auth.register.title': { en: 'Create account', de: 'Konto anlegen' },
   'auth.register.lead': {
     en: 'One server slot is free with an active AFKSystems Discord membership. No payment details needed.',
@@ -1956,6 +1977,75 @@ export const S = {
     en: 'This panel has no outgoing mail set up, so no code can be sent. The switch takes effect as soon as it is.',
     de: 'Auf diesem Panel ist kein Postausgang eingerichtet, es kann also kein Code verschickt werden. Der Schalter wirkt, sobald es einen gibt.',
   },
+  // Zwei-Faktor-Anmeldung. Die Texte grenzen sie ausdrücklich vom Anmeldecode darüber ab: Beide
+  // fragen sechs Ziffern ab, und wer den Unterschied nicht kennt, hält das eine für das andere.
+  'adm.totpOn': { en: 'two-factor', de: 'Zwei-Faktor' },
+  'set.totp': { en: 'Two-factor sign-in', de: 'Zwei-Faktor-Anmeldung' },
+  'set.totpSub': {
+    en: 'A code from an app on your phone, on top of the password.',
+    de: 'Ein Code aus einer App auf deinem Telefon, zusätzlich zum Passwort.',
+  },
+  'set.totpWhat': {
+    en: 'Every sign-in then needs a six-digit code from your authenticator app – and so does resetting the password. Unlike the sign-in code above, it does not travel through your mailbox: whoever gets into your email still does not get into this account.',
+    de: 'Jede Anmeldung braucht dann einen sechsstelligen Code aus deiner Authenticator-App – und das Zurücksetzen des Passworts ebenso. Anders als der Anmeldecode darüber geht er nicht durch dein Postfach: Wer in deine E-Mails kommt, kommt damit noch lange nicht in dieses Konto.',
+  },
+  'set.totpStart': { en: 'Set up', de: 'Einrichten' },
+  'set.totpPasswordWhy': {
+    en: 'Your password once more – switching this on is not something a borrowed session should be able to do.',
+    de: 'Noch einmal dein Passwort – das Einschalten soll nichts sein, was eine geliehene Sitzung nebenbei erledigt.',
+  },
+  'set.totpScan': {
+    en: 'Scan this with your authenticator app – Google Authenticator, Aegis, 1Password, whichever you use.',
+    de: 'Scanne das mit deiner Authenticator-App – Google Authenticator, Aegis, 1Password, was du eben benutzt.',
+  },
+  'set.totpSecret': { en: 'Or enter this by hand', de: 'Oder von Hand eintragen' },
+  'set.totpSecretHint': {
+    en: 'For when the app runs on the same device as this panel and there is no camera to point.',
+    de: 'Für den Fall, dass die App auf demselben Gerät läuft wie dieses Panel und es nichts abzufotografieren gibt.',
+  },
+  'set.totpFirstCode': { en: 'The code the app shows now', de: 'Der Code, den die App jetzt zeigt' },
+  'set.totpTurnOn': { en: 'Switch on', de: 'Einschalten' },
+  'set.totpOnNow': { en: 'Two-factor sign-in is on.', de: 'Die Zwei-Faktor-Anmeldung ist an.' },
+  'set.totpOnSince': { en: 'Switched on since {when}.', de: 'Eingeschaltet seit {when}.' },
+  'set.totpRecoveryTitle': { en: 'Your recovery codes', de: 'Deine Wiederherstellungscodes' },
+  'set.totpRecoveryWhat': {
+    en: 'These are shown once. Keep them somewhere that is not your phone – they are the way back into this account if the phone is gone. Each one works exactly once.',
+    de: 'Diese Liste gibt es genau einmal. Bewahre sie irgendwo auf, das nicht dein Telefon ist – sie ist der Weg zurück ins Konto, wenn das Telefon weg ist. Jeder Code gilt genau einmal.',
+  },
+  'set.totpRecoverySave': { en: 'Download', de: 'Herunterladen' },
+  'set.totpRecoveryFile': {
+    en: 'AFKSystems recovery codes. Each one works once.',
+    de: 'AFKSystems-Wiederherstellungscodes. Jeder gilt einmal.',
+  },
+  'set.totpRecoveryAck': {
+    en: 'I have saved these codes somewhere safe.',
+    de: 'Ich habe diese Codes sicher gespeichert.',
+  },
+  'set.totpRecoveryLeft': {
+    en: '{n} of {total} recovery codes are still unused.',
+    de: '{n} von {total} Wiederherstellungscodes sind noch unbenutzt.',
+  },
+  'set.totpRecoveryUsed': {
+    en: 'You signed in with a recovery code. {n} are left.',
+    de: 'Du hast dich mit einem Wiederherstellungscode angemeldet. Es sind noch {n} übrig.',
+  },
+  'set.totpNewCodes': { en: 'New recovery codes', de: 'Neue Wiederherstellungscodes' },
+  'set.totpNewCodesWhat': {
+    en: 'The old ones stop working right away, including the ones you never used.',
+    de: 'Die alten gelten ab sofort nicht mehr – auch die, die du nie benutzt hast.',
+  },
+  'set.totpOff': { en: 'Switch off', de: 'Abschalten' },
+  'set.totpOffWhat': {
+    en: 'Afterwards the password alone gets into this account again. Your {n} remaining recovery codes are deleted with it.',
+    de: 'Danach kommt das Passwort allein wieder in dieses Konto. Deine {n} übrigen Wiederherstellungscodes werden mit gelöscht.',
+  },
+  'set.totpOffNow': { en: 'Two-factor sign-in is off.', de: 'Die Zwei-Faktor-Anmeldung ist aus.' },
+
+  'set.loginCodeSuperseded': {
+    en: 'Two-factor sign-in is on, so this code is not asked for any more – the app code already covers what it does. The setting stays here for the day you switch two-factor off again.',
+    de: 'Die Zwei-Faktor-Anmeldung ist an, deshalb wird dieser Code nicht mehr abgefragt – der Code aus der App leistet dasselbe und mehr. Die Einstellung bleibt für den Tag stehen, an dem die Zwei-Faktor-Anmeldung wieder ausgeht.',
+  },
+
   'set.devices': { en: 'Known browsers', de: 'Bekannte Browser' },
   'set.devicesSub': {
     en: 'These get in without a code. Signing out does not remove one – forgetting it does.',

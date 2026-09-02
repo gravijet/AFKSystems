@@ -34,6 +34,7 @@ import { router as nodeRouter, tryNodeToken } from './routes/node.js';
 import * as agents from './agents.js';
 import * as security from './security.js';
 import * as logincode from './logincode.js';
+import * as totp from './totp.js';
 import * as backup from './backup.js';
 import * as account from './account.js';
 import * as schedules from './schedules.js';
@@ -1185,6 +1186,8 @@ jobs.every(
     security.cleanup();
     // Abgelaufene Anmeldecodes und Browser, die seit über einem Jahr nicht mehr da waren.
     logincode.cleanup();
+    // Und angefangene Einrichtungen der Zwei-Faktor-Anmeldung, die nie bestätigt wurden.
+    totp.cleanup();
     // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
     // fällt an der jüngsten Datei – ein Neustart um drei Uhr nachts vergisst so keinen Tag.
     const made = backup.dailyTick();

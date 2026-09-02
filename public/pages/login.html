@@ -35,6 +35,37 @@
           </p>
         </div>
 
+        <!-- Der zweite Faktor aus der Authenticator-App. Eigene Karte wie der Anmeldecode und aus
+             demselben Grund: Es ist derselbe Vorgang, nur eine Frage weiter. Zwei Felder, von
+             denen immer genau eines zu sehen ist – sechs Ziffern aus der App, oder, wer das
+             Gerät nicht hat, einer der zehn Wiederherstellungscodes vom Einrichten. -->
+        <div class="auth-card hide" id="totp-card">
+          <h1>{{auth.totp.title}}</h1>
+          <p class="auth-lead" id="totp-lead">{{auth.totp.lead}}</p>
+
+          <form id="totp-form" class="stack" novalidate>
+            <div class="field" id="totp-app-field">
+              <label for="totp-code">{{auth.totp.label}}</label>
+              <input id="totp-code" name="totp-code" type="text" inputmode="numeric" pattern="[0-9]*"
+                     autocomplete="one-time-code" maxlength="6" class="code-input" />
+            </div>
+            <div class="field hide" id="totp-recovery-field">
+              <label for="totp-recovery">{{auth.totp.recoveryLabel}}</label>
+              <input id="totp-recovery" name="totp-recovery" type="text" autocomplete="off"
+                     spellcheck="false" autocapitalize="characters" maxlength="11"
+                     class="code-input code-input-wide" placeholder="XXXXX-XXXXX" />
+            </div>
+            <p id="totp-error" class="form-error hide" role="alert"></p>
+            <button class="btn btn-primary btn-block" type="submit">{{auth.totp.submit}}</button>
+          </form>
+
+          <p class="auth-alt">
+            <button class="linkish" type="button" id="totp-switch">{{auth.totp.lost}}</button>
+            <span aria-hidden="true">·</span>
+            <button class="linkish" type="button" id="totp-back">{{auth.code.back}}</button>
+          </p>
+        </div>
+
         <div class="auth-card" id="login-card">
           <h1>{{auth.login.title}}</h1>
           <p class="auth-lead">{{auth.login.lead}}</p>

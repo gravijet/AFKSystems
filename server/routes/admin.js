@@ -589,6 +589,11 @@ const userRow = (row) => ({
   credits: row.credits,
   blocked: Boolean(row.blocked),
   email_verified: Boolean(row.email_verified),
+  // Ob die Zwei-Faktor-Anmeldung an ist. Der Support braucht die Auskunft für genau eine Frage –
+  // „ich komme nicht mehr hinein“ –, und die Antwort darauf ist eine andere, je nachdem. Was
+  // dieses Konto **hat**, steht hier nie: Das Geheimnis ist ein Schlüssel, und ein Administrator,
+  // der ihn lesen könnte, wäre der eigentliche zweite Faktor.
+  totp: Boolean(row.totp_enabled_at && row.totp_secret),
   language: row.language,
   discord: row.discord_id ? { id: row.discord_id, name: row.discord_name } : null,
   discord_moderator: Boolean(row.discord_moderator),

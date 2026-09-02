@@ -250,8 +250,9 @@ const newCode = () => String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
  */
 export async function start(user, req) {
   // Ältere Marken desselben Kontos verfallen. Wer zweimal hintereinander anmeldet, hat sonst zwei
-  // gültige Codes im Postfach und weiß nicht, welcher der richtige ist.
-  db.prepare('DELETE FROM login_challenges WHERE user_id = ?').run(user.id);
+  // gültige Codes im Postfach und weiß nicht, welcher der richtige ist. Nur die eigene Sorte:
+  // In derselben Tabelle liegt auch die Marke der Zwei-Faktor-Anmeldung.
+  db.prepare("DELETE FROM login_challenges WHERE user_id = ? AND kind = 'mail'").run(user.id);
 
   const code = newCode();
   const value = token(24);
@@ -319,17 +320,93 @@ export function maskEmail(address) {
   return `${head}${'•'.repeat(Math.max(2, Math.min(6, name.length - 1)))}@${host}`;
 }
 
-/** Die offene Marke, sofern sie noch gilt. Abgelaufene werden gleich mit weggeräumt. */
-function open(rawToken) {
+/**
+ * Die offene Marke, sofern sie noch gilt. Abgelaufene werden gleich mit weggeräumt.
+ *
+ * `kind` gehört zwingend dazu. In derselben Tabelle liegen zwei Sorten Wartemarke – der Code aus
+ * der E-Mail und der zweite Schritt der Zwei-Faktor-Anmeldung (`totp.js`) –, und ohne diese
+ * Bedingung ließe sich eine Marke der einen Sorte am Endpunkt der anderen einlösen. Bei der
+ * Zwei-Faktor-Marke steht in `code_hash` nichts; sie an `/auth/login/code` vorbeizureichen hieße,
+ * eine Anmeldung gegen einen leeren Hash zu prüfen.
+ */
+function open(rawToken, kind = 'mail') {
   const keys = candidates('login-challenge', rawToken);
   if (!keys.length) return null;
-  const row = db.prepare('SELECT * FROM login_challenges WHERE token IN (?, ?)').get(...keys);
+  const row = db
+    .prepare('SELECT * FROM login_challenges WHERE token IN (?, ?) AND kind = ?')
+    .get(...keys, kind);
   if (!row) return null;
   if (row.expires_at <= Date.now()) {
     db.prepare('DELETE FROM login_challenges WHERE token = ?').run(row.token);
     return null;
   }
   return row;
+}
+
+// ---------------------------------------------------------------- Die Marke für den zweiten Faktor
+//
+// Die Zwei-Faktor-Anmeldung braucht dieselbe Wartemarke wie der Anmeldecode: eine Kennung, die
+// „das Passwort stimmte“ bedeutet und sonst nichts – keine Sitzung, kein Cookie, kein Konto. Was
+// sie nicht braucht, ist ein gespeicherter Code: Den rechnet die App aus, und geprüft wird gegen
+// das Geheimnis des Kontos.
+//
+// Deshalb liegt sie in derselben Tabelle und nicht in einer zweiten daneben. Ablauf, Aufräumen
+// und die Frage „zu welchem Konto gehört diese Marke“ gibt es damit genau einmal.
+
+/** Eine Wartemarke ohne Code – für den zweiten Schritt, der nichts zu verschicken hat. */
+export function startPending(user, req, kind) {
+  db.prepare('DELETE FROM login_challenges WHERE user_id = ? AND kind = ?').run(user.id, kind);
+  const value = token(24);
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO login_challenges
+       (token, user_id, code_hash, sent_at, expires_at, ip, agent, created_at, kind)
+     VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`
+  ).run(
+    capabilityDigest('login-challenge', value),
+    user.id,
+    now,
+    now + CODE_MS,
+    req.ip || null,
+    String(req.headers?.['user-agent'] || '').slice(0, 200),
+    now,
+    kind
+  );
+  return { token: value, expires_at: now + CODE_MS };
+}
+
+/**
+ * Das Konto hinter einer offenen Marke – oder `null`.
+ *
+ * Die Marke wird dabei **nicht** verbraucht: Wer sich beim Code vertippt, soll es noch einmal
+ * versuchen dürfen. Verbraucht wird sie erst durch `finishPending`.
+ */
+export function pendingUser(rawToken, kind) {
+  const row = open(rawToken, kind);
+  if (!row) return null;
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(row.user_id);
+  return user || null;
+}
+
+/** Die Marke einlösen, damit sie kein zweites Mal gilt. */
+export function finishPending(rawToken, kind) {
+  const keys = candidates('login-challenge', rawToken);
+  if (keys.length) {
+    db.prepare('DELETE FROM login_challenges WHERE token IN (?, ?) AND kind = ?').run(...keys, kind);
+  }
+}
+
+/** Wie oft an dieser Marke schon danebengetippt wurde – und einer mehr. */
+export function countTry(rawToken, kind) {
+  const row = open(rawToken, kind);
+  if (!row) return null;
+  const tries = row.tries + 1;
+  if (tries > MAX_TRIES) {
+    db.prepare('DELETE FROM login_challenges WHERE token = ?').run(row.token);
+    return null;
+  }
+  db.prepare('UPDATE login_challenges SET tries = ? WHERE token = ?').run(tries, row.token);
+  return MAX_TRIES - tries;
 }
 
 /**
@@ -340,12 +417,15 @@ function open(rawToken) {
  * er merkt, dass sein Passwort in fremden Händen ist. Ohne diese Auskunft stünden die Versuche
  * dort ohne Konto, und damit in niemandes Liste.
  */
-export function identifierFor(rawToken) {
+export function identifierFor(rawToken, kind = 'mail') {
   const keys = candidates('login-challenge', rawToken);
   if (!keys.length) return '';
   const row = db
-    .prepare('SELECT u.email FROM login_challenges c JOIN users u ON u.id = c.user_id WHERE c.token IN (?, ?)')
-    .get(...keys);
+    .prepare(
+      `SELECT u.email FROM login_challenges c JOIN users u ON u.id = c.user_id
+        WHERE c.token IN (?, ?) AND c.kind = ?`
+    )
+    .get(...keys, kind);
   return row?.email || '';
 }
 
