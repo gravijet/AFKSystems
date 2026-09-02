@@ -381,3 +381,44 @@ export function deviceOf(agent) {
     ].find(([probe]) => probe.test(value))?.[1] || '';
   return [browser, system].filter(Boolean).join(' · ');
 }
+
+/**
+ * Ein Schiebefenster, das zählt, wie oft etwas gerade passiert.
+ *
+ * Eine Handvoll Stellen im Panel braucht dieselbe Sache – wie oft eine Adresse anklopft, wie oft
+ * ein Passwort probiert wird –, und jede hatte ihre eigene `Map` mit ihrer eigenen Aufräumregel.
+ * Das hier ist dieselbe Logik an einer Stelle: Zeitpunkte je Schlüssel, alles außerhalb des
+ * Fensters fällt beim Nachsehen weg, und wenn die Tabelle groß wird, wird sie einmal durchgekehrt.
+ * Ohne das Kehren wäre jeder Zähler ein Speicherleck mit Zugriff von außen.
+ */
+export function slidingWindow({ windowMs, max, cap = 20_000 }) {
+  const hits = new Map();
+  return (key) => {
+    const now = Date.now();
+    const id = String(key ?? '');
+    let times = hits.get(id);
+    if (!times) {
+      times = [];
+      hits.set(id, times);
+    }
+    // Die Zeitpunkte stehen in der Reihenfolge darin, in der sie kamen – die abgelaufenen sind
+    // also immer ein Stück am Anfang. Sie dort abzuschneiden ist billiger, als die Liste zu
+    // filtern: Ein `filter` legt bei **jeder** Anfrage eine neue Liste an, und die allgemeine
+    // Bremse lässt bis zu neunhundert Einträge je Adresse zu. Wer nahe an die Grenze kommt, bezahlt
+    // dann neunhundert Vergleiche und eine neue Liste für die Auskunft, dass er noch darf – und das
+    // ausgerechnet unter Last.
+    let expired = 0;
+    while (expired < times.length && now - times[expired] >= windowMs) expired += 1;
+    if (expired) times.splice(0, expired);
+
+    if (times.length >= max) return false;
+    times.push(now);
+
+    if (hits.size > cap) {
+      for (const [entry, list] of hits) {
+        if (!list.length || now - list[list.length - 1] >= windowMs) hits.delete(entry);
+      }
+    }
+    return true;
+  };
+}

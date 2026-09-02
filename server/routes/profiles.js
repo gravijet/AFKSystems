@@ -88,8 +88,10 @@ function membersOf(profile) {
 
 function profileView(profile, lang = 'en') {
   const plan = billing.planOf(profile);
+  // Einmal holen, dreimal benutzen: Fähigkeiten, Anzeige und Preis fragen dieselbe Liste.
+  const booked = billing.addonsOf(profile.id);
   // Was der Platz wirklich kann, steht nicht im Tarif allein: dazugekaufte Zusätze zählen mit.
-  const features = billing.featuresOf(profile);
+  const features = billing.featuresOf(profile, booked);
   const members = membersOf(profile);
   const build = binaries.buildFor(profile, features);
   const caps = build ? billing.gateCaps(binaries.caps(build), features) : {};
@@ -137,14 +139,14 @@ function profileView(profile, lang = 'en') {
       premium: Boolean(features.premium),
       max_macros: features.max_macros,
     },
-    addons: billing.addonsOf(profile.id).map((addon) => ({
+    addons: booked.map((addon) => ({
       id: addon.id,
       key: addon.key,
       name: lang === 'de' ? addon.name_de : addon.name_en,
       qty: addon.qty,
       price_credits: addon.price_credits * addon.qty,
     })),
-    monthly_credits: billing.monthlyPrice(profile),
+    monthly_credits: billing.monthlyPrice(profile, booked),
     paid_until: profile.paid_until,
     renew: Boolean(profile.renew),
     suspended: Boolean(profile.suspended),

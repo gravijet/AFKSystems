@@ -53,11 +53,24 @@ export function t(key, vars = null) {
 }
 
 /**
+ * Wie gründlich Brotli hier packen darf.
+ *
+ * Bei den Dateien auf der Platte ist die Antwort "so gründlich wie möglich" – die werden beim
+ * Ausrollen gepackt, und dort ist Zeit (siehe assets.js). Hier nicht: Dieses Modul wird beim
+ * Hochfahren ausgewertet, **bevor** der Dienst seinen Port aufmacht. Jede Millisekunde ist
+ * Ausfallzeit bei einem Neustart.
+ *
+ * Gemessen an diesem Text: Stufe 11 braucht 133 ms und liefert 22.399 Bytes, Stufe 10 braucht
+ * 45 ms und liefert 22.804. Vierhundert Bytes gegen hundert Millisekunden weniger Ausfall bei
+ * jedem Neustart – und zwar für beide Sprachen, also gegen zweihundert.
+ */
+const BROTLI_QUALITY = 10;
+
+/**
  * Die fertigen Antworten, je Sprache: der Text, sein ETag und die gepackten Fassungen.
  *
  * Gepackt wird beim Hochfahren und nicht je Anfrage – aus demselben Grund wie bei den Dateien auf
- * der Platte (siehe assets.js). Brotli auf höchster Stufe kostet hier einmalig ein paar
- * Millisekunden und spart sie danach bei jedem Besucher.
+ * der Platte (siehe assets.js).
  */
 const bundles = new Map(
   LANGS.map((lang) => {
@@ -68,7 +81,7 @@ const bundles = new Map(
         identity: body,
         br: zlib.brotliCompressSync(body, {
           params: {
-            [zlib.constants.BROTLI_PARAM_QUALITY]: zlib.constants.BROTLI_MAX_QUALITY,
+            [zlib.constants.BROTLI_PARAM_QUALITY]: BROTLI_QUALITY,
             [zlib.constants.BROTLI_PARAM_SIZE_HINT]: body.length,
           },
         }),
@@ -90,10 +103,15 @@ export const sizeOf = (lang) => bundles.get(LANGS.includes(lang) ? lang : DEFAUL
  *
  * `cacheControl` und `current` kommen von außen, damit hier dieselbe Regel gilt wie für jede
  * andere Asset-Adresse: mit passendem Fingerabdruck ein Jahr, ohne eine Minute.
+ *
+ * Die Adresse ohne Fingerabdruck gilt ebenfalls – wie bei den Dateien daneben. Sie kommt vor,
+ * wenn jemand eine Seite offen hat, die vor dem letzten Deployment geladen wurde: Deren ui.js
+ * sucht die Texte relativ zu ihrer eigenen Adresse. Ohne diese Zeile bekäme sie eine 404 – und
+ * ohne Texte ist das Panel für sie leer.
  */
 export function handler({ cacheControl, current }) {
   return (req, res, next) => {
-    const match = /^\/assets\/v\/([A-Za-z0-9_-]{1,64})\/js\/i18n\.([a-z]{2})\.js$/.exec(req.path);
+    const match = /^\/assets(?:\/v\/([A-Za-z0-9_-]{1,64}))?\/js\/i18n\.([a-z]{2})\.js$/.exec(req.path);
     if (!match) return next();
     const [, version, lang] = match;
     const bundle = bundles.get(lang);

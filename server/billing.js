@@ -144,11 +144,17 @@ export function addonsOf(profileId) {
 /**
  * Tarif plus gebuchte Zusätze. Das ist das, woran sich alles andere hält – der rohe Tarif sagt
  * nur, womit jemand angefangen hat.
+ *
+ * `booked` darf mitgegeben werden, wenn der Aufrufer die Zusätze ohnehin schon geholt hat. Das ist
+ * kein Umweg, sondern der Grund, warum diese Antwort schnell ist: Die Ansicht eines Serverplatzes
+ * braucht dieselbe Liste dreimal – für die Fähigkeiten, für die Anzeige und für den Preis –, und
+ * ohne diesen Weg wären das drei Abfragen je Platz statt einer. Im Profil war genau das der größte
+ * Posten von /api/profiles.
  */
-export function featuresOf(profile) {
+export function featuresOf(profile, booked = addonsOf(profile.id)) {
   const plan = planOf(profile);
   const merged = { ...plan };
-  for (const entry of addonsOf(profile.id)) {
+  for (const entry of booked) {
     if (entry.kind === 'slot') merged.max_accounts += entry.amount * entry.qty;
     else if (entry.flag) merged[entry.flag] = 1;
   }
@@ -189,12 +195,12 @@ export function gateCaps(clientCaps = {}, features = {}) {
 }
 
 /** Was ein Serverplatz je 30 Tage kostet: Tarif plus Zusätze. */
-export function monthlyPrice(profile) {
+export function monthlyPrice(profile, booked = null) {
   const plan = planOf(profile);
   if (plan.free_slot) return 0;
   return (
     plan.price_credits +
-    addonsOf(profile.id).reduce((sum, entry) => sum + entry.price_credits * entry.qty, 0)
+    (booked ?? addonsOf(profile.id)).reduce((sum, entry) => sum + entry.price_credits * entry.qty, 0)
   );
 }
 
