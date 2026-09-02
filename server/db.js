@@ -1563,6 +1563,117 @@ if (seededFreePlan) {
   db.prepare('UPDATE profiles SET plan_id = ? WHERE plan_id IS NULL').run(seededFreePlan.id);
 }
 
+// ---------------------------------------------------------------- Vorbereitete Abfragen
+//
+// **Jedes `db.prepare(...)` übersetzt SQL neu.** Im Panel steht der Aufruf fast überall dort, wo
+// die Abfrage gebraucht wird – lesbar, aber teuer: Ein Profil im laufenden Betrieb zeigte das
+// Übersetzen als den größten einzelnen Posten der Serverzeit, größer als Kompression, Vorlagen und
+// Sitzungsprüfung zusammen. Der Grund ist die Menge, nicht die einzelne Abfrage: Eine Seite im
+// Panel löst leicht hundert davon aus, und jede kostet dasselbe wieder.
+//
+// Derselbe Text ergibt immer dieselbe übersetzte Abfrage, also wird sie behalten. Das ist auch die
+// Bedingung, unter der es sicher ist: Ein Statement von better-sqlite3 hält bei `.get()`, `.all()`
+// und `.run()` keinen Zustand zwischen den Aufrufen. Zustand hätte nur `.iterate()` – ein halb
+// gelesener Cursor ließe sich nicht gleichzeitig ein zweites Mal benutzen –, und `.iterate()` kommt
+// in diesem Dienst nicht vor. Dasselbe gilt für `.pluck()`, `.raw()` und `.expand()`: Sie schalten
+// ein Statement dauerhaft um, und ein geteiltes Statement träfe damit auch den nächsten Aufrufer.
+// Auch die kommen hier nicht vor. Wer eines davon einführt, baut sein Statement mit `prepareOnce`
+// (unten exportiert) und bekommt damit wie früher ein eigenes.
+//
+// Die Obergrenze ist gegen den einen Fall da, in dem der Text *nicht* endlich ist: Ein paar
+// Schreibpfade bauen ihr `UPDATE … SET` aus den Feldern zusammen, die sich wirklich geändert haben.
+// Das sind Teilmengen, also im schlechtesten Fall viele Varianten. Ohne Deckel wäre der Zwischen-
+// speicher ein Leck; mit Deckel fällt die älteste Variante heraus und wird beim nächsten Mal neu
+// übersetzt – genau das Verhalten von vorher, aber eben nur für diese Handvoll Abfragen.
+const STATEMENT_CACHE_MAX = 500;
+const statements = new Map();
+
+/** Das ursprüngliche `prepare` – für alles, was ein Statement für sich allein braucht. */
+export const prepareOnce = db.prepare.bind(db);
+
+db.prepare = function cachedPrepare(sql) {
+  const hit = statements.get(sql);
+  if (hit !== undefined) return hit;
+  const statement = prepareOnce(sql);
+  if (statements.size >= STATEMENT_CACHE_MAX) {
+    // Eine Map behält ihre Einfügereihenfolge: der erste Eintrag ist der älteste.
+    statements.delete(statements.keys().next().value);
+  }
+  statements.set(sql, statement);
+  return statement;
+};
+
+// ---------------------------------------------------------------- Was sich selten ändert
+//
+// Ein paar Tabellen sind winzig, ändern sich fast nie und werden trotzdem dauernd gelesen: die
+// Tarife, die Zusätze, die Einstellungen. Ein einziger Aufruf von `/api/profiles` fragte den Tarif
+// eines Serverplatzes ein halbes Dutzend Mal ab, einmal je Funktion, die ihn braucht.
+//
+// **Woran erkennt der Zwischenspeicher, dass er alt ist?** Nicht an einer Uhr und nicht an einer
+// Liste von Stellen, die sich melden müssen – so etwas vergisst man beim nächsten Endpunkt, und
+// dann steht im Panel ein Preis, den es nicht mehr gibt. Sondern an SQLite selbst: `total_changes()`
+// zählt jede Zeile, die diese Verbindung jemals eingefügt, geändert oder gelöscht hat. Steht der
+// Zähler noch, wo er stand, hat **niemand** geschrieben, und der gemerkte Wert ist mit Sicherheit
+// derselbe, den eine neue Abfrage ergäbe.
+//
+// Das ist bewusst grob: Jede Schreiboperation irgendwo im Dienst wirft alles weg. Das kostet
+// nichts – ein Neuaufbau ist eine Abfrage über drei Zeilen –, und es kann per Konstruktion nicht
+// veralten. Der Zähler wird zuerst gelesen und danach gebaut; wer dazwischen schreibt, bekommt
+// beim nächsten Mal einen Neuaufbau, nie eine alte Antwort.
+//
+// **`total_changes()` allein reicht nicht.** Es zählt nur, was *diese* Verbindung geschrieben hat.
+// Die Datenbank ist aber eine Datei, und es gibt einen zweiten Weg an sie heran:
+// `npm run admin:credits` startet einen eigenen Prozess mit eigener Verbindung und bucht Guthaben,
+// und der Testlauf schreibt genauso von außen in denselben Bestand. Für diese Schreibvorgänge
+// bewegt sich der Zähler hier nicht um einen Strich – ohne die zweite Frage bliebe der Dienst auf
+// einer Fassung sitzen, die es nicht mehr gibt, bis ihn jemand neu startet.
+//
+// Die zweite Frage ist `PRAGMA data_version`: eine Zahl, die sich genau dann ändert, wenn eine
+// **andere** Verbindung etwas festgeschrieben hat. Beide zusammen decken jeden Schreibvorgang ab.
+// Sie kostet mehr als der Zähler (rund drei Mikrosekunden gegenüber einer halben), und weil
+// `getSetting` dutzendfach je Anfrage aufgerufen wird, wird sie höchstens einmal je Millisekunde
+// gestellt. Der eigene Zähler dagegen bei jedem Zugriff: Ein `setSetting` und das Lesen desselben
+// Wertes stehen im selben Endpunkt direkt hintereinander, und dazwischen darf nichts hängen.
+//
+// Die eine Ausnahme, die beide nicht sehen, sind Änderungen am Schema selbst
+// (`CREATE`/`ALTER`/`DROP`). Die stehen ausschließlich in den Migrationen weiter oben und laufen
+// beim Hochfahren, bevor irgendetwas hiervon zum ersten Mal gefragt wird.
+const readChanges = prepareOnce('SELECT total_changes() AS n');
+const readForeign = prepareOnce('PRAGMA data_version');
+
+let foreignAt = 0;
+let foreignVersion = -1;
+function outsideVersion() {
+  const now = Date.now();
+  if (now !== foreignAt) {
+    foreignAt = now;
+    foreignVersion = readForeign.get().data_version;
+  }
+  return foreignVersion;
+}
+
+/**
+ * Ein abgeleiteter Wert, der neu berechnet wird, sobald irgendwo geschrieben wurde.
+ *
+ * Der zurückgegebene Wert wird geteilt – wer ihn verändert, verändert ihn für alle. Also nur für
+ * Dinge benutzen, die gelesen und nicht angefasst werden.
+ */
+export function cached(build) {
+  let ownStamp = -1;
+  let outsideStamp = -1;
+  let value;
+  return () => {
+    const own = readChanges.get().n;
+    const outside = outsideVersion();
+    if (own !== ownStamp || outside !== outsideStamp) {
+      value = build();
+      ownStamp = own;
+      outsideStamp = outside;
+    }
+    return value;
+  };
+}
+
 // ---------------------------------------------------------------- Einstellungen
 
 const defaults = {
@@ -1693,19 +1804,38 @@ const defaults = {
 };
 
 
-const readSetting = db.prepare('SELECT value FROM settings WHERE key = ?');
 const writeSetting = db.prepare(
   'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
 );
 
-export function getSetting(key) {
-  const row = readSetting.get(key);
-  if (!row) return defaults[key];
+const parse = (raw) => {
   try {
-    return JSON.parse(row.value);
+    return JSON.parse(raw);
   } catch {
-    return row.value;
+    return raw;
   }
+};
+
+/**
+ * Alle Einstellungen als Tabelle – gelesen und ausgepackt, solange niemand schreibt.
+ *
+ * `getSetting` steht an sechsundachtzig Stellen im Dienst, mehrere davon in jedem Seitenaufruf:
+ * Wartungsmodus, Inhaltsschutz, Discord-Link, Support-Adresse, Umsatzsteuersatz. Jeder Aufruf war
+ * eine Abfrage **und** ein `JSON.parse` – für Werte, die sich ändern, wenn jemand im Admin-Bereich
+ * auf Speichern drückt, also praktisch nie. Siehe `cached` weiter oben, warum das nicht veralten
+ * kann.
+ */
+const settings = cached(() => {
+  const table = new Map();
+  for (const row of db.prepare('SELECT key, value FROM settings').all()) {
+    table.set(row.key, parse(row.value));
+  }
+  return table;
+});
+
+export function getSetting(key) {
+  const table = settings();
+  return table.has(key) ? table.get(key) : defaults[key];
 }
 
 export function setSetting(key, value) {
@@ -1713,15 +1843,7 @@ export function setSetting(key, value) {
 }
 
 export function allSettings() {
-  const out = { ...defaults };
-  for (const row of db.prepare('SELECT key, value FROM settings').all()) {
-    try {
-      out[row.key] = JSON.parse(row.value);
-    } catch {
-      out[row.key] = row.value;
-    }
-  }
-  return out;
+  return { ...defaults, ...Object.fromEntries(settings()) };
 }
 
 export const settingDefaults = defaults;

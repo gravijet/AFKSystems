@@ -17,7 +17,7 @@ import { db, getSetting } from './db.js';
 import { config, ROOT } from './config.js';
 import * as vat from './vat.js';
 import { displayNameOf } from './profile.js';
-import { safeUrl } from './util.js';
+import { formatEuro, safeUrl } from './util.js';
 
 /** Ist der Versand eingerichtet? */
 export function configured() {
@@ -353,11 +353,7 @@ function wrap({ title, body, action, footer }) {
 </body></html>`;
 }
 
-const money = (credits, lang) =>
-  (Number(credits || 0) / 100).toLocaleString(lang === 'en' ? 'en-GB' : 'de-DE', {
-    style: 'currency',
-    currency: 'EUR',
-  });
+const money = (credits, lang) => formatEuro(credits, lang);
 
 /**
  * Alle Vorlagen an einer Stelle. `subject`, `lines` und `action` sind Funktionen der Werte, die

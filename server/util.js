@@ -255,6 +255,36 @@ export function requireInt(value, name, { min = 0, max = Number.MAX_SAFE_INTEGER
   return number;
 }
 
+/** Die Länderkennung zur Sprache – Zahlen, Datum und Währung sehen darin unterschiedlich aus. */
+export const localeOf = (lang) => (lang === 'en' ? 'en-GB' : 'de-DE');
+
+/**
+ * Formatierer, die einmal gebaut und dann behalten werden.
+ *
+ * `zahl.toLocaleString(locale, optionen)` sieht aus wie eine Zeichenkettenoperation, ist aber bei
+ * jedem Aufruf der Bau eines vollständigen `Intl.NumberFormat`: Sprachdaten nachschlagen, Regeln
+ * für Trennzeichen und Währungssymbol zusammenstellen, und danach erst formatieren. Gemessen sind
+ * das rund sechzig Mikrosekunden für eine Zahl und über hundert für ein Datum – gegenüber ein bis
+ * vier Mikrosekunden, wenn der Formatierer schon dasteht.
+ *
+ * Das fällt nicht bei einer Zahl auf, sondern bei hundert: eine Nutzerliste im Admin-Bereich, die
+ * Aufgabenliste am Konto, die Tarifkästen der Preisseite. Im Profil des laufenden Dienstes war
+ * `formatEuro` einer der teuersten Posten überhaupt – für eine Funktion, die nichts tut, als eine
+ * Zahl mit einem Eurozeichen zu versehen.
+ *
+ * Es gibt genau zwei Sprachen und eine Handvoll Formate; die Tabelle bleibt also klein und
+ * vollständig gefüllt, sobald jede Seite einmal aufgerufen wurde.
+ */
+const formatters = new Map();
+export function intl(key, build) {
+  let found = formatters.get(key);
+  if (found === undefined) {
+    found = build();
+    formatters.set(key, found);
+  }
+  return found;
+}
+
 /**
  * Credits sind ganze Zahlen (1 Credit = 1 Cent) – nur die Tausender bekommen ein Trennzeichen.
  *
@@ -263,15 +293,26 @@ export function requireInt(value, name, { min = 0, max = Number.MAX_SAFE_INTEGER
  * Zahl, die tausendmal kleiner ist als die gemeinte.
  */
 export function formatCredits(credits, lang = 'de') {
-  return Number(credits || 0).toLocaleString(lang === 'en' ? 'en-GB' : 'de-DE');
+  return intl(`count:${lang}`, () => new Intl.NumberFormat(localeOf(lang))).format(
+    Number(credits || 0)
+  );
 }
 
 /** Credits als Euro-Betrag – nur zur Anzeige. */
 export function formatEuro(credits, lang = 'de') {
-  return (Number(credits || 0) / 100).toLocaleString(lang === 'en' ? 'en-GB' : 'de-DE', {
-    style: 'currency',
-    currency: 'EUR',
-  });
+  return intl(
+    `euro:${lang}`,
+    () => new Intl.NumberFormat(localeOf(lang), { style: 'currency', currency: 'EUR' })
+  ).format(Number(credits || 0) / 100);
+}
+
+/** Ein Datum ohne Uhrzeit, wie es überall im Panel und in den E-Mails steht. */
+export function formatDay(timestamp, lang = 'de') {
+  return intl(
+    `day:${lang}`,
+    () =>
+      new Intl.DateTimeFormat(localeOf(lang), { day: '2-digit', month: '2-digit', year: 'numeric' })
+  ).format(new Date(timestamp));
 }
 
 /** "host:port" zerlegen. Ohne Port bleibt der Port 0 – dann fragt der Client den SRV-Eintrag. */

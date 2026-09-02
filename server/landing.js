@@ -6,7 +6,7 @@
 
 import { getSetting } from './db.js';
 import { config } from './config.js';
-import { formatEuro, safeUrl } from './util.js';
+import { formatCredits, formatEuro, safeUrl } from './util.js';
 import * as binaries from './binaries.js';
 import * as billing from './billing.js';
 import * as vat from './vat.js';
@@ -21,7 +21,7 @@ const escape = (text) =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-const number = (value, lang) => Number(value || 0).toLocaleString(lang === 'de' ? 'de-DE' : 'en-GB');
+const number = (value, lang) => formatCredits(value, lang);
 
 // Die paar Symbole, die auf der Startseite vorkommen. Dieselben Pfade wie im Panel (ui.js) –
 // hier noch einmal, weil ui.js für den Browser gedacht ist und der Server nichts davon lädt.

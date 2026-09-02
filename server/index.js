@@ -19,6 +19,7 @@ import * as metrics from './metrics.js';
 import * as nodes from './nodes.js';
 import * as pages from './pages.js';
 import * as protect from './protect.js';
+import * as assets from './assets.js';
 import * as landing from './landing.js';
 import * as tickets from './tickets.js';
 import * as attachments from './attachments.js';
@@ -366,6 +367,26 @@ const assetsDir = path.join(paths.public, 'assets');
 // kommt gar nicht erst bis zum Ausliefern. Siehe server/protect.js.
 app.use('/assets', protect.assetGuard(allowedOrigins));
 
+/**
+ * Die Kopfzeilen einer Asset-Antwort.
+ *
+ * `filePath` ist die Datei, die wirklich gelesen wird – und das kann eine vorgepackte `app.css.br`
+ * sein (siehe assets.js). Für Inhaltstyp und Haltbarkeit zählt aber immer das Original: Ein `.br`
+ * am Ende macht aus einem Stylesheet weder einen anderen Typ noch eine Datei, die ein fremder
+ * Zwischenspeicher behalten dürfte. Deshalb steht der ursprüngliche Name in `res.locals`.
+ */
+function assetHeaders(res, filePath, current) {
+  const original = res.locals.assetOriginal || filePath;
+  // Vor `send`: Steht der Typ schon, lässt `send` ihn stehen – sonst käme für app.css.br
+  // "application/brotli" heraus und der Browser hielte das Stylesheet für einen Download.
+  const type = express.static.mime.lookup(original);
+  if (type && !res.getHeader('Content-Type')) {
+    const charset = express.static.mime.charsets.lookup(type);
+    res.setHeader('Content-Type', type + (charset ? `; charset=${charset}` : ''));
+  }
+  res.setHeader('Cache-Control', protect.cacheControl(original, current));
+}
+
 app.use(
   '/assets/v',
   (req, res, next) => {
@@ -375,10 +396,11 @@ app.use(
     res.locals.assetCurrent = match[1] === assetVersion;
     next();
   },
+  assets.preferPacked(assetsDir),
   express.static(assetsDir, {
     index: false,
     setHeaders(res, filePath) {
-      res.setHeader('Cache-Control', protect.cacheControl(filePath, res.locals.assetCurrent));
+      assetHeaders(res, filePath, res.locals.assetCurrent);
     },
   })
 );
@@ -387,10 +409,11 @@ app.use(
 // wurden, und in alten Lesezeichen: kurz halten, damit so etwas höchstens Minuten nachhängt.
 app.use(
   '/assets',
+  assets.preferPacked(assetsDir),
   express.static(assetsDir, {
     index: false,
     setHeaders(res, filePath) {
-      res.setHeader('Cache-Control', protect.cacheControl(filePath, false));
+      assetHeaders(res, filePath, false);
     },
   })
 );

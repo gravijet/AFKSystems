@@ -287,8 +287,14 @@ export function profileOf(user) {
  * Ohne eigene Angabe die des Servers. Das ist keine Vermutung über den Kunden, sondern die
  * einzige Zeit, über die beide Seiten sicher dasselbe wissen – und sie steht im Panel dabei.
  */
+// Die Zeitzone des Servers ändert sich im laufenden Betrieb nicht – ein Neustart holt sie neu.
+// Sie einmal je Aufruf zu erfragen ist teurer, als es aussieht: `Intl.DateTimeFormat()` baut dafür
+// einen vollständigen Formatierer (gemessen über hundert Mikrosekunden), und `/api/meta` fragt
+// danach bei jedem Panelaufruf.
+const SERVER_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
 export const timezoneOf = (user) =>
-  isTimezone(user?.timezone) ? user.timezone : Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  isTimezone(user?.timezone) ? user.timezone : SERVER_TIMEZONE;
 
 // ---------------------------------------------------------------- Schreiben
 

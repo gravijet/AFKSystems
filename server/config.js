@@ -168,6 +168,11 @@ function fingerprint(dir) {
         walk(file);
         continue;
       }
+      // Die vorgepackten Fassungen (app.css.br, app.css.gz – siehe server/assets.js) bleiben
+      // außen vor. Sie tragen keinen eigenen Inhalt, sondern nur denselben in anderer Form: Sie
+      // mitzuzählen hieße, dass derselbe Quellstand vor und nach dem Packen zwei verschiedene
+      // Fingerabdrücke bekommt – und das Lesen doppelt so lange dauert.
+      if (/\.(?:br|gz)$/.test(entry.name)) continue;
       // Pfad mit hinein: eine umbenannte Datei ist auch eine Änderung.
       hash.update(path.relative(dir, file));
       hash.update(fs.readFileSync(file));
