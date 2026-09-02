@@ -7,8 +7,14 @@
 // ausliefert, der Browser das, was live hereinkommt. Deshalb reines ESM ohne Browser-Aufrufe –
 // Node kann sie genauso importieren (wie i18n.js).
 
-/** Wie weit zwei gleiche Zeilen auseinanderliegen dürfen und trotzdem dieselbe Nachricht sind. */
-const WINDOW_MS = 2500;
+/**
+ * Wie weit zwei gleiche Zeilen auseinanderliegen dürfen und trotzdem dieselbe Nachricht sind.
+ *
+ * Exportiert, weil ein Aufrufer, der nur einen Ausschnitt zusammenlegt, wissen muss, ab wann sein
+ * Ergebnis vollständig ist: Alles, was näher als dieses Fenster am Anfang des Ausschnitts liegt,
+ * könnte noch mit einer Zeile davor zusammengehören, die er gar nicht mitgegeben hat.
+ */
+export const WINDOW_MS = 2500;
 
 /**
  * Zeilen zusammenlegen.

@@ -8,7 +8,7 @@ import {
   api, icon, escapeHtml, since, clock, credits, euro, date, datetime, stateBadge, mcText, safeLink, tr, locale,
   $, $$, ok, fail, toast, confirmDialog, formDialog, debounce, copy,
 } from '../ui.js';
-import { mergeLines, stripFormatting } from '../chatlog.js';
+import { mergeLines, stripFormatting, WINDOW_MS } from '../chatlog.js';
 import { state, appbar, refresh, draw, drawSide, profileById, tabsFor, linesOf } from '../app.js';
 import { noAccounts, accountPicker, commandRunner, anyOnline, itemSlot } from './parts.js';
 import { tabPov, tabInventory } from './live.js';
@@ -770,36 +770,77 @@ async function tabConnect(root, profile) {
   /** Der Suchbegriff, kleingeschrieben. Leer heißt: nicht gesucht, alles steht da. */
   let needle = '';
 
-  const paintChat = () => {
-    const raw = [];
-    for (const member of members) {
-      if (!receivers.includes(member.account_id)) continue;
-      for (const entry of linesOf(`${profile.id}:${member.account_id}`)) {
-        raw.push({ ...entry, account_id: member.account_id });
-      }
-    }
-    // Drei Bots hören denselben Chat – ohne Zusammenlegen stünde jede Zeile dreimal da.
-    //
-    // Was hier steht, ist der Chat des Servers und was der Bot selbst hineingeschrieben hat –
-    // sonst nichts. Zustandsmeldungen des Clients ("Gehe 3.0 Blöcke vorwärts") und örtliche
-    // Befehle stehen nicht drin: sie sind kein Chat, und dazwischen war der Chat nicht zu lesen.
-    //
-    // "Alles zeigen" nimmt sie dazu. Das ist keine zweite Ansicht, sondern die Antwort auf die
-    // eine Frage, für die der Chat allein nicht reicht: warum der Bot plötzlich weg war.
+  /** So viele Zeilen stehen im Kasten. Alles darüber liest ohnehin niemand mehr. */
+  const SHOWN = 500;
+
+  /**
+   * Die Zeilen aller ausgewählten Konten, zusammengelegt.
+   *
+   * `wanted` sagt, wie viele fertige Zeilen gebraucht werden – `null` heißt "alle", und das
+   * braucht wirklich nur die Suche: Sie zeigt an, wie viele Treffer es von wie vielen Zeilen
+   * insgesamt gibt, und diese Gesamtzahl gibt es nicht ohne den ganzen Verlauf.
+   *
+   * **Warum das nicht immer alle sind.** Ein Serverplatz mit Premium oder Ultra behält
+   * fünfzigtausend Zeilen je Konto. Bei fünf Konten sind das eine Viertelmillion Einträge, und
+   * jede davon wurde kopiert, sortiert und zusammengelegt – gemessen 249 Millisekunden, und zwar
+   * **je eingehender Chatzeile**. Auf einem Server, auf dem etwas los ist, kam der Reiter damit
+   * nicht mehr hinterher: Er stand still und geriet immer weiter in Rückstand.
+   *
+   * Gezeigt werden aber nur die letzten fünfhundert. Also wird auch nur so weit zurückgelesen,
+   * wie es dafür reicht – und wenn das Zusammenlegen und Filtern mehr wegnimmt als gedacht, noch
+   * einmal weiter zurück. Das Ergebnis ist Zeile für Zeile dasselbe wie vorher; nur wird nicht
+   * mehr der ganze Verlauf angefasst, um sein Ende zu zeigen.
+   */
+  const collect = (wanted) => {
+    // Was gezeigt wird, ist Chat und was der Bot selbst hineingeschrieben hat – sonst nichts.
+    // Zustandsmeldungen des Clients ("Gehe 3.0 Blöcke vorwärts") und örtliche Befehle stehen
+    // nicht drin: sie sind kein Chat, und dazwischen war der Chat nicht zu lesen. "Alles zeigen"
+    // nimmt sie dazu – die Antwort auf die eine Frage, für die der Chat allein nicht reicht:
+    // warum der Bot plötzlich weg war.
     const everything = $('#show-all')?.checked;
-    let lines = mergeLines(raw).filter(
-      (entry) =>
-        entry.type === 'chat' ||
-        (entry.type === 'sent' && !String(entry.text || '').startsWith(':')) ||
-        (everything && entry.type !== 'sent')
-    );
+    const keep = (entry) =>
+      entry.type === 'chat' ||
+      (entry.type === 'sent' && !String(entry.text || '').startsWith(':')) ||
+      (everything && entry.type !== 'sent');
+
+    const buffers = members
+      .filter((member) => receivers.includes(member.account_id))
+      .map((member) => ({ id: member.account_id, all: linesOf(`${profile.id}:${member.account_id}`) }));
+
+    for (let tail = wanted === null ? Infinity : Math.max(2000, wanted * 4); ; tail *= 4) {
+      const raw = [];
+      // Ab wann das Ergebnis stimmt. Von jedem Konto wurde alles ab seinem ersten mitgenommenen
+      // Zeitpunkt geholt; der **späteste** dieser Anfänge ist also die Grenze, ab der von jedem
+      // Konto wirklich alles vorliegt. Ein Konto, von dem nichts abgeschnitten wurde, schränkt
+      // nichts ein.
+      let from = -Infinity;
+      for (const buffer of buffers) {
+        const start = tail === Infinity ? 0 : Math.max(0, buffer.all.length - tail);
+        if (start > 0) from = Math.max(from, buffer.all[start].t);
+        for (let i = start; i < buffer.all.length; i++) {
+          raw.push({ ...buffer.all[i], account_id: buffer.id });
+        }
+      }
+      // Drei Bots hören denselben Chat – ohne Zusammenlegen stünde jede Zeile dreimal da.
+      const merged = mergeLines(raw).filter(keep);
+      if (from === -Infinity) return merged; // nichts abgeschnitten: das ist der ganze Verlauf
+      // Eine Zeile, die näher als das Zusammenlege-Fenster an der Grenze liegt, könnte zu einer
+      // gehören, die davor lag und nicht mitgekommen ist. Die wird verworfen, nicht geraten.
+      const exact = merged.filter((entry) => entry.t >= from + WINDOW_MS);
+      if (exact.length >= wanted) return exact;
+    }
+  };
+
+  const paintChat = () => {
+    // Ohne Suche reicht das Ende des Verlaufs; die Suche zeigt „x von y“ und braucht dafür alles.
+    let lines = collect(needle ? null : SHOWN);
     const total = lines.length;
     if (needle) {
       lines = lines.filter((entry) => stripFormatting(entry.text || '').toLowerCase().includes(needle));
     }
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
 
-    box.innerHTML = lines.slice(-500).map(chatLine).join('');
+    box.innerHTML = lines.slice(-SHOWN).map(chatLine).join('');
     const counter = $('#chat-count');
     if (counter) {
       counter.textContent = needle ? tr('ch.hits', { n: lines.length, total }) : '';
@@ -807,6 +848,23 @@ async function tabConnect(root, profile) {
     // Beim Suchen nicht nach unten springen: Wer nach oben gescrollt hat, um einen Treffer zu
     // lesen, will nicht bei jedem getippten Buchstaben ans Ende geworfen werden.
     if (!needle && (autoscroll.checked || atBottom)) box.scrollTop = box.scrollHeight;
+  };
+
+  /**
+   * Mehrere Chatzeilen in demselben Bild brauchen nur ein Neuzeichnen.
+   *
+   * Auf einem belebten Server kommen mehrere Zeilen je Sekunde, in Schüben auch mehrere in
+   * derselben Millisekunde – und jede löste bisher ein vollständiges Neuzeichnen des Kastens aus.
+   * Dasselbe Muster wie bei der Seitenleiste in app.js: Was im selben Bild passiert, wird einmal
+   * gezeichnet.
+   */
+  let chatFrame = null;
+  const scheduleChat = () => {
+    if (chatFrame !== null) return;
+    chatFrame = requestAnimationFrame(() => {
+      chatFrame = null;
+      paintChat();
+    });
   };
 
   function chatLine(entry) {
@@ -1024,7 +1082,7 @@ async function tabConnect(root, profile) {
   }, 400);
 
   state.onLive = (event) => {
-    if (event.type === 'line' && event.key.startsWith(`${profile.id}:`)) paintChat();
+    if (event.type === 'line' && event.key.startsWith(`${profile.id}:`)) scheduleChat();
     if (event.type === 'state' && event.key.startsWith(`${profile.id}:`)) {
       paintAuth();
       refreshBots();

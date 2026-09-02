@@ -48,7 +48,7 @@ const exportCsv = await import('../server/export.js');
 const { hashPassword, formatCredits, formatDay, formatEuro, slidingWindow } = await import('../server/util.js');
 const { renderDiscord } = await import('../public/assets/js/discord.js');
 const { staffTodos } = await import('../server/todos.js');
-const { parseFormatting } = await import('../public/assets/js/chatlog.js');
+const { parseFormatting, mergeLines, WINDOW_MS } = await import('../public/assets/js/chatlog.js');
 const { Roles } = await import('../bot/handlers/roles.js');
 const { ChannelAccess } = await import('../bot/handlers/channelAccess.js');
 const { Panel } = await import('../bot/panel.js');
@@ -2944,6 +2944,53 @@ test('the browser gets one language of the texts, and it really is a module', as
   assert.equal(ask('/assets/v/jetzt/js/i18n.kl.js').passed, true);
   assert.equal(ask('/assets/v/jetzt/js/app.js').passed, true);
   assert.equal(ask('/assets/v/jetzt/js/views/i18n.de.js').passed, true);
+});
+
+test('merging only the tail of a chat history gives exactly the full result', () => {
+  // Worauf sich der Chat-Reiter verlässt (public/assets/js/views/server.js, `collect`): Wer von
+  // jedem Konto nur das Ende des Verlaufs zusammenlegt, bekommt ab `WINDOW_MS` nach dem spätesten
+  // Schnitt dasselbe wie beim Zusammenlegen des ganzen Verlaufs. Ohne diese Eigenschaft müsste
+  // jede eingehende Chatzeile den kompletten Verlauf anfassen – bei zwanzigtausend Zeilen im
+  // Browser gemessene 146 Millisekunden, in denen der Reiter stillsteht.
+  let seed = 7;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+
+  for (let round = 0; round < 20; round++) {
+    const accounts = 1 + Math.floor(rnd() * 4);
+    const buffers = Array.from({ length: accounts }, (_, i) => ({ id: i + 1, all: [] }));
+    let at = 1_700_000_000_000;
+    for (let i = 0; i < 900; i++) {
+      // Enge Zeitabstände sind der schwierige Fall: Dann greift das Zusammenlege-Fenster wirklich.
+      at += Math.floor(rnd() * 1800);
+      const text = `§7Spieler${Math.floor(rnd() * 20)}: Nachricht ${i}`;
+      for (const buffer of buffers) {
+        if (rnd() < 0.08) continue; // ein Konto war kurz weg
+        buffer.all.push({ t: at + Math.floor(rnd() * 80), type: 'chat', text });
+      }
+    }
+    for (const buffer of buffers) buffer.all.sort((a, b) => a.t - b.t);
+
+    const withAccount = (buffer) => buffer.all.map((entry) => ({ ...entry, account_id: buffer.id }));
+    const full = mergeLines(buffers.flatMap(withAccount));
+
+    const tail = 200;
+    let cut = -Infinity;
+    const partial = [];
+    for (const buffer of buffers) {
+      const start = Math.max(0, buffer.all.length - tail);
+      if (start > 0) cut = Math.max(cut, buffer.all[start].t);
+      for (let i = start; i < buffer.all.length; i++) {
+        partial.push({ ...buffer.all[i], account_id: buffer.id });
+      }
+    }
+    assert.notEqual(cut, -Infinity, 'der Ausschnitt muss wirklich abgeschnitten sein');
+
+    const key = (entry) => `${entry.t}|${entry.text}|${[...entry.accounts].sort().join(',')}`;
+    const expected = full.filter((entry) => entry.t >= cut + WINDOW_MS).map(key);
+    const actual = mergeLines(partial).filter((entry) => entry.t >= cut + WINDOW_MS).map(key);
+    assert.deepEqual(actual, expected, `Runde ${round} mit ${accounts} Konten`);
+    assert.ok(expected.length > 100, 'der Vergleich muss etwas zu vergleichen haben');
+  }
 });
 
 test('the sliding window counts a window, forgets what fell out of it and sweeps itself', () => {
