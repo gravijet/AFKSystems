@@ -37,14 +37,26 @@ TasksMax=4096
 # Absicherung: Der Dienst braucht nur sein eigenes Verzeichnis und Netz.
 NoNewPrivileges=true
 PrivateTmp=true
+PrivateDevices=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/opt/afksystems/data
+UMask=0077
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectClock=true
+ProtectHostname=true
+ProtectKernelLogs=true
+ProtectProc=invisible
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
 RestrictSUIDSGID=true
 RestrictNamespaces=true
+RestrictRealtime=true
+RemoveIPC=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
 LockPersonality=true
 
 StandardOutput=journal

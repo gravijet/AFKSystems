@@ -444,7 +444,7 @@ export function avatar(person, { size = 32, klass = '' } = {}) {
   const style = `--avatar-size:${size}px`;
   if (person?.avatar) {
     return `<img class="avatar ${klass}" style="${style}" src="${escapeHtml(safeLink(person.avatar))}"
-      alt="" width="${size}" height="${size}" loading="lazy" referrerpolicy="no-referrer">`;
+      alt="" width="${size}" height="${size}" loading="lazy" decoding="async" referrerpolicy="no-referrer">`;
   }
   const hue = hueOf(name.toLowerCase());
   return `<span class="avatar ${klass}" style="${style};--avatar-hue:${hue}" aria-hidden="true">${escapeHtml(

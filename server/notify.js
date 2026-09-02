@@ -128,11 +128,33 @@ export const FOOTER = {
 
 export const COLORS = { info: 0x206cfe, ok: 0x00bb7f, warn: 0xfcbb00, bad: 0xfb2c36 };
 
+/** Nur echte Discord-Webhook-Adressen – keine Lookalike-Domain, Zugangsdaten oder fremder Port. */
+export function webhookUrl(raw) {
+  let url;
+  try {
+    url = new URL(String(raw || '').trim());
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== 'https:' ||
+    !['discord.com', 'discordapp.com'].includes(url.hostname.toLowerCase()) ||
+    url.username ||
+    url.password ||
+    url.port ||
+    !/^\/api(?:\/v\d+)?\/webhooks\/\d+\/[A-Za-z0-9._-]+\/?$/.test(url.pathname)
+  ) {
+    return null;
+  }
+  return url.toString();
+}
+
 /** Eine fertige Nachricht an einen Webhook schicken. Wirft nie. */
 export async function post(url, { embeds = [], content = '' } = {}) {
-  if (!url) return false;
+  const destination = webhookUrl(url);
+  if (!destination) return false;
   try {
-    const response = await fetch(url, {
+    const response = await fetch(destination, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({

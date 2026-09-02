@@ -2218,12 +2218,16 @@ test('the username has a cooldown and the email only moves once the new address 
     () => auth.requestEmailChange(fresh(), 'neu@example.test', 'falsch'),
     /Passwort|password/
   );
-  await auth.requestEmailChange(fresh(), 'neu@example.test', 'passwort123');
+  let emailChangeToken = null;
+  await auth.requestEmailChange(fresh(), 'neu@example.test', 'passwort123', {
+    onToken: (value) => (emailChangeToken = value),
+  });
   assert.equal(fresh().pending_email, 'neu@example.test');
+  assert.notEqual(fresh().pending_email_token, emailChangeToken);
   // Bis zur Bestätigung gilt die alte Adresse – ein Tippfehler sperrt also niemanden aus.
   assert.notEqual(fresh().email, 'neu@example.test');
 
-  const confirmed = auth.confirmEmailChange(fresh().pending_email_token);
+  const confirmed = auth.confirmEmailChange(emailChangeToken);
   assert.equal(confirmed.email, 'neu@example.test');
   assert.equal(fresh().pending_email, null);
   // Ein zweites Mal löst derselbe Link nichts mehr aus.
@@ -2257,6 +2261,106 @@ test('open sessions are listed without their tokens and can be ended one at a ti
   assert.equal(auth.sessionsOf(user.id, 'sitzung-eins').length, 1);
   // Ein geratener Abdruck meldet kein fremdes Gerät ab.
   assert.equal(auth.endSession(user.id, '0'.repeat(16), 'sitzung-eins'), false);
+
+  // Neue Sitzungen liegen nicht als benutzbares Cookie in der Datenbank. Eine kopierte SQLite-
+  // Datei allein darf keine laufende Anmeldung übernehmen können.
+  const cookies = {};
+  const raw = auth.createSession(
+    { cookie: (name, value) => (cookies[name] = value) },
+    user,
+    { ip: '198.51.100.8', headers: { 'user-agent': 'Test browser' } }
+  );
+  const stored = db
+    .prepare('SELECT token FROM sessions WHERE user_id = ? AND ip = ?')
+    .get(user.id, '198.51.100.8').token;
+  assert.equal(cookies.afk_session, raw);
+  assert.notEqual(stored, raw);
+  assert.match(stored, /^h1:[0-9a-f]{64}$/);
+});
+
+test('"log out everywhere else" keeps the browser that pressed it', () => {
+  const user = createUser();
+  const jar = {};
+  const res = { cookie: (name, value) => (jar[name] = value) };
+  const req = { ip: '198.51.100.9', headers: { 'user-agent': 'Test browser' } };
+
+  auth.createSession(res, user, req);
+  const mine = db
+    .prepare('SELECT token FROM sessions WHERE user_id = ? ORDER BY rowid DESC LIMIT 1')
+    .get(user.id).token;
+  auth.createSession(res, user, req);
+  auth.createSession(res, user, req);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(user.id).n, 3);
+
+  // Verglichen wird der **gespeicherte** Wert. Mit dem rohen Cookie träfe `token != ?` auf jede
+  // Zeile zu – der Knopf hätte dann auch die Sitzung mitgenommen, an der gerade jemand sitzt.
+  assert.equal(auth.endOtherSessions(user.id, mine), 2);
+  const left = db.prepare('SELECT token FROM sessions WHERE user_id = ?').all(user.id);
+  assert.deepEqual(left.map((row) => row.token), [mine]);
+
+  // Ohne bekannte eigene Sitzung heißt "alle anderen" eben: alle.
+  assert.equal(auth.endOtherSessions(user.id, null), 1);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM sessions WHERE user_id = ?').get(user.id).n, 0);
+});
+
+test('a borrowed view expires after an hour, an ordinary sign-in after the usual time', () => {
+  const user = createUser();
+  const res = { cookie: () => {} };
+  const req = { ip: '198.51.100.10', headers: { 'user-agent': 'Test browser' } };
+  const expiryOf = () =>
+    db.prepare('SELECT expires_at FROM sessions WHERE user_id = ? ORDER BY rowid DESC LIMIT 1').get(user.id)
+      .expires_at;
+
+  auth.createSession(res, user, req);
+  const ordinary = expiryOf() - Date.now();
+  assert.ok(ordinary > 20 * 86_400_000, `eine gewöhnliche Sitzung hält lange (${ordinary} ms)`);
+
+  auth.createSession(res, user, req, { impersonatorId: 1, maxAgeMs: auth.IMPERSONATION_MS });
+  const borrowed = expiryOf() - Date.now();
+  assert.ok(borrowed <= auth.IMPERSONATION_MS, `eine geliehene Ansicht nicht (${borrowed} ms)`);
+  assert.ok(borrowed > 55 * 60_000);
+
+  // Und niemand verlängert sich damit über die normale Grenze hinaus.
+  auth.createSession(res, user, req, { maxAgeMs: 400 * 86_400_000 });
+  assert.ok(expiryOf() - Date.now() <= 31 * 86_400_000);
+});
+
+test('a password needs more than twelve characters to be one', () => {
+  const identity = { username: 'hugo', email: 'hugo@example.test' };
+  // Lang genug und trotzdem in jeder Liste, mit der ein Angreifer anfängt.
+  assert.throws(() => auth.checkPasswordPair('123456789012', '123456789012'), /erraten/);
+  assert.throws(() => auth.checkPasswordPair('aaaaaaaaaaaa', 'aaaaaaaaaaaa'), /erraten/);
+  assert.throws(() => auth.checkPasswordPair('PasswortPasswort', 'PasswortPasswort'), /erraten/);
+  // Der eigene Name ist das Erste, was jemand probiert, der ihn kennt – und ihn kennt jeder.
+  assert.throws(() => auth.checkPasswordPair('hugohugohugo', 'hugohugohugo', identity), /Benutzernamen/);
+  assert.throws(() => auth.checkPasswordPair('bitte-hugo-rein', 'bitte-hugo-rein', identity), /Benutzernamen/);
+  // Zu kurz und ungleich bleiben, was sie waren.
+  assert.throws(() => auth.checkPasswordPair('kurz', 'kurz'), /12 Zeichen/);
+  assert.throws(() => auth.checkPasswordPair('richtig-langes-passwort', 'anderes'), /nicht gleich/);
+  // Und ein gewöhnliches gutes Passwort kommt durch, auch mit Identität daneben.
+  assert.doesNotThrow(() => auth.checkPasswordPair('Weizenfeld-Kartoffel-7', 'Weizenfeld-Kartoffel-7', identity));
+});
+
+test('a location token cannot be guessed without limit', async () => {
+  const { tryNodeToken } = await import('../server/routes/node.js');
+  const nodes = await import('../server/nodes.js');
+  const node = nodes.create({ name: 'Bremse', kind: 'agent' }, null);
+  const withToken = (value) => ({ headers: { authorization: `Bearer ${value}` } });
+  const ip = '203.0.113.77';
+
+  // Zwanzig Fehlversuche je Adresse und Viertelstunde – danach ist zu, und zwar auch für das
+  // richtige Token: Sonst wäre die Bremse ein Orakel, das "fast richtig" von "falsch" trennt.
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    assert.equal(tryNodeToken(ip, withToken(`falsch-${attempt}-${'x'.repeat(20)}`)).status, 'wrong');
+  }
+  assert.equal(tryNodeToken(ip, withToken(node.token)).status, 'throttled');
+  // Eine andere Adresse hat ihren eigenen Zähler und kommt weiterhin herein.
+  const other = tryNodeToken('203.0.113.78', withToken(node.token));
+  assert.equal(other.status, 'ok');
+  assert.equal(other.node.id, node.id);
+  // Und ein geglückter Versuch löscht den Zähler dieser Adresse wieder.
+  assert.equal(tryNodeToken('203.0.113.78', withToken('zu-kurz')).status, 'wrong');
+  assert.equal(tryNodeToken('203.0.113.78', withToken(node.token)).status, 'ok');
 });
 
 /**
@@ -2303,6 +2407,10 @@ test('the sign-in code only asks unknown browsers, and a password change makes e
   const res = fakeRes();
   logincode.remember(user(), fakeReq(), res);
   assert.match(res.jar.afk_device, /^[A-Za-z0-9_-]{20,64}$/);
+  assert.match(
+    db.prepare('SELECT token FROM known_devices WHERE user_id = ?').get(id).token,
+    /^h1:[0-9a-f]{64}$/
+  );
   assert.equal(logincode.required(user(), fakeReq(res)), false);
 
   // Ein anderer Browser mit demselben `User-Agent` ist trotzdem ein anderer. Genau hier lag die
@@ -2791,12 +2899,17 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
 
   const englishHome = await (await fetch(`${base}/en`)).text();
   const germanHome = await (await fetch(`${base}/de`)).text();
-  assert.match(englishHome, /href="\/en"[^>]*aria-current="true"[^>]*>EN<\/a>/);
-  assert.doesNotMatch(englishHome, /href="\/de"[^>]*aria-current="true"/);
-  assert.match(germanHome, /href="\/de"[^>]*aria-current="true"[^>]*>DE<\/a>/);
-  assert.doesNotMatch(germanHome, /href="\/en"[^>]*aria-current="true"/);
+  assert.match(englishHome, /class="language-switch" href="\/de"[^>]*aria-label="Switch to Deutsch"/);
+  assert.match(englishHome, /<span>Deutsch<\/span>/);
+  assert.match(germanHome, /class="language-switch" href="\/en"[^>]*aria-label="Zu English wechseln"/);
+  assert.match(germanHome, /<span>English<\/span>/);
   assert.match(germanHome, /class="site-menu-toggle"[^>]*aria-expanded="false"/);
   assert.match(germanHome, /class="site-menu" id="site-menu"/);
+  assert.doesNotMatch(germanHome, /\/js\/shield\.js/);
+  setSetting('content_lock_ui', 1);
+  const lockedHome = await (await fetch(`${base}/de`)).text();
+  setSetting('content_lock_ui', 0);
+  assert.match(lockedHome, /\/js\/shield\.js/);
   assert.doesNotMatch(germanHome, /class="hero-product"|play\.example\.net|Vorschau des AFKSystems-Panels/);
   assert.doesNotMatch(germanHome, /Live-Steuerung|class="hl"/);
   assert.doesNotMatch(englishHome, /Live control|class="hl"/);
@@ -2805,12 +2918,20 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const appShell = await (await fetch(`${base}/en/app`)).text();
   assert.match(appShell, /class="mobile-nav" id="mobile-nav"/);
   assert.match(appShell, /id="side-backdrop"[^>]*aria-label="Close"/);
+  assert.match(appShell, /class="side boot-side"[^>]*aria-busy="true"/);
+  assert.match(appShell, /rel="modulepreload"[^>]*\/js\/app\.js/);
   assert.equal((await fetch(`${base}/en/app`)).headers.get('cache-control'), 'no-store');
-  const homeResponse = await fetch(`${base}/en`);
+  const homeResponse = await fetch(`${base}/en`, { headers: { 'accept-encoding': 'gzip' } });
+  assert.equal(homeResponse.headers.get('content-encoding'), 'gzip');
   assert.equal(homeResponse.headers.get('x-frame-options'), 'DENY');
   assert.match(homeResponse.headers.get('content-security-policy'), /script-src 'self'/);
   assert.doesNotMatch(homeResponse.headers.get('content-security-policy'), /script-src[^;]*unsafe-inline/);
   assert.match(homeResponse.headers.get('permissions-policy'), /camera=\(\)/);
+  const headerMeta = await (
+    await fetch(`${base}/api/meta?scope=header`, { headers: { cookie: `afk_session=${USER_TOKEN}` } })
+  ).json();
+  assert.deepEqual(Object.keys(headerMeta).sort(), ['registration_open', 'user']);
+  assert.equal(headerMeta.user.id, user.id);
   const stylesheetPath = englishHome.match(/href="([^"]+\/css\/app\.css)"/)?.[1];
   assert.ok(stylesheetPath);
   // Inhaltsschutz: einzeln aufgerufen kommt die Datei nicht heraus, als Stylesheet einer Seite

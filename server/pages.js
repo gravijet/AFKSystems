@@ -60,6 +60,8 @@ export function render(name, lang, vars = {}) {
     title: t('meta.title', lang),
     description: t('meta.description', lang),
     robotsTag: '',
+    resourceHints: '',
+    shieldScript: '',
     // Ob der Inhaltsschutz (shield.js) gilt. Der Wert kommt aus den Einstellungen; index.js
     // setzt ihn bei jeder Seite mit.
     shield: '1',
@@ -68,8 +70,18 @@ export function render(name, lang, vars = {}) {
     ogLocale: lang === 'de' ? 'de_DE' : 'en_GB',
     enCurrent: lang === 'en' ? 'aria-current="true"' : '',
     deCurrent: lang === 'de' ? 'aria-current="true"' : '',
+    languageSwitchLabel: t('common.switchLanguage', lang, {
+      language: lang === 'de' ? 'English' : 'Deutsch',
+    }),
     ...vars,
   };
+  // Nur laden, wenn die Bedienungssperre wirklich aktiv ist. Dann bleibt das Skript bewusst im
+  // Kopf und synchron, damit kein ungeschütztes erstes Bild aufblitzt. Im Normalbetrieb spart das
+  // eine blockierende Datei auf jeder öffentlichen Seite und im Panel.
+  if (values.shield === '1') {
+    values.shieldScript = `<!-- Vor dem ersten Inhalt: die aktivierte Bedienungssperre gilt sofort. -->
+    <script src="${values.assets}/js/shield.js"></script>`;
+  }
   // Titel und Beschreibung landen in Attributen – die dürfen keine Anführungszeichen mitbringen.
   values.title = escape(values.title);
   values.description = escape(values.description);
@@ -122,6 +134,11 @@ export function setLangCookie(res, lang) {
   res.cookie('lang', lang, {
     httpOnly: false, // das Frontend liest sie auch, um die Sprache umzuschalten
     sameSite: 'lax',
+    // Kein Geheimnis, aber trotzdem: Ein Cookie ohne `Secure` reist auch über eine unverschlüsselte
+    // Verbindung, und wer die mitliest, sieht daran, dass hier jemand ist – und wer sie umschreiben
+    // kann, setzt Cookies für die ganze Domain. Auf einer Website, die ausschließlich über HTTPS
+    // läuft, gibt es keinen Grund, eines davon auszulassen.
+    secure: config.publicUrl.startsWith('https'),
     maxAge: 365 * 86_400_000,
     path: '/',
   });

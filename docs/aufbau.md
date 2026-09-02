@@ -659,7 +659,10 @@ journalctl -u afksystems -f
 curl -s localhost:3010/api/health
 ```
 
-`/api/health` sagt Laufzeit, Zahl der laufenden Bots und die Client-Version.
+`/api/health` sagt Laufzeit, Zahl der laufenden Bots und die Client-Version – aber nur, wenn die
+Frage von dieser Maschine kommt oder eine Administratorsitzung dahintersteht. Von außen antwortet
+die Adresse mit `{"ok":true}` und sonst nichts: Ob der Dienst läuft, darf jeder wissen; wie viele
+Bots gerade laufen und seit wann der Prozess steht, geht niemanden außerhalb etwas an.
 
 ### Zeitgeber
 

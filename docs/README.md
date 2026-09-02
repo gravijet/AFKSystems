@@ -22,6 +22,13 @@ Alles zu AFKSystems an einer Stelle. Die kurze Fassung des Ganzen steht in der
 | **[live-ansicht.md](live-ansicht.md)** | Die Live-Ansicht (POV): die beiden Wege zu einem Bild, die Minecraft-Ressourcen, Steuern im Bild, Sichtweite, was sie kostet. |
 | **[schutz.md](schutz.md)** | Inhaltsschutz: was gegen Kopieren und Herunterladen getan wird – und was ehrlicherweise nicht geht. |
 
+## Sicherheitsbetrieb
+
+Die Produktionsvorlagen erzwingen HTTPS, prüfen Cloudflare-Herkünfte vor der Übernahme von
+`CF-Connecting-IP` und starten Panel sowie Agent mit restriktiven systemd-Sandboxen. Bei Docker
+oder einem getrennten Reverse Proxy muss `TRUST_PROXY` in `.env` auf dessen konkretes Netz gesetzt
+werden; `true` würde beliebige weitergereichte Client-IP-Köpfe vertrauen.
+
 ## Häufige Wege
 
 **Ein neuer Standort soll her.**

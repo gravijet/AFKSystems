@@ -60,6 +60,14 @@ export function create({ automatic = false } = {}) {
   // Er kommt aus dieser Datei und enthält keinen, aber das gilt nur, solange es jemand prüft.
   if (target.includes("'")) throw new Error('Sicherungspfad mit Apostroph.');
   db.exec(`VACUUM INTO '${target}'`);
+  // Eine Sicherung ist ein Generalschlüssel (siehe oben) – sie liegt deshalb so eng wie die
+  // Datenbank selbst. `VACUUM INTO` richtet sich nach der umask des Prozesses, und die ist beim
+  // Start von Hand oder aus einer fremden Umgebung nicht zwingend die aus dem systemd-Unit.
+  try {
+    fs.chmodSync(target, 0o600);
+  } catch {
+    /* Dateisystem ohne Rechte – die Sicherung ist trotzdem geschrieben */
+  }
   const info = fs.statSync(target);
   prune();
   return { name, size: info.size, created_at: info.mtimeMs, automatic };

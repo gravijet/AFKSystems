@@ -8,25 +8,49 @@ export function token(bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64url');
 }
 
-/** Passwort-Hash mit scrypt – kein Zusatzpaket, kein nativer Build. */
+/** Passwort-Hash mit parametrisierter, speicherharter scrypt-Konfiguration. */
+const SCRYPT = { N: 65_536, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
+
 export function hashPassword(password) {
   const salt = crypto.randomBytes(16);
-  const key = crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 });
-  return `scrypt$${salt.toString('base64')}$${key.toString('base64')}`;
+  const key = crypto.scryptSync(password, salt, 64, SCRYPT);
+  // Die Parameter gehören in den Hash. So lassen sie sich künftig erhöhen, ohne bestehende
+  // Passwörter ungültig zu machen; ältere dreiteilige Hashes werden darunter weiter gelesen.
+  return `scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$${salt.toString('base64')}$${key.toString('base64')}`;
 }
 
 export function verifyPassword(password, stored) {
   if (typeof stored !== 'string') return false;
-  const [scheme, salt, key] = stored.split('$');
-  if (scheme !== 'scrypt' || !salt || !key) return false;
+  const parts = stored.split('$');
+  if (parts[0] !== 'scrypt') return false;
+  const legacy = parts.length === 3;
+  const N = legacy ? 16_384 : Number(parts[1]);
+  const r = legacy ? 8 : Number(parts[2]);
+  const p = legacy ? 1 : Number(parts[3]);
+  const salt = legacy ? parts[1] : parts[4];
+  const key = legacy ? parts[2] : parts[5];
+  // Nie Rechenparameter blind aus der Datenbank übernehmen. Ein beschädigter Datensatz soll die
+  // Anmeldung ablehnen, nicht den Prozess mit mehreren Gigabyte Speicher auslasten.
+  if (![N, r, p].every(Number.isInteger) || N < 16_384 || N > SCRYPT.N || r !== 8 || p !== 1 || !salt || !key) {
+    return false;
+  }
   const expected = Buffer.from(key, 'base64');
-  const actual = crypto.scryptSync(password, Buffer.from(salt, 'base64'), expected.length, {
-    N: 16384,
-    r: 8,
-    p: 1,
-  });
-  return crypto.timingSafeEqual(expected, actual);
+  if (expected.length !== 64) return false;
+  try {
+    const actual = crypto.scryptSync(password, Buffer.from(salt, 'base64'), expected.length, {
+      N,
+      r,
+      p,
+      maxmem: 128 * 1024 * 1024,
+    });
+    return crypto.timingSafeEqual(expected, actual);
+  } catch {
+    return false;
+  }
 }
+
+export const passwordNeedsRehash = (stored) =>
+  typeof stored === 'string' && !stored.startsWith(`scrypt$${SCRYPT.N}$${SCRYPT.r}$${SCRYPT.p}$`);
 
 /**
  * Eine Adresse, die in ein `href` darf – oder `null`.

@@ -559,7 +559,7 @@ async function tabConnect(root, profile) {
     const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
     const running = bot.state && bot.state !== 'offline';
     return `<li class="botrow ${running ? 'is-on' : ''}">
-      <img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy">
+      <img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy" decoding="async">
       <div class="grow" style="min-width:0">
         <div class="row" style="gap:.4rem">
           <span class="strong truncate">${escapeHtml(member.name)}</span>
@@ -2126,7 +2126,7 @@ async function tabProxies(root, profile) {
             <tbody>${profile.accounts
               .map(
                 (member) => `<tr>
-                  <td><span class="row"><img class="head" src="${escapeHtml(member.head)}" alt="">${escapeHtml(
+                  <td><span class="row"><img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy" decoding="async">${escapeHtml(
                     member.name
                   )}</span></td>
                   <td><select data-proxy="${member.account_id}" style="max-width:22rem">

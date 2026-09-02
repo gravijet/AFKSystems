@@ -215,13 +215,49 @@ export async function fromUrl({ ticketId, messageId, userId, name, url, size = 0
   if (size && size > MAX_BYTES) {
     throw bad('Die Datei ist größer als 20 MB.', { en: 'That file is larger than 20 MB.' });
   }
-  const address = new URL(String(url));
-  // Nur von Discord. Ohne diese Schranke wäre der Endpunkt ein Werkzeug, mit dem sich beliebige
-  // Adressen aus unserem Netz abrufen lassen (SSRF) – auch solche, die nur von hier erreichbar sind.
-  if (address.protocol !== 'https:' || !/(^|\.)(discordapp\.(com|net)|discord\.com)$/.test(address.hostname)) {
+  // Nur von Discord – und nach jeder Weiterleitung erneut prüfen. `fetch` folgt sonst automatisch
+  // auch einem 302 auf 127.0.0.1 oder einen Cloud-Metadaten-Endpunkt und würde aus einer erlaubten
+  // Discord-Adresse nachträglich ein SSRF-Werkzeug machen.
+  const allowed = (raw) => {
+    let address;
+    try {
+      address = new URL(String(raw));
+    } catch {
+      return null;
+    }
+    const host = address.hostname.toLowerCase();
+    if (
+      address.protocol !== 'https:' ||
+      address.username ||
+      address.password ||
+      address.port ||
+      !/(^|\.)(discordapp\.(com|net)|discord\.com)$/.test(host)
+    ) {
+      return null;
+    }
+    return address;
+  };
+
+  let address = allowed(url);
+  if (!address) {
     throw bad('Diese Adresse gehört nicht zu Discord.', { en: 'That address does not belong to Discord.' });
   }
-  const response = await fetch(address, { signal: AbortSignal.timeout(30_000) });
+  let response;
+  for (let redirects = 0; redirects <= 3; redirects += 1) {
+    response = await fetch(address, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (![301, 302, 303, 307, 308].includes(response.status)) break;
+    const location = response.headers.get('location');
+    address = location ? allowed(new URL(location, address)) : null;
+    if (!address || redirects === 3) {
+      await response.body?.cancel?.().catch?.(() => {});
+      throw bad('Unsichere Weiterleitung beim Discord-Anhang.', {
+        en: 'Unsafe redirect while fetching the Discord attachment.',
+      });
+    }
+  }
   if (!response.ok) {
     throw bad(`Der Anhang ließ sich nicht laden (${response.status}).`, {
       en: `The attachment could not be fetched (${response.status}).`,

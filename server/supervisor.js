@@ -359,12 +359,20 @@ function disconnectText(raw) {
   } catch {
     return text.slice(0, 300);
   }
-  const walk = (node) => {
-    if (node === null || node === undefined) return '';
+  // Die Tiefe ist begrenzt, und zwar aus demselben Grund wie in mcping.js: Diese Zeile kommt von
+  // einem fremden Minecraft-Server, den der Kunde selbst aussucht. Eine tausendfach geschachtelte
+  // Abschiedsmeldung wäre für eine Funktion, die sich selbst aufruft, das Ende des Stapels – und
+  // dieser Aufruf hängt in der Verarbeitung der Client-Ausgabe, ohne Netz darunter. Der Prozess
+  // hält jeden laufenden Bot; er darf an einer Textumwandlung nicht sterben.
+  const walk = (node, depth = 0) => {
+    if (node === null || node === undefined || depth > 32) return '';
     if (typeof node === 'string') return node;
-    if (Array.isArray(node)) return node.map(walk).join('');
+    if (Array.isArray(node)) return node.map((entry) => walk(entry, depth + 1)).join('');
     if (typeof node !== 'object') return String(node);
-    return [node.text ?? '', ...(Array.isArray(node.extra) ? node.extra.map(walk) : [])].join('');
+    return [
+      node.text ?? '',
+      ...(Array.isArray(node.extra) ? node.extra.map((entry) => walk(entry, depth + 1)) : []),
+    ].join('');
   };
   return walk(data).replace(/\s+/g, ' ').trim().slice(0, 300);
 }

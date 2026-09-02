@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
+    "compression": "^1.8.1",
     "esbuild": "0.28.2",
     "express": "^4.21.2",
     "nodemailer": "^9.0.5",

@@ -998,7 +998,7 @@ body.site {
     gap: 0.5rem;
   }
   .site-actions .head-discord,
-  .site-actions .langs a,
+  .site-actions .language-switch,
   .site-actions .themes button {
     min-height: 2.75rem;
   }
@@ -1030,35 +1030,26 @@ body.site {
   }
 }
 
-.langs {
-  display: inline-flex;
-  overflow: hidden;
-  border-radius: var(--r-lg);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.langs a {
+.language-switch {
   display: inline-flex;
   align-items: center;
-  gap: 0.28rem;
-  padding: 0.25rem 0.5rem;
-  font-size: 0.6875rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  gap: 0.4rem;
+  min-height: 1.75rem;
+  padding: 0.3rem 0.6rem;
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 650;
 }
-.langs a[aria-current] {
-  background: var(--primary);
-  color: #fff;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 80%, #000);
+.language-switch .icon {
+  width: 0.9rem;
+  height: 0.9rem;
 }
-.langs a[aria-current]::before {
-  content: '✓';
-  font-size: 0.66rem;
-  line-height: 1;
-}
-.langs a:hover:not([aria-current]) {
+.language-switch:hover {
   color: var(--text);
-  background: var(--surface-2);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 35%, var(--line));
 }
 
 .oauth-icon {
@@ -1808,6 +1799,63 @@ body.site {
 
 
 /* ---------------------------------------------------------------- Dashboard */
+
+/* Schon das HTML zeigt die Form des Panels. Diese ruhigen Flächen verschwinden, sobald die vier
+ * Startanfragen beantwortet sind; sie verhindern eine leere Seite und halten das Layout stabil. */
+.boot-line,
+.boot-title,
+.boot-panel,
+.boot-cards > span {
+  display: block;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--text) 8%, transparent);
+}
+.boot-line {
+  width: 72%;
+  height: 0.72rem;
+  margin: 0.55rem 0.45rem;
+}
+.boot-line-wide {
+  width: calc(100% - 0.9rem);
+}
+.boot-line-short {
+  width: 48%;
+}
+.boot-side-lines {
+  display: grid;
+  align-content: start;
+  gap: 0.55rem;
+  padding-top: 1rem;
+}
+.boot-main {
+  width: 100%;
+}
+.boot-kicker {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.boot-title {
+  width: min(21rem, 65%);
+  height: 1.85rem;
+  margin-bottom: 1.5rem;
+}
+.boot-cards {
+  margin-bottom: 1.5rem;
+}
+.boot-cards > span {
+  min-height: 7rem;
+  border-radius: var(--r-2xl);
+}
+.boot-panel {
+  width: 100%;
+  height: min(15rem, 32vh);
+  border-radius: var(--r-2xl);
+}
 
 /* ================================================================ Panel: Rahmen und Seitenleiste
  *
@@ -4902,6 +4950,15 @@ h5.dc-head {
 }
 
 /* ================================================================ Website: neue Bausteine */
+
+/* Unterhalb des ersten Bildschirms überspringt der Browser Layout und Paint zunächst. Die echte
+ * Höhe wird beim Annähern gemerkt; deshalb springt nach dem ersten Rendern nichts mehr zurück. */
+body.site main > .band,
+body.site main > .closing,
+body.site > .site-foot {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 36rem;
+}
 
 /* Eine schmale Bahn für einen einzelnen Hinweis – volle Breite liest sich schlechter als
  * 44 Zeichen zu wenig. */

@@ -46,6 +46,11 @@ export const config = {
   publicUrl: (process.env.PUBLIC_URL || 'https://example.invalid').replace(/\/+$/, ''),
   brand: process.env.BRAND || 'AFKSystems',
 
+  // Nur bekannte Reverse-Proxies dürfen die Client-IP über X-Forwarded-For bestimmen. Die
+  // Vorgabe "loopback" passt zum mitgelieferten nginx und bleibt auch dann sicher, wenn Node
+  // versehentlich direkt ins Netz lauscht. Weitere Netze müssen ausdrücklich konfiguriert werden.
+  trustProxy: process.env.TRUST_PROXY || 'loopback',
+
   // Alles Veränderliche liegt unter data/: Datenbank, Client-Binaries, Konten je Nutzer, Logs.
   dataDir: process.env.DATA_DIR || path.join(ROOT, 'data'),
 
@@ -96,6 +101,35 @@ export const paths = {
 for (const dir of [config.dataDir, paths.bin, paths.users, paths.logs, paths.resources, paths.backups]) {
   fs.mkdirSync(dir, { recursive: true });
 }
+
+/**
+ * Was unter data/ liegt, geht nur den Dienst etwas an.
+ *
+ * In der Datenbank stehen Passwort-Hashes, Sitzungen, die Token der Standorte und das Geheimnis
+ * des Bots; unter `users/` liegen die Microsoft-Anmeldungen der Kunden; unter `backups/` liegt
+ * beides noch einmal. Das systemd-Unit setzt dafür `UMask=0077`, aber das gilt nur für Dateien,
+ * die **dieser** Dienst neu anlegt – eine von Hand kopierte Datenbank, ein Bestand aus einer
+ * älteren Fassung oder ein Umzug mit `scp` bringt seine eigenen Rechte mit, und die sind
+ * gewöhnlich `0644`. Auf einer Maschine mit einem zweiten Benutzer ist das der ganze Betrieb zum
+ * Mitlesen.
+ *
+ * Deshalb wird es bei jedem Start nachgezogen, und zwar nachsichtig: Ein Dateisystem, das keine
+ * Rechte kann, und eine Datei, die jemand anderem gehört, sind ein Grund für eine Zeile im
+ * Protokoll – nicht dafür, den Dienst nicht hochfahren zu lassen.
+ */
+export function tighten(target, mode) {
+  try {
+    fs.chmodSync(target, mode);
+  } catch {
+    /* fremder Eigentümer oder ein Dateisystem ohne Rechte – der Dienst läuft trotzdem */
+  }
+}
+for (const dir of [config.dataDir, paths.bin, paths.users, paths.logs, paths.resources, paths.backups]) {
+  tighten(dir, 0o700);
+}
+// Die Datenbank selbst wird in db.js nachgezogen, und nicht hier: Sie existiert in diesem Moment
+// womöglich noch gar nicht – bei einem ersten Start legt sie erst `new Database(...)` an, und ein
+// `chmod` auf eine Datei, die es nicht gibt, schützt nichts.
 
 // Der Sitzungsschlüssel darf nicht bei jedem Neustart wechseln, sonst wäre jeder ausgeloggt.
 if (!config.secret) {

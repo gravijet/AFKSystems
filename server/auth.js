@@ -1,10 +1,10 @@
 // Anmeldung: Sitzungen als zufälliges Token im HttpOnly-Cookie, Passwörter als scrypt-Hash.
 // Kein Zusatzpaket – die Sitzung steht in der Datenbank und lässt sich damit auch wieder entziehen.
 
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { db, audit, getSetting } from './db.js';
 import { config } from './config.js';
-import { token, hashPassword, verifyPassword, deviceOf, HttpError, bad } from './util.js';
+import { token, hashPassword, verifyPassword, passwordNeedsRehash, deviceOf, HttpError, bad } from './util.js';
 import { grant, planOf, isPayingUser, monthlyCost, freeAccess } from './billing.js';
 import * as mail from './mail.js';
 import * as linkedRoles from './linked-roles.js';
@@ -15,25 +15,75 @@ const COOKIE = 'afk_session';
 /** So oft höchstens wird "zuletzt gesehen" nachgeführt. */
 const SEEN_MS = 5 * 60 * 1000;
 
+/**
+ * Zugangstoken werden nur als schlüsselgebundener Abdruck gespeichert.
+ *
+ * Ein gewöhnlicher SHA-Hash genügt bei zufälligen Tokens zwar gegen Zurückrechnen, aber ein HMAC
+ * trennt zusätzlich Datenbank und Schlüssel: Eine kopierte SQLite-Datei allein enthält damit
+ * weder offene Sitzungen noch gültige Links zum Zurücksetzen. Der zweite Kandidat hält bereits
+ * laufende Sitzungen aus älteren Versionen bis zu ihrem normalen Ablauf am Leben.
+ */
+const capabilityDigest = (purpose, value) =>
+  `h1:${createHmac('sha256', config.secret)
+    .update(String(purpose))
+    .update('\0')
+    .update(String(value))
+    .digest('hex')}`;
+
+const capabilityCandidates = (purpose, raw) => {
+  const value = String(raw || '').trim();
+  if (!value || value.startsWith('h1:')) return [];
+  return [capabilityDigest(purpose, value), value];
+};
+
+const storedSessionToken = (raw) => capabilityDigest('session', raw);
+
 export function readCookie(req, name) {
   const header = req.headers.cookie;
   if (!header) return null;
   for (const part of header.split(';')) {
     const eq = part.indexOf('=');
     if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        // Ein kaputtes Prozent-Encoding ist kein Serverfehler und darf insbesondere beim
+        // WebSocket-Upgrade nicht als ungefangene Ausnahme den Prozess beenden.
+        return null;
+      }
+    }
   }
   return null;
 }
 
-export function createSession(res, user, req, { impersonatorId = null, parentToken = null } = {}) {
+/**
+ * Wie lange eine geliehene Ansicht („Als Nutzer ansehen“) gilt.
+ *
+ * Eine Impersonation ist ein Generalschlüssel zu einem fremden Konto, und sie war bisher genauso
+ * langlebig wie eine gewöhnliche Anmeldung: dreißig Tage. Wer im Support einmal in ein Konto
+ * hineingesehen und den Reiter zugemacht hat, ließ damit einen Monat lang ein gültiges Cookie für
+ * ein fremdes Konto in seinem Browser liegen. Eine Stunde reicht für jede Rückfrage, und wer
+ * länger braucht, drückt noch einmal auf den Knopf – das steht dann auch noch einmal im Protokoll.
+ */
+export const IMPERSONATION_MS = 60 * 60 * 1000;
+
+export function createSession(
+  res,
+  user,
+  req,
+  { impersonatorId = null, parentToken = null, maxAgeMs = null } = {}
+) {
   const value = token(32);
-  const expires = Date.now() + config.sessionDays * 86_400_000;
+  const lifetime = Number.isFinite(maxAgeMs) && maxAgeMs > 0
+    ? Math.min(maxAgeMs, config.sessionDays * 86_400_000)
+    : config.sessionDays * 86_400_000;
+  const expires = Date.now() + lifetime;
   db.prepare(
     `INSERT INTO sessions (token, user_id, created_at, expires_at, ip, agent, impersonator_id, parent_token)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    value,
+    storedSessionToken(value),
     user.id,
     Date.now(),
     expires,
@@ -46,7 +96,7 @@ export function createSession(res, user, req, { impersonatorId = null, parentTok
     httpOnly: true,
     sameSite: 'lax',
     secure: config.publicUrl.startsWith('https'),
-    maxAge: config.sessionDays * 86_400_000,
+    maxAge: lifetime,
     path: '/',
   });
   return value;
@@ -65,24 +115,33 @@ export function setSessionCookie(res, value) {
 
 export function destroySession(req, res) {
   const value = readCookie(req, COOKIE);
-  if (value) db.prepare('DELETE FROM sessions WHERE token = ?').run(value);
+  const candidates = capabilityCandidates('session', value);
+  if (candidates.length) db.prepare('DELETE FROM sessions WHERE token IN (?, ?)').run(...candidates);
   res.clearCookie(COOKIE, { path: '/' });
 }
 
 /** Hängt req.user an, wenn eine gültige Sitzung vorliegt. Wirft nie. */
 export function attachUser(req, _res, next) {
   const value = readCookie(req, COOKIE);
-  if (value) {
+  const candidates = capabilityCandidates('session', value);
+  if (candidates.length) {
     const row = db
       .prepare(
-        `SELECT u.*, s.impersonator_id, s.parent_token FROM sessions s JOIN users u ON u.id = s.user_id
-         WHERE s.token = ? AND s.expires_at > ?`
+        `SELECT u.*, s.token AS session_storage_token, s.impersonator_id, s.parent_token
+           FROM sessions s JOIN users u ON u.id = s.user_id
+          WHERE s.token IN (?, ?) AND s.expires_at > ?`
       )
-      .get(value, Date.now());
+      .get(...candidates, Date.now());
     if (row) {
-      const { impersonator_id: impersonatorId, parent_token: parentToken, ...user } = row;
+      const {
+        session_storage_token: sessionStorageToken,
+        impersonator_id: impersonatorId,
+        parent_token: parentToken,
+        ...user
+      } = row;
       req.user = user;
       req.sessionToken = value;
+      req.sessionStorageToken = sessionStorageToken;
       if (impersonatorId) {
         req.impersonator = db
           .prepare('SELECT id, username FROM users WHERE id = ?')
@@ -133,16 +192,87 @@ export function requireAdmin(req, _res, next) {
 const EMAIL = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 const USERNAME = /^[a-zA-Z0-9_.-]{3,24}$/;
 
-export function checkPasswordPair(password, repeat) {
-  if (String(password || '').length < 8) {
-    throw bad('Das Passwort braucht mindestens 8 Zeichen.', {
-      en: 'The password needs at least 8 characters.',
+/**
+ * Passwörter, die zwölf Zeichen haben und trotzdem keine sind.
+ *
+ * Die Längengrenze allein ist eine Rechenaufgabe, kein Schutz: `passwortpasswort`,
+ * `123456789012` und `qwertzuiopü` erfüllen sie und stehen trotzdem in jeder Liste, mit der ein
+ * Angreifer anfängt. Die Sammlung hier ist bewusst kurz – sie ersetzt keine Prüfung gegen ein
+ * Leck, sondern fängt die Handvoll Muster ab, die Menschen tatsächlich eintippen, wenn ihnen ein
+ * Formular „mindestens zwölf Zeichen“ sagt.
+ */
+const WEAK_PASSWORDS = new Set([
+  '123456789012',
+  '1234567890123',
+  '12345678901234',
+  '123456789012345',
+  '1234567890',
+  'passwortpasswort',
+  'passwordpassword',
+  'passwort1234',
+  'password1234',
+  'passwort12345',
+  'password12345',
+  'qwertzuiopasdf',
+  'qwertyuiopasdf',
+  'administrator',
+  'minecraft123',
+  'minecraftminecraft',
+  'letmeinletmein',
+  'iloveyouiloveyou',
+  'willkommen123',
+  'welcome123456',
+  'afksystems123',
+  'geheimgeheim',
+  'aaaaaaaaaaaa',
+]);
+
+/**
+ * Steckt der Kontoname oder der Postfachname im Passwort?
+ *
+ * `hugo` mit dem Passwort `hugohugohugo` hat zwölf Zeichen und ist trotzdem der erste Versuch, den
+ * jemand macht, der den Namen kennt – und den Namen kennt bei einem Panel, in dem er unter jeder
+ * Ticketantwort steht, jeder. Geprüft wird in beide Richtungen und ohne Rücksicht auf Groß- und
+ * Kleinschreibung; kurze Bruchstücke (unter vier Zeichen) zählen nicht, sonst scheitert jedes
+ * Passwort an einem Konto namens `ab`.
+ */
+function containsIdentity(value, identity = {}) {
+  const needles = [identity.username, String(identity.email || '').split('@')[0]]
+    .map((entry) => String(entry || '').trim().toLowerCase())
+    .filter((entry) => entry.length >= 4);
+  const haystack = value.toLowerCase();
+  return needles.some((needle) => haystack.includes(needle));
+}
+
+export function checkPasswordPair(password, repeat, identity = null) {
+  const value = String(password || '');
+  if (value.length < 12) {
+    throw bad('Das Passwort braucht mindestens 12 Zeichen.', {
+      en: 'The password needs at least 12 characters.',
+    });
+  }
+  if (value.length > 256) {
+    throw bad('Das Passwort darf höchstens 256 Zeichen lang sein.', {
+      en: 'The password may be at most 256 characters long.',
     });
   }
   if (String(password) !== String(repeat ?? '')) {
     throw bad('Die beiden Passwörter sind nicht gleich.', {
       en: 'The two passwords are not the same.',
       code: 'password-mismatch',
+    });
+  }
+  const plain = value.toLowerCase();
+  if (WEAK_PASSWORDS.has(plain) || /^(.)\1+$/.test(value)) {
+    throw bad('Dieses Passwort ist zu leicht zu erraten. Bitte ein anderes wählen.', {
+      en: 'That password is too easy to guess. Please choose a different one.',
+      code: 'password-weak',
+    });
+  }
+  if (identity && containsIdentity(value, identity)) {
+    throw bad('Das Passwort darf nicht den Benutzernamen oder die E-Mail-Adresse enthalten.', {
+      en: 'The password must not contain your username or email address.',
+      code: 'password-weak',
     });
   }
 }
@@ -158,7 +288,7 @@ export function register({ email, username, password, password2, language = 'en'
       en: 'Username: 3–24 characters – letters, digits, . _ and - only.',
     });
   }
-  checkPasswordPair(password, password2);
+  checkPasswordPair(password, password2, { username: name, email: mailAddress });
 
   if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(mailAddress)) {
     throw bad('Diese E-Mail-Adresse ist schon vergeben.', { en: 'That email address is taken.' });
@@ -171,6 +301,7 @@ export function register({ email, username, password, password2, language = 'en'
   const count = db.prepare('SELECT COUNT(*) AS n FROM users').get().n;
   const role = count === 0 || (config.adminEmail && config.adminEmail === mailAddress) ? 'admin' : 'user';
   const needsVerification = mail.verifyRequired() && role !== 'admin';
+  const verificationToken = needsVerification ? token(24) : null;
 
   const info = db
     .prepare(
@@ -185,7 +316,7 @@ export function register({ email, username, password, password2, language = 'en'
       role,
       language === 'de' ? 'de' : 'en',
       needsVerification ? 0 : 1,
-      needsVerification ? token(24) : null,
+      verificationToken ? capabilityDigest('verify-email', verificationToken) : null,
       needsVerification ? Date.now() : null,
       Date.now()
     );
@@ -194,7 +325,7 @@ export function register({ email, username, password, password2, language = 'en'
   const bonus = Number(getSetting('signup_bonus')) || 0;
   if (bonus > 0) grant(user.id, bonus, 'bonus', 'Startguthaben');
   audit(user.id, 'register', { role });
-  if (needsVerification) mail.sendVerification(user, user.verify_token);
+  if (needsVerification) mail.sendVerification(user, verificationToken);
   return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
 }
 
@@ -212,6 +343,11 @@ export function login({ login: identifier, password }) {
     });
   }
   if (user.blocked) throw new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' });
+  // Alte, schwächere Parameter werden ohne Zwangs-Reset beim nächsten richtigen Login angehoben.
+  if (passwordNeedsRehash(user.password_hash)) {
+    user.password_hash = hashPassword(password);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(user.password_hash, user.id);
+  }
   return user;
 }
 
@@ -243,7 +379,7 @@ export function changePassword(user, oldPassword, newPassword, repeat) {
   if (!verifyPassword(String(oldPassword || ''), user.password_hash)) {
     throw bad('Das alte Passwort stimmt nicht.', { en: 'The current password is wrong.' });
   }
-  checkPasswordPair(newPassword, repeat);
+  checkPasswordPair(newPassword, repeat, { username: user.username, email: user.email });
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(newPassword), user.id);
   // Andere Sitzungen fliegen raus, die aktuelle wird vom Aufrufer neu gesetzt.
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(user.id);
@@ -326,7 +462,7 @@ const EMAIL_CHANGE_MS = 24 * 60 * 60 * 1000;
  *   3. **Die Nachricht an die alte Adresse.** Sie ist die einzige Warnung, die ein Kunde bekommt,
  *      wenn jemand anderes gerade dabei ist, ihm das Konto wegzunehmen.
  */
-export async function requestEmailChange(user, wanted, password) {
+export async function requestEmailChange(user, wanted, password, { onToken = null } = {}) {
   if (!checkPassword(user, password)) throw wrongPassword();
   const address = String(wanted || '').trim().toLowerCase();
   if (!EMAIL.test(address)) {
@@ -352,7 +488,10 @@ export async function requestEmailChange(user, wanted, password) {
   const value = token(24);
   db.prepare(
     'UPDATE users SET pending_email = ?, pending_email_token = ?, pending_email_at = ? WHERE id = ?'
-  ).run(address, value, Date.now(), user.id);
+  ).run(address, capabilityDigest('email-change', value), Date.now(), user.id);
+  // Kleiner Test-/Integrationshaken für den Mail-Transport. Der HTTP-Aufrufer kann ihn nicht
+  // setzen; produktiv bleibt der Klartext ausschließlich in der Nachricht an die neue Adresse.
+  if (typeof onToken === 'function') onToken(value);
   audit(user.id, 'email-change-requested', { to: address });
 
   // An die neue Adresse: der Link. An die alte: die Warnung. Beides geht nebenher hinaus – ein
@@ -374,9 +513,9 @@ export async function requestEmailChange(user, wanted, password) {
 
 /** Den Bestätigungslink aus der Nachricht an die neue Adresse einlösen. */
 export function confirmEmailChange(rawToken) {
-  const value = String(rawToken || '').trim();
-  if (!value) return null;
-  const user = db.prepare('SELECT * FROM users WHERE pending_email_token = ?').get(value);
+  const candidates = capabilityCandidates('email-change', rawToken);
+  if (!candidates.length) return null;
+  const user = db.prepare('SELECT * FROM users WHERE pending_email_token IN (?, ?)').get(...candidates);
   if (!user) return null;
   const clear = () =>
     db
@@ -442,9 +581,9 @@ export function noticeNewDevice(user, req) {
 const VERIFY_MS = 7 * 24 * 60 * 60 * 1000;
 
 export function verifyEmail(rawToken) {
-  const value = String(rawToken || '').trim();
-  if (!value) return null;
-  const user = db.prepare('SELECT * FROM users WHERE verify_token = ?').get(value);
+  const candidates = capabilityCandidates('verify-email', rawToken);
+  if (!candidates.length) return null;
+  const user = db.prepare('SELECT * FROM users WHERE verify_token IN (?, ?)').get(...candidates);
   if (!user) return null;
   // Ein Bestätigungslink meldet an (siehe unten) – er ist damit ein zweiter Weg ins Konto, und der
   // muss dieselbe Tür sein wie das Anmeldeformular. Ohne diese Zeile kam ein gesperrtes Konto über
@@ -474,7 +613,7 @@ export function resendVerification(user) {
   }
   const value = token(24);
   db.prepare('UPDATE users SET verify_token = ?, verify_sent_at = ? WHERE id = ?').run(
-    value,
+    capabilityDigest('verify-email', value),
     Date.now(),
     user.id
   );
@@ -492,7 +631,7 @@ export async function requestReset(email) {
   if (!user || !mail.configured()) return;
   const value = token(24);
   db.prepare('UPDATE users SET reset_token = ?, reset_expires = ? WHERE id = ?').run(
-    value,
+    capabilityDigest('password-reset', value),
     Date.now() + RESET_MS,
     user.id
   );
@@ -500,9 +639,12 @@ export async function requestReset(email) {
 }
 
 export function applyReset(rawToken, password, repeat) {
-  const value = String(rawToken || '').trim();
-  const user = value
-    ? db.prepare('SELECT * FROM users WHERE reset_token = ? AND reset_expires > ?').get(value, Date.now())
+  const candidates = capabilityCandidates('password-reset', rawToken);
+  const user = candidates.length
+    ? db.prepare('SELECT * FROM users WHERE reset_token IN (?, ?) AND reset_expires > ?').get(
+        ...candidates,
+        Date.now()
+      )
     : null;
   if (!user) throw bad('Dieser Link gilt nicht mehr.', { en: 'This link is no longer valid.', code: 'reset-invalid' });
   // Ein gesperrtes Konto bekommt kein neues Passwort. Anmelden könnte es sich damit zwar ohnehin
@@ -511,7 +653,7 @@ export function applyReset(rawToken, password, repeat) {
   if (user.blocked) {
     throw new HttpError(403, 'Dieses Konto ist gesperrt.', { en: 'This account is blocked.' });
   }
-  checkPasswordPair(password, repeat);
+  checkPasswordPair(password, repeat, { username: user.username, email: user.email });
   db.prepare(
     'UPDATE users SET password_hash = ?, reset_token = NULL, reset_expires = NULL WHERE id = ?'
   ).run(hashPassword(password), user.id);
@@ -614,6 +756,7 @@ export { deviceOf };
 const sessionRef = (value) => createHash('sha256').update(String(value)).digest('hex').slice(0, 16);
 
 export function sessionsOf(userId, currentToken = null) {
+  const current = new Set(capabilityCandidates('session', currentToken));
   return db
     .prepare('SELECT token, created_at, expires_at, ip, agent FROM sessions WHERE user_id = ? ORDER BY created_at DESC')
     .all(userId)
@@ -624,7 +767,7 @@ export function sessionsOf(userId, currentToken = null) {
       ip: row.ip,
       agent: row.agent,
       device: deviceOf(row.agent),
-      current: Boolean(currentToken) && row.token === currentToken,
+      current: current.has(row.token),
     }));
 }
 
@@ -638,13 +781,70 @@ export function sessionsOf(userId, currentToken = null) {
  */
 export function endSession(userId, ref, exceptToken = null) {
   const wanted = String(ref || '');
+  const except = new Set(capabilityCandidates('session', exceptToken));
   const row = db
     .prepare('SELECT token FROM sessions WHERE user_id = ?')
     .all(userId)
-    .find((entry) => sessionRef(entry.token) === wanted && entry.token !== exceptToken);
+    .find((entry) => sessionRef(entry.token) === wanted && !except.has(entry.token));
   if (!row) return false;
   db.prepare('DELETE FROM sessions WHERE token = ?').run(row.token);
   audit(userId, 'session-revoked');
+  return true;
+}
+
+/**
+ * Alle Sitzungen dieses Kontos beenden – außer der, an der gerade jemand sitzt.
+ *
+ * Der Vergleich läuft über den **gespeicherten** Wert und nicht über das Cookie. In der Datenbank
+ * steht ein HMAC (siehe oben); wer dort das rohe Cookie einsetzt, vergleicht zwei Dinge, die nie
+ * gleich sein können – und meldet damit auch den ab, der gerade auf „alle anderen abmelden“
+ * gedrückt hat. Genau das war der Fehler an dieser Stelle: Der Knopf hat funktioniert, nur eben
+ * einen Schritt zu weit, und der Kunde stand danach selbst vor der Anmeldeseite.
+ */
+export function endOtherSessions(userId, currentStorageToken = null) {
+  if (!currentStorageToken) {
+    return db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId).changes;
+  }
+  return db
+    .prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?')
+    .run(userId, currentStorageToken).changes;
+}
+
+/** Eine Browser-WebSocket-Sitzung mit derselben Logik wie die HTTP-Middleware nachschlagen. */
+export function userForSession(rawToken) {
+  const candidates = capabilityCandidates('session', rawToken);
+  if (!candidates.length) return null;
+  return db
+    .prepare(
+      `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+        WHERE s.token IN (?, ?) AND s.expires_at > ?`
+    )
+    .get(...candidates, Date.now());
+}
+
+/**
+ * Aus einer geliehenen Ansicht sicher ins Administratorkonto zurückkehren.
+ *
+ * Im Kind steht nur der bereits gehashte Datenbankwert der Elternsitzung. Beim Rückweg wird diese
+ * Sitzungskennung rotiert; dadurch muss niemals ein gültiges Admin-Cookie in SQLite liegen.
+ */
+export function returnToImpersonator(req, res) {
+  if (!req.user || !req.impersonator || !req.parentToken) return false;
+  const parent = db
+    .prepare(
+      `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+        WHERE s.token = ? AND s.user_id = ? AND s.expires_at > ?`
+    )
+    .get(req.parentToken, req.impersonator.id, Date.now());
+  if (!parent) return false;
+
+  const current = capabilityCandidates('session', req.sessionToken);
+  const rotate = db.transaction(() => {
+    if (current.length) db.prepare('DELETE FROM sessions WHERE token IN (?, ?)').run(...current);
+    db.prepare('DELETE FROM sessions WHERE token = ?').run(req.parentToken);
+  });
+  rotate();
+  createSession(res, parent, req);
   return true;
 }
 

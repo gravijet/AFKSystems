@@ -1752,7 +1752,7 @@ async function serverDetail(root, id) {
               data.accounts
                 .map(
                   (account) => `<li class="botrow ${account.online ? 'is-on' : ''}">
-                    <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy">
+                    <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
                     <div class="grow" style="min-width:0">
                       <div class="strong truncate">${escapeHtml(account.name)}</div>
                       <div class="small muted truncate">${escapeHtml(account.state)}
