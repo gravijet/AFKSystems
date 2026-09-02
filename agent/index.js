@@ -23,6 +23,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { execFile } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
@@ -67,6 +68,23 @@ const config = {
 if (!config.token) {
   console.error('NODE_TOKEN fehlt. Es steht im Panel unter Administration → Standorte.');
   process.exit(1);
+}
+if (process.env.NODE_ENV === 'production') {
+  let panel;
+  try {
+    panel = new URL(config.panel);
+  } catch {
+    console.error('PANEL_URL muss eine vollständige HTTPS-Adresse sein.');
+    process.exit(1);
+  }
+  if (panel.protocol !== 'https:' || panel.username || panel.password || panel.search || panel.hash) {
+    console.error('PANEL_URL muss im Produktionsbetrieb eine HTTPS-Adresse ohne Zugangsdaten sein.');
+    process.exit(1);
+  }
+  if (config.token.length < 32) {
+    console.error('NODE_TOKEN ist für den Produktionsbetrieb zu kurz. Bitte im Panel neu erzeugen.');
+    process.exit(1);
+  }
 }
 
 const paths = {
@@ -224,10 +242,78 @@ async function metrics() {
 
 // ---------------------------------------------------------------- Client-Dateien
 
-const sha256 = async (file) => {
-  const { createHash } = await import('node:crypto');
-  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-};
+const sha256 = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const DOWNLOAD_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,100}$/;
+const SHA256 = /^[a-f0-9]{64}$/i;
+const MANIFEST_MAX_BYTES = 1024 * 1024;
+const BINARY_MAX_BYTES = 256 * 1024 * 1024;
+const RESOURCE_MAX_BYTES = 128 * 1024 * 1024;
+
+/** Eine Antwort lesen, ohne der Gegenstelle unbegrenzt Arbeitsspeicher zu überlassen. */
+async function readCapped(response, limit) {
+  if (!response.body) return Buffer.alloc(0);
+  const parts = [];
+  let total = 0;
+  for await (const chunk of response.body) {
+    total += chunk.length;
+    if (total > limit) {
+      await response.body.cancel?.().catch?.(() => {});
+      throw new Error(`Antwort ist größer als ${limit} Bytes.`);
+    }
+    parts.push(Buffer.from(chunk));
+  }
+  return Buffer.concat(parts, total);
+}
+
+/**
+ * Eine große Datei direkt auf die Platte schreiben und erst nach Größe und SHA-256 übernehmen.
+ * Die feste Zieldatei wird atomar ersetzt; eine abgebrochene oder falsche Antwort wird gelöscht.
+ */
+async function downloadVerified(response, target, entry, maxBytes, { executable = false } = {}) {
+  const expectedSize = Number(entry?.size);
+  const expectedHash = String(entry?.sha256 || '').toLowerCase();
+  if (!Number.isInteger(expectedSize) || expectedSize <= 0 || expectedSize > maxBytes || !SHA256.test(expectedHash)) {
+    throw new Error('Manifest enthält ungültige Größe oder Prüfsumme.');
+  }
+  const declared = Number(response.headers.get('content-length') || 0);
+  if (declared && declared !== expectedSize) throw new Error('Download-Größe weicht vom Manifest ab.');
+  if (!response.body) throw new Error('Download enthält keine Daten.');
+
+  const temp = `${target}.${crypto.randomBytes(8).toString('hex')}.neu`;
+  const fd = fs.openSync(temp, 'wx', 0o600);
+  const hash = crypto.createHash('sha256');
+  let total = 0;
+  try {
+    for await (const raw of response.body) {
+      const chunk = Buffer.from(raw);
+      total += chunk.length;
+      if (total > expectedSize || total > maxBytes) {
+        await response.body.cancel?.().catch?.(() => {});
+        throw new Error('Download ist größer als angekündigt.');
+      }
+      hash.update(chunk);
+      fs.writeSync(fd, chunk);
+    }
+    fs.closeSync(fd);
+    if (total !== expectedSize || hash.digest('hex') !== expectedHash) {
+      throw new Error('SHA-256 oder Größe des Downloads stimmt nicht.');
+    }
+    fs.chmodSync(temp, executable ? 0o755 : 0o600);
+    fs.renameSync(temp, target);
+  } catch (error) {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* bereits geschlossen */
+    }
+    try {
+      fs.unlinkSync(temp);
+    } catch {
+      /* schon entfernt */
+    }
+    throw error;
+  }
+}
 
 /**
  * Die Client-Dateien vom Panel holen – aber nur, was fehlt oder sich geändert hat.
@@ -242,12 +328,14 @@ async function syncBinaries() {
   const response = await fetch(`${config.panel}/api/node/manifest`, {
     headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
     signal: AbortSignal.timeout(30_000),
+    redirect: 'error',
   });
   if (!response.ok) throw new Error(`Manifest ${response.status}`);
-  const manifest = await response.json();
+  const manifest = JSON.parse((await readCapped(response, MANIFEST_MAX_BYTES)).toString('utf8'));
   let loaded = 0;
 
-  for (const entry of manifest.files || []) {
+  for (const entry of Array.isArray(manifest.files) ? manifest.files : []) {
+    if (!DOWNLOAD_NAME.test(String(entry?.name || ''))) throw new Error('Manifest enthält einen unsicheren Dateinamen.');
     const target = path.join(paths.bin, entry.name);
     if (fs.existsSync(target) && fs.statSync(target).size === entry.size) {
       if ((await sha256(target)) === entry.sha256) continue;
@@ -256,12 +344,10 @@ async function syncBinaries() {
       headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
       // Eine Client-Datei sind ein paar Dutzend Megabyte – großzügiger als das Manifest.
       signal: AbortSignal.timeout(10 * 60_000),
+      redirect: 'error',
     });
     if (!file.ok) throw new Error(`Download ${entry.name}: ${file.status}`);
-    const temp = `${target}.neu`;
-    fs.writeFileSync(temp, Buffer.from(await file.arrayBuffer()));
-    fs.chmodSync(temp, 0o755);
-    fs.renameSync(temp, target);
+    await downloadVerified(file, target, entry, BINARY_MAX_BYTES, { executable: true });
     loaded += 1;
   }
   if (loaded) log(`${loaded} Client-Datei(en) geholt.`);
@@ -283,7 +369,7 @@ const VERSION = /^[A-Za-z0-9][A-Za-z0-9._-]{0,15}$/;
  */
 async function syncResources(wanted) {
   const keep = new Set();
-  for (const entry of wanted) {
+  for (const entry of Array.isArray(wanted) ? wanted : []) {
     const version = String(entry?.version || '');
     if (!VERSION.test(version)) continue;
     keep.add(version);
@@ -295,11 +381,10 @@ async function syncResources(wanted) {
       const file = await fetch(`${config.panel}/api/node/resources/${encodeURIComponent(version)}`, {
         headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
         signal: AbortSignal.timeout(10 * 60_000),
+        redirect: 'error',
       });
       if (!file.ok) throw new Error(`Status ${file.status}`);
-      const temp = `${target}.neu`;
-      fs.writeFileSync(temp, Buffer.from(await file.arrayBuffer()));
-      fs.renameSync(temp, target);
+      await downloadVerified(file, target, entry, RESOURCE_MAX_BYTES);
       log(`Minecraft-Ressourcen für ${version} geholt.`);
     } catch (error) {
       log(`Ressourcen für ${version} nicht geholt: ${error.message}`);
@@ -509,8 +594,7 @@ async function relay(link, message) {
       method,
       signal: AbortSignal.timeout(8000),
     });
-    const body = Buffer.from(await response.arrayBuffer());
-    if (body.length > HTTP_MAX_BYTES) return answer({ error: 'Antwort zu groß.' });
+    const body = await readCapped(response, HTTP_MAX_BYTES);
     answer({
       status: response.status,
       ctype: response.headers.get('content-type') || 'application/octet-stream',
@@ -548,6 +632,7 @@ function connect() {
   socket = new WebSocket(address, {
     headers: { authorization: `Bearer ${config.token}`, 'user-agent': 'afksystems-agent' },
     handshakeTimeout: 20_000,
+    maxPayload: 6 * 1024 * 1024,
   });
 
   socket.on('open', async () => {

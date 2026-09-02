@@ -6,7 +6,15 @@
           <span>{{brand}}</span>
         </a>
 
-        <button class="site-menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu">
+        <div class="mobile-language-picker language-picker" role="group" aria-label="{{common.language}}">
+          <a href="/de{{path}}" hreflang="de" lang="de" data-language="de"
+            aria-label="Deutsch" title="Deutsch" {{deCurrent}}>DE</a>
+          <a href="/en{{path}}" hreflang="en" lang="en" data-language="en"
+            aria-label="English" title="English" {{enCurrent}}>EN</a>
+        </div>
+
+        <button class="site-menu-toggle" type="button" aria-expanded="false" aria-controls="site-menu"
+          aria-label="{{nav.menu}}">
           <span class="site-menu-lines" aria-hidden="true"><i></i><i></i></span>
           <span>{{nav.menu}}</span>
         </button>
@@ -20,15 +28,14 @@
 
           <div class="site-actions">
             {{discordNav}}
-            <a class="language-switch" href="/{{altLang}}{{path}}" hreflang="{{altLang}}"
-              lang="{{altLang}}" data-language="{{altLang}}" title="{{languageSwitchLabel}}"
-              aria-label="{{languageSwitchLabel}}">
+            <div class="language-picker" role="group" aria-label="{{common.language}}">
               <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>
               </svg>
-              <span>{{altLangName}}</span>
-            </a>
+              <a href="/de{{path}}" hreflang="de" lang="de" data-language="de" {{deCurrent}}>Deutsch</a>
+              <a href="/en{{path}}" hreflang="en" lang="en" data-language="en" {{enCurrent}}>English</a>
+            </div>
             <div class="themes" id="themes" role="group" aria-label="{{common.appearance}}">
               <button type="button" data-theme="light" title="{{common.light}}" aria-label="{{common.light}}" aria-pressed="false">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>

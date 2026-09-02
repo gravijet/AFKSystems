@@ -144,6 +144,7 @@ etwa 10–15 Bots. Für mehr entsprechend mehr Arbeitsspeicher: rechne mit ~80 M
 | Bots höchstens | z. B. `15` |
 | CPU-Grenze (%) | z. B. `85` |
 | Speichergrenze (%) | z. B. `85` |
+| Festplattengrenze (%) | z. B. `90` |
 | Zugang | zunächst **Nur Administratoren** – zum Testen |
 | Aktiv | an |
 
@@ -421,15 +422,16 @@ Ein Standort gilt als **voll**, sobald eine dieser Grenzen erreicht ist:
 | Bots höchstens | **laufende** Bots | unbegrenzt |
 | CPU-Grenze (%) | gemessene Auslastung der Maschine | keine Grenze |
 | Speichergrenze (%) | gemessener Arbeitsspeicher der Maschine | keine Grenze |
+| Festplattengrenze (%) | gemessener belegter Platz des Agent-Datenträgers | keine Grenze |
 
-Die beiden gemessenen Grenzen sind der Unterschied zwischen einer Zahl im Formular und der
+Die drei gemessenen Grenzen sind der Unterschied zwischen einer Zahl im Formular und der
 Wirklichkeit: Ein Standort mit 95 % CPU ist voll, auch wenn rechnerisch noch Bots hineinpassten.
 
 Ein voller Standort nimmt **keine neuen Serverplätze** an. Was schon dort liegt, läuft weiter –
 niemandem wird etwas abgeschaltet, weil eine Grenze erreicht ist.
 
 **Empfohlene Werte** für einen VPS mit 1 GB RAM: Bots höchstens `12`, CPU-Grenze `85`,
-Speichergrenze `85`.
+Speichergrenze `85`, Festplattengrenze `90`.
 
 Die Auslastung steht auf der Karte jedes Standorts und wird alle 15 Sekunden neu gemeldet. Wer
 wie viel verbraucht, steht in **Administration → System**.

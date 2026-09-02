@@ -242,11 +242,11 @@ const newCode = () => String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
 /**
  * Den Code erzeugen, verschicken und die Wartemarke zurückgeben.
  *
- * **Gibt `null` zurück, wenn die Nachricht nicht hinausging.** Das ist Absicht und die wichtigste
- * Zeile in dieser Datei: Ein Postausgang, der gerade klemmt, darf keinen Kunden aussperren. Der
- * Aufrufer meldet dann ganz normal an – die Anmeldung war ja mit dem richtigen Passwort belegt –
- * und der Fehlschlag steht im Protokoll. Die Alternative wäre ein Konto, das niemand mehr öffnen
- * kann, solange ein fremder Mailserver Schluckauf hat.
+ * **Schlägt geschlossen fehl, wenn die Nachricht nicht hinausging.** Wer den Anmeldecode
+ * eingeschaltet hat, hat sich bewusst für eine zweite Schranke entschieden. Ein klemmender
+ * Postausgang darf diese Schranke nicht unbemerkt entfernen und ausgerechnet in einem
+ * Störungsfall jedes Konto auf reines Passwort zurückstufen. Der offene Datensatz wird dabei
+ * entfernt; ein späterer Versuch beginnt mit einem frischen Code.
  */
 export async function start(user, req) {
   // Ältere Marken desselben Kontos verfallen. Wer zweimal hintereinander anmeldet, hat sonst zwei
@@ -276,7 +276,14 @@ export async function start(user, req) {
     db.prepare('DELETE FROM login_challenges WHERE token = ?').run(stored);
     console.error(`[anmeldecode] Nachricht an #${user.id} ging nicht hinaus: ${sent.error}`);
     audit(user.id, 'login-code-failed', { error: String(sent.error || '').slice(0, 200) }, req.ip);
-    return null;
+    throw new HttpError(
+      503,
+      'Der Anmeldecode konnte nicht verschickt werden. Bitte später erneut versuchen.',
+      {
+        en: 'The sign-in code could not be sent. Please try again later.',
+        code: 'login-code-delivery',
+      }
+    );
   }
   audit(user.id, 'login-code-sent', null, req.ip);
   return { token: value, expires_at: now + CODE_MS, hint: maskEmail(user.email) };

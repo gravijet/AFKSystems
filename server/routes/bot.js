@@ -75,22 +75,25 @@ const FAIL_MAX = 20;
 export function tryBotSecret(ip, value) {
   const now = Date.now();
   const recent = (failures.get(ip) || []).filter((at) => now - at < FAIL_WINDOW_MS);
+  // Ein Angreifer darf den echten Bot nicht durch zwanzig absichtlich falsche Versuche aussperren.
+  // Das starke Geheimnis wird deshalb auch bei gefülltem Zähler geprüft; nur falsche Werte werden
+  // gebremst. Damit bleibt Raten wirkungslos, der rechtmäßige Dienst aber erreichbar.
+  if (checkSecret(value)) {
+    failures.delete(ip);
+    return 'ok';
+  }
   if (recent.length >= FAIL_MAX) {
     failures.set(ip, recent);
     return 'throttled';
   }
-  if (!checkSecret(value)) {
-    recent.push(now);
-    failures.set(ip, recent);
-    if (failures.size > 5_000) {
-      for (const [key, times] of failures) {
-        if (!times.some((at) => now - at < FAIL_WINDOW_MS)) failures.delete(key);
-      }
+  recent.push(now);
+  failures.set(ip, recent);
+  if (failures.size > 5_000) {
+    for (const [key, times] of failures) {
+      if (!times.some((at) => now - at < FAIL_WINDOW_MS)) failures.delete(key);
     }
-    return 'wrong';
   }
-  failures.delete(ip);
-  return 'ok';
+  return 'wrong';
 }
 
 router.use((req, res, next) => {

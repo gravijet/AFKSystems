@@ -1477,6 +1477,7 @@ export const S = {
   'nd.ofCores': { en: 'of {n} cores', de: 'von {n} Kernen' },
   'nd.maxCpu': { en: 'CPU limit (%)', de: 'CPU-Grenze (%)' },
   'nd.maxMem': { en: 'Memory limit (%)', de: 'Speichergrenze (%)' },
+  'nd.maxDisk': { en: 'Disk limit (%)', de: 'Festplattengrenze (%)' },
   'nd.maxHint': {
     en: '0 = no limit. Above the limit the location counts as full and takes no new server slots.',
     de: '0 = keine Grenze. Darüber gilt der Standort als voll und nimmt keine neuen Serverplätze an.',

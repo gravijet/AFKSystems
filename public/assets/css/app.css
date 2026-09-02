@@ -870,6 +870,9 @@ body.site {
 .site-menu-toggle {
   display: none;
 }
+.mobile-language-picker {
+  display: none;
+}
 .site-links {
   display: flex;
   justify-content: center;
@@ -904,7 +907,7 @@ body.site {
 
 @media (max-width: 939px) {
   .site-head > .page {
-    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto auto;
     gap: 0.65rem;
     min-height: 3.75rem;
     padding: 0.55rem 1rem;
@@ -927,6 +930,15 @@ body.site {
     font-size: 0.8125rem;
     font-weight: 700;
     cursor: pointer;
+  }
+  .mobile-language-picker {
+    display: inline-flex;
+    min-height: 2.65rem;
+  }
+  .mobile-language-picker a {
+    min-width: 2rem;
+    min-height: 2.25rem;
+    padding-inline: 0.4rem;
   }
   .site-menu-lines {
     position: relative;
@@ -998,9 +1010,16 @@ body.site {
     gap: 0.5rem;
   }
   .site-actions .head-discord,
-  .site-actions .language-switch,
+  .site-actions .language-picker,
   .site-actions .themes button {
     min-height: 2.75rem;
+  }
+  .site-actions .language-picker {
+    flex: 1 1 12rem;
+  }
+  .site-actions .language-picker a {
+    flex: 1;
+    min-height: 2.25rem;
   }
   .site-actions .head-discord span {
     display: inline;
@@ -1019,6 +1038,9 @@ body.site {
   }
 }
 @media (max-width: 360px) {
+  .site-menu-toggle > span:last-child {
+    display: none;
+  }
   .site-actions .head-discord span {
     display: none;
   }
@@ -1030,26 +1052,42 @@ body.site {
   }
 }
 
-.language-switch {
+.language-picker {
   display: inline-flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.15rem;
   min-height: 1.75rem;
-  padding: 0.3rem 0.6rem;
+  padding: 0.2rem;
   border-radius: var(--r-lg);
   box-shadow: inset 0 0 0 1px var(--line);
   color: var(--text-2);
   font-size: 0.75rem;
   font-weight: 650;
 }
-.language-switch .icon {
+.language-picker > .icon {
   width: 0.9rem;
   height: 0.9rem;
+  margin: 0 0.3rem;
+  flex: none;
 }
-.language-switch:hover {
+.language-picker a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.45rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: calc(var(--r-lg) - 0.15rem);
+  white-space: nowrap;
+}
+.language-picker a:hover {
   color: var(--text);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 35%, var(--line));
+  background: color-mix(in oklab, var(--text) 6%, transparent);
+}
+.language-picker a[aria-current='true'] {
+  background: var(--surface-2);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
+  color: var(--text);
+  cursor: default;
 }
 
 .oauth-icon {
@@ -4960,6 +4998,16 @@ body.site > .site-foot {
   contain-intrinsic-size: auto 36rem;
 }
 
+/* Lange Panel-Seiten bestehen aus unabhängigen Flächen. Was weit unterhalb des sichtbaren
+ * Bereichs liegt, braucht noch kein Layout und keinen Paint; die gemerkte Eigenhöhe hält den
+ * Scrollbalken dabei stabil. Der App-Rahmen und die jeweils erste sichtbare Fläche bleiben davon
+ * unberührt. */
+body.dash .main > .panel,
+body.dash .main > .grid > .panel {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 18rem;
+}
+
 /* Eine schmale Bahn für einen einzelnen Hinweis – volle Breite liest sich schlechter als
  * 44 Zeichen zu wenig. */
 .page.narrow {
@@ -5241,6 +5289,14 @@ body.site > .site-foot {
     box-shadow: 0 -1px 0 var(--line), 0 -12px 32px -28px rgba(0, 0, 0, 0.65);
     backdrop-filter: blur(18px) saturate(1.25);
   }
+  /* Ein dauerhaft fixierter Weichzeichner zwingt mobile Grafikchips bei jedem Scrollschritt zum
+     erneuten Zusammensetzen des Hintergrunds. Eine deckende Fläche sieht hier fast gleich aus,
+     scrollt aber auch auf schwächeren Telefonen ruhig. */
+  .site-head,
+  .mobile-nav {
+    background: var(--surface-2);
+    backdrop-filter: none;
+  }
   .mobile-nav a,
   .mobile-nav button {
     position: relative;
@@ -5348,6 +5404,11 @@ body.site > .site-foot {
     background: color-mix(in oklab, var(--background) 90%, transparent);
     box-shadow: inset 0 -1px 0 var(--line-soft);
     backdrop-filter: blur(14px) saturate(1.2);
+  }
+  .appbar,
+  body.dash .activity-tools {
+    background: var(--background);
+    backdrop-filter: none;
   }
   .appbar > .row:first-child {
     min-height: 2.75rem;

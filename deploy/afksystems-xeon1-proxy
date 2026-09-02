@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# systemd stellt die Zugangsdaten nur diesem Dienst in einem geschützten Verzeichnis bereit.
+# Das ist ein eigener Proxy-Zugang und berührt weder SSH noch irgendein bestehendes Login.
+PROXY_PASSWORD="$(<"${CREDENTIALS_DIRECTORY}/proxy.password")"
+exec /usr/bin/microsocks \
+  -i 192.0.2.1 \
+  -p 1080 \
+  -u afksystems-xeon1 \
+  -P "$PROXY_PASSWORD" \
+  -b 192.0.2.1

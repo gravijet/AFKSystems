@@ -1339,6 +1339,14 @@ const migrations = [
     name: '030-wer-ist-administrator',
     sql: `CREATE INDEX users_role ON users(role);`,
   },
+  {
+    // CPU und Arbeitsspeicher entschieden bereits, wann eine Standort-Maschine keine weiteren
+    // Serverplätze mehr annimmt. Die Platte wurde zwar gemessen und angezeigt, blieb bei dieser
+    // Entscheidung aber wirkungslos. Damit "bis voll" für alle drei Ressourcen dasselbe heißt,
+    // bekommt auch sie eine frei wählbare Grenze.
+    name: '031-festplattengrenze-fuer-standorte',
+    sql: `ALTER TABLE nodes ADD COLUMN max_disk_percent INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];
 
 /**

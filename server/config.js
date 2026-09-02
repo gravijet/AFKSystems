@@ -143,6 +143,38 @@ if (!config.secret) {
 }
 
 /**
+ * Unsichere Produktionskonfiguration nicht stillschweigend hinnehmen.
+ * Entwicklung und Tests dürfen bewusst über HTTP und mit Wegwerf-Schlüsseln laufen; live wären
+ * dieselben Werte eine Umgehung der Schutzmechanismen, die der übrige Code voraussetzt.
+ */
+if (process.env.NODE_ENV === 'production') {
+  let publicAddress;
+  try {
+    publicAddress = new URL(config.publicUrl);
+  } catch {
+    throw new Error('PUBLIC_URL muss im Produktionsbetrieb eine vollständige HTTPS-Adresse sein.');
+  }
+  if (
+    publicAddress.protocol !== 'https:' ||
+    publicAddress.username ||
+    publicAddress.password ||
+    publicAddress.search ||
+    publicAddress.hash
+  ) {
+    throw new Error('PUBLIC_URL muss im Produktionsbetrieb eine vollständige HTTPS-Adresse ohne Zugangsdaten sein.');
+  }
+  if (String(config.secret).length < 32) {
+    throw new Error('SECRET muss im Produktionsbetrieb mindestens 32 Zeichen lang sein.');
+  }
+  if (config.trustProxy === 'true') {
+    throw new Error('TRUST_PROXY=true vertraut beliebigen Absendern. Bitte nur konkrete Proxy-Netze eintragen.');
+  }
+  if (!Number.isFinite(config.sessionDays) || config.sessionDays < 1 || config.sessionDays > 30) {
+    throw new Error('SESSION_DAYS muss im Produktionsbetrieb zwischen 1 und 30 liegen.');
+  }
+}
+
+/**
  * Fingerabdruck über alles unter public/assets.
  *
  * Warum es ihn gibt: CSS und JS lagen mit `max-age=7d` im Browser und bei Cloudflare. Die Seiten

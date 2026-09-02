@@ -119,14 +119,27 @@ let panelReady = false;
 let ticketStatsTimer = null;
 let notificationStatsTimer = null;
 let sideFrame = null;
+let sideTimer = null;
+let lastSideDraw = 0;
+
+// Statusmeldungen mehrerer Bots können dauerhaft schneller eintreffen als der Bildschirm sie
+// sinnvoll zeigen kann. Die Seitenleiste besteht aus Navigation, Suche und allen Serverplätzen;
+// sie sechzigmal je Sekunde komplett neu aufzubauen kostet deutlich mehr als der kleine Punkt,
+// der sich darin ändert. Zehn Aktualisierungen je Sekunde bleiben visuell unmittelbar, lassen
+// dem Hauptinhalt und Eingaben aber zuverlässig Zeit.
+const SIDE_DRAW_INTERVAL = 100;
 
 /** Mehrere Bot-Ereignisse in demselben Bild brauchen nur eine neue Seitenleiste. */
 function scheduleSideDraw() {
-  if (sideFrame !== null) return;
-  sideFrame = requestAnimationFrame(() => {
-    sideFrame = null;
-    drawSide();
-  });
+  if (sideFrame !== null || sideTimer !== null) return;
+  const elapsed = performance.now() - lastSideDraw;
+  sideTimer = setTimeout(() => {
+    sideTimer = null;
+    sideFrame = requestAnimationFrame(() => {
+      sideFrame = null;
+      drawSide();
+    });
+  }, Math.max(0, SIDE_DRAW_INTERVAL - elapsed));
 }
 
 /**
@@ -561,10 +574,15 @@ function adminSection() {
 // ---------------------------------------------------------------- Zeichnen
 
 export function drawSide() {
+  if (sideTimer !== null) {
+    clearTimeout(sideTimer);
+    sideTimer = null;
+  }
   if (sideFrame !== null) {
     cancelAnimationFrame(sideFrame);
     sideFrame = null;
   }
+  lastSideDraw = performance.now();
   applySideLayout();
   const route = state.route;
   const unread = state.stats?.tickets_unread || 0;
@@ -1008,6 +1026,29 @@ const VIEWS = {
   admin: () => import('./views/admin.js'),
 };
 
+// Die meisten Startansichten brauchen nur den Rahmen des Panels. Tarife, Zahlungswege,
+// Client-Fähigkeiten und die Beschreibungen aller Macro-Felder sind dagegen nur in diesen
+// Ansichten sichtbar. Bis dahin bleibt die kleine /meta?scope=panel-Antwort genug.
+const FULL_META_VIEWS = new Set(['servers', 'server', 'tickets', 'settings', 'admin']);
+let fullMeta = false;
+let fullMetaJob = null;
+
+export function ensureMeta() {
+  if (fullMeta) return Promise.resolve(state.meta);
+  if (!fullMetaJob) {
+    fullMetaJob = api('/meta')
+      .then((meta) => {
+        state.meta = meta;
+        fullMeta = true;
+        return meta;
+      })
+      .finally(() => {
+        fullMetaJob = null;
+      });
+  }
+  return fullMetaJob;
+}
+
 let drawing = false;
 let redrawWanted = false;
 let paintedRoute = '';
@@ -1040,6 +1081,7 @@ export async function draw() {
   state.onLive = null;
   drawSide();
   try {
+    if (FULL_META_VIEWS.has(state.route.name)) await ensureMeta();
     const module = await VIEWS[state.route.name]();
     await module.render($('#main'), state.route);
     animateRoute(state.route);
@@ -1224,7 +1266,9 @@ async function boot() {
     // `/me`, `/profiles` und `/accounts` erst nach `/meta`, und das Ansichtsmodul sogar erst nach
     // allen vier Antworten – zwei vermeidbare Wasserfälle vor dem ersten echten Panel-Inhalt.
     const firstRoute = parseRoute();
-    const metaJob = api('/meta').then((meta) => { state.meta = meta; });
+    const metaJob = FULL_META_VIEWS.has(firstRoute.name)
+      ? ensureMeta()
+      : api('/meta?scope=panel').then((meta) => { state.meta = meta; });
     const dataJob = refresh();
     const viewJob = VIEWS[firstRoute.name]();
     await Promise.all([metaJob, dataJob, viewJob]);

@@ -102,7 +102,10 @@ app.use((req, res, next) => {
   if (config.publicUrl.startsWith('https://')) {
     res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   }
-  if (req.path.startsWith('/api/') || /^\/(en|de)\/app(?:\/|$)/.test(req.path)) {
+  if (
+    req.path.startsWith('/api/') ||
+    /^\/(en|de)\/(?:app(?:\/|$)|login\/?$|register\/?$|forgot\/?$|reset\/?$|verify\/?$)/.test(req.path)
+  ) {
     res.setHeader('Cache-Control', 'no-store');
   }
   next();
@@ -111,31 +114,27 @@ app.use((req, res, next) => {
 /**
  * Was für diesen Server "die eigene Website" ist.
  *
- * Die eingestellte Adresse gilt immer. Dazu kommt der Host, unter dem die Anfrage wirklich
- * hereinkam – hinter Cloudflare oder nginx ist das nicht zwingend dieselbe Zeichenkette, und ohne
- * diesen zweiten Eintrag lehnte das Panel unter einer zweiten Domain jede Eingabe ab.
- *
- * **`req.hostname` statt der rohen Kopfzeilen.** Vorher wurde `X-Forwarded-Host` direkt gelesen –
- * eine Kopfzeile, die jeder mitschicken darf. Wer sie setzte, schrieb sich damit selbst in die
- * Liste der erlaubten Herkünfte, und die Prüfung darunter sagte zu allem ja. Express wertet
- * dieselbe Kopfzeile aus, aber nur so weit, wie `trust proxy` es erlaubt (hier: ein Sprung, also
- * der eigene Reverse Proxy) – und genau das ist der Unterschied zwischen "der Proxy sagt es" und
- * "irgendwer behauptet es".
+ * Live gelten ausschließlich die konfigurierte öffentliche Adresse und ihr fester www-Alias.
+ * Weder `Host` noch `X-Forwarded-Host` dürfen sich dort selbst auf die Positivliste schreiben:
+ * beide sind Eingangsdaten einer Anfrage und damit keine Vertrauensquelle. Nur lokale Entwicklung
+ * und Tests ergänzen ihren wechselnden Host samt Port, weil sie keine feste öffentliche Adresse
+ * haben.
  */
 function allowedOrigins(req) {
   const origins = new Set([new URL(config.publicUrl).origin]);
-  // Die Adresse, an die diese Anfrage wirklich gerichtet war – **`Host`, nicht `X-Forwarded-Host`**.
-  // Der Unterschied ist der ganze Punkt: `Host` setzt der Browser auf das Ziel, das er anspricht,
-  // und niemand sonst. `X-Forwarded-Host` darf jeder frei mitschicken, und wer es tat, schrieb sich
-  // damit selbst in diese Liste – die Prüfung darunter fragte danach den Angreifer, ob er
-  // vertrauenswürdig sei. (Express' `req.hostname` liest dieselbe Kopfzeile, sobald `trust proxy`
-  // gesetzt ist, und taugt hier deshalb genauso wenig.)
-  const host = String(req?.headers?.host || '').split(',')[0].trim();
-  if (host) {
-    // Beide Schemata: Hinter nginx oder Cloudflare endet TLS dort, hier kommt die Anfrage
-    // unverschlüsselt an – der Browser nennt trotzdem "https" als Herkunft.
-    origins.add(`https://${host}`);
-    origins.add(`http://${host}`);
+  const publicAddress = new URL(config.publicUrl);
+  // Die feste www-Variante ist ein bekannter Alias, nicht eine Behauptung aus der Anfrage.
+  if (!publicAddress.hostname.startsWith('www.') && !publicAddress.port) {
+    origins.add(`${publicAddress.protocol}//www.${publicAddress.hostname}`);
+  }
+  // Nur Entwicklung und Integrationstests laufen auf einem zufälligen lokalen Port. Live darf
+  // ein frei gewählter Host-Kopf niemals seine eigene Herkunft auf die Positivliste schreiben.
+  if (process.env.NODE_ENV !== 'production') {
+    const host = String(req?.headers?.host || '').split(',')[0].trim();
+    if (host) {
+      origins.add(`https://${host}`);
+      origins.add(`http://${host}`);
+    }
   }
   return origins;
 }
@@ -791,6 +790,10 @@ server.on('upgrade', (req, socket, head) => {
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
     ws.userId = row.id;
+    // Der rohe Wert bleibt ausschließlich im Serverprozess. Im 30-Sekunden-Takt wird damit
+    // geprüft, ob Abmeldung, Passwortwechsel, Sperre oder gezielter Sitzungsentzug inzwischen
+    // wirksam wurden; eine bereits offene Leitung darf diese Entscheidungen nicht überleben.
+    ws.sessionToken = value;
     ws.isAlive = true;
     if (!sockets.has(row.id)) sockets.set(row.id, new Set());
     const open = sockets.get(row.id);
@@ -931,6 +934,13 @@ jobs.every(
   () => {
     agents.heartbeat();
     for (const ws of [...wss.clients, ...botSockets.clients, ...nodeSockets.clients]) {
+      if (wss.clients.has(ws)) {
+        const current = auth.userForSession(ws.sessionToken);
+        if (!current || current.blocked || current.id !== ws.userId) {
+          ws.close(4001, 'Sitzung beendet.');
+          continue;
+        }
+      }
       if (!ws.isAlive) {
         ws.terminate();
         continue;

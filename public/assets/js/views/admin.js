@@ -2078,7 +2078,7 @@ async function nodes(root) {
         label: tr('adm.disk'),
         percent: stats.disk?.percent ?? 0,
         text: stats.disk ? `${bytes(stats.disk.used)} / ${bytes(stats.disk.total)}` : '–',
-        limit: 0,
+        limit: node.max_disk_percent,
       },
     ];
     return `<div class="node-load">
@@ -2226,6 +2226,15 @@ async function nodes(root) {
       max: 100,
       hint: tr('nd.maxHint'),
       value: node.max_mem_percent ?? 0,
+    },
+    {
+      key: 'max_disk_percent',
+      label: tr('nd.maxDisk'),
+      type: 'number',
+      min: 0,
+      max: 100,
+      hint: tr('nd.maxHint'),
+      value: node.max_disk_percent ?? 0,
     },
     {
       key: 'access',

@@ -3,7 +3,7 @@
 // Fünf Seiten, ein Modul: die Vorlagen sind so gebaut, dass immer dieselben Felder-IDs
 // vorkommen. Welche Seite gerade offen ist, steht in der Adresse.
 
-import { api, tr, url, $ } from './ui.js';
+import { api, tr, url, $ } from './auth-runtime.js';
 
 const page = location.pathname.split('/')[2] || 'login';
 const form = $('#form');
@@ -84,7 +84,7 @@ function showOauth(meta) {
 }
 
 if (page === 'login') {
-  api('/meta').then(showOauth).catch(() => {});
+  api('/meta?scope=auth').then(showOauth).catch(() => {});
 
   /** Die Marke der offenen Code-Abfrage. Sie lebt nur in dieser Seite und in diesem Tab. */
   let challenge = null;
@@ -202,7 +202,7 @@ if (page === 'login') {
 // ---------------------------------------------------------------- Konto anlegen
 
 if (page === 'register') {
-  api('/meta')
+  api('/meta?scope=auth')
     .then((meta) => {
       if (!meta.registration_open) {
         $('#closed')?.classList.remove('hide');
@@ -252,7 +252,7 @@ if (page === 'register') {
 // ---------------------------------------------------------------- Passwort vergessen
 
 if (page === 'forgot') {
-  api('/meta')
+  api('/meta?scope=auth')
     .then((meta) => {
       if (meta.mail_ready) return;
       $('#off')?.classList.remove('hide');
@@ -318,7 +318,7 @@ if (page === 'verify') {
   } else {
     // Ohne Marke in der Adresse: der Hinweis für jemanden, der schon angemeldet, aber noch nicht
     // bestätigt ist.
-    api('/meta')
+    api('/meta?scope=auth')
       .then((meta) => {
         state.textContent = meta.user
           ? tr('auth.verify.pending.text', { email: meta.user.email })

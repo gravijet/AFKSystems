@@ -34,16 +34,24 @@ if (storedLang && storedLang !== pageLang && /^\/(en|de)(\/|$)/.test(location.pa
   storage.set('afk-lang', pageLang);
 }
 
-$('.language-switch')?.addEventListener('click', (event) => {
-  const link = event.currentTarget;
-  const next = link.dataset.language;
-  if (next !== 'de' && next !== 'en') return;
-  storage.set('afk-lang', next);
-  document.cookie = `lang=${next}; path=/; max-age=${365 * 86400}; samesite=lax`;
-  const target = new URL(link.href);
-  target.search = location.search;
-  target.hash = location.hash;
-  link.href = target.href;
+// Beide Sprachen stehen sichtbar nebeneinander. So ist nicht nur das Ziel des Schalters, sondern
+// auch der aktuelle Zustand klar. Der aktive Eintrag bleibt ein echter Link (kopierbar, ohne
+// JavaScript brauchbar), ein Klick darauf lädt dieselbe Seite aber nicht unnötig neu.
+document.querySelectorAll('.language-picker [data-language]').forEach((link) => {
+  link.addEventListener('click', (event) => {
+    const next = link.dataset.language;
+    if (next !== 'de' && next !== 'en') return;
+    if (next === pageLang) {
+      event.preventDefault();
+      return;
+    }
+    storage.set('afk-lang', next);
+    document.cookie = `lang=${next}; path=/; max-age=${365 * 86400}; samesite=lax`;
+    const target = new URL(link.href);
+    target.search = location.search;
+    target.hash = location.hash;
+    link.href = target.href;
+  });
 });
 
 const menuButton = $('.site-menu-toggle');

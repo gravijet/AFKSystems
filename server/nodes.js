@@ -107,7 +107,8 @@ export function visibleFor(user) {
  * Ist hier kein Platz mehr?
  *
  * Neben den gezählten Grenzen (Serverplätze, Bots) zählen jetzt auch die gemessenen: ein Standort,
- * dessen Maschine bei 95 % CPU steht, ist voll, auch wenn rechnerisch noch Bots hineinpassten.
+ * dessen Maschine bei 95 % CPU steht oder dessen Platte voll ist, ist voll, auch wenn
+ * rechnerisch noch Bots hineinpassten.
  * Das ist der Unterschied zwischen einer Zahl im Formular und der Wirklichkeit.
  */
 export function isFull(node) {
@@ -118,6 +119,7 @@ export function isFull(node) {
   if (stats) {
     if (node.max_cpu_percent > 0 && (stats.cpu_percent ?? 0) >= node.max_cpu_percent) return true;
     if (node.max_mem_percent > 0 && (stats.memory?.percent ?? 0) >= node.max_mem_percent) return true;
+    if (node.max_disk_percent > 0 && (stats.disk?.percent ?? 0) >= node.max_disk_percent) return true;
   }
   return false;
 }
@@ -228,8 +230,8 @@ export function create(body, by) {
   const info = db
     .prepare(
       `INSERT INTO nodes (name, kind, region, proxy_id, max_bots, max_profiles, max_cpu_percent,
-                          max_mem_percent, access, note, active, sort, token, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                          max_mem_percent, max_disk_percent, access, note, active, sort, token, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       name,
@@ -240,6 +242,7 @@ export function create(body, by) {
       requireInt(body.max_profiles ?? 0, 'Server', { max: 10_000 }),
       requireInt(body.max_cpu_percent ?? 0, 'CPU-Grenze', { max: 100 }),
       requireInt(body.max_mem_percent ?? 0, 'Speichergrenze', { max: 100 }),
+      requireInt(body.max_disk_percent ?? 0, 'Festplattengrenze', { max: 100 }),
       access,
       String(body.note || '').slice(0, 400) || null,
       body.active === false ? 0 : 1,
@@ -301,6 +304,9 @@ export function update(id, body, by) {
   }
   if (body.max_mem_percent !== undefined) {
     put('max_mem_percent', requireInt(body.max_mem_percent, 'Speichergrenze', { max: 100 }));
+  }
+  if (body.max_disk_percent !== undefined) {
+    put('max_disk_percent', requireInt(body.max_disk_percent, 'Festplattengrenze', { max: 100 }));
   }
   // Die Art lässt sich nachträglich ändern – aus einer reinen Adresse wird eine Maschine, sobald
   // jemand den Agenten darauf installiert. Ein Token entsteht dabei von selbst.
