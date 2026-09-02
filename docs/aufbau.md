@@ -790,3 +790,8 @@ eine unbehandelte Ausnahme beendete in Node den Prozess – mit ihm jeden laufen
 
 Alles Einstellbare steht **nicht** in der `.env`, sondern in der Tabelle `settings` und damit im
 Admin-Bereich: SMTP, Discord, Google, Stripe, Umsatzsteuer, Grenzen, Rechtstexte, Inhaltsschutz.
+
+Bei den Rechtstexten gibt es eine Ausnahme von der Regel „leer heißt Systemvorgabe“: Das Impressum
+hat keine Vorgabe, weil ein Impressum aus Namen und Anschrift eines Bestimmten besteht. Leer heißt
+dort: `landing.js` setzt es aus den Verkäuferangaben zusammen (siehe README), und fehlen auch die,
+sagt die Seite das statt einen Rest zu zeigen.

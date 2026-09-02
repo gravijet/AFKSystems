@@ -128,6 +128,19 @@ export function preload(lang, modules) {
  * der Browser mitbringt. Gespeichert wird sie im Cookie `lang` (und am Konto, wenn angemeldet).
  */
 export function langFor(req) {
+  // Steht die Sprache in der Adresse, dann gilt sie. Sie ist die ausdrücklichste Angabe, die es
+  // gibt – ausdrücklicher als ein Cookie vom letzten Besuch.
+  //
+  // Den bekannten Seiten fiel das nie auf: Ihre Route liest `:lang` selbst aus dem Pfad. Die
+  // 404-Seite und die Fehlerseite kommen aber hier vorbei, und dort stand es falsch: Wer einem
+  // deutschen Link auf eine Seite folgte, die es nicht gibt, las „Nothing here“, obwohl `/de/` in
+  // der Adresse stand. Die Route setzt das Sprach-Cookie zwar auf Deutsch, aber das steht in der
+  // **Antwort** – die Anfrage, die hier ankommt, trägt es noch nicht.
+  const path = String(req.path || '');
+  const prefix = path.slice(1, 3);
+  if (path[0] === '/' && LANGS.includes(prefix) && (path.length === 3 || path[3] === '/')) {
+    return prefix;
+  }
   const cookie = readLangCookie(req);
   if (cookie) return cookie;
   if (req.user?.language && LANGS.includes(req.user.language)) return req.user.language;
