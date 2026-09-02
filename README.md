@@ -54,9 +54,16 @@ niemand einlösen kann, ohne dass die Seite darüber redet.
 
 Englisch ist die Hauptsprache, Deutsch die zweite. Beide sind echte Adressen (siehe oben).
 
-Alle sichtbaren Texte stehen in **einer** Datei: `public/assets/js/i18n.js`. Sie wird von beiden
-Seiten importiert – Node rendert daraus die festen Seiten, der Browser das Dashboard.
-Fehlermeldungen der API kommen in derselben Sprache zurück.
+Alle sichtbaren Texte stehen in **einer** Datei: `public/assets/js/i18n.js`, jeder Text in beiden
+Sprachen nebeneinander. Node rendert daraus die festen Seiten; Fehlermeldungen der API kommen in
+derselben Sprache zurück.
+
+Der **Browser** bekommt daraus nur seine eine Sprache: `server/strings.js` rechnet beim Hochfahren
+je Sprache ein eigenes Modul aus derselben Tabelle und liefert es unter
+`/assets/v/<hash>/js/i18n.<sprache>.js` aus. Beide zu laden wären hundertdreißig Kilobyte, das
+größte Stück auf dem Weg zum ersten Bild, und die Hälfte davon ungelesen. Wer einen Text ändert,
+ändert trotzdem nur `i18n.js` – es gibt keine erzeugte Datei im Projekt und keinen Bauschritt, der
+vergessen werden könnte.
 
 Gemerkt wird die Sprache **im Browser**: `localStorage['afk-lang']` und das Cookie `lang`, das der
 Server liest. Beim allerersten Besuch steht nichts davon fest – dann entscheidet `Accept-Language`,
@@ -648,6 +655,8 @@ server/
   resources.js    die Original-Client-JARs von Minecraft – Texturen für die Live-Ansicht
   stripe.js       Bezahlen, Webhook           vat.js        Umsatzsteuer auf Preis und Beleg
   protect.js      Inhaltsschutz serverseitig  legal.js      Datenschutz, AGB, Steuerhinweis
+  assets.js       vorgepackte Dateien ausliefern statt bei jeder Anfrage zu komprimieren
+  strings.js      die Texte des Panels, je Sprache einzeln – aus i18n.js beim Hochfahren gerechnet
   features.js     die Funktionsliste der öffentlichen Seiten, gefiltert nach dem echten Client
   settings-schema.js  Beschreibung jeder Einstellung: Gruppe, Beschriftung, Erklärung, Art
   pages.js        Vorlagen                    landing.js    das Bewegliche der öffentlichen Seiten
@@ -675,7 +684,7 @@ agent/
   index.js        der Standort-Agent – läuft auf einer anderen Maschine und führt dort Bots aus
 public/
   pages/          die festen Seiten als Vorlagen ({{> partial}} und {{schlüssel}})
-  assets/js/i18n.js     alle Texte, beide Sprachen, von Server und Browser genutzt
+  assets/js/i18n.js     alle Texte, beide Sprachen – die Quelle für Server und Browser
   assets/js/chatlog.js  Chatzeilen zusammenlegen, §-Farben zerlegen – ebenfalls von beiden
   assets/js/countries.js  die Länder der Rechnungsadresse – geprüft am Server, gewählt im Browser
   assets/js/discord.js  Discord-Nachrichten als HTML: Erwähnungen mit Namen statt Zahlen
