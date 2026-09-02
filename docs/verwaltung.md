@@ -203,6 +203,11 @@ Betriebs stehen darin. Jedes Herunterladen steht deshalb im Protokoll.
 Nicht mitgesichert wird `data/users/` – die Microsoft-Anmeldungen. Die gehören zu einem vollen
 Umzug (siehe [umzug.md](umzug.md)) und nicht in eine Datei, die im Browser landet.
 
+Für den laufenden Betrieb kann `deploy/install-backup.sh` zusätzlich vollständige, versionierte
+Stände auf einen zweiten Server übertragen. Diese externen Stände enthalten auch `data/users/`
+und die Betriebsgeheimnisse und sind deshalb ausschließlich per SSH zugänglich. Einrichtung und
+Wiederherstellung sind in [aufbau.md](aufbau.md#sicherung-auf-einen-zweiten-server) beschrieben.
+
 ---
 
 <a id="betrieb"></a>
