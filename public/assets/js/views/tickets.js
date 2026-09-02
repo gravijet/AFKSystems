@@ -278,6 +278,11 @@ async function one(root, id, { staff, backHash }) {
   const ticket = data.ticket;
   let messages = data.messages;
   let participants = data.participants || [];
+  // Große Verläufe starten mit der jüngsten, lesbaren Seite. Ältere Nachrichten bleiben mit
+  // einem Klick erreichbar, statt beim Öffnen eines Tickets tausend DOM-Knoten, Avatare und
+  // Anhänge zu bauen. Das ist vor allem auf Mobilgeräten spürbar.
+  let hasOlder = Boolean(data.has_more);
+  let loadingOlder = false;
 
   const statusControls = () =>
     staff
@@ -428,8 +433,11 @@ async function one(root, id, { staff, backHash }) {
     // Ein Ticket darf ohne Text abgeschickt werden – dann steht hier zunächst nur der Betreff,
     // und der Kasten sagt das, statt leer zu bleiben wie ein Fehler.
     thread.innerHTML =
-      messages.map(bubble).join('') ||
-      `<div class="chat-system"><span>${escapeHtml(tr('tk.onlySubject'))}</span></div>`;
+      `${hasOlder ? `<button class="btn btn-sm ticket-load-history" id="load-older" ${
+        loadingOlder ? 'disabled' : ''
+      }>${escapeHtml(loadingOlder ? tr('common.loading') : tr('tk.loadOlder'))}</button>` : ''}` +
+      (messages.map(bubble).join('') ||
+      `<div class="chat-system"><span>${escapeHtml(tr('tk.onlySubject'))}</span></div>`);
     if (atBottom) thread.scrollTop = thread.scrollHeight;
   };
 
@@ -451,9 +459,13 @@ async function one(root, id, { staff, backHash }) {
       return `<div class="chat-system"><span>${escapeHtml(message.body)}</span></div>`;
     }
     const mine = message.user_id === (data.me ?? state.me.id);
+    // Eine Team-Antwort ist eine Antwort des Teams, nicht die Visitenkarte der Person, die gerade
+    // Dienst hat. Das gilt für alle Kundenansichten – auch wenn der Verlauf aus Discord kam.
     const who = message.internal
       ? tr('tk.internal')
-      : message.author_name || message.display_name || message.username || (message.role === 'staff' ? tr('tk.staff') : tr('tk.you'));
+      : message.role === 'staff'
+        ? tr('tk.staff')
+        : message.author_name || message.display_name || message.username || tr('tk.you');
     return `<article class="chat-msg ${message.role} ${mine ? 'mine' : ''} ${
       message.internal ? 'internal' : ''
     }">
@@ -511,6 +523,32 @@ async function one(root, id, { staff, backHash }) {
   paint();
   paintPeople();
   thread.scrollTop = thread.scrollHeight;
+
+  thread.addEventListener('click', async (event) => {
+    if (!event.target.closest('#load-older') || loadingOlder || !messages.length) return;
+    loadingOlder = true;
+    const previousTop = thread.scrollTop;
+    const previousHeight = thread.scrollHeight;
+    paint();
+    try {
+      const first = messages[0].id;
+      const page = await api(`${base}/messages?before=${first}`);
+      const known = new Set(messages.map((entry) => entry.id));
+      const older = page.messages.filter((entry) => !known.has(entry.id));
+      messages = older.concat(messages);
+      hasOlder = Boolean(page.has_more);
+      Object.assign(ticket, page.ticket);
+      paintStatus(ticket.status);
+      paint();
+      // Beim Einfügen oberhalb des Sichtfensters bleibt derselbe Satz unter dem Auge stehen.
+      thread.scrollTop = thread.scrollHeight - previousHeight + previousTop;
+    } catch (error) {
+      fail(error);
+    } finally {
+      loadingOlder = false;
+      paint();
+    }
+  });
 
   // ------------------------------------------------------------ Schreiben
 
@@ -634,9 +672,11 @@ async function one(root, id, { staff, backHash }) {
       });
       const result = await api(
         staff ? `/admin/tickets/${id}/reply` : `/tickets/${id}/reply`,
-        { method: 'POST', body: { body, internal, files } }
+        // Der Server liefert nur den Nachschlag seit der letzten sichtbaren Nachricht. So bleibt
+        // das Abschicken auch bei einem sehr langen Ticket konstant schnell.
+        { method: 'POST', body: { body, internal, files, after: messages.at(-1)?.id || 0 } }
       );
-      messages = result.messages;
+      mergeMessages(result.messages);
       Object.assign(ticket, result.ticket);
       setStoredDraft('');
       paintDraft();

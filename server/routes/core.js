@@ -1286,9 +1286,11 @@ router.get(
   wrap((req, res) => {
     const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
     tickets.markRead(ticket, req.user, { staff: false });
+    const messages = tickets.messages(ticket.id, { staff: false, limit: 100, newest: true });
     res.json({
       ticket: ticketView(ticket),
-      messages: tickets.messages(ticket.id, { staff: false }),
+      messages,
+      has_more: messages.length === 100,
       participants: tickets.participants(ticket.id),
       me: req.user.id,
     });
@@ -1302,11 +1304,16 @@ router.get(
   wrap((req, res) => {
     const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
     const since = Number(req.query.since) || 0;
+    const before = Number(req.query.before) || 0;
     tickets.markRead(ticket, req.user, { staff: false });
-    const all = tickets.messages(ticket.id, { staff: false });
+    const messages = tickets.messages(ticket.id, {
+      staff: false,
+      ...(since ? { after: since, limit: 100 } : before ? { before, limit: 100, newest: true } : { limit: 100, newest: true }),
+    });
     res.json({
       ticket: ticketView(ticket),
-      messages: since ? all.filter((message) => message.id > since) : all,
+      messages,
+      has_more: messages.length === 100,
     });
   })
 );
@@ -1327,9 +1334,12 @@ router.post(
       { preview: String(req.body?.body || '').slice(0, 160), author: profile.displayNameOf(req.user) },
       req.user.id
     );
+    const after = Number(req.body?.after);
     res.json({
       ticket: ticketView(updated),
-      messages: tickets.messages(ticket.id, { staff: false }),
+      messages: Number.isInteger(after) && after >= 0
+        ? tickets.messages(ticket.id, { staff: false, after, limit: 100 })
+        : tickets.messages(ticket.id, { staff: false }),
     });
   })
 );

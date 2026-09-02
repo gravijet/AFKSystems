@@ -194,7 +194,20 @@ export function unpackMentions(value) {
   }
 }
 
-export function messages(ticketId, { staff = false } = {}) {
+export function messages(ticketId, { staff = false, before = null, after = null, limit = null, newest = false } = {}) {
+  const where = ['m.ticket_id = ?'];
+  const values = [ticketId];
+  if (!staff) where.push('m.internal = 0');
+  if (Number.isInteger(before) && before > 0) {
+    where.push('m.id < ?');
+    values.push(before);
+  }
+  if (Number.isInteger(after) && after >= 0) {
+    where.push('m.id > ?');
+    values.push(after);
+  }
+  const capped = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 250) : null;
+  const reverse = Boolean(capped && newest && !(Number.isInteger(after) && after >= 0));
   const rows = db
     .prepare(
       `SELECT m.*, u.username, u.full_name, u.discord_name, u.google_name,
@@ -202,14 +215,17 @@ export function messages(ticketId, { staff = false } = {}) {
               u.google_avatar AS author_google_avatar, u.avatar_source AS author_avatar_source,
               u.email AS author_email
          FROM ticket_messages m LEFT JOIN users u ON u.id = m.user_id
-        WHERE m.ticket_id = ? ORDER BY m.id`
+        WHERE ${where.join(' AND ')} ORDER BY m.id ${reverse ? 'DESC' : 'ASC'}${capped ? ' LIMIT ?' : ''}`
     )
-    .all(ticketId);
-  const visible = staff ? rows : rows.filter((row) => !row.internal);
+    .all(...values, ...(capped ? [capped] : []));
+  // Für den Browser bleibt der Verlauf immer chronologisch. Nur die Abfrage nach der jüngsten
+  // Seite läuft rückwärts, damit SQLite nicht erst tausende alte Zeilen lesen muss.
+  if (reverse) rows.reverse();
+  const visible = rows;
   // Anhänge gehören zur Nachricht, nicht daneben. Sie hier anzuhängen heißt: jede Oberfläche,
   // die Nachrichten liest, hat sie automatisch – ohne einen zweiten Aufruf und ohne dass jemand
   // das Nachladen vergessen kann.
-  const attachments = files.byMessage(ticketId, { staff });
+  const attachments = files.byMessages(visible.map((row) => row.id), { staff });
   return visible.map((row) => {
     // Die zwei Discord-Spalten sind nur da, um daraus ein Bild zu bauen – sie selbst gehören
     // nicht in die Antwort. Deshalb werden sie hier ausgepackt und fallen gelassen.

@@ -362,7 +362,12 @@ export class Tickets {
       { id: guild.roles.everyone.id, deny: [PermissionFlagsBits.ViewChannel] },
       {
         id: this.bot.client.user.id,
-        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels],
+        allow: [
+          PermissionFlagsBits.ViewChannel,
+          PermissionFlagsBits.SendMessages,
+          PermissionFlagsBits.ManageChannels,
+          PermissionFlagsBits.ManageMessages,
+        ],
       },
       ...staffRoles.map((id) => ({
         id,
@@ -466,7 +471,9 @@ export class Tickets {
     if (entry.role === 'system') embed.setAuthor({ name: 'System' });
     else {
       embed.setAuthor({
-        name: `${entry.author || 'Customer'}${entry.role === 'staff' ? ' · Team' : ''}`,
+        // Im Support schreibt das Team als Team. Namen einzelner Mitarbeitender sind weder für
+        // die Zuordnung nötig noch sollen sie je nach Kanal (Panel/Discord) unterschiedlich sein.
+        name: entry.role === 'staff' ? 'Team' : entry.author || 'Customer',
         iconURL: this.config.logo,
       });
     }
@@ -551,22 +558,40 @@ export class Tickets {
           attachments: files,
         },
       });
-      // Keine Reaktion auf übernommene Nachrichten. Der Bot hat früher jede Zeile eines
-      // Ticket-Kanals mit einem grünen Haken versehen – bei einem Gespräch aus dreissig
-      // Nachrichten steht dann unter jeder einzelnen ein Häkchen, und der Kanal ist zugemüllt.
-      // Dass eine Nachricht angekommen ist, ist der Normalfall und braucht keine Bestätigung;
-      // gemeldet wird nur noch, was **nicht** geklappt hat, und das als lesbare Antwort.
-      //
+      // Im Ticket-Kanal bleiben ausschließlich Bot-Nachrichten sichtbar. Das Original wird erst
+      // gelöscht, nachdem das Panel es samt Dateien gespeichert hat; danach erzeugt der Bot das
+      // einheitliche Embed. Damit sehen Panel und Discord dieselbe Nachricht, ohne doppelte oder
+      // unbearbeitbare Rohzeilen im Kanal.
+      await message.delete().catch((error) =>
+        console.warn(`[tickets] could not remove source message in #${id}: ${error.message}`)
+      );
+      if (result?.message) {
+        await this.relayToDiscord(message.channel, result.message, {
+          id,
+          url: result.ticket?.url || this.ticketUrl(id),
+        });
+      }
       // Ein Anhang, der nicht übernommen werden konnte (zu groß, Adresse tot), darf nicht still
-      // verschwinden: sonst glaubt der Kunde, das Team habe sein Bild.
+      // verschwinden: sonst glaubt der Kunde, das Team habe sein Bild. Auch dieser Hinweis kommt
+      // als Bot-Embed, damit die Regel "nur Bot-Nachrichten" nicht durch einen Fehler bricht.
       for (const note of result?.failed || []) {
-        await message.reply(`This attachment did not make it into the panel – ${note}`).catch(() => {});
+        await this.notice(message.channel, `This attachment did not make it into the panel – ${note}`, COLORS.warn);
       }
     } catch (error) {
-      // Wer nicht verknüpft ist, soll wissen warum – und nicht ins Leere schreiben. Die Antwort
-      // sagt alles; eine zusätzliche Reaktion wäre dieselbe Nachricht ein zweites Mal.
-      await message.reply(`This was not saved in the panel: ${error.message}`).catch(() => {});
+      // Auch abgelehnte oder nicht verknüpfte Autoren hinterlassen keine fremde Rohzeile im
+      // Ticket-Kanal. Der Bot erklärt die Ursache selbst, damit der Kanal sauber und eindeutig
+      // bleibt.
+      await message.delete().catch(() => {});
+      await this.notice(message.channel, `This was not saved in the panel: ${error.message}`, COLORS.bad);
     }
+  }
+
+  /** Eine kurze Systemmeldung im Ticketkanal – immer als Bot-Embed. */
+  async notice(channel, text, color = COLORS.info) {
+    const message = await channel
+      .send({ embeds: [new EmbedBuilder().setColor(color).setAuthor({ name: this.config.brand }).setDescription(text)] })
+      .catch(() => null);
+    if (message) this.remember(message.id);
   }
 
   /** Knopf "Schließen" im Kanal. */
@@ -748,6 +773,11 @@ export class Tickets {
           .edit(admin, { ViewChannel: true, SendMessages: true }, 'Only administrators may handle tickets')
           .catch(() => {});
       }
+      // Kanäle aus älteren Versionen hatten keine Löschberechtigung für den Bot. Ohne sie kann
+      // er Nutzerzeilen nicht durch die kanonischen Embeds ersetzen.
+      await channel.permissionOverwrites
+        .edit(this.bot.client.user.id, { ViewChannel: true, SendMessages: true, ManageMessages: true }, 'Bot mirrors ticket messages')
+        .catch(() => {});
       for (const roleId of [this.config.roles.team, this.config.roles.mod].filter(Boolean)) {
         await channel.permissionOverwrites.delete(roleId, 'Only administrators may handle tickets').catch(() => {});
       }
