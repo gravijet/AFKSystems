@@ -58,6 +58,10 @@ export function exportFor(user) {
       credits: user.credits,
       email_verified: Boolean(user.email_verified),
       login_code: Boolean(user.login_code),
+      // **Ob**, nicht **was**. Das Geheimnis der Zwei-Faktor-Anmeldung ist ein Schlüssel und
+      // keine Auskunft – so wie der Passwort-Hash und die Sitzungstoken, die hier ebenfalls
+      // fehlen. Dass sie eingeschaltet ist, gehört dagegen zum Konto und darf mit.
+      two_factor: Boolean(user.totp_enabled_at && user.totp_secret),
       created_at: user.created_at,
       last_seen_at: user.last_seen_at,
       blocked: Boolean(user.blocked),

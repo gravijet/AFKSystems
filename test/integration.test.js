@@ -39,6 +39,8 @@ const { macros: macroEngine } = await import('../server/macros.js');
 const notify = await import('../server/notify.js');
 const auth = await import('../server/auth.js');
 const logincode = await import('../server/logincode.js');
+const totp = await import('../server/totp.js');
+const qr = await import('../server/qr.js');
 const profile = await import('../server/profile.js');
 const account = await import('../server/account.js');
 const receipt = await import('../server/receipt.js');
@@ -2479,6 +2481,214 @@ const fakeRes = () => {
 const fakeReq = (res = null, agent = 'Mozilla/5.0 (Windows NT 10.0) Chrome/131.0 Safari/537.36') => ({
   headers: { 'user-agent': agent, cookie: res?.jar?.afk_device ? `afk_device=${res.jar.afk_device}` : '' },
   ip: '198.51.100.7',
+});
+
+/**
+ * Der Code selbst, gegen die Vektoren aus RFC 6238.
+ *
+ * Sie sind für ein Geheimnis aus zwanzig Byte ASCII ("12345678901234567890") und feste Zeiten
+ * angegeben. Wer hier etwas ändert und sie noch bestehen, hat nichts kaputt gemacht; wer sie
+ * bricht, hat jede Authenticator-App der Welt gegen sich.
+ */
+test('the app code follows RFC 6238 down to the published vectors', () => {
+  const secret = totp.base32(Buffer.from('12345678901234567890'));
+  assert.equal(secret, 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ');
+  assert.deepEqual(totp.unbase32(secret), Buffer.from('12345678901234567890'));
+
+  // Zeit → Zähler → Code. Die Werte stehen im Anhang B von RFC 6238 (SHA-1, 8 Stellen); hier
+  // zählen die letzten sechs, denn sechs Stellen sind das, was die Apps zeigen.
+  const vectors = [
+    [59, '287082'],
+    [1111111109, '081804'],
+    [1111111111, '050471'],
+    [1234567890, '005924'],
+    [2000000000, '279037'],
+    [20000000000, '353130'],
+  ];
+  for (const [seconds, expected] of vectors) {
+    assert.equal(totp.codeFor(secret, Math.floor(seconds / 30)), expected, `t=${seconds}`);
+  }
+
+  // Die Toleranz von ±1 Fenster, und keines mehr. Ein Fenster ist dreißig Sekunden; wer eine
+  // Minute zurückliegt, hat einen Code aus einer anderen Minute.
+  const now = 1_700_000_000_000;
+  const counter = Math.floor(now / 1000 / 30);
+  assert.equal(totp.check(secret, totp.codeFor(secret, counter), { now }), counter);
+  assert.equal(totp.check(secret, totp.codeFor(secret, counter - 1), { now }), counter - 1);
+  assert.equal(totp.check(secret, totp.codeFor(secret, counter + 1), { now }), counter + 1);
+  assert.equal(totp.check(secret, totp.codeFor(secret, counter - 2), { now }), null);
+  assert.equal(totp.check(secret, totp.codeFor(secret, counter + 2), { now }), null);
+  assert.equal(totp.check(secret, '000000', { now }), null);
+  assert.equal(totp.check(secret, '', { now }), null);
+  assert.equal(totp.check(secret, '12345', { now }), null);
+
+  // Die Adresse, die eine App abfotografiert. Der Aussteller steht zweimal darin, und das ist
+  // Absicht – ältere Apps lesen den Namensraum, neuere den Parameter.
+  const address = totp.uri({ secret, account: 'a@b.example', issuer: 'AFKSystems' });
+  assert.match(address, /^otpauth:\/\/totp\/AFKSystems:a%40b\.example\?/);
+  const params = new URL(address.replace('otpauth://', 'https://')).searchParams;
+  assert.equal(params.get('secret'), secret);
+  assert.equal(params.get('issuer'), 'AFKSystems');
+  assert.equal(params.get('algorithm'), 'SHA1');
+  assert.equal(params.get('digits'), '6');
+  assert.equal(params.get('period'), '30');
+});
+
+/**
+ * Der QR-Code, gegen feste Bilder.
+ *
+ * Ein falscher QR-Code sieht aus wie ein richtiger – man merkt es erst an der Kamera, die nichts
+ * findet. Die vier Vorlagen hier stammen aus einem Abgleich Modul für Modul gegen eine fremde
+ * Erzeugung (siehe den Kopf von qr.js); sie decken die Fassungen 1, 6, 7 und 10 ab und damit
+ * beide Längen des Zeichenzählers, den Sprung zur zweiten Blockgruppe und die Fassungsinformation,
+ * die es erst ab Fassung 7 gibt.
+ */
+test('the QR code still draws exactly the picture that was checked against a reference', () => {
+  const hexOf = (modules) => {
+    let bits = '';
+    for (const row of modules) for (const value of row) bits += value;
+    let out = '';
+    for (let index = 0; index < bits.length; index += 4) {
+      out += parseInt(bits.slice(index, index + 4).padEnd(4, '0'), 2).toString(16);
+    }
+    return out;
+  };
+
+  const golden = [
+    {
+      text: 'AFKSystems',
+      size: 21,
+      hex: 'fe0bfc11906ea2bb7535dbadaec14507faafe01700be2be7e76f229504084aebb922006f43f8b1505b9dba8f6dd6452ebd910440cfe91d0',
+    },
+    {
+      text: 'otpauth://totp/AFKSystems:admin%40example.com?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=AFKSystems&algorithm=SHA1&digits=6&period=30',
+      size: 49,
+      hex: 'fea1398a58bfc10ce7fefdd06e9873547a6bb7564c93a4a5dbae7a3fe582ec17f8b10cd107faaaaaaaaafe0192bc40a8008bd9c3e2bbfcb6176f1f2dbc26c4cc2c1afd8a0dab72fe9361bbe6f96bcb8902a0c9b09319bcb949682fb9a8904e9bf3553a8575c3b8c93818365967b270f031cf75999ca331f027bb5125086b6becea6a25c3b2d37c3e0ccf9b8bf8312c1c7bd1161ac632b3a9ab9c4a971365c6b3ecc1ff29be9223399ab342477e7bd94ca910c9bc057653421800a14bd829d828f6779eeca2c5b679da1e3e3ee6f6e314c2f5a15151918f34e6da49c44a28009f6f8d31c3a94dba9f651d9de52cdb28e0fd2f52d17de3c6e3f6fcfa806f27132d453faa84ad48ab904292c43d314ba936fe2d9fcdd042e0f25506e9cc50f99b4f049c44d9382efee68466ed7b8',
+    },
+    {
+      text: 'x'.repeat(120),
+      size: 45,
+      hex: 'fe0857564bfc12082fe6906ebaea2a74bb7582f40635dba8bdfd63aec16c247e4107faaaaaaaafe01d01153c00be054f8353e000fd7ab0e8d0c0017f2bedc8e04153c5cc27de2035049c1be7ab0e8ead3c77f2bec0b636153c5cdb5ee203504ea9ba7ab0e8dc92077f2bede9646153c5c7fcfef835fcdc59e46b0c4d6ad0abf2eacb14df153d1cffd1bf834fc988efd2b040d6eb01df2d4cb08d4b53efcf6e098834ac906eed2b040c2c819df2d4d71944b53efc5ee038834acb07e2d2b040c2c8f9df2d4cf19b4b53efc9be63f834fc8070ac6b044ff84cebf2aad05a13153d1cbab24f835fcdd48906b094eea2c29f2e0d04f13e53dacfeaa558347d0',
+    },
+    {
+      text: 'x'.repeat(200),
+      size: 57,
+      hex: 'fe01e3d60d673fc11d9f7e53e6906ea8630a5ca7cbb7576b204b0625dbae9abbf0d612ec15da67113e5107faaaaaaaaaaafe016b50c7e53c00be351d7f58353e0c7954db06b0e8facd12a729f2bed4a6e5c83e53c5cb3351af3583504d67916b306b0e8fedd128d29f2bed3aa65ad3e53c5c8f351b03583504c66a1adb06b0e8f7cd3c2729f2bed03a6c89be53c5c8e951561583504c0a605da06b0e8e7d72426a9f2bed00760890e53c5c8fed3563d83504e0aa11db46b0e8f7f52c2fe9f2bec91661847e53d1c7aedb52b5834acdc6591f106b0c4e3f42c3fa9f2fec1b4a1cfbe53efc53e9b1895834acbea5d24106b0402c8ccdfda9f2d4e794c117be53efc6789b7115834ac289756d506b040ed84e8a7a9f2d4c314cb0dbe53efc67f1bd095834acacbf46c106b040fc9af8bda9f2d4c219c20f8e53efc63f9bd0a5834accce766c306b040e998e6bca9f2d4df2b820ffe53efc0264bd3f5834fc806976d106b044ff9a67aaa9f2aad05ab2047e53d1cbae1bcff5835fcdd69b4b406b0942eab8788a9f2e0904a1262fe53dacfec6375d58347d0',
+    },
+  ];
+
+  for (const entry of golden) {
+    const modules = qr.matrix(entry.text);
+    assert.equal(modules.length, entry.size, `Größe für ${entry.text.length} Zeichen`);
+    assert.equal(hexOf(modules), entry.hex, `Bild für ${entry.text.length} Zeichen`);
+  }
+
+  // Die drei Sucher sitzen dort, wo ein Leser sie sucht, und der Rahmen ist da: Ohne die vier
+  // hellen Module ringsum findet keine Kamera den Code, auch wenn jedes Modul stimmt.
+  const svg = qr.svg('AFKSystems');
+  assert.match(svg, /viewBox="0 0 29 29"/); // 21 Module + zweimal vier Rand
+  assert.match(svg, /shape-rendering="crispEdges"/);
+  assert.match(svg, /fill="#ffffff"/); // heller Grund, auch im Dunkelmodus
+
+  // Was nicht mehr hineinpasst, wird abgelehnt statt falsch gezeichnet.
+  assert.throws(() => qr.matrix('y'.repeat(214)), /keine Fassung/);
+});
+
+/**
+ * Die Zwei-Faktor-Anmeldung als Ganzes: einschalten, einlösen, wiederherstellen, abschalten.
+ *
+ * Vier Zusagen stehen hier auf dem Prüfstand, und jede ist eine, die sonst niemandem auffiele:
+ * Das Geheimnis liegt verschlüsselt in der Datenbank. Ein Code gilt genau einmal. Ein
+ * Wiederherstellungscode auch. Und das Zurücksetzen des Passworts kommt nicht daran vorbei –
+ * ohne das wäre das Postfach weiterhin ein Generalschlüssel und die ganze Funktion eine
+ * Behauptung.
+ */
+test('two-factor sign-in is stored sealed, spent once, and password reset cannot walk around it', () => {
+  const read = (id) => db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  const { id } = createUser({ username: 'zweifaktor' });
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword('passwortpasswort1'), id);
+
+  assert.equal(totp.enabled(read(id)), false);
+  assert.deepEqual(totp.statusOf(read(id)), {
+    enabled: false,
+    since: null,
+    recovery_left: 0,
+    recovery_total: totp.RECOVERY_COUNT,
+  });
+
+  // Einrichten. Das Geheimnis steht danach als **vorgemerkt** in der Datenbank, nicht als gültig:
+  // Zwischen „abfotografiert“ und „bestätigt“ darf kein Konto nach einem Code fragen, den noch
+  // niemand beantworten kann.
+  const setup = totp.begin(read(id), { issuer: 'AFKSystems' });
+  assert.match(setup.secret, /^[A-Z2-7]{32}$/);
+  assert.match(setup.uri, /^otpauth:\/\/totp\//);
+  assert.match(setup.qr, /^<svg /);
+  assert.equal(totp.enabled(read(id)), false);
+  // **Verschlüsselt, nicht im Klartext.** Sicherungen lassen sich im Panel herunterladen; eine
+  // Sicherung mit jedem Zwei-Faktor-Geheimnis im Klartext wäre ein Generalschlüssel in einer Datei.
+  const stored = read(id).totp_pending_secret;
+  assert.match(stored, /^v1:/);
+  assert.equal(stored.includes(setup.secret), false);
+
+  // Ein falscher Code schaltet nicht scharf.
+  assert.throws(() => totp.enable(read(id), '000000'), /code-Fehler|stimmt nicht|wrong/i);
+  assert.equal(totp.enabled(read(id)), false);
+
+  const counter = Math.floor(Date.now() / 1000 / 30);
+  const codes = totp.enable(read(id), totp.codeFor(setup.secret, counter));
+  assert.equal(codes.length, totp.RECOVERY_COUNT);
+  assert.equal(totp.enabled(read(id)), true);
+  assert.match(read(id).totp_secret, /^v1:/);
+  assert.equal(read(id).totp_pending_secret, null);
+  assert.equal(totp.statusOf(read(id)).recovery_left, totp.RECOVERY_COUNT);
+
+  // **Der Code, mit dem eingeschaltet wurde, ist verbraucht.** Sonst wäre ein abgefangener Code
+  // dreißig Sekunden lang ein zweiter Zugang – und dreißig Sekunden reichen.
+  assert.equal(totp.verify(read(id), totp.codeFor(setup.secret, counter)), null);
+  assert.ok(totp.verify(read(id), totp.codeFor(setup.secret, counter + 1)));
+  // Und derselbe danach auch nicht mehr.
+  assert.equal(totp.verify(read(id), totp.codeFor(setup.secret, counter + 1)), null);
+
+  // Wiederherstellungscodes: jeder genau einmal, Schreibweise egal.
+  assert.equal(totp.redeemRecovery(id, codes[0].toLowerCase()), true);
+  assert.equal(totp.redeemRecovery(id, codes[0]), false);
+  assert.equal(totp.redeemRecovery(id, codes[1].replace('-', '')), true);
+  assert.equal(totp.statusOf(read(id)).recovery_left, totp.RECOVERY_COUNT - 2);
+  assert.equal(totp.redeemRecovery(id, 'GIBTESNICHT'), false);
+
+  // Neue Codes werfen die alten weg – auch die unbenutzten. Wer sich neue ausstellen lässt, tut
+  // das, weil der alte Zettel weg ist oder ihn jemand gesehen hat.
+  const second = totp.newRecoveryCodes(id);
+  assert.equal(totp.statusOf(read(id)).recovery_left, totp.RECOVERY_COUNT);
+  assert.equal(totp.redeemRecovery(id, codes[2]), false);
+  assert.equal(totp.redeemRecovery(id, second[0]), true);
+
+  // **Das Zurücksetzen des Passworts kommt nicht vorbei.** Das ist der Punkt, an dem sich
+  // entscheidet, ob die Zwei-Faktor-Anmeldung etwas bedeutet oder nur so heißt.
+  const setReset = (token) =>
+    db.prepare('UPDATE users SET reset_token = ?, reset_expires = ? WHERE id = ?').run(
+      token,
+      Date.now() + 600_000,
+      id
+    );
+  setReset('reset-ohne-code');
+  assert.throws(
+    () => auth.applyReset('reset-ohne-code', 'neuespasswort123', 'neuespasswort123'),
+    (error) => error.code === 'totp-required'
+  );
+  // Mit einem Wiederherstellungscode geht es – wer Telefon **und** Passwort verloren hat, kommt
+  // über den Zettel zurück.
+  assert.ok(auth.applyReset('reset-ohne-code', 'neuespasswort123', 'neuespasswort123', second[1]));
+  assert.equal(totp.statusOf(read(id)).recovery_left, totp.RECOVERY_COUNT - 2);
+
+  // Abschalten nimmt die Wiederherstellungscodes mit. Ein Zettel, der nach dem Abschalten weiter
+  // gälte, wäre ein Zugang, von dem niemand mehr weiß, dass es ihn gibt.
+  totp.disable(id);
+  assert.equal(totp.enabled(read(id)), false);
+  assert.equal(read(id).totp_secret, null);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM recovery_codes WHERE user_id = ?').get(id).n, 0);
+  setReset('reset-danach');
+  assert.ok(auth.applyReset('reset-danach', 'nochmalpasswort123', 'nochmalpasswort123'));
 });
 
 test('the sign-in code fails closed and only asks unknown browsers', async () => {

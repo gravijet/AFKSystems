@@ -815,18 +815,58 @@ function showMail(mail) {
 // ================================================================ Reiter: Sicherheit
 
 async function tabSecurity(root) {
-  const [sessions, signins, devices] = await Promise.all([
+  const [sessions, signins, devices, twoFactor] = await Promise.all([
     api('/me/sessions').catch(() => ({ sessions: [] })),
     api('/me/signins').catch(() => ({ attempts: [] })),
     api('/me/devices').catch(() => ({ devices: [], login_code: false, mail_ready: false })),
+    api('/me/totp').catch(() => ({ enabled: false, recovery_left: 0, recovery_total: 10 })),
   ]);
   root.innerHTML = `
     ${section('key', tr('set.password'), tr('set.securitySub'), passwordBody())}
-    ${section('lock', tr('set.loginCode'), tr('set.loginCodeSub'), loginCodeBody(devices))}
+    ${section('shield', tr('set.totp'), tr('set.totpSub'), totpBody(twoFactor))}
+    ${section('lock', tr('set.loginCode'), tr('set.loginCodeSub'), loginCodeBody(devices, twoFactor))}
     ${section('monitor', tr('set.sessions'), tr('set.sessionsSub'), sessionsBody(sessions.sessions || []))}
     ${section('shield', tr('set.signIns'), tr('set.signInsSub'), signinsBody(signins.attempts || []))}`;
   bindCommon();
   bindSecurity();
+  bindTotp(twoFactor);
+
+  // Wer sich gerade mit einem Wiederherstellungscode angemeldet hat, kommt mit `?recovery=<n>`
+  // hier an (siehe auth.js). Er soll wissen, wie viele noch da sind, bevor er es beim letzten
+  // merkt – und zwar an der Stelle, an der er neue ausstellen kann.
+  const used = new URLSearchParams(location.hash.split('?')[1] || '').get('recovery');
+  if (used !== null) {
+    toast(tr('set.totpRecoveryUsed', { n: Number(used) }));
+    go('#/settings/security');
+  }
+}
+
+/**
+ * Die Zwei-Faktor-Anmeldung.
+ *
+ * Zwei Zustände, und sie sagen verschiedene Dinge. Ist sie aus, steht hier, was sie leistet und
+ * worin sie sich vom Anmeldecode darüber unterscheidet – die beiden nebeneinander zu haben und
+ * nicht zu erklären, welcher was kann, wäre die halbe Auskunft. Ist sie an, steht hier, seit wann,
+ * wie viele Wiederherstellungscodes noch übrig sind, und die zwei Handgriffe, die es dann gibt.
+ */
+function totpBody(status) {
+  if (!status.enabled) {
+    return `
+      <p class="small muted" style="margin:0 0 1rem">${escapeHtml(tr('set.totpWhat'))}</p>
+      <div><button class="btn btn-primary" id="totp-setup">${escapeHtml(tr('set.totpStart'))}</button></div>`;
+  }
+  const low = status.recovery_left <= 2;
+  return `
+    <div class="note ok" style="margin-bottom:1rem">${icon('check')}
+      <div>${escapeHtml(tr('set.totpOnSince', { when: date(status.since) }))}</div></div>
+    <div class="note ${low ? 'warn' : ''}" style="margin-bottom:1rem">${icon(low ? 'alert' : 'info')}
+      <div>${escapeHtml(
+        tr('set.totpRecoveryLeft', { n: status.recovery_left, total: status.recovery_total })
+      )}</div></div>
+    <div class="row" style="gap:.5rem;flex-wrap:wrap">
+      <button class="btn" id="totp-new-codes">${escapeHtml(tr('set.totpNewCodes'))}</button>
+      <button class="btn btn-danger" id="totp-off">${escapeHtml(tr('set.totpOff'))}</button>
+    </div>`;
 }
 
 /**
@@ -837,9 +877,19 @@ async function tabSecurity(root) {
  * nicht sind. Ohne die Liste wäre der Schalter eine Behauptung, die sich nicht nachprüfen lässt –
  * und niemand hätte einen Weg, einem fremden Rechner das Vertrauen wieder zu entziehen.
  */
-function loginCodeBody(data) {
+function loginCodeBody(data, twoFactor = {}) {
   const devices = data.devices || [];
   return `
+    ${
+      // Solange die Zwei-Faktor-Anmeldung an ist, fragt keine Anmeldung mehr nach diesem Code –
+      // der stärkere Schritt enthält den schwächeren. Ein Schalter, der in dieser Lage nichts
+      // bewirkt, gehört nicht heimlich abgeschaltet, sondern erklärt: Genau dieselbe Regel steht
+      // ein paar Zeilen weiter oben über den fehlenden Postausgang.
+      twoFactor.enabled
+        ? `<div class="note" style="margin-bottom:1rem">${icon('info')}
+            <div>${escapeHtml(tr('set.loginCodeSuperseded'))}</div></div>`
+        : ''
+    }
     <ul class="switch-list">
       <li>
         <div class="grow">
@@ -972,6 +1022,204 @@ function signinsBody(attempts) {
       )
       .join('')}
   </ul>`;
+}
+
+/**
+ * Der Kasten mit dem QR-Code und dem ersten Code aus der App.
+ *
+ * Eigener Dialog statt `formDialog`, weil hier ein Bild steht und kein Feld. Das Geheimnis steht
+ * zusätzlich als Text darunter: Nicht jeder scannt – wer das Panel auf demselben Gerät bedient,
+ * auf dem die App läuft, hat keine zweite Kamera dafür.
+ */
+function totpSetupDialog(setup) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'totp-dialog';
+    dialog.innerHTML = `
+      <header><h3>${escapeHtml(tr('set.totpStart'))}</h3></header>
+      <div class="body stack">
+        <p class="small muted">${escapeHtml(tr('set.totpScan'))}</p>
+        <div class="totp-qr">${setup.qr}</div>
+        <div class="field">
+          <label for="totp-secret">${escapeHtml(tr('set.totpSecret'))}</label>
+          <div class="row" style="gap:.5rem">
+            <input id="totp-secret" class="grow mono" readonly value="${escapeHtml(setup.secret)}">
+            <button class="btn btn-sm" type="button" id="totp-copy">${escapeHtml(tr('common.copy'))}</button>
+          </div>
+          <span class="hint">${escapeHtml(tr('set.totpSecretHint'))}</span>
+        </div>
+        <div class="field">
+          <label for="totp-first">${escapeHtml(tr('set.totpFirstCode'))}</label>
+          <input id="totp-first" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6"
+                 autocomplete="one-time-code" class="code-input">
+        </div>
+        <p class="form-error hide" id="totp-dialog-error" role="alert"></p>
+      </div>
+      <footer>
+        <button class="btn" type="button" id="totp-cancel">${escapeHtml(tr('common.cancel'))}</button>
+        <button class="btn btn-primary" type="button" id="totp-confirm">${escapeHtml(tr('set.totpTurnOn'))}</button>
+      </footer>`;
+    document.body.append(dialog);
+
+    const error = $('#totp-dialog-error', dialog);
+    const field = $('#totp-first', dialog);
+    const finish = (value) => {
+      dialog.close();
+      resolve(value);
+    };
+
+    $('#totp-copy', dialog).addEventListener('click', () => {
+      navigator.clipboard?.writeText(setup.secret).then(() => ok(tr('common.copied'))).catch(() => {});
+    });
+    $('#totp-cancel', dialog).addEventListener('click', () => finish(null));
+    dialog.addEventListener('cancel', () => finish(null));
+    dialog.addEventListener('close', () => dialog.remove());
+
+    const submit = async () => {
+      const button = $('#totp-confirm', dialog);
+      button.disabled = true;
+      error.classList.add('hide');
+      try {
+        const result = await api('/me/totp/enable', { method: 'POST', body: { code: field.value } });
+        finish(result);
+      } catch (problem) {
+        error.textContent = problem.message;
+        error.classList.remove('hide');
+        field.value = '';
+        field.focus();
+        button.disabled = false;
+      }
+    };
+    $('#totp-confirm', dialog).addEventListener('click', submit);
+    field.addEventListener('input', (event) => {
+      const cleaned = event.target.value.replace(/\D/g, '').slice(0, 6);
+      if (cleaned !== event.target.value) event.target.value = cleaned;
+      if (cleaned.length === 6) submit();
+    });
+
+    dialog.showModal();
+    field.focus();
+  });
+}
+
+/**
+ * Die zehn Wiederherstellungscodes – einmal und nie wieder.
+ *
+ * Deshalb steht hier mehr als eine Liste: kopieren, herunterladen, und ein Häkchen, das den
+ * Schließen-Knopf freigibt. Das Häkchen ist keine Förmlichkeit. Diese zehn Zeilen sind der
+ * einzige Weg zurück ins Konto, wenn das Telefon weg ist, und ein Dialog, den man mit Escape
+ * wegklickt, hat sie dann weggeklickt.
+ */
+function recoveryDialog(codes) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'totp-dialog';
+    const text = codes.join('\n');
+    dialog.innerHTML = `
+      <header><h3>${escapeHtml(tr('set.totpRecoveryTitle'))}</h3></header>
+      <div class="body stack">
+        <div class="note warn">${icon('alert')}<div>${escapeHtml(tr('set.totpRecoveryWhat'))}</div></div>
+        <ol class="recovery-codes">${codes.map((code) => `<li>${escapeHtml(code)}</li>`).join('')}</ol>
+        <div class="row" style="gap:.5rem">
+          <button class="btn btn-sm" type="button" id="rc-copy">${escapeHtml(tr('common.copy'))}</button>
+          <button class="btn btn-sm" type="button" id="rc-save">${escapeHtml(tr('set.totpRecoverySave'))}</button>
+        </div>
+        <label class="check"><input type="checkbox" id="rc-ack"><span>${escapeHtml(
+          tr('set.totpRecoveryAck')
+        )}</span></label>
+      </div>
+      <footer><button class="btn btn-primary" type="button" id="rc-done" disabled>${escapeHtml(
+        tr('common.close')
+      )}</button></footer>`;
+    document.body.append(dialog);
+
+    $('#rc-copy', dialog).addEventListener('click', () => {
+      navigator.clipboard?.writeText(text).then(() => ok(tr('common.copied'))).catch(() => {});
+    });
+    $('#rc-save', dialog).addEventListener('click', () => {
+      const blob = new Blob([`${tr('set.totpRecoveryFile')}\n\n${text}\n`], { type: 'text/plain' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = 'afksystems-wiederherstellungscodes.txt';
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+    $('#rc-ack', dialog).addEventListener('change', (event) => {
+      $('#rc-done', dialog).disabled = !event.target.checked;
+    });
+    $('#rc-done', dialog).addEventListener('click', () => dialog.close());
+    // Escape schließt einen Dialog von selbst. Hier nicht, solange das Häkchen fehlt.
+    dialog.addEventListener('cancel', (event) => {
+      if (!$('#rc-ack', dialog).checked) event.preventDefault();
+    });
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      resolve();
+    });
+    dialog.showModal();
+  });
+}
+
+function bindTotp(status) {
+  $('#totp-setup')?.addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('set.totpStart'),
+      [{ key: 'password', label: tr('set.emailPassword'), type: 'password', required: true }],
+      { submit: tr('common.next'), note: tr('set.totpPasswordWhy') }
+    );
+    if (!answer) return;
+    let setup;
+    try {
+      setup = await api('/me/totp/start', { method: 'POST', body: { password: answer.password } });
+    } catch (error) {
+      return fail(error);
+    }
+    const result = await totpSetupDialog(setup);
+    if (!result) return draw(); // abgebrochen – die angefangene Einrichtung verfällt von selbst
+    await recoveryDialog(result.recovery);
+    await refresh({ profiles: false, accounts: false });
+    ok(tr('set.totpOnNow'));
+    draw();
+  });
+
+  $('#totp-new-codes')?.addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('set.totpNewCodes'),
+      [
+        { key: 'password', label: tr('set.emailPassword'), type: 'password', required: true },
+        { key: 'code', label: tr('auth.totp.label'), required: true },
+      ],
+      { submit: tr('set.totpNewCodes'), note: tr('set.totpNewCodesWhat') }
+    );
+    if (!answer) return;
+    try {
+      const result = await api('/me/totp/recovery', { method: 'POST', body: answer });
+      await recoveryDialog(result.recovery);
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $('#totp-off')?.addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('set.totpOff'),
+      [
+        { key: 'password', label: tr('set.emailPassword'), type: 'password', required: true },
+        { key: 'code', label: tr('auth.totp.label'), required: true },
+      ],
+      { submit: tr('set.totpOff'), note: tr('set.totpOffWhat', { n: status.recovery_left }) }
+    );
+    if (!answer) return;
+    try {
+      await api('/me/totp', { method: 'DELETE', body: answer });
+      await refresh({ profiles: false, accounts: false });
+      ok(tr('set.totpOffNow'));
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
 }
 
 function bindSecurity() {

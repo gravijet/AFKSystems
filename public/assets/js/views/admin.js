@@ -1277,7 +1277,12 @@ async function userDetail(root, id) {
           ${(user.discord_roles || [])
             .map((role) => `<span class="pill">${escapeHtml(tr(`role.${role}`))}</span>`)
             .join('')}
-          ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}</h2>
+          ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('adm.block'))}</span>` : ''}
+          ${
+            // „Ich komme nicht mehr hinein“ hat zwei verschiedene Antworten, je nachdem, ob
+            // dieses Konto einen zweiten Faktor hat. Der Support soll sie nicht erraten müssen.
+            user.totp ? `<span class="pill ok">${escapeHtml(tr('adm.totpOn'))}</span>` : ''
+          }</h2>
         <p class="small muted mono">@${escapeHtml(user.username)} · ${escapeHtml(user.email)} · #${user.id} ·
           ${escapeHtml(tr('common.status'))}: ${user.last_seen_at ? since(user.last_seen_at) : '–'}
           ${user.discord ? ` · Discord ${escapeHtml(user.discord.name || user.discord.id)}` : ''}</p>

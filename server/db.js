@@ -1347,6 +1347,49 @@ const migrations = [
     name: '031-festplattengrenze-fuer-standorte',
     sql: `ALTER TABLE nodes ADD COLUMN max_disk_percent INTEGER NOT NULL DEFAULT 0;`,
   },
+  {
+    // **Zwei-Faktor-Anmeldung mit einer Authenticator-App.**
+    //
+    // Der Anmeldecode aus Migration 027 fragt nach dem Postfach und sagt selbst, dass er kein
+    // zweiter Faktor ist – er geht über denselben Kanal wie „Passwort vergessen“. Hier kommt der
+    // Faktor dazu, der das nicht tut: ein Geheimnis in einer App auf einem Gerät des Kunden.
+    //
+    // `totp_secret` steht verschlüsselt da (AES-256-GCM, Schlüssel aus `config.secret`). Nicht
+    // wegen des laufenden Betriebs, sondern wegen der Sicherungen: Die lassen sich im Panel
+    // herunterladen, und eine Sicherung mit jedem Zwei-Faktor-Geheimnis im Klartext wäre ein
+    // Generalschlüssel in einer Datei. Warum es nicht wie ein Passwort gehasht ist: Der Wert wird
+    // im Klartext gebraucht, um den Code auszurechnen.
+    //
+    // `totp_pending_secret` ist die begonnene, noch nicht bestätigte Einrichtung. Sie steht
+    // getrennt, damit zwischen „QR-Code abfotografiert“ und „erster Code eingegeben“ noch kein
+    // Konto nach einem Code fragt, das keiner beantworten kann.
+    //
+    // `totp_last_counter` ist das zuletzt eingelöste Zeitfenster. Ein Code gilt dreißig Sekunden;
+    // ohne diese Spalte wäre ein abgefangener Code in dieser Zeit ein zweiter Zugang.
+    name: '032-zwei-faktor-anmeldung',
+    sql: `
+      ALTER TABLE users ADD COLUMN totp_secret TEXT;
+      ALTER TABLE users ADD COLUMN totp_enabled_at INTEGER;
+      ALTER TABLE users ADD COLUMN totp_last_counter INTEGER;
+      ALTER TABLE users ADD COLUMN totp_pending_secret TEXT;
+      ALTER TABLE users ADD COLUMN totp_pending_at INTEGER;
+
+      CREATE TABLE recovery_codes (
+        id         INTEGER PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        code_hash  TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        used_at    INTEGER,
+        used_ip    TEXT
+      );
+      CREATE INDEX idx_recovery_codes_user ON recovery_codes(user_id, used_at);
+
+      -- Die Wartemarke der Anmeldung trägt jetzt, wonach sie fragt: 'mail' oder 'totp'.
+      -- Beim Anmeldecode steht in code_hash der scrypt-Hash der sechs Ziffern; bei der
+      -- Zwei-Faktor-Anmeldung gibt es nichts zu speichern – die Antwort rechnet die App aus.
+      ALTER TABLE login_challenges ADD COLUMN kind TEXT NOT NULL DEFAULT 'mail';
+    `,
+  },
 ];
 
 /**

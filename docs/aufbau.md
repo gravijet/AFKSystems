@@ -437,6 +437,41 @@ Einstellungen lässt sich eine Quelle fest anheften oder mit „Initialen“ gan
 Name und -Bild werden beim OAuth-Abgleich mit aktualisiert. Gravatar bekommt nur den üblichen
 MD5-Abdruck der normalisierten E-Mail-Adresse, nie die Adresse als Klartext.
 
+### Die Zwei-Faktor-Anmeldung
+
+`server/totp.js` ist der zweite Faktor, der der Anmeldecode weiter unten ausdrücklich nicht ist.
+Sechs Ziffern nach RFC 6238: HMAC-SHA1 über die Nummer des laufenden Dreißig-Sekunden-Fensters,
+Geheimnis als zwanzig zufällige Byte in Base32, Toleranz ein Fenster nach jeder Seite.
+
+Drei Entscheidungen tragen die ganze Funktion:
+
+* **Das Geheimnis liegt verschlüsselt in der Datenbank** (AES-256-GCM, Schlüssel per HKDF aus
+  `config.secret`). Nicht wegen des laufenden Betriebs – wer die Datei lesen kann, kommt meist
+  auch an den Schlüssel –, sondern wegen der Sicherungen: Die lassen sich im Panel herunterladen
+  und liegen danach irgendwo. Gehasht werden kann es nicht, denn der Wert wird im Klartext
+  gebraucht, um zu rechnen.
+* **Ein Zeitfenster gilt einmal.** `users.totp_last_counter` merkt sich das zuletzt eingelöste;
+  ein Code aus demselben oder einem älteren Fenster wird abgelehnt. Ohne das wäre ein
+  abgefangener Code dreißig Sekunden lang ein zweiter Zugang, und dreißig Sekunden reichen.
+* **Sie gilt an allen drei Türen** – Passwort, Anbieter-Anmeldung, Zurücksetzen des Passworts.
+  Die dritte ist die eigentliche: Ohne sie bliebe der Postfachzugang ein Generalschlüssel, und
+  die Zwei-Faktor-Anmeldung wäre genau die Behauptung, die der Anmeldecode zu Recht vermeidet.
+
+Der zweite Schritt benutzt dieselbe Wartemarke wie der Anmeldecode (`login_challenges`,
+unterschieden durch die Spalte `kind`). Beim Anmelden mit Passwort reist sie im Rumpf der
+Antwort; vom Rückweg aus Discord oder Google gibt es keinen Rumpf, dort liegt sie fünfzehn
+Minuten lang in einem eigenen HttpOnly-Cookie `afk_login` – **nicht** in der Adresse, denn die
+steht im Verlauf, im Referrer und in jedem Protokoll dazwischen.
+
+**Wiederherstellungscodes** sind zehn Zeichenketten, als scrypt-Hash gespeichert wie ein
+Passwort, jede genau einmal einlösbar. Ohne sie wäre ein verlorenes Telefon ein verlorenes Konto
+und die einzige Rettung ein Administrator, der die Zwei-Faktor-Anmeldung auf Zuruf abschaltet –
+womit ein Anruf der zweite Faktor wäre.
+
+Den QR-Code zeichnet `server/qr.js`: Byte-Modus, Fehlerkorrektur M, Fassungen 1 bis 10, ohne
+Abhängigkeit, als SVG im selben Antwortkörper wie das Geheimnis. Er wurde Modul für Modul gegen
+eine fremde Erzeugung geprüft; vier Bilder stehen als feste Vorlage im Test.
+
 ### Der Anmeldecode und die bekannten Browser
 
 `server/logincode.js` macht aus einer Anmeldung zwei Schritte, sobald der Browser neu ist. Der
@@ -547,10 +582,11 @@ Die wichtigsten Tabellen:
 
 | Tabelle | Inhalt |
 | --- | --- |
-| `users` | Konten, Guthaben, Rolle, Discord-/Google-Verknüpfung, E-Mail-Wünsche, Name und Rechnungsadresse, Zeitzone, Anmeldecode (`login_code`), angemeldete Löschung |
+| `users` | Konten, Guthaben, Rolle, Discord-/Google-Verknüpfung, E-Mail-Wünsche, Name und Rechnungsadresse, Zeitzone, Anmeldecode (`login_code`), Zwei-Faktor-Geheimnis (`totp_secret`, verschlüsselt), angemeldete Löschung |
 | `sessions` | offene Anmeldungen |
 | `known_devices` | Browser, die den Anmeldecode schon beantwortet haben. Schlüssel ist der Zufallswert aus dem Cookie `afk_device`, nicht die Browserkennung |
-| `login_challenges` | offene Anmeldecodes, als scrypt-Hash, mit Frist und Versuchszähler |
+| `login_challenges` | offene Wartemarken der Anmeldung: der Anmeldecode als scrypt-Hash oder der zweite Schritt der Zwei-Faktor-Anmeldung (Spalte `kind`), mit Frist und Versuchszähler |
+| `recovery_codes` | die zehn Wiederherstellungscodes je Konto, als scrypt-Hash, jeder einmal einlösbar |
 | `profiles` | Serverplätze: Adresse, Version, Tarif, Standort, Laufzeit, freie Notiz des Kunden |
 | `mc_accounts` | Minecraft-Konten je Nutzer |
 | `profile_accounts` | welches Konto auf welchem Platz sitzt (und ob es laufen soll) |

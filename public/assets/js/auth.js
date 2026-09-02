@@ -94,13 +94,23 @@ if (page === 'login') {
     location.assign(nextUrl(url('/app')));
   };
 
+  /**
+   * Der Rückweg von Discord oder Google, wenn dort noch der zweite Faktor fehlt.
+   *
+   * Die Wartemarke steht dabei **nicht** in der Adresse, sondern in einem kurzlebigen Cookie
+   * (siehe LOGIN_COOKIE in routes/core.js). Hier steht nur, dass es einen zweiten Schritt gibt.
+   */
+  if (query.get('step') === 'totp') askForTotp({});
+
   onSubmit(async () => {
     const result = await api('/auth/login', {
       method: 'POST',
       body: { login: $('#login').value, password: $('#password').value },
     });
     // Kommt eine Marke zurück, war das Passwort richtig und die Anmeldung trotzdem nicht fertig:
-    // Dieser Browser ist neu, und der Code aus der E-Mail fehlt noch.
+    // entweder fehlt der Code aus der App, oder dieser Browser ist neu und der Code aus der
+    // E-Mail fehlt.
+    if (result.kind === 'totp') return askForTotp(result);
     if (result.challenge) return askForCode(result);
     done(result);
   });
@@ -124,6 +134,102 @@ if (page === 'login') {
     $('#code').value = '';
     $('#code').focus();
   }
+
+  // ------------------------------------------------------------ Der zweite Faktor
+  //
+  // Dieselbe Umblendung wie beim Anmeldecode, mit einem Unterschied: Hier gibt es zwei Felder.
+  // Das eine nimmt die sechs Ziffern aus der App, das andere einen der Wiederherstellungscodes.
+  // Immer genau eines ist zu sehen – ein einzelnes Feld, das beides annimmt, könnte weder die
+  // Zifferntastatur des Telefons anfordern noch dem Passwortmanager sagen, was es will.
+
+  let totpChallenge = null;
+  let onRecovery = false;
+
+  function askForTotp(result) {
+    totpChallenge = result.challenge || null;
+    const password = $('#password');
+    if (password) password.value = '';
+    $('#login-card').classList.add('hide');
+    $('#code-card')?.classList.add('hide');
+    $('#oauth')?.classList.add('hide');
+    $('#totp-card').classList.remove('hide');
+    showRecovery(false);
+  }
+
+  function showRecovery(wanted) {
+    onRecovery = wanted;
+    $('#totp-app-field').classList.toggle('hide', wanted);
+    $('#totp-recovery-field').classList.toggle('hide', !wanted);
+    $('#totp-switch').textContent = tr(wanted ? 'auth.totp.useApp' : 'auth.totp.lost');
+    $('#totp-lead').textContent = tr(wanted ? 'auth.totp.recoveryLead' : 'auth.totp.lead');
+    const field = $(wanted ? '#totp-recovery' : '#totp-code');
+    field.value = '';
+    field.focus();
+  }
+
+  const totpError = $('#totp-error');
+  $('#totp-switch')?.addEventListener('click', () => {
+    totpError.classList.add('hide');
+    showRecovery(!onRecovery);
+  });
+
+  // Sechs Ziffern schicken sich von selbst ab – wie beim Anmeldecode. Beim Wiederherstellungscode
+  // nicht: Er ist elf Zeichen lang, und wer ihn abtippt, ist noch nicht fertig, wenn er einmal
+  // kurz stehenbleibt.
+  $('#totp-code')?.addEventListener('input', (event) => {
+    const cleaned = event.target.value.replace(/\D/g, '').slice(0, 6);
+    if (cleaned !== event.target.value) event.target.value = cleaned;
+    if (cleaned.length === 6) $('#totp-form').requestSubmit();
+  });
+
+  // Groß, und der Bindestrich kommt von selbst. Auf dem Zettel steht er mit; wer ihn wegläs
+  // st, soll trotzdem hereinkommen.
+  $('#totp-recovery')?.addEventListener('input', (event) => {
+    const raw = event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10);
+    const shaped = raw.length > 5 ? `${raw.slice(0, 5)}-${raw.slice(5)}` : raw;
+    if (shaped !== event.target.value) event.target.value = shaped;
+  });
+
+  $('#totp-form')?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    if (button.disabled) return;
+    const label = button.textContent;
+    totpError.classList.add('hide');
+    button.disabled = true;
+    button.textContent = tr('auth.working');
+    try {
+      const value = $(onRecovery ? '#totp-recovery' : '#totp-code').value;
+      const result = await api('/auth/login/totp', {
+        method: 'POST',
+        body: { challenge: totpChallenge, code: value },
+      });
+      // Wer einen Wiederherstellungscode verbraucht hat, erfährt es hier und nicht erst, wenn
+      // keiner mehr übrig ist. Der Hinweis reist als Anker mit ins Panel.
+      if (result.recovery_used) {
+        return location.assign(`${url('/app')}#/settings/security?recovery=${result.recovery_left}`);
+      }
+      done(result);
+    } catch (problem) {
+      totpError.textContent = problem.message;
+      totpError.classList.remove('hide');
+      if (problem.code === 'login-code-expired') backToPassword(problem.message);
+      else {
+        const field = $(onRecovery ? '#totp-recovery' : '#totp-code');
+        field.value = '';
+        field.focus();
+      }
+    } finally {
+      button.disabled = false;
+      button.textContent = label;
+    }
+  });
+
+  $('#totp-back')?.addEventListener('click', () => {
+    totpChallenge = null;
+    $('#totp-card').classList.add('hide');
+    backToPassword('');
+  });
 
   const codeForm = $('#code-form');
   const codeError = $('#code-error');
@@ -188,7 +294,9 @@ if (page === 'login') {
 
   function backToPassword(message) {
     challenge = null;
+    totpChallenge = null;
     $('#code-card').classList.add('hide');
+    $('#totp-card')?.classList.add('hide');
     $('#login-card').classList.remove('hide');
     // Die Anbieterknöpfe kommen nur zurück, wenn sie vorher da waren: `showOauth` hat dann
     // mindestens einen von ihnen sichtbar gemacht. Ohne diese Frage stünde auf einem Panel ohne
@@ -278,10 +386,26 @@ if (page === 'reset') {
   }
   onSubmit(async () => {
     sameOrError($('#password').value, $('#password2').value);
-    await api('/auth/reset', {
-      method: 'POST',
-      body: { token, password: $('#password').value, password2: $('#password2').value },
-    });
+    try {
+      await api('/auth/reset', {
+        method: 'POST',
+        body: {
+          token,
+          password: $('#password').value,
+          password2: $('#password2').value,
+          code: $('#code')?.value || '',
+        },
+      });
+    } catch (problem) {
+      // **Zwei-Faktor.** Welches Konto hinter der Marke steht, weiß diese Seite nicht – der
+      // Server sagt es mit `totp-required`, und erst dann kommt das Feld dazu. Ein Feld, das
+      // vorsorglich für jeden dasteht, wäre für alle anderen eine Frage ohne Antwort.
+      if (problem.code === 'totp-required') {
+        $('#totp-field').classList.remove('hide');
+        $('#code').focus();
+      }
+      throw problem;
+    }
     form.classList.add('hide');
     $('#done').classList.remove('hide');
   });
@@ -307,7 +431,11 @@ if (page === 'verify') {
       });
   } else if (token) {
     api('/auth/verify', { method: 'POST', body: { token } })
-      .then(() => {
+      .then((result) => {
+        // Die Adresse ist bestätigt – angemeldet ist dieses Konto damit aber nur, wenn es keinen
+        // zweiten Faktor hat. Sonst fehlt noch der Code aus der App, und der wird dort gefragt,
+        // wo er hingehört: auf der Anmeldeseite. Die Wartemarke reist im Cookie mit.
+        if (result?.totp) return location.assign(`/${result.lang || 'en'}/login?step=totp`);
         state.textContent = tr('auth.verify.ok');
         $('#go').classList.remove('hide');
       })
