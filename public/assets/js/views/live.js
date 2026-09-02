@@ -309,7 +309,8 @@ export async function tabPov(root, profile) {
               : bot?.pov?.on
                 ? tr('pov.waiting')
                 : tr('pov.idle');
-    stage.hintNode.textContent = message;
+    // Wie beim Zustandstext: Diese Zeile läuft je Bild, und die Meldung ändert sich fast nie.
+    if (stage.hintNode.textContent !== message) stage.hintNode.textContent = message;
   }
 
   /** Kopfzeile, Schnellleiste und das offene Menü aus dem letzten Zustand zeichnen. */
@@ -426,11 +427,20 @@ export async function tabPov(root, profile) {
     const rows = view.rows.length;
     if (!cols || !rows) return;
 
-    const buffer = document.createElement('canvas');
-    buffer.width = cols;
-    buffer.height = rows;
-    const source = buffer.getContext('2d');
-    const image = source.createImageData(cols, rows);
+    // Die Zwischenfläche und ihr Pixelspeicher gehören zur Anzeige, nicht zum Bild: Sie bleiben
+    // stehen, solange die Größe dieselbe ist. Fünf Bilder in der Sekunde je Bot bedeuteten sonst
+    // fünf frische Zeichenflächen und fünf frische Pixelfelder in der Sekunde – Müll, den der
+    // Browser ausgerechnet dann einsammeln muss, wenn gerade das nächste Bild ankommt.
+    if (!stage.buffer || stage.buffer.width !== cols || stage.buffer.height !== rows) {
+      stage.buffer = document.createElement('canvas');
+      stage.buffer.width = cols;
+      stage.buffer.height = rows;
+      stage.bufferContext = stage.buffer.getContext('2d');
+      stage.image = stage.bufferContext.createImageData(cols, rows);
+    }
+    const buffer = stage.buffer;
+    const source = stage.bufferContext;
+    const image = stage.image;
     const pixels = image.data;
 
     for (let y = 0; y < rows; y++) {
@@ -452,19 +462,39 @@ export async function tabPov(root, profile) {
           at += 4;
         }
       }
+      // Reichen die Läufe nicht bis zum Zeilenende, bleibt der Rest **durchsichtig** – wie bei
+      // einem frisch angelegten Pixelfeld. Ohne diese Zeile stünde dort, was im letzten Bild an
+      // derselben Stelle stand: Die Fläche wird ja wiederverwendet, und ein kurzes Bild würde vom
+      // vorherigen aufgefüllt statt an dieser Stelle nichts zu zeigen.
+      if (at < end) pixels.fill(0, at, end);
     }
     source.putImageData(image, 0, 0);
 
     const canvas = stage.canvas;
-    canvas.width = Math.min(640, cols * 4);
-    canvas.height = Math.round((canvas.width * rows) / cols);
-    const target = canvas.getContext('2d');
-    target.imageSmoothingEnabled = false;
-    target.drawImage(buffer, 0, 0, canvas.width, canvas.height);
+    const width = Math.min(640, cols * 4);
+    const height = Math.round((width * rows) / cols);
+    // **Nur bei echter Größenänderung.** Eine Zuweisung an `canvas.width` legt die Fläche neu an
+    // und setzt dabei jede Einstellung des Zeichenkontexts zurück – auch die abgeschaltete
+    // Glättung eine Zeile weiter unten. Bei gleichbleibender Größe ist das fünfmal in der Sekunde
+    // Arbeit für nichts.
+    if (!stage.target || canvas.width !== width || canvas.height !== height) {
+      canvas.width = width;
+      canvas.height = height;
+      stage.target = canvas.getContext('2d');
+      stage.target.imageSmoothingEnabled = false;
+    } else {
+      // Was gleich gezeichnet wird, kann durchsichtige Stellen haben, und darunter stünde sonst
+      // das vorherige Bild. Früher erledigte das die Zuweisung an `canvas.width` nebenbei; die
+      // fällt jetzt weg, also wird ausdrücklich gelöscht.
+      stage.target.clearRect(0, 0, width, height);
+    }
+    stage.target.drawImage(buffer, 0, 0, width, height);
 
     stage.node.classList.add('has-frame');
     stage.node.classList.remove('is-textured');
-    stage.status.textContent = view.status || '';
+    // Der Text ist von Bild zu Bild fast immer derselbe. Ihn trotzdem zu setzen ist eine
+    // Schreiboperation am DOM, die den Browser zum Nachrechnen des Layouts zwingen kann.
+    if (stage.status.textContent !== (view.status || '')) stage.status.textContent = view.status || '';
     setHint(stage, '');
   }
 
