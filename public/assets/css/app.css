@@ -884,30 +884,43 @@ body.site {
 .site-head .mobile-language-picker {
   display: none;
 }
+/*
+ * Die drei Seiten der Website – Funktionen, Preise, Fragen.
+ *
+ * Sie standen in einem eigenen Kasten direkt neben der Marke: ein blasses graues Rechteck, das
+ * links klebte, während die Mitte der Leiste leer blieb. Ein Kasten um eine Navigation herum
+ * behauptet außerdem eine Gruppe, die es nicht braucht – Marke links, Seiten in der Mitte,
+ * Konto rechts sagt dasselbe ohne jede Linie.
+ *
+ * `margin-inline: auto` mittet sie deshalb zwischen Marke und Aktionen aus. Nicht in der Mitte
+ * der Seite: rechts stehen Discord, Sprache, Aussehen und zwei Knöpfe, links nur die Marke. Eine
+ * Ausmittelung über die ganze Breite schöbe die Navigation unter die Marke.
+ */
 .site-links {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem;
-  border-radius: var(--r-xl);
-  background: color-mix(in oklab, var(--surface) 76%, transparent);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-  font-size: 0.875rem;
+  gap: 0.125rem;
+  margin-inline: auto;
+  font-size: 0.9375rem;
   font-weight: 600;
   color: var(--text-2);
 }
 .site-links a {
-  padding: 0.5rem 0.75rem;
-  border-radius: var(--r-lg);
+  position: relative;
+  padding: 0.5rem 0.9rem;
+  border-radius: var(--r-xl);
   white-space: nowrap;
+  transition: color 0.15s ease, background-color 0.15s ease;
 }
 .site-links a:hover {
-  background: var(--surface);
+  background: color-mix(in oklab, var(--text) 6%, transparent);
   color: var(--text);
+  text-decoration: none;
 }
+/* Die Seite, auf der man steht: gefüllt und in der Primärfarbe. Dieselbe Sprache wie die
+   ausgewählte Sprache und das ausgewählte Farbschema rechts daneben. */
 .site-links a[aria-current] {
-  background: var(--surface-2);
-  box-shadow: var(--shadow), inset 0 0 0 1px var(--line-soft);
+  background: color-mix(in oklab, var(--primary) 11%, transparent);
   color: var(--primary-text);
 }
 
@@ -954,9 +967,21 @@ body.site {
 }
 
 @media (max-width: 939px) {
+  /*
+   * Die Kopfleiste ist auf dem Handy zweizeilig: Marke, Sprache und Knopf oben, das aufgeklappte
+   * Menü darunter über die ganze Breite.
+   *
+   * Sie **muss** dafür ein Raster sein. Hier stand seit jeher `grid-template-columns`, die Fläche
+   * blieb aber das `display: flex` von weiter oben – beide Eigenschaften waren damit wirkungslos,
+   * diese hier und das `grid-column: 1 / -1` des Menüs. Das Menü landete deshalb als vierter
+   * Kasten *neben* dem Knopf in derselben Zeile und stand zur Hälfte außerhalb des Bildschirms:
+   * Wer auf dem Handy „Funktionen“ antippen wollte, konnte es nicht erreichen.
+   */
   .site-head > .page {
+    display: grid;
     grid-template-columns: minmax(0, 1fr) auto auto;
-    gap: 0.65rem;
+    align-items: center;
+    gap: 0.5rem;
     min-height: 3.75rem;
     padding: 0.55rem 1rem;
   }
@@ -968,69 +993,106 @@ body.site {
     width: 1.85rem;
     height: 1.85rem;
   }
+
+  /* Sprache und Menüknopf sind nebeneinander dasselbe Bauteil: gleiche Höhe, gleiche Kante,
+     gleicher Radius. Vorher war der eine 2,65 rem hoch und der andere aus einer anderen Familie. */
   .site-menu-toggle {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.5rem;
-    min-height: 2.65rem;
-    padding: 0.5rem 0.75rem;
+    gap: 0.55rem;
+    height: 2.5rem;
+    padding-inline: 0.85rem;
     border: 0;
     border-radius: var(--r-xl);
     background: var(--surface);
     box-shadow: inset 0 0 0 1px var(--line);
     color: var(--text);
-    font-size: 0.8125rem;
-    font-weight: 700;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 650;
     cursor: pointer;
+    transition: background-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
+  }
+  .site-menu-toggle:hover {
+    background: var(--surface-2);
+  }
+  /* Offen ist der Knopf kein Knopf mehr, sondern der Zustand der Seite – und sieht auch so aus.
+     Dieselbe Primärtönung wie die aktive Seite in der Navigation. */
+  .site-menu-toggle[aria-expanded='true'] {
+    background: color-mix(in oklab, var(--primary) 12%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent);
+    color: var(--primary-text);
   }
   .site-head .mobile-language-picker {
     display: inline-flex;
-    min-height: 2.65rem;
+    height: 2.5rem;
+    padding: 0.25rem;
+    border-radius: var(--r-xl);
+    background: var(--surface);
   }
   .mobile-language-picker a {
-    min-width: 2rem;
-    min-height: 2.25rem;
+    min-width: 2.15rem;
+    border-radius: var(--r-lg);
     padding-inline: 0.4rem;
   }
+
+  /* Drei Striche, die zum Kreuz werden: der mittlere blendet sich aus, die äußeren wandern in
+     die Mitte und drehen sich. */
   .site-menu-lines {
     position: relative;
-    width: 1rem;
-    height: 0.8rem;
+    width: 1.05rem;
+    height: 0.75rem;
+    flex: none;
   }
   .site-menu-lines i {
     position: absolute;
     left: 0;
-    width: 1rem;
-    height: 1.5px;
+    width: 100%;
+    height: 2px;
     border-radius: 999px;
     background: currentColor;
-    transition: transform 0.18s ease, top 0.18s ease;
+    transition: transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), top 0.2s cubic-bezier(0.4, 0, 0.2, 1),
+      opacity 0.12s ease;
   }
-  .site-menu-lines i:first-child {
-    top: 0.18rem;
+  .site-menu-lines i:nth-child(1) {
+    top: 0;
   }
-  .site-menu-lines i:last-child {
-    top: 0.62rem;
+  .site-menu-lines i:nth-child(2) {
+    top: calc(50% - 1px);
   }
-  .site-menu-toggle[aria-expanded='true'] .site-menu-lines i:first-child {
-    top: 0.4rem;
+  .site-menu-lines i:nth-child(3) {
+    top: calc(100% - 2px);
+  }
+  .site-menu-toggle[aria-expanded='true'] .site-menu-lines i:nth-child(1) {
+    top: calc(50% - 1px);
     transform: rotate(45deg);
   }
-  .site-menu-toggle[aria-expanded='true'] .site-menu-lines i:last-child {
-    top: 0.4rem;
+  .site-menu-toggle[aria-expanded='true'] .site-menu-lines i:nth-child(2) {
+    opacity: 0;
+    transform: scaleX(0.3);
+  }
+  .site-menu-toggle[aria-expanded='true'] .site-menu-lines i:nth-child(3) {
+    top: calc(50% - 1px);
     transform: rotate(-45deg);
   }
+
   .site-menu {
     display: none;
     grid-column: 1 / -1;
-    gap: 0.75rem;
-    padding: 0.75rem 0 0.35rem;
+    gap: 0.6rem;
+    margin-top: 0.5rem;
+    padding: 0.75rem 0 0.25rem;
     box-shadow: inset 0 1px 0 var(--line-soft);
+    /* Ein kleines Gerät im Querformat hat unter der Leiste keine 30 rem mehr. Statt die Knöpfe
+       unten abzuschneiden, scrollt das Menü in sich. */
+    max-height: calc(100dvh - 4.5rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .site-menu.open {
     display: grid;
-    animation: menu-in 0.16s ease-out;
+    animation: menu-in 0.18s ease-out;
   }
   /*
    * Solange das Menü offen ist, scrollt die Seite darunter nicht mit.
@@ -1047,6 +1109,8 @@ body.site {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.4rem;
+    margin-inline: 0;
+    font-size: 0.9375rem;
   }
   .site-links a {
     display: flex;
@@ -1058,28 +1122,47 @@ body.site {
     box-shadow: inset 0 0 0 1px var(--line-soft);
     text-align: center;
   }
+  .site-links a[aria-current] {
+    box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 28%, transparent);
+  }
   .site-actions {
     flex-wrap: wrap;
     gap: 0.5rem;
     margin-left: 0;
   }
+  /*
+   * Die Sprachwahl steht auf dem Handy schon in der Kopfzeile – als DE/EN, immer sichtbar, ohne
+   * dass jemand dafür ein Menü öffnen muss. Ein zweites Mal im aufgeklappten Menü stand sie
+   * damit direkt unter sich selbst: zwei Bedienelemente für dieselbe Sache, keine zwei
+   * Zentimeter auseinander. Auf breiten Bildschirmen bleibt sie hier, dort gibt es die andere
+   * nicht.
+   */
+  .site-menu .language-picker {
+    display: none;
+  }
   .site-actions .head-discord,
-  .site-actions .language-picker,
-  .site-actions .themes button {
+  .site-actions .themes {
     min-height: 2.75rem;
   }
-  .site-actions .language-picker {
-    flex: 1 1 12rem;
-  }
-  .site-actions .language-picker a {
+  .site-actions .head-discord {
     flex: 1;
-    min-height: 2.25rem;
+    justify-content: center;
+    border-radius: var(--r-xl);
+    background: var(--surface);
+    box-shadow: inset 0 0 0 1px var(--line-soft);
+    font-size: 0.9375rem;
   }
   .site-actions .head-discord span {
     display: inline;
   }
+  .site-actions .themes {
+    padding: 0.25rem;
+    border-radius: var(--r-xl);
+  }
   .site-actions .themes button {
-    width: 2.35rem;
+    width: 2.6rem;
+    height: 2.25rem;
+    border-radius: var(--r-lg);
   }
   .head-auth {
     order: 2;
@@ -1094,14 +1177,77 @@ body.site {
     min-height: 2.75rem;
   }
 }
-@media (max-width: 360px) {
+
+/*
+ * Tablet: dasselbe aufgeklappte Menü, aber in einer Zeile.
+ *
+ * Die Untereinander-Anordnung darüber ist für ein Handy gedacht, wo eine Reihe von 380 px alles
+ * ist, was es gibt. Auf 800 px sah sie aus wie ein Formular: drei Knöpfe von je einem halben
+ * Meter Breite, darunter zwei weitere. Ab 600 px ist Platz für die Aufteilung, die der Desktop
+ * ohnehin hat – Seiten links, Konto rechts.
+ */
+@media (min-width: 600px) and (max-width: 939px) {
+  .site-menu.open {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .site-links {
+    display: flex;
+    gap: 0.35rem;
+  }
+  .site-links a {
+    min-height: 2.5rem;
+    padding-inline: 1.1rem;
+  }
+  .site-actions {
+    flex-wrap: nowrap;
+    gap: 0.5rem;
+  }
+  .site-actions .head-discord {
+    flex: none;
+  }
+  .head-auth {
+    order: 0;
+    display: inline-flex;
+    width: auto;
+  }
+}
+
+/* Auf sehr schmalen Geräten fällt die Beschriftung weg und der Knopf wird quadratisch – ein
+   Rechteck mit einem Strichbild und viel Luft daneben sähe wie ein Fehler aus. */
+@media (max-width: 380px) {
+  .site-menu-toggle {
+    width: 2.5rem;
+    padding-inline: 0;
+  }
   .site-menu-toggle > span:last-child {
     display: none;
   }
-  .site-actions .head-discord span {
-    display: none;
+  .site-head > .page {
+    gap: 0.4rem;
+    padding-inline: 0.85rem;
+  }
+  .mobile-language-picker a {
+    min-width: 1.9rem;
+    padding-inline: 0.3rem;
   }
 }
+
+/* Wer Bewegung abbestellt hat, bekommt denselben Zustand ohne die Fahrt dorthin. */
+@media (prefers-reduced-motion: reduce) {
+  .site-menu-lines i,
+  .site-menu-toggle,
+  .site-links a {
+    transition: none;
+  }
+  .site-menu.open {
+    animation: none;
+  }
+}
+
 @keyframes menu-in {
   from {
     opacity: 0;
