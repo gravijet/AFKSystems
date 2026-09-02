@@ -304,7 +304,12 @@ app.use('/api/node', nodeRouter);
  * sind genau die beiden Fälle, für die es gedacht war.
  */
 app.get('/api/health', (req, res) => {
-  const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '');
+  // `req.ip` und **nicht** `req.socket.remoteAddress`: Hinter nginx kommt jede Anfrage von
+  // 127.0.0.1 – die Socket-Adresse hätte also die ganze Welt für „von dieser Maschine“ gehalten
+  // und genau die Auskunft weitergegeben, die hier zurückgehalten werden soll. `req.ip` ist die
+  // Adresse, die `trust proxy` durchlässt, und die ist bei einem Aufruf über den vHost die des
+  // Besuchers und nur bei einem echten `curl localhost:3010` die Loopback-Adresse.
+  const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip || '');
   if (req.user?.role !== 'admin' && !local) return res.json({ ok: true });
   res.json({
     ok: true,
