@@ -95,6 +95,10 @@ export const paths = {
   // Sicherungen der Datenbank. Sie liegen neben ihr und nicht darin: Wer den Datenbestand
   // wegkopiert, nimmt damit auch die Sicherungen mit (siehe server/backup.js).
   backups: path.join(config.dataDir, 'backups'),
+  // Die Minecraft-Köpfe, einmal geholt und danach von hier ausgeliefert. Sie liegen bewusst
+  // unter data/ und nicht unter public/: Es ist ein Zwischenspeicher und kein Bestandteil des
+  // Projekts, und beim Ausrollen wird er nicht mitkopiert (siehe server/heads.js).
+  heads: path.join(config.dataDir, 'heads'),
   public: path.join(ROOT, 'public'),
 };
 

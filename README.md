@@ -770,6 +770,7 @@ Alles unter `/api`, Sitzung im HttpOnly-Cookie.
 | Guthaben | `GET /billing`, `POST /billing/voucher`, `POST /billing/topup` |
 | Support | `GET/POST /tickets`, `GET /tickets/:id`, `/messages`, `POST /tickets/:id/reply`, `/status`, `/typing` |
 | Anhänge | `POST /tickets/files` (Rumpf = die Datei), `GET /tickets/files/:id` |
+| Bilder | `GET /heads/:name.png` – der Minecraft-Kopf, über diesen Server geholt und zwischengespeichert. Vorher stand die Adresse des Skin-Dienstes direkt im `src`, und jeder Kunde schickte damit Kontonamen und IP-Adresse zu einem Fremden |
 | Sonstiges | `GET /announcements`, `GET /nodes` |
 | Admin | `/admin/overview`, `/metrics`, `/users`, `/servers/:id` (samt Konsole), `/nodes`, `/plans`, `/addons`, `/topups`, `/vouchers`, `/proxies`, `/tickets`, `/announcements`, `/settings`, `/client/sync`, `/client/rollout` (alle veralteten Bots neu starten), `/resources/:version` (POST = Rumpf ist die JAR, `/fetch`, DELETE), `/mails`, `/audit`, `/ledger` |
 | Admin: suchen | `GET /admin/search?q=` – Nutzer, Serverplätze, Accounts, Tickets, Gutscheine, Standorte, Aufladungen auf einmal; jeder Treffer bringt seinen Weg mit |

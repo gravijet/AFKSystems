@@ -9,6 +9,7 @@ import { macros as macroEngine, ACTIONS, EVENT_TYPES } from '../macros.js';
 import * as binaries from '../binaries.js';
 import * as billing from '../billing.js';
 import * as nodes from '../nodes.js';
+import * as heads from '../heads.js';
 import * as roles from '../roles.js';
 import * as schedules from '../schedules.js';
 import * as mcping from '../mcping.js';
@@ -81,7 +82,7 @@ function membersOf(profile) {
       // Ohne diese Zeile wüsste die Live-Ansicht nach jedem Neuladen nicht, welcher Weg gilt:
       // `refresh()` im Browser ersetzt den gemerkten Bot-Zustand durch genau diese Zeile.
       pov: live ? live.povState() : null,
-      head: `https://minotar.net/helm/${encodeURIComponent(row.uuid || row.name)}/64.png`,
+      head: heads.urlFor(row.uuid || row.name),
     };
   });
 }

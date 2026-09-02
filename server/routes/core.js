@@ -13,6 +13,7 @@ import * as tickets from '../tickets.js';
 import { todosFor } from '../todos.js';
 import * as attachments from '../attachments.js';
 import * as nodes from '../nodes.js';
+import * as heads from '../heads.js';
 import { features } from '../features.js';
 import { actionsFor, eventsFor } from '../macros.js';
 import { supervisor } from '../supervisor.js';
@@ -1305,9 +1306,35 @@ const accountView = (row) => ({
   suspend_reason: row.suspend_reason || '',
   connections: row.connections,
   created_at: row.created_at,
-  // Kopfbild aus dem öffentlichen Skin-Dienst; ohne UUID nimmt der Dienst den Namen.
-  head: `https://minotar.net/helm/${encodeURIComponent(row.uuid || row.name)}/64.png`,
+  // Kopfbild – über diesen Server, nicht direkt vom Skin-Dienst. Warum, steht in heads.js:
+  // Sonst schickte der Browser jedes Kunden bei jedem Seitenaufruf den Namen seines
+  // Minecraft-Kontos und seine IP-Adresse zu einem fremden Anbieter.
+  head: heads.urlFor(row.uuid || row.name),
 });
+
+/**
+ * Ein Minecraft-Kopf, über diesen Server statt aus dem Browser des Kunden.
+ *
+ * **Angemeldet.** Nicht weil ein Kopf geheim wäre – Skins sind öffentlich –, sondern weil diese
+ * Adresse sonst ein offener Bildumschlag für jeden wäre, der sie findet. Sichtbar ist sie
+ * ohnehin nur dort, wo auch die Kontenliste steht.
+ *
+ * **Lange haltbar, aber privat.** Der Kopf ändert sich, wenn jemand seinen Skin wechselt; einen
+ * Tag im Browser zu bleiben ist der richtige Kompromiss zwischen „sofort da“ und „irgendwann
+ * neu“. `private`, weil ein Zwischenspeicher unterwegs nicht mitschreiben soll, welches Konto zu
+ * welcher Sitzung gehört.
+ */
+router.get(
+  '/heads/:name.png',
+  auth.requireUser,
+  wrap(async (req, res) => {
+    const result = await heads.headFor(req.params.name);
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', result.fresh ? 'private, max-age=86400' : 'private, max-age=300');
+    res.setHeader('Content-Length', result.body.length);
+    res.end(result.body);
+  })
+);
 
 router.get(
   '/accounts',
