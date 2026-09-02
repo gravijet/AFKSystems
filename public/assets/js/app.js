@@ -114,6 +114,8 @@ function pushLine(key, entry) {
 
 let socket = null;
 let retry = 0;
+let reconnectTimer = null;
+let panelReady = false;
 let ticketStatsTimer = null;
 let notificationStatsTimer = null;
 let sideFrame = null;
@@ -165,15 +167,21 @@ function refreshNotificationStats() {
 }
 
 function connect() {
+  // Ein verdeckter Reiter braucht keine Echtzeitdaten. Das spart pro offen gelassenem Panel eine
+  // WebSocket-Leitung, Live-Updates und unnötige Neuzeichnungen; beim Zurückkehren wird sauber
+  // neu verbunden und der sichtbare Zustand nachgezogen.
+  if (document.hidden || socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING) return;
+  clearTimeout(reconnectTimer);
   const address = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/api/ws`;
-  socket = new WebSocket(address);
+  const connection = new WebSocket(address);
+  socket = connection;
 
-  socket.addEventListener('open', () => {
+  connection.addEventListener('open', () => {
     retry = 0;
     setLive(true);
   });
 
-  socket.addEventListener('message', (event) => {
+  connection.addEventListener('message', (event) => {
     let message;
     try {
       message = JSON.parse(event.data);
@@ -245,10 +253,13 @@ function connect() {
     }
   });
 
-  socket.addEventListener('close', () => {
+  connection.addEventListener('close', () => {
+    if (socket === connection) socket = null;
     setLive(false);
+    if (document.hidden) return;
     retry += 1;
-    setTimeout(connect, Math.min(30_000, 1000 * 2 ** Math.min(retry, 5)));
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, Math.min(30_000, 1000 * 2 ** Math.min(retry, 5)));
   });
 }
 
@@ -1185,6 +1196,23 @@ export function discordBanner() {
 
 window.addEventListener('hashchange', draw);
 
+document.addEventListener('visibilitychange', () => {
+  if (!panelReady) return;
+  if (document.hidden) {
+    clearTimeout(reconnectTimer);
+    socket?.close(1000, 'Panel tab hidden');
+    return;
+  }
+  retry = 0;
+  connect();
+  // Während der Reiter verborgen war, sind absichtlich keine Push-Ereignisse verarbeitet
+  // worden. Ein kompakter Nachzug beim Sichtbarwerden ist günstiger und zuverlässiger als sie
+  // im Hintergrund alle zu rendern.
+  refresh()
+    .then(() => draw())
+    .catch(() => {});
+});
+
 // ---------------------------------------------------------------- Start
 //
 // Bewusst ohne `await` auf Modulebene: die Ansichten importieren dieses Modul zurück, und ein
@@ -1202,6 +1230,7 @@ async function boot() {
     await Promise.all([metaJob, dataJob, viewJob]);
     applyPreferences(state.me?.id);
     if (!location.hash) history.replaceState(null, '', startHash(state.me?.id, state.profiles));
+    panelReady = true;
     connect();
     await draw();
   } catch (error) {

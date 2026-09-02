@@ -2006,6 +2006,7 @@ export const S = {
     en: 'No text yet – only the subject. Write below to add something.',
     de: 'Noch kein Text – nur der Betreff. Schreib unten, wenn du etwas ergänzen willst.',
   },
+  'tk.loadOlder': { en: 'Load earlier messages', de: 'Ältere Nachrichten laden' },
   'tk.discordTitle': { en: 'Ask in Discord', de: 'Im Discord fragen' },
   'tk.discordText': {
     en: 'Other players are often faster than we are – and there is no waiting for a reply.',

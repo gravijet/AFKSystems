@@ -2009,6 +2009,53 @@ test('the reconcile pass opens the Discord channels that are missing', async () 
   assert.deepEqual(renamed, [904]);
 });
 
+test('a ticket channel replaces member messages with a bot embed', async () => {
+  const calls = [];
+  const relayed = [];
+  const deleted = [];
+  const source = {
+    id: 'discord-message-1',
+    author: { bot: false, id: '400000000000000001', username: 'customer' },
+    member: { displayName: 'Customer' },
+    content: 'The bot does not connect.',
+    attachments: new Map(),
+    channel: { name: 'ticket-77' },
+    delete: async () => deleted.push('source'),
+  };
+  const fake = {
+    mine: new Set(),
+    bot: {
+      panel: {
+        call: async (path, options) => {
+          calls.push({ path, options });
+          return {
+            ticket: { url: 'https://example.test/en/app#/tickets/77' },
+            message: {
+              role: 'staff',
+              author: 'Team',
+              body: 'The bot does not connect.',
+              files: [],
+              created_at: Date.now(),
+            },
+            failed: [],
+          };
+        },
+      },
+    },
+    ticketUrl: (id) => `https://example.test/en/app#/tickets/${id}`,
+    relayToDiscord: async (channel, entry, ticket) => relayed.push({ channel, entry, ticket }),
+    notice: async () => assert.fail('a successful sync needs no error notice'),
+  };
+
+  await Tickets.prototype.onMessage.call(fake, source);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].path, '/tickets/77/messages');
+  assert.deepEqual(deleted, ['source']);
+  assert.equal(relayed.length, 1);
+  assert.equal(relayed[0].entry.author, 'Team');
+  assert.equal(relayed[0].entry.discord_id, undefined, 'the replacement must not be skipped as an original');
+});
+
 /** Die Kontakt-Adresse: im Fuß jeder Seite – aber nur, wenn dort wirklich eine steht. */
 test('the contact address is offered in the footer, and only when it is one', async () => {
   const landing = await import('../server/landing.js');
@@ -3064,6 +3111,22 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     db.prepare('SELECT role FROM ticket_messages WHERE ticket_id = ? ORDER BY id DESC LIMIT 1').get(openTicket.id).role,
     'staff'
   );
+
+  // „Answered“ bedeutet „der Kunde ist am Zug“, nicht „der Discord-Kanal ist gesperrt“. Eine
+  // normale, verknüpfte Person kann dort direkt nachfragen und das Ticket wird wieder offen.
+  assert.equal(db.prepare('SELECT status FROM tickets WHERE id = ?').get(openTicket.id).status, 'answered');
+  const discordAnsweredReply = await api(base, `/api/bot/tickets/${openTicket.id}/messages`, {
+    botSecret: BOT_SECRET,
+    method: 'POST',
+    body: {
+      discord_id: '300000000000000005',
+      discord_user_id: user.discord_id,
+      author_name: 'Customer test',
+      body: 'I can still reply from Discord after an answer.',
+    },
+  });
+  assert.equal(discordAnsweredReply.response.status, 200);
+  assert.equal(discordAnsweredReply.data.ticket.status, 'open');
 
   // Ein Admin kann im eigenen Ticket auch aus Discord als Kunde schreiben. Die Discord-ID muss
   // dabei im Bridge-Ereignis stehen, damit der Bot die bereits vorhandene Nachricht nicht erneut

@@ -424,7 +424,31 @@ router.post(
       { preview: String(body.body || '').slice(0, 160), author: profile.displayNameOf(user) },
       user.id
     );
-    res.json({ ok: true, ticket: ticketView(updated), files: fileIds.length, failed });
+    // Der Bot ersetzt die ursprüngliche Discord-Nachricht durch sein Embed. Dafür bekommt er die
+    // kanonische, bereits gespeicherte Fassung zurück (inklusive der lokal gesicherten Anhänge),
+    // statt Inhalt und Absender noch einmal selbst zu erraten.
+    const storedId = body.discord_id
+      ? db.prepare('SELECT id FROM ticket_messages WHERE discord_id = ?').get(String(body.discord_id))?.id
+      : null;
+    const stored = storedId
+      ? tickets.messages(ticket.id, { after: Number(storedId) - 1, limit: 1 })[0]
+      : null;
+    res.json({
+      ok: true,
+      ticket: ticketView(updated),
+      message: stored
+        ? {
+            id: stored.id,
+            role: stored.role,
+            author: stored.role === 'staff' ? 'Team' : stored.author_name || stored.display_name || stored.username,
+            body: stored.body,
+            files: stored.files,
+            created_at: stored.created_at,
+          }
+        : null,
+      files: fileIds.length,
+      failed,
+    });
   })
 );
 

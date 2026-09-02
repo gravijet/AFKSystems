@@ -159,6 +159,33 @@ export function byMessage(ticketId, { staff = false } = {}) {
   return out;
 }
 
+/**
+ * Anhänge nur für Nachrichten, die gerade angezeigt werden.
+ *
+ * Ein langer Ticketverlauf darf nicht bei jedem Nachladen alle alten Screenshots aus der
+ * Datenbank ziehen. Die Ticket-Ansicht lädt ihren Verlauf seitenweise; dieselbe Grenze muss für
+ * die zugehörigen Dateien gelten, sonst spart die Seitierung genau dort nichts, wo Tickets teuer
+ * werden.
+ */
+export function byMessages(messageIds, { staff = false } = {}) {
+  const ids = [...new Set((messageIds || []).map(Number).filter(Number.isInteger))];
+  const out = new Map();
+  if (!ids.length) return out;
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = db
+    .prepare(
+      `SELECT * FROM ticket_files
+        WHERE message_id IN (${placeholders}) ${staff ? '' : 'AND internal = 0'}
+        ORDER BY id`
+    )
+    .all(...ids);
+  for (const row of rows) {
+    if (!out.has(row.message_id)) out.set(row.message_id, []);
+    out.get(row.message_id).push(view(row));
+  }
+  return out;
+}
+
 /** Wie ein Anhang im Panel und im Bot aussieht – nie mit dem Pfad auf der Platte. */
 export const view = (row) => ({
   id: row.id,
