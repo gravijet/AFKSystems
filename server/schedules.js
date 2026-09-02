@@ -19,7 +19,7 @@ import { supervisor } from './supervisor.js';
 import * as billing from './billing.js';
 import * as notify from './notify.js';
 import { timezoneOf } from './profile.js';
-import { bad, notFound, requireInt } from './util.js';
+import { bad, intl, notFound, requireInt } from './util.js';
 
 export const ACTIONS = ['start', 'stop', 'restart'];
 
@@ -48,14 +48,20 @@ const WEEKDAYS = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
  * Mitternacht die Stunde "24", und dann läge ein Zeitplan um 0:00 Uhr einen Tag daneben.
  */
 function localAt(at, timeZone) {
+  // Der Formatierer bleibt stehen: Diese Funktion läuft im Minutentakt für jeden aktiven Zeitplan,
+  // und einen `Intl.DateTimeFormat` zu bauen kostet mehr als das Formatieren selbst (util.js).
   const parts = Object.fromEntries(
-    new Intl.DateTimeFormat('en-GB', {
-      timeZone,
-      hourCycle: 'h23',
-      weekday: 'short',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
+    intl(
+      `schedule:${timeZone}`,
+      () =>
+        new Intl.DateTimeFormat('en-GB', {
+          timeZone,
+          hourCycle: 'h23',
+          weekday: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+    )
       .formatToParts(at)
       .map((part) => [part.type, part.value])
   );

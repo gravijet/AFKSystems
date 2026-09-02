@@ -9,7 +9,7 @@
 // im AFKSystems-Server bestätigt. Jeder weitere bekommt einen bezahlten Tarif; läuft er ab und es
 // ist zu wenig Guthaben da, wird der Server stillgelegt (Bots aus) statt gelöscht.
 
-import { db, getSetting, audit } from './db.js';
+import { db, cached, getSetting, audit } from './db.js';
 import { voucherCode, bad, notFound } from './util.js';
 import * as mail from './mail.js';
 import * as notify from './notify.js';
@@ -76,16 +76,34 @@ export const euro = (credits) => credits / 100;
 
 // ---------------------------------------------------------------- Tarife
 
+/**
+ * Tarife und Zusätze stehen einmal im Speicher.
+ *
+ * Drei Zeilen, geändert wird daran vielleicht einmal im Quartal – gelesen dagegen dauernd: Eine
+ * einzige Antwort auf `/api/profiles` fragte den Tarif eines Serverplatzes sechsmal ab (einmal für
+ * `planOf`, einmal in `featuresOf`, einmal in `monthlyPrice`, einmal in `isActive` …), und das je
+ * Serverplatz. Bei acht Plätzen waren das fünfzig Abfragen für dreimal dieselbe Zeile.
+ *
+ * Der Zwischenspeicher fällt weg, sobald irgendwo in der Datenbank geschrieben wird – auch dann,
+ * wenn es die Tarife gar nicht betraf. Das ist Absicht: So gibt es keine Liste von Stellen, die
+ * eine Preisänderung melden müssen, und damit auch keine, die man vergessen kann. Siehe `cached`
+ * in db.js.
+ */
+const planTable = cached(() => db.prepare('SELECT * FROM plans ORDER BY sort, id').all());
+const addonTable = cached(() => db.prepare('SELECT * FROM addons ORDER BY sort, id').all());
+
 export function plans({ includeInactive = false } = {}) {
-  const where = includeInactive ? '' : 'WHERE active = 1';
-  return db.prepare(`SELECT * FROM plans ${where} ORDER BY sort, id`).all();
+  const all = planTable();
+  return includeInactive ? all : all.filter((plan) => plan.active);
 }
 
-export const planById = (id) => db.prepare('SELECT * FROM plans WHERE id = ?').get(id);
-export const planBySlug = (slug) => db.prepare('SELECT * FROM plans WHERE slug = ?').get(slug);
+// `Number`/`String`: In SQL glich `WHERE id = ?` eine "3" aus einer Adresse noch mit der Zahl 3 ab,
+// im Vergleich hier nicht mehr. Die Umwandlung hält genau diesen Unterschied heraus.
+export const planById = (id) => planTable().find((plan) => plan.id === Number(id));
+export const planBySlug = (slug) => planTable().find((plan) => plan.slug === String(slug));
 
 export function freePlan() {
-  return db.prepare('SELECT * FROM plans WHERE free_slot = 1 AND active = 1 ORDER BY sort').get();
+  return planTable().find((plan) => plan.free_slot && plan.active);
 }
 
 export function cheapestPaidPlan() {
@@ -105,11 +123,13 @@ export function planOf(profile) {
 // und auf dem anderen nicht, soll auch nur einmal zahlen. Abgerechnet wird im selben Takt wie der
 // Tarif – der Platz hat ein Ablaufdatum, und alles, was dranhängt, endet mit ihm.
 
-export const addons = ({ includeInactive = false } = {}) =>
-  db.prepare(`SELECT * FROM addons ${includeInactive ? '' : 'WHERE active = 1'} ORDER BY sort, id`).all();
+export const addons = ({ includeInactive = false } = {}) => {
+  const all = addonTable();
+  return includeInactive ? all : all.filter((addon) => addon.active);
+};
 
-export const addonById = (id) => db.prepare('SELECT * FROM addons WHERE id = ?').get(id);
-export const addonByKey = (key) => db.prepare('SELECT * FROM addons WHERE key = ?').get(key);
+export const addonById = (id) => addonTable().find((addon) => addon.id === Number(id));
+export const addonByKey = (key) => addonTable().find((addon) => addon.key === String(key));
 
 /** Die gebuchten Zusätze eines Serverplatzes, jeweils mit Menge. */
 export function addonsOf(profileId) {

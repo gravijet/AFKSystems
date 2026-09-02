@@ -27,20 +27,19 @@ import * as billing from './billing.js';
 import * as mail from './mail.js';
 import * as binaries from './binaries.js';
 import * as nodes from './nodes.js';
-import { formatEuro, safeUrl } from './util.js';
+import { formatCredits, formatDay, formatEuro, safeUrl } from './util.js';
 
 const RANK = { bad: 0, warn: 1, info: 2 };
 
+// Zahl und Datum kommen aus util.js: Diese Liste wird bei **jedem** `/me` neu gebaut, und das
+// Panel holt `/me` bei jedem Zustandswechsel. Ein `toLocaleString` je Eintrag baute dafür jedes
+// Mal einen frischen `Intl`-Formatierer – siehe die Erklärung bei `intl` in util.js.
+
 /** Eine Zahl mit Tausenderpunkt – dieselbe Schreibweise wie sonst im Panel. */
-const number = (value, lang) => Number(value || 0).toLocaleString(lang === 'en' ? 'en-GB' : 'de-DE');
+const number = (value, lang) => formatCredits(value, lang);
 
 /** Ein Datum ohne Uhrzeit. Auf den Tag genau reicht für alles, was hier steht. */
-const day = (timestamp, lang) =>
-  new Date(timestamp).toLocaleDateString(lang === 'en' ? 'en-GB' : 'de-DE', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
+const day = (timestamp, lang) => formatDay(timestamp, lang);
 
 /**
  * Die offenen Aufgaben eines Kontos.

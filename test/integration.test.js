@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 import Database from 'better-sqlite3';
@@ -17,7 +18,8 @@ process.env.NODE_ENV = 'test';
 process.env.SECRET = 'test-session-secret';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
 
-const { db, setSetting } = await import('../server/db.js');
+const { db, cached, prepareOnce, setSetting } = await import('../server/db.js');
+const assets = await import('../server/assets.js');
 const billing = await import('../server/billing.js');
 const stripe = await import('../server/stripe.js');
 const vat = await import('../server/vat.js');
@@ -41,7 +43,7 @@ const receipt = await import('../server/receipt.js');
 const schedules = await import('../server/schedules.js');
 const systemreport = await import('../server/systemreport.js');
 const exportCsv = await import('../server/export.js');
-const { hashPassword } = await import('../server/util.js');
+const { hashPassword, formatCredits, formatDay, formatEuro } = await import('../server/util.js');
 const { renderDiscord } = await import('../public/assets/js/discord.js');
 const { staffTodos } = await import('../server/todos.js');
 const { parseFormatting } = await import('../public/assets/js/chatlog.js');
@@ -2768,6 +2770,112 @@ test('display names and selectable avatar providers replace the login name witho
 
 test('going online is deliberately not a notification event', () => {
   assert.equal('botOnline' in notify, false);
+});
+
+// ---------------------------------------------------------------- Tempo
+
+test('cached values follow every write, including one from another process', () => {
+  let built = 0;
+  const value = cached(() => {
+    built += 1;
+    return db.prepare("SELECT value FROM settings WHERE key = 'free_slots'").get()?.value ?? null;
+  });
+
+  assert.equal(value(), value());
+  assert.equal(built, 1, 'ohne Schreibvorgang wird nicht neu gebaut');
+
+  setSetting('free_slots', 7);
+  assert.equal(JSON.parse(value()), 7);
+  assert.equal(built, 2, 'ein eigener Schreibvorgang baut neu');
+
+  // Ein zweiter Prozess mit eigener Verbindung – so schreibt `npm run admin:credits`. Für
+  // `total_changes()` dieser Verbindung passiert dabei nichts; erkannt wird es über
+  // `PRAGMA data_version`. Genau das ist der Fall, den ein reiner Zähler übersehen würde.
+  const outside = new Database(path.join(TEST_DIR, 'afksystems.db'));
+  outside.pragma('busy_timeout = 5000');
+  outside.prepare("UPDATE settings SET value = '9' WHERE key = 'free_slots'").run();
+  outside.close();
+
+  assert.equal(JSON.parse(value()), 9, 'auch eine fremde Verbindung wird bemerkt');
+  setSetting('free_slots', 1);
+});
+
+test('the same query text is only translated once', () => {
+  const sql = 'SELECT 1 AS eins';
+  assert.strictEqual(db.prepare(sql), db.prepare(sql));
+  // `prepareOnce` bleibt der Weg an dem Zwischenspeicher vorbei – für alles, was sein Statement
+  // umschaltet (`pluck`, `raw`) und es deshalb nicht teilen darf.
+  assert.notStrictEqual(prepareOnce(sql), db.prepare(sql));
+  assert.equal(db.prepare(sql).get().eins, 1);
+});
+
+test('assets are packed once and served without compressing them again', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'afksystems-assets-'));
+  const style = path.join(dir, 'app.css');
+  fs.writeFileSync(style, `.a{color:red}\n`.repeat(400)); // groß genug, dass Packen lohnt
+  fs.writeFileSync(path.join(dir, 'tiny.css'), '.a{color:red}');
+  fs.writeFileSync(path.join(dir, 'logo.webp'), Buffer.alloc(4096, 7));
+
+  const { written } = assets.pack(dir);
+  assert.equal(written, 2, 'eine Brotli- und eine gzip-Fassung');
+  assert.ok(fs.existsSync(`${style}.br`) && fs.existsSync(`${style}.gz`));
+  assert.equal(zlib.brotliDecompressSync(fs.readFileSync(`${style}.br`)).toString(), fs.readFileSync(style, 'utf8'));
+  // Was schon komprimiert ist oder zu klein, bleibt liegen.
+  assert.equal(fs.existsSync(path.join(dir, 'tiny.css.br')), false);
+  assert.equal(fs.existsSync(path.join(dir, 'logo.webp.br')), false);
+
+  const middleware = assets.preferPacked(dir);
+  const ask = (url, headers = {}, method = 'GET') => {
+    const sent = {};
+    const req = { url, method, headers };
+    const res = { locals: {}, setHeader: (name, value) => (sent[name.toLowerCase()] = value) };
+    middleware(req, res, () => {});
+    return { url: req.url, sent, locals: res.locals };
+  };
+
+  const brotli = ask('/app.css', { 'accept-encoding': 'gzip, deflate, br' });
+  assert.equal(brotli.url, '/app.css.br');
+  assert.equal(brotli.sent['content-encoding'], 'br');
+  assert.equal(brotli.sent.vary, 'Accept-Encoding');
+  // Der ursprüngliche Name muss erhalten bleiben: Inhaltstyp und Inhaltsschutz hängen an ".css".
+  assert.equal(brotli.locals.assetOriginal, '/app.css');
+
+  // Was der Browser nicht annimmt, wird ihm auch nicht geschickt.
+  assert.equal(ask('/app.css', { 'accept-encoding': 'gzip' }).url, '/app.css.gz');
+  assert.equal(ask('/app.css', { 'accept-encoding': 'br;q=0, gzip' }).url, '/app.css.gz');
+  assert.equal(ask('/app.css', { 'accept-encoding': 'identity' }).url, '/app.css');
+  assert.equal(ask('/app.css', {}).url, '/app.css');
+  // Eine Bereichsanfrage bekommt das Original – ein Ausschnitt einer anderen Darstellung wäre falsch.
+  assert.equal(ask('/app.css', { 'accept-encoding': 'br', range: 'bytes=0-10' }).url, '/app.css');
+  // Nichts, was nicht gepackt dasteht, und nichts außerhalb des Verzeichnisses.
+  assert.equal(ask('/tiny.css', { 'accept-encoding': 'br' }).url, '/tiny.css');
+  assert.equal(ask('/../secret.css', { 'accept-encoding': 'br' }).url, '/../secret.css');
+  // Der Abfrageteil der Adresse bleibt hinter der Endung stehen.
+  assert.equal(ask('/app.css?v=1', { 'accept-encoding': 'br' }).url, '/app.css.br?v=1');
+
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('numbers and dates are formatted through one cached formatter per language', () => {
+  // Gleiches Ergebnis wie das frühere `toLocaleString` – nur eben ohne es jedes Mal neu zu bauen.
+  assert.equal(formatCredits(1234, 'de'), (1234).toLocaleString('de-DE'));
+  assert.equal(formatCredits(1234, 'en'), (1234).toLocaleString('en-GB'));
+  assert.equal(
+    formatEuro(249, 'de'),
+    (2.49).toLocaleString('de-DE', { style: 'currency', currency: 'EUR' })
+  );
+  assert.equal(
+    formatEuro(249, 'en'),
+    (2.49).toLocaleString('en-GB', { style: 'currency', currency: 'EUR' })
+  );
+  const at = Date.parse('2026-03-07T12:00:00Z');
+  assert.equal(
+    formatDay(at, 'de'),
+    new Date(at).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  );
+  // Zweimal derselbe Aufruf muss dasselbe ergeben – ein geteilter Formatierer darf keinen
+  // Zustand mitschleppen.
+  assert.equal(formatEuro(100, 'de'), formatEuro(100, 'de'));
 });
 
 // ---------------------------------------------------------------- Zeitpläne

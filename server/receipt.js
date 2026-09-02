@@ -21,20 +21,12 @@ import { assetVersion, config } from './config.js';
 import * as vat from './vat.js';
 import { addressLines } from '../public/assets/js/countries.js';
 import { escapeHtml } from '../public/assets/js/discord.js';
+import { formatDay, formatEuro } from './util.js';
 
 /** Wie das Geld auf dem Beleg steht – in der Sprache des Belegs, immer mit zwei Nachkommastellen. */
-const money = (cent, lang) =>
-  ((Number(cent) || 0) / 100).toLocaleString(lang === 'de' ? 'de-DE' : 'en-GB', {
-    style: 'currency',
-    currency: 'EUR',
-  });
+const money = (cent, lang) => formatEuro(cent, lang);
 
-const day = (at, lang) =>
-  new Date(at).toLocaleDateString(lang === 'de' ? 'de-DE' : 'en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
+const day = (at, lang) => formatDay(at, lang);
 
 /** Wie die Zahlart auf dem Beleg heißt. Der Schlüssel in der Datenbank ist keine Auskunft. */
 const METHODS = {
