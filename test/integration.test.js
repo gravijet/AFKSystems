@@ -45,7 +45,7 @@ const receipt = await import('../server/receipt.js');
 const schedules = await import('../server/schedules.js');
 const systemreport = await import('../server/systemreport.js');
 const exportCsv = await import('../server/export.js');
-const { hashPassword, formatCredits, formatDay, formatEuro } = await import('../server/util.js');
+const { hashPassword, formatCredits, formatDay, formatEuro, slidingWindow } = await import('../server/util.js');
 const { renderDiscord } = await import('../public/assets/js/discord.js');
 const { staffTodos } = await import('../server/todos.js');
 const { parseFormatting } = await import('../public/assets/js/chatlog.js');
@@ -2934,10 +2934,47 @@ test('the browser gets one language of the texts, and it really is a module', as
 
   // Ein alter Fingerabdruck bekommt dieselbe Datei, aber nur kurz haltbar.
   assert.match(ask('/assets/v/frueher/js/i18n.de.js').res.headers['cache-control'], /max-age=60/);
+  // Und die Adresse ganz ohne Fingerabdruck ebenso – eine Seite aus der Zeit vor dem letzten
+  // Deployment sucht die Texte dort, und ohne Texte wäre das Panel für sie leer.
+  const bookmarked = ask('/assets/js/i18n.de.js', { 'accept-encoding': 'identity' });
+  assert.equal(bookmarked.passed, false);
+  assert.equal(bookmarked.sent.toString(), source);
+  assert.match(bookmarked.res.headers['cache-control'], /max-age=60/);
   // Alles andere geht diesen Handler nichts an.
   assert.equal(ask('/assets/v/jetzt/js/i18n.kl.js').passed, true);
   assert.equal(ask('/assets/v/jetzt/js/app.js').passed, true);
-  assert.equal(ask('/assets/js/i18n.de.js').passed, true);
+  assert.equal(ask('/assets/v/jetzt/js/views/i18n.de.js').passed, true);
+});
+
+test('the sliding window counts a window, forgets what fell out of it and sweeps itself', () => {
+  let clock = 1_000_000;
+  const realNow = Date.now;
+  Date.now = () => clock;
+  try {
+    const allow = slidingWindow({ windowMs: 1000, max: 3 });
+    assert.deepEqual([allow('a'), allow('a'), allow('a'), allow('a')], [true, true, true, false]);
+    // Ein anderer Schlüssel hat sein eigenes Fenster.
+    assert.equal(allow('b'), true);
+
+    // Eine halbe Sekunde später ist noch nichts abgelaufen.
+    clock += 500;
+    assert.equal(allow('a'), false);
+    // Nach einer vollen Sekunde sind die ersten drei aus dem Fenster – aber nur die.
+    clock += 501;
+    assert.deepEqual([allow('a'), allow('a'), allow('a')], [true, true, true]);
+    assert.equal(allow('a'), false);
+
+    // Die Tabelle darf nicht endlos wachsen: Wer über die Obergrenze hinaus Schlüssel erzeugt,
+    // lässt die abgelaufenen wegkehren. Ohne das wäre der Zähler ein Speicherleck von außen.
+    const swept = slidingWindow({ windowMs: 1000, max: 5, cap: 10 });
+    for (let i = 0; i < 10; i++) swept(`alt-${i}`);
+    clock += 2000;
+    for (let i = 0; i < 3; i++) swept(`neu-${i}`);
+    // Ein alter Schlüssel ist weg – er fängt bei null an und darf wieder voll zählen.
+    for (let i = 0; i < 5; i++) assert.equal(swept('alt-0'), true, `Versuch ${i + 1} nach dem Kehren`);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('numbers and dates are formatted through one cached formatter per language', () => {

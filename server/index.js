@@ -39,7 +39,7 @@ import * as account from './account.js';
 import * as schedules from './schedules.js';
 import * as systemreport from './systemreport.js';
 import * as jobs from './jobs.js';
-import { HttpError, langOf } from './util.js';
+import { HttpError, langOf, slidingWindow } from './util.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -186,36 +186,6 @@ app.use('/api', (req, _res, next) => {
   if (site === 'same-origin' || site === 'same-site' || site === 'none') return next();
   reject();
 });
-
-/**
- * Ein Schiebefenster, das zählt, wie oft etwas gerade passiert.
- *
- * Eine Handvoll Stellen im Panel braucht dieselbe Sache – wie oft eine Adresse anklopft, wie oft
- * ein Passwort probiert wird –, und jede hatte ihre eigene `Map` mit ihrer eigenen Aufräumregel.
- * Das hier ist dieselbe Logik an einer Stelle: Zeitpunkte je Schlüssel, alles außerhalb des
- * Fensters fällt beim Nachsehen weg, und wenn die Tabelle groß wird, wird sie einmal durchgekehrt.
- * Ohne das Kehren wäre jeder Zähler ein Speicherleck mit Zugriff von außen.
- */
-function slidingWindow({ windowMs, max, cap = 20_000 }) {
-  const hits = new Map();
-  return (key) => {
-    const now = Date.now();
-    const id = String(key ?? '');
-    const recent = (hits.get(id) || []).filter((at) => now - at < windowMs);
-    if (recent.length >= max) {
-      hits.set(id, recent);
-      return false;
-    }
-    recent.push(now);
-    hits.set(id, recent);
-    if (hits.size > cap) {
-      for (const [entry, times] of hits) {
-        if (!times.some((at) => now - at < windowMs)) hits.delete(entry);
-      }
-    }
-    return true;
-  };
-}
 
 /**
  * Eine allgemeine Bremse für die ganze API.

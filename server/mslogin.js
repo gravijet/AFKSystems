@@ -9,7 +9,7 @@ import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
 import fs from 'node:fs';
 import path from 'node:path';
-import { userDir } from './config.js';
+import { userDir, userPath } from './config.js';
 import { db, audit } from './db.js';
 import * as binaries from './binaries.js';
 import { token, HttpError, codeUrl } from './util.js';
@@ -259,14 +259,42 @@ export function removeAccount(user, accountId) {
 }
 
 /**
+ * Wann zuletzt abgeglichen wurde, und wie das Verzeichnis dabei aussah. Je Konto ein Eintrag mit
+ * zwei Zahlen – das wächst mit der Zahl der Kunden und nicht mit der Zahl der Anfragen.
+ */
+const lastSeen = new Map();
+
+/**
  * Kontodateien und Datenbank abgleichen. Fängt den Fall ab, dass jemand direkt auf dem Server
  * eine Anmeldung abgelegt oder gelöscht hat.
+ *
+ * **Zuerst die billige Frage.** Das hier hängt an `GET /accounts`, und das Panel holt diese Liste
+ * bei jedem Zustandswechsel. Jeder Aufruf legte bisher das Verzeichnis an (`userDir`), las es
+ * vollständig aus und fragte die Datenbank – drei Zugriffe auf die Platte für einen Fall, der
+ * eintritt, wenn ein Administrator von Hand eine Datei hinlegt oder wegnimmt, also so gut wie nie.
+ *
+ * Ein Verzeichnis ändert seine Zeitmarke genau dann, wenn ein Eintrag dazukommt oder verschwindet –
+ * und genau danach wird hier gesucht. Steht sie noch, wo sie stand, gibt es nichts abzugleichen.
+ * Das ist kein Zeitfenster und keine Schätzung: Was der Abgleich finden könnte, hätte die Zeitmarke
+ * bewegt.
  */
 export function reconcile(userId) {
-  const dir = path.join(userDir(userId), 'afksystems', 'accounts');
-  const files = fs.existsSync(dir)
-    ? fs.readdirSync(dir).filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5))
-    : [];
+  const dir = path.join(userPath(userId), 'afksystems', 'accounts');
+  let stamp = null;
+  try {
+    const stats = fs.statSync(dir);
+    stamp = `${stats.mtimeMs}:${stats.size}`;
+  } catch {
+    // Kein Verzeichnis heißt: keine Dateien. Das ist ein Zustand wie jeder andere und muss sich
+    // merken lassen, sonst sähe jeder Aufruf für ein Konto ohne Anmeldungen wieder nach.
+    stamp = 'fehlt';
+  }
+  if (lastSeen.get(userId) === stamp) return;
+
+  const files =
+    stamp === 'fehlt'
+      ? []
+      : fs.readdirSync(dir).filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5));
   const rows = db.prepare('SELECT * FROM mc_accounts WHERE user_id = ?').all(userId);
 
   for (const name of files) {
@@ -279,5 +307,17 @@ export function reconcile(userId) {
         row.id
       );
     }
+  }
+
+  // Erst am Ende merken. Wirft der Abgleich dazwischen, wird beim nächsten Aufruf noch einmal
+  // hingesehen, statt einen halb erledigten Stand für erledigt zu halten.
+  //
+  // `saveAccount` legt oben womöglich selbst etwas ab; die Zeitmarke wird deshalb hier neu gelesen
+  // und nicht die von vorhin übernommen.
+  try {
+    const stats = fs.statSync(dir);
+    lastSeen.set(userId, `${stats.mtimeMs}:${stats.size}`);
+  } catch {
+    lastSeen.set(userId, 'fehlt');
   }
 }

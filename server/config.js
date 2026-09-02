@@ -187,9 +187,18 @@ function fingerprint(dir) {
   return hash.digest('base64url').slice(0, 16);
 }
 
-/** Verzeichnis mit den Minecraft-Konten eines Nutzers (wird dem Client als XDG_CONFIG_HOME gegeben). */
+/**
+ * Verzeichnis mit den Minecraft-Konten eines Nutzers – **und es wird angelegt**.
+ *
+ * Für alles, was dort etwas ablegt oder einen Client startet, ist genau das richtig. Wer nur
+ * nachsehen will, ob etwas da ist, nimmt `userPath`: Ein `mkdir` bei jedem Blick ist ein
+ * Schreibzugriff auf die Platte für eine Frage, die keinen braucht.
+ */
 export function userDir(userId) {
   const dir = path.join(paths.users, String(userId));
   fs.mkdirSync(path.join(dir, 'afksystems', 'accounts'), { recursive: true });
   return dir;
 }
+
+/** Derselbe Pfad, nur ohne ihn anzulegen. */
+export const userPath = (userId) => path.join(paths.users, String(userId));
