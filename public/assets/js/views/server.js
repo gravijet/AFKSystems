@@ -1806,10 +1806,26 @@ async function tabAddons(root, profile) {
 /** Die Wochentage in der Reihenfolge, in der ein Kalender sie zeigt – Montag zuerst. */
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0];
 
-/** Der kurze Name eines Wochentags in der Sprache des Panels – ohne eigene Übersetzungstabelle. */
-const weekdayName = (day, style = 'short') =>
-  // Der 4. Januar 1970 war ein Sonntag; +day trifft damit genau den gewünschten Wochentag.
-  new Date(Date.UTC(1970, 0, 4 + day)).toLocaleDateString(locale, { weekday: style, timeZone: 'UTC' });
+/**
+ * Der kurze Name eines Wochentags in der Sprache des Panels – ohne eigene Übersetzungstabelle.
+ *
+ * Es gibt vierzehn mögliche Antworten (sieben Tage, zwei Schreibweisen), und die ändern sich
+ * nicht mehr. Sie stehen zu lassen erspart je Zeitplanzeile einen frisch gebauten `Intl`-
+ * Formatierer – und die Wochentagsleiste zeichnet sieben Knöpfe je Zeitplan.
+ */
+const weekdayNames = new Map();
+const weekdayName = (day, style = 'short') => {
+  const key = `${day}:${style}`;
+  let name = weekdayNames.get(key);
+  if (name === undefined) {
+    // Der 4. Januar 1970 war ein Sonntag; +day trifft damit genau den gewünschten Wochentag.
+    name = new Intl.DateTimeFormat(locale, { weekday: style, timeZone: 'UTC' }).format(
+      new Date(Date.UTC(1970, 0, 4 + day))
+    );
+    weekdayNames.set(key, name);
+  }
+  return name;
+};
 
 /** Minuten seit Mitternacht als Uhrzeit. */
 const asClock = (minutes) =>

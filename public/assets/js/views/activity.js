@@ -20,6 +20,14 @@ import {
 } from '../ui.js';
 import { state, appbar, drawSide } from '../app.js';
 
+/** Die Überschrift über einem Tag – einmal gebaut, für jede Zeile derselbe. */
+const DAY_HEADING = new Intl.DateTimeFormat(locale, {
+  weekday: 'long',
+  day: '2-digit',
+  month: 'long',
+  year: 'numeric',
+});
+
 const EVENT_ICONS = {
   ticket: 'ticket',
   billing: 'wallet',
@@ -98,12 +106,9 @@ export async function render(root) {
 
     const days = new Map();
     for (const item of visible) {
-      const day = new Date(item.created_at).toLocaleDateString(locale, {
-        weekday: 'long',
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
-      });
+      // Ein Formatierer für die ganze Liste, nicht einer je Eintrag – siehe die Erklärung bei den
+      // Formaten in ui.js.
+      const day = DAY_HEADING.format(new Date(item.created_at));
       if (!days.has(day)) days.set(day, []);
       days.get(day).push(item);
     }

@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assetVersion, config, paths } from './config.js';
 import { LANGS, DEFAULT_LANG, t, pickLang } from '../public/assets/js/i18n.js';
+import * as strings from './strings.js';
 
 const DIR = path.join(paths.public, 'pages');
 const cache = new Map();
@@ -56,6 +57,9 @@ export function render(name, lang, vars = {}) {
     origin: config.publicUrl,
     // Vorne an jede CSS-, JS- und Bildadresse. Siehe assetVersion in config.js.
     assets: `/assets/v/${assetVersion}`,
+    // Welche Textdatei zu dieser Seite gehört. Sie steht am <html>, damit ui.js sie laden kann,
+    // ohne selbst zu wissen, welche Sprachen es gibt – siehe server/strings.js.
+    stringsFile: strings.fileFor(lang),
     // Kopfdaten. Jede Seite darf sie überschreiben; ohne Angabe steht die Startseite da.
     title: t('meta.title', lang),
     description: t('meta.description', lang),
@@ -99,6 +103,29 @@ export function render(name, lang, vars = {}) {
     const text = t(key, lang);
     return text === key ? match : escape(text);
   });
+}
+
+/**
+ * `<link rel="modulepreload">` für den ganzen Modulbaum einer Seite.
+ *
+ * **Warum das nötig ist.** Ein Browser findet ein Modul erst, wenn er das Modul gelesen hat, das
+ * es importiert. Beim Panel hieß das: erst app.js holen, daraus ui.js erfahren, daraus i18n
+ * erfahren – die größte Datei von allen wurde also erst in der dritten Runde überhaupt angefragt.
+ * Auf einer Mobilfunkverbindung sind das zwei volle Umläufe, in denen nichts passiert, bevor das
+ * größte Stück überhaupt losgeht.
+ *
+ * Diese Zeilen stehen im `<head>` und nennen den ganzen Baum sofort. Der Browser lädt alles
+ * nebeneinander, und wenn app.js ankommt, liegt der Rest schon da.
+ *
+ * Genannt wird nur, was für das erste Bild wirklich gebraucht wird. Die einzelnen Ansichten des
+ * Panels (views/) holt app.js absichtlich erst, wenn jemand hinsieht – sie hier aufzuzählen würde
+ * genau das rückgängig machen.
+ */
+export function preload(lang, modules) {
+  const base = `/assets/v/${assetVersion}/js`;
+  return [...modules, strings.fileFor(lang)]
+    .map((file) => `<link rel="modulepreload" href="${base}/${file}" />`)
+    .join('\n    ');
 }
 
 /**

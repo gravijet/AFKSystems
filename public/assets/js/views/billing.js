@@ -2,9 +2,13 @@
 
 import {
   api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, toast, copy, formDialog,
+  locale,
 } from '../ui.js';
 import { appbar, refresh, draw } from '../app.js';
 import * as chart from '../charts.js';
+
+// Ein Formatierer für die ganze Achse statt einer je Monat (siehe ui.js).
+const MONTH_SHORT = new Intl.DateTimeFormat(locale, { month: 'short' });
 
 const KIND = {
   topup: 'bill.kind.topup',
@@ -226,10 +230,7 @@ export async function render(root) {
 
     const monthName = (key) => {
       const [year, month] = key.split('-');
-      return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(
-        document.documentElement.lang === 'de' ? 'de-DE' : 'en-GB',
-        { month: 'short' }
-      );
+      return MONTH_SHORT.format(new Date(Number(year), Number(month) - 1, 1));
     };
     // Auf der Achse steht Euro, nicht Credits: Der Kunde bezahlt in Euro, und "1.200" sagt weniger
     // als "12 €". Die genauen Credits stehen in der Sprechblase am Balken.

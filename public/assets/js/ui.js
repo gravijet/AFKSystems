@@ -1,12 +1,30 @@
 // Gemeinsame Bausteine für Startseite und Dashboard: Symbole, API-Aufrufe, Meldungen, Aussehen.
 
-import { t, LANGS, DEFAULT_LANG } from './i18n.js';
 import { parseFormatting } from './chatlog.js';
 
 // ---------------------------------------------------------------- Sprache
 //
 // Die Sprache steht im <html lang="…">, das der Server schon richtig ausliefert. Von dort holen
 // wir sie – so gibt es keinen zweiten Ort, an dem sie stehen könnte, und nichts blitzt falsch auf.
+//
+// **Die Texte kommen einsprachig.** Bisher stand hier ein Import von i18n.js, und die trägt jeden
+// Text in beiden Sprachen: rund tausendvierhundert Schlüssel, hundertdreißig Kilobyte übersetztes
+// JavaScript, das größte Stück auf dem Weg zum ersten Bild – und die Hälfte davon in einer Sprache,
+// die dieser Besucher nie zu sehen bekommt. Der Server rechnet daraus beim Hochfahren je Sprache
+// eine eigene Fassung und schreibt ihre Adresse ins <html> (siehe server/strings.js). Welche gilt,
+// entscheidet also die Stelle, die auch die Seite ausliefert; hier steht kein zweites Mal eine
+// Liste von Sprachen.
+//
+// Ein `await` auf Modulebene: Jedes Modul, das ui.js benutzt, wartet damit auf die Texte. Das ist
+// richtig so – ohne sie hätte es nichts zu zeichnen –, und es kostet nichts, weil der <head> die
+// Datei mit `modulepreload` schon anfordert, während das HTML noch gelesen wird.
+const documentElement = document.documentElement;
+const stringsUrl =
+  documentElement.dataset.strings ||
+  // Rückfalltür für eine Seite, die noch aus einem Zwischenspeicher stammt: dann steht das
+  // Attribut nicht da, und die Adresse ergibt sich aus der eigenen.
+  new URL(`./i18n.${documentElement.lang === 'de' ? 'de' : 'en'}.js`, import.meta.url).pathname;
+const { t, LANGS, DEFAULT_LANG, LANG } = await import(stringsUrl);
 //
 // Gemerkt wird sie **im Browser** (localStorage `afk-lang`) und zusätzlich im Cookie `lang`, das
 // der Server liest. Der Ablauf ist damit:
@@ -39,8 +57,10 @@ const writeStore = (value) => {
   document.cookie = `lang=${value}; path=/; max-age=${365 * 86400}; samesite=lax`;
 };
 
-const documentLang = document.documentElement.lang;
-const pageLang = LANGS.includes(documentLang) ? documentLang : DEFAULT_LANG;
+// `LANG` sagt, in welcher Sprache die geladenen Texte wirklich stehen. Das ist die verlässlichere
+// Auskunft als das Attribut am <html>: Beides kommt vom Server und stimmt überein, aber wenn es
+// das einmal nicht täte, sollen Beschriftungen und Sprachkennzeichnung nicht auseinanderlaufen.
+const pageLang = LANG;
 const stored = readStore();
 
 // Steht etwas anderes gespeichert, als gerade ausgeliefert wurde, gehört der Besucher auf die
@@ -56,8 +76,8 @@ if (!stored) writeStore(pageLang);
 export const lang = pageLang;
 export const locale = lang === 'de' ? 'de-DE' : 'en-GB';
 
-/** Ein Text in der Sprache dieser Seite. */
-export const tr = (key, vars = null) => t(key, lang, vars);
+/** Ein Text in der Sprache dieser Seite. Eine andere gibt es im Browser nicht. */
+export const tr = (key, vars = null) => t(key, vars);
 
 /** Ein Feld, das der Server in beiden Sprachen liefert: {de, en} oder ein fertiger Text. */
 export const pick = (value) =>
@@ -331,14 +351,40 @@ export function todoList(list, { title = tr('todo.title') } = {}) {
 export const $ = (selector, root = document) => root.querySelector(selector);
 export const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 
+// ---------------------------------------------------------------- Zahlen, Datum, Uhrzeit
+//
+// **Formatierer werden einmal gebaut.** `zahl.toLocaleString(…)` und `datum.toLocaleString(…)`
+// lesen sich wie eine Zeichenkettenoperation, sind aber jedes Mal der vollständige Bau eines
+// `Intl`-Objekts: gemessen rund sechzig Mikrosekunden für eine Zahl und über hundert für ein
+// Datum, gegenüber ein bis vier für einen Formatierer, der schon dasteht.
+//
+// Bei einer Zahl merkt das niemand. Diese Funktionen stehen aber genau dort, wo Listen gezeichnet
+// werden: eine Uhrzeit je Chatzeile (bis zu fünfzigtausend im Verlauf eines Serverplatzes), ein
+// Datum je Zeile im Kontoauszug, ein Betrag je Zeile in der Nutzerliste des Admin-Bereichs. Zwei
+// Bildschirmseiten Chat waren damit ein Zehntel einer Sekunde, in der der Browser nichts anderes
+// tun konnte – nicht scrollen, nicht auf einen Klick reagieren.
+//
+// Die Sprache steht für die Dauer dieser Seite fest (ein Wechsel lädt neu), also reicht je Format
+// genau einer.
+const nf = (options) => new Intl.NumberFormat(locale, options);
+const df = (options) => new Intl.DateTimeFormat(locale, options);
+
+const FORMATS = {
+  credits: nf(),
+  euro: nf({ style: 'currency', currency: 'EUR' }),
+  datetime: df({ day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }),
+  date: df({ day: '2-digit', month: '2-digit', year: 'numeric' }),
+  clock: df({ hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+};
+
 /** Guthaben. Ein Credit ist ein Cent – gezählt wird in ganzen Credits. */
 export function credits(value) {
-  return Math.round(Number(value) || 0).toLocaleString(locale);
+  return FORMATS.credits.format(Math.round(Number(value) || 0));
 }
 
 /** Dieselbe Zahl als Geldbetrag: 100 Credits sind ein Euro. */
 export function euro(value) {
-  return ((Number(value) || 0) / 100).toLocaleString(locale, { style: 'currency', currency: 'EUR' });
+  return FORMATS.euro.format((Number(value) || 0) / 100);
 }
 
 export function since(timestamp) {
@@ -354,30 +400,16 @@ export function since(timestamp) {
 
 export function datetime(timestamp) {
   if (!timestamp) return '–';
-  return new Date(timestamp).toLocaleString(locale, {
-    day: '2-digit',
-    month: '2-digit',
-    year: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return FORMATS.datetime.format(new Date(timestamp));
 }
 
 export function date(timestamp) {
   if (!timestamp) return '–';
-  return new Date(timestamp).toLocaleDateString(locale, {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  });
+  return FORMATS.date.format(new Date(timestamp));
 }
 
 export function clock(timestamp) {
-  return new Date(timestamp).toLocaleTimeString(locale, {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
+  return FORMATS.clock.format(new Date(timestamp));
 }
 
 /**

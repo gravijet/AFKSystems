@@ -1630,10 +1630,12 @@ db.prepare = function cachedPrepare(sql) {
 //
 // Die zweite Frage ist `PRAGMA data_version`: eine Zahl, die sich genau dann ändert, wenn eine
 // **andere** Verbindung etwas festgeschrieben hat. Beide zusammen decken jeden Schreibvorgang ab.
-// Sie kostet mehr als der Zähler (rund drei Mikrosekunden gegenüber einer halben), und weil
-// `getSetting` dutzendfach je Anfrage aufgerufen wird, wird sie höchstens einmal je Millisekunde
-// gestellt. Der eigene Zähler dagegen bei jedem Zugriff: Ein `setSetting` und das Lesen desselben
-// Wertes stehen im selben Endpunkt direkt hintereinander, und dazwischen darf nichts hängen.
+//
+// Beide werden bei **jedem** Zugriff gestellt. Ein Fenster, in dem eine Änderung noch nicht gilt –
+// und sei es nur eine Millisekunde –, wäre hier der falsche Handel: `setSetting` und das Lesen
+// desselben Wertes stehen im selben Endpunkt direkt hintereinander, und ein Zwischenspeicher, der
+// „meistens stimmt“, ist im Zweifel schlimmer als gar keiner. Gemessen kostet das Paar zusammen
+// gut drei Mikrosekunden und im Durchsatz der Endpunkte nichts Messbares.
 //
 // Die eine Ausnahme, die beide nicht sehen, sind Änderungen am Schema selbst
 // (`CREATE`/`ALTER`/`DROP`). Die stehen ausschließlich in den Migrationen weiter oben und laufen
@@ -1641,16 +1643,7 @@ db.prepare = function cachedPrepare(sql) {
 const readChanges = prepareOnce('SELECT total_changes() AS n');
 const readForeign = prepareOnce('PRAGMA data_version');
 
-let foreignAt = 0;
-let foreignVersion = -1;
-function outsideVersion() {
-  const now = Date.now();
-  if (now !== foreignAt) {
-    foreignAt = now;
-    foreignVersion = readForeign.get().data_version;
-  }
-  return foreignVersion;
-}
+const outsideVersion = () => readForeign.get().data_version;
 
 /**
  * Ein abgeleiteter Wert, der neu berechnet wird, sobald irgendwo geschrieben wurde.
