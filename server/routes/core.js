@@ -38,11 +38,23 @@ router.get(
   '/meta',
   wrap((req, res) => {
     const lang = langOf(req);
+    const registrationOpen = Boolean(Number(getSetting('registration_open'))) && config.registrationOpen;
+    // Die öffentliche Kopfleiste braucht weder Tarife noch Client-Fähigkeiten oder sämtliche
+    // Funktionsbeschreibungen. Diese kleine Antwort wird zudem erst in einer ruhigen Browserphase
+    // geholt und vermeidet auf der Startseite den größten JSON-Transfer vollständig.
+    if (req.query.scope === 'header') {
+      return res.json({
+        // Die Kopfleiste fragt nur „angemeldet?“. Die vollständige Kontodarstellung würde hierfür
+        // Guthaben, Profil, Mail-Einstellungen und Discord-Zustand unnötig neu berechnen.
+        user: req.user ? { id: req.user.id } : null,
+        registration_open: registrationOpen,
+      });
+    }
     const caps = binaries.anyCaps();
     res.json({
       brand: config.brand,
       lang,
-      registration_open: Boolean(Number(getSetting('registration_open'))) && config.registrationOpen,
+      registration_open: registrationOpen,
       email_verify: mail.verifyRequired(),
       mail_ready: mail.configured(),
       oauth: oauth.state(),
@@ -382,13 +394,11 @@ router.post(
 router.post(
   '/auth/return',
   wrap((req, res) => {
-    if (!req.user || !req.impersonator || !req.parentToken) {
+    if (!auth.returnToImpersonator(req, res)) {
       throw bad('Diese Sitzung wurde nicht von einem Administrator geöffnet.', {
         en: 'This session was not opened by an administrator.',
       });
     }
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(req.sessionToken);
-    auth.setSessionCookie(res, req.parentToken);
     res.json({ ok: true });
   })
 );
@@ -635,13 +645,13 @@ router.patch(
           en: 'That address is too long for a Discord webhook.',
         });
       }
-      if (hook && !/^https:\/\/(discord\.com|discordapp\.com)\/api\/webhooks\//.test(hook)) {
+      if (hook && !notify.webhookUrl(hook)) {
         throw bad('Das sieht nicht nach einem Discord-Webhook aus.', {
           en: 'That does not look like a Discord webhook.',
         });
       }
       fields.push('discord_webhook = ?');
-      values.push(hook || null);
+      values.push(hook ? notify.webhookUrl(hook) : null);
     }
     if (body.discord_events !== undefined) {
       // Nur bekannte Arten, jede höchstens einmal. Leer heißt "alles" – und weil das die
@@ -868,11 +878,11 @@ router.delete(
   '/me/sessions',
   auth.requireUser,
   wrap((req, res) => {
-    db.prepare('DELETE FROM sessions WHERE user_id = ? AND token != ?').run(
-      req.user.id,
-      req.sessionToken
-    );
-    res.json({ ok: true });
+    // Über den **gespeicherten** Wert, nicht über das Cookie: In der Datenbank steht ein HMAC,
+    // und ein Vergleich mit dem rohen Cookie trifft nie – der Knopf hat deshalb bisher auch die
+    // eigene Sitzung mitgenommen und den Kunden vor die Anmeldeseite gestellt.
+    const gone = auth.endOtherSessions(req.user.id, req.sessionStorageToken);
+    res.json({ ok: true, ended: gone, sessions: auth.sessionsOf(req.user.id, req.sessionToken) });
   })
 );
 
@@ -1180,7 +1190,8 @@ router.post(
           WHERE user_id = ? AND ticket_id IS NULL`
       )
       .get(req.user.id);
-    if (open.n >= 50 || open.bytes >= PENDING_BYTES_MAX) {
+    const incoming = Buffer.isBuffer(req.body) ? req.body.length : 0;
+    if (open.n >= 50 || open.bytes + incoming > PENDING_BYTES_MAX) {
       throw bad('Zu viele offene Anhänge. Bitte erst das Ticket abschicken.', {
         en: 'Too many pending attachments. Please send the ticket first.',
       });
@@ -1188,7 +1199,7 @@ router.post(
     const stored = db
       .prepare('SELECT COALESCE(SUM(size), 0) AS bytes FROM ticket_files WHERE user_id = ?')
       .get(req.user.id).bytes;
-    if (stored >= TOTAL_BYTES_MAX) {
+    if (stored + incoming > TOTAL_BYTES_MAX) {
       throw bad('Für dieses Konto liegen schon sehr viele Anhänge. Bitte melde dich beim Support.', {
         en: 'This account already stores a lot of attachments. Please contact support.',
       });

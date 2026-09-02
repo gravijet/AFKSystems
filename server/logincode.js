@@ -51,6 +51,20 @@ const DEVICE_DAYS = 400;
 
 export const DEVICE_COOKIE = 'afk_device';
 
+/** Wie bei Sitzungen: Datenbankkopie und Cookie/Challenge allein sollen jeweils wertlos sein. */
+const capabilityDigest = (purpose, value) =>
+  `h1:${crypto.createHmac('sha256', config.secret)
+    .update(String(purpose))
+    .update('\0')
+    .update(String(value))
+    .digest('hex')}`;
+
+const candidates = (purpose, raw) => {
+  const value = String(raw || '').trim();
+  if (!value || value.startsWith('h1:')) return [];
+  return [capabilityDigest(purpose, value), value];
+};
+
 // ---------------------------------------------------------------- Der Browser
 
 /**
@@ -88,7 +102,19 @@ function readCookie(req, name) {
   for (const part of header.split(';')) {
     const eq = part.indexOf('=');
     if (eq < 0) continue;
-    if (part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+    if (part.slice(0, eq).trim() === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1).trim());
+      } catch {
+        // Ein kaputtes Prozent-Encoding (`afk_device=%`) ist kein Serverfehler. Ohne dieses
+        // `catch` warf `decodeURIComponent` mitten in der Anmeldung, und weil diese Funktion an
+        // *jeder* Anmeldung hängt (isKnownDevice), sperrte ein einziges verhunztes Cookie das
+        // Konto aus seinem eigenen Browser aus – mit einer 500 und ohne Hinweis, was zu tun wäre.
+        // Wie in auth.js: kein lesbarer Wert heißt "kein bekanntes Gerät", und das ist die
+        // vorsichtige Antwort.
+        return null;
+      }
+    }
   }
   return null;
 }
@@ -97,9 +123,10 @@ function readCookie(req, name) {
 export function isKnownDevice(user, req) {
   const value = readDeviceToken(req);
   if (!value) return false;
+  const keys = candidates('known-device', value);
   const row = db
-    .prepare('SELECT last_at FROM known_devices WHERE token = ? AND user_id = ?')
-    .get(value, user.id);
+    .prepare('SELECT last_at FROM known_devices WHERE token IN (?, ?) AND user_id = ?')
+    .get(...keys, user.id);
   if (!row) return false;
   // Ein Browser, der ein gutes Jahr nicht da war, ist keiner mehr, den wir kennen wollen. Die
   // Zeile bleibt liegen, bis `cleanup()` sie holt – die Auskunft hier ist trotzdem schon „nein“.
@@ -114,6 +141,7 @@ export function isKnownDevice(user, req) {
  */
 export function remember(user, req, res) {
   const value = deviceToken(req, res);
+  const stored = capabilityDigest('known-device', value);
   const now = Date.now();
   db.prepare(
     `INSERT INTO known_devices (token, user_id, agent, ip, created_at, last_at)
@@ -122,7 +150,7 @@ export function remember(user, req, res) {
                                                agent   = excluded.agent,
                                                ip      = excluded.ip`
   ).run(
-    value,
+    stored,
     user.id,
     String(req.headers['user-agent'] || '').slice(0, 200),
     req.ip || null,
@@ -139,6 +167,7 @@ export function remember(user, req, res) {
  * Zum Wiederfinden genügt ein kurzer Abdruck, genau wie bei den Sitzungen (siehe auth.js).
  */
 export function devicesOf(userId, currentToken = null) {
+  const current = new Set(candidates('known-device', currentToken));
   return db
     .prepare('SELECT * FROM known_devices WHERE user_id = ? ORDER BY last_at DESC')
     .all(userId)
@@ -149,7 +178,7 @@ export function devicesOf(userId, currentToken = null) {
       ip: row.ip,
       created_at: row.created_at,
       last_at: row.last_at,
-      current: Boolean(currentToken) && row.token === currentToken,
+      current: current.has(row.token),
     }));
 }
 
@@ -226,12 +255,13 @@ export async function start(user, req) {
 
   const code = newCode();
   const value = token(24);
+  const stored = capabilityDigest('login-challenge', value);
   const now = Date.now();
   db.prepare(
     `INSERT INTO login_challenges (token, user_id, code_hash, sent_at, expires_at, ip, agent, created_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
-    value,
+    stored,
     user.id,
     hashPassword(code),
     now,
@@ -243,7 +273,7 @@ export async function start(user, req) {
 
   const sent = await deliver(user, code, req);
   if (!sent.ok) {
-    db.prepare('DELETE FROM login_challenges WHERE token = ?').run(value);
+    db.prepare('DELETE FROM login_challenges WHERE token = ?').run(stored);
     console.error(`[anmeldecode] Nachricht an #${user.id} ging nicht hinaus: ${sent.error}`);
     audit(user.id, 'login-code-failed', { error: String(sent.error || '').slice(0, 200) }, req.ip);
     return null;
@@ -284,12 +314,12 @@ export function maskEmail(address) {
 
 /** Die offene Marke, sofern sie noch gilt. Abgelaufene werden gleich mit weggeräumt. */
 function open(rawToken) {
-  const value = String(rawToken || '');
-  if (!value) return null;
-  const row = db.prepare('SELECT * FROM login_challenges WHERE token = ?').get(value);
+  const keys = candidates('login-challenge', rawToken);
+  if (!keys.length) return null;
+  const row = db.prepare('SELECT * FROM login_challenges WHERE token IN (?, ?)').get(...keys);
   if (!row) return null;
   if (row.expires_at <= Date.now()) {
-    db.prepare('DELETE FROM login_challenges WHERE token = ?').run(value);
+    db.prepare('DELETE FROM login_challenges WHERE token = ?').run(row.token);
     return null;
   }
   return row;
@@ -304,9 +334,11 @@ function open(rawToken) {
  * dort ohne Konto, und damit in niemandes Liste.
  */
 export function identifierFor(rawToken) {
+  const keys = candidates('login-challenge', rawToken);
+  if (!keys.length) return '';
   const row = db
-    .prepare('SELECT u.email FROM login_challenges c JOIN users u ON u.id = c.user_id WHERE c.token = ?')
-    .get(String(rawToken || ''));
+    .prepare('SELECT u.email FROM login_challenges c JOIN users u ON u.id = c.user_id WHERE c.token IN (?, ?)')
+    .get(...keys);
   return row?.email || '';
 }
 

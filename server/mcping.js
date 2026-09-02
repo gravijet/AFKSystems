@@ -251,10 +251,23 @@ function favicon(value) {
  * Übersetzbare Komponenten (`translate`) fallen weg: Ihren Wortlaut kennt nur das Sprachpaket des
  * Spielclients. Ein Platzhalter wie "chat.type.text" im MOTD wäre schlechter als eine Lücke.
  */
-export function legacy(component, inherited = {}) {
-  if (component === null || component === undefined) return '';
+/**
+ * Wie tief eine Chat-Komponente geschachtelt sein darf.
+ *
+ * Was hier hereinkommt, hat ein fremder Server geschickt – und welchen Server ein Bot anspricht,
+ * bestimmt der Kunde. Ein `extra` in einem `extra` in einem `extra`, zehntausendfach, ist eine
+ * gültige JSON-Antwort und für eine Funktion, die sich selbst aufruft, das Ende des Stapels. Der
+ * Absturz träfe nicht die Abfrage, sondern den Prozess – und mit ihm jeden laufenden Bot. Kein
+ * echter MOTD ist auch nur annähernd so tief; alles darunter wird abgeschnitten statt beantwortet.
+ */
+const MAX_DEPTH = 32;
+
+export function legacy(component, inherited = {}, depth = 0) {
+  if (component === null || component === undefined || depth > MAX_DEPTH) return '';
   if (typeof component === 'string') return component;
-  if (Array.isArray(component)) return component.map((entry) => legacy(entry, inherited)).join('');
+  if (Array.isArray(component)) {
+    return component.map((entry) => legacy(entry, inherited, depth + 1)).join('');
+  }
 
   const style = {
     color: component.color ?? inherited.color,
@@ -269,7 +282,7 @@ export function legacy(component, inherited = {}) {
   const text = typeof component.text === 'string' ? component.text : '';
   if (text) out += codes(style) + text;
   for (const child of Array.isArray(component.extra) ? component.extra : []) {
-    out += legacy(child, style);
+    out += legacy(child, style, depth + 1);
   }
   return out;
 }

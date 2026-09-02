@@ -615,6 +615,25 @@ Zwei Regeln ziehen sich durch: **Was nicht geht, wird übersprungen und aufgezä
 in einer Massenaktion abgebrochen. Und **niemand sperrt sich selbst aus** – weder aus dem eigenen
 Konto noch über die eigene Adresse.
 
+## Was von außen abprallt
+
+Nichts davon ist eine Funktion, die jemand anklickt – es sind die Annahmen, unter denen der Rest
+überhaupt gilt. Deshalb stehen sie hier zusammen und nicht verstreut in den Bereichen, zu denen sie
+gehören.
+
+| Wogegen | Was dagegen steht |
+| --- | --- |
+| **Passwort raten** | Zehn Fehlversuche je Adresse und zwanzig je Konto in einer Viertelstunde, danach eine Absage statt einer Prüfung. Der Zähler steht **vor** dem Hashen: Wer gebremst wird, bekommt die teure Rechnung gar nicht erst. |
+| **Anfragen fluten** | Eine Bremse über die ganze API (900 Anfragen je Minute und Adresse) und eine engere über die Anmeldung – je Endpunkt *und* je Adresse insgesamt, sonst wechselt man einfach den Pfad. Die Dienst-Bereiche (Bot, Standorte, Stripe) bleiben außen vor; sie sprechen im Takt ihrer eigenen Ereignisse. |
+| **Token raten** | Das gemeinsame Geheimnis des Bots und das Token eines Standorts sind nach zwanzig Fehlversuchen je Adresse und Viertelstunde zu – über HTTP wie über den WebSocket-Aufbau, denn eine verriegelte Tür neben einer offenen ist keine. |
+| **Zu leichte Passwörter** | Zwölf Zeichen sind die Untergrenze, nicht der Maßstab: Eine Handvoll bekannter Muster und alles, was den eigenen Benutzernamen oder Postfachnamen enthält, wird abgelehnt – auch dann, wenn ein Administrator es setzt. |
+| **Fremde Websites** | Schreibende Aufrufe brauchen `Origin` oder `Sec-Fetch-Site` von dieser Website. Fehlt beides, ist es ein Nein. Dazu `SameSite=Lax`, `HttpOnly` und `Secure` auf jedem Cookie. |
+| **Ein liegengebliebener Generalschlüssel** | „Als Nutzer ansehen“ gilt **eine Stunde**, nicht dreißig Tage. Wer länger braucht, drückt noch einmal – und das steht dann auch noch einmal im Protokoll. |
+| **Eine kopierte Datenbank** | Sitzungen, Rücksetzlinks und Gerätemerkmale liegen nur als HMAC darin. Die Datei selbst, ihr Schreibprotokoll und jede Sicherung werden bei jedem Start auf `0600` gezogen, die Verzeichnisse darunter auf `0700`. |
+| **Ein bösartiger Minecraft-Server** | Die Antwort eines Zielservers wird der Größe nach gedeckelt und der Tiefe nach begrenzt: Eine tausendfach geschachtelte Abschiedsmeldung darf nicht den Prozess umwerfen, der jeden laufenden Bot hält. |
+| **Eine Leitung, die niemand schließt** | Höchstens zwölf WebSocket-Verbindungen je Konto; eine dreizehnte verdrängt die älteste. Ohne Grenze konnte ein einziges Konto den Speicher belegen und jede Live-Meldung vervielfachen. |
+| **Neugier von außen** | `/api/health` sagt Fremden nur, dass der Dienst läuft. Laufzeit, Zahl der Bots und Client-Fassung gibt es für eine Administratorsitzung und für Aufrufe von dieser Maschine. |
+
 ## Aufbau
 
 ```

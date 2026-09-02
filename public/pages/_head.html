@@ -22,9 +22,10 @@
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preload" href="{{assets}}/fonts/host-grotesk-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="{{assets}}/css/app.css" />
+    {{resourceHints}}
     <script src="{{assets}}/js/theme.js"></script>
-    <!-- Steht bewusst im Kopf: der Schutz soll gelten, bevor der erste Inhalt zu sehen ist. -->
-    <script src="{{assets}}/js/shield.js"></script>
+    {{shieldScript}}
   </head>
   <body class="{{bodyClass}}" data-shield-note="{{shield.note}}">

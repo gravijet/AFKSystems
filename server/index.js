@@ -1,6 +1,7 @@
 // Einstiegspunkt: HTTP, die Seiten in zwei Sprachen, WebSocket, Verlängerungen, Aufräumarbeiten.
 
 import express from 'express';
+import compression from 'compression';
 import http from 'node:http';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
@@ -27,7 +28,7 @@ import { router as profilesRouter } from './routes/profiles.js';
 import { router as billingRouter, stripeWebhook } from './routes/billing.js';
 import { admin as adminRouter } from './routes/admin.js';
 import { router as botRouter, tryBotSecret } from './routes/bot.js';
-import { router as nodeRouter, nodeByToken } from './routes/node.js';
+import { router as nodeRouter, tryNodeToken } from './routes/node.js';
 import * as agents from './agents.js';
 import * as security from './security.js';
 import * as logincode from './logincode.js';
@@ -40,7 +41,23 @@ import { HttpError, langOf } from './util.js';
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// Eine feste Hop-Anzahl vertraut bei direkter Erreichbarkeit des Node-Ports dem vom Angreifer
+// gesetzten X-Forwarded-For. Standardmäßig zählt deshalb nur ein Proxy auf derselben Maschine;
+// Container-/Netzwerkaufbauten können TRUST_PROXY ausdrücklich auf ihr Netz setzen.
+const trustProxy = /^\d+$/.test(config.trustProxy)
+  ? Number(config.trustProxy)
+  : config.trustProxy === 'true'
+    ? true
+    : config.trustProxy === 'false'
+      ? false
+      : config.trustProxy;
+app.set('trust proxy', trustProxy);
+
+// HTML, CSS, JavaScript und JSON bestehen fast nur aus Text. Ohne Kompression ging insbesondere
+// die große Sprachdatei des Panels in voller Größe über die Leitung. `compression` handelt die
+// passende Kodierung über Accept-Encoding aus und lässt bereits komprimierte Bilder/Schriften in
+// Ruhe. Der kleine Schwellwert spart bei winzigen Antworten mehr CPU, als Bytes zu gewinnen wären.
+app.use(compression({ threshold: 1024 }));
 
 const websocketOrigin = config.publicUrl.replace(/^http/, 'ws');
 const CONTENT_SECURITY_POLICY = [
@@ -59,6 +76,14 @@ const CONTENT_SECURITY_POLICY = [
   `connect-src 'self' ${websocketOrigin}`,
   "media-src 'none'",
   "manifest-src 'self'",
+  // `default-src` deckt das mit ab – aber nur, solange niemand `default-src` aufweicht. Diese drei
+  // Zeilen stehen ausdrücklich da, damit ein späterer Zusatz an der Vorgabe oben nicht nebenbei
+  // fremde Rahmen oder einen fremden Worker erlaubt.
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'self'",
+  // Wer über einen alten `http://`-Link hereinkommt, lädt die Unterressourcen trotzdem verschlüsselt.
+  ...(config.publicUrl.startsWith('https://') ? ['upgrade-insecure-requests'] : []),
 ].join('; ');
 
 /** Browser-Härtung für Website, Panel und auch Fehlerantworten. */
@@ -72,6 +97,9 @@ app.use((req, res, next) => {
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Origin-Agent-Cluster', '?1');
   res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  if (config.publicUrl.startsWith('https://')) {
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  }
   if (req.path.startsWith('/api/') || /^\/(en|de)\/app(?:\/|$)/.test(req.path)) {
     res.setHeader('Cache-Control', 'no-store');
   }
@@ -157,29 +185,78 @@ app.use('/api', (req, _res, next) => {
   reject();
 });
 
+/**
+ * Ein Schiebefenster, das zählt, wie oft etwas gerade passiert.
+ *
+ * Eine Handvoll Stellen im Panel braucht dieselbe Sache – wie oft eine Adresse anklopft, wie oft
+ * ein Passwort probiert wird –, und jede hatte ihre eigene `Map` mit ihrer eigenen Aufräumregel.
+ * Das hier ist dieselbe Logik an einer Stelle: Zeitpunkte je Schlüssel, alles außerhalb des
+ * Fensters fällt beim Nachsehen weg, und wenn die Tabelle groß wird, wird sie einmal durchgekehrt.
+ * Ohne das Kehren wäre jeder Zähler ein Speicherleck mit Zugriff von außen.
+ */
+function slidingWindow({ windowMs, max, cap = 20_000 }) {
+  const hits = new Map();
+  return (key) => {
+    const now = Date.now();
+    const id = String(key ?? '');
+    const recent = (hits.get(id) || []).filter((at) => now - at < windowMs);
+    if (recent.length >= max) {
+      hits.set(id, recent);
+      return false;
+    }
+    recent.push(now);
+    hits.set(id, recent);
+    if (hits.size > cap) {
+      for (const [entry, times] of hits) {
+        if (!times.some((at) => now - at < windowMs)) hits.delete(entry);
+      }
+    }
+    return true;
+  };
+}
+
+/**
+ * Eine allgemeine Bremse für die ganze API.
+ *
+ * Bisher war nur die Anmeldung gedeckelt, und das war die halbe Miete: Passwörter durchprobieren
+ * ging nicht mehr, alles andere schon. Wer eine Ticketnummer, eine Anhangsnummer oder eine
+ * Kontonummer durchzählen wollte, durfte das so schnell, wie die Leitung hergab – und jeder dieser
+ * Aufrufe ist eine Datenbankabfrage, ein paar davon sind teuer.
+ *
+ * Die Grenze ist bewusst hoch angesetzt (fünfzehn Anfragen je Sekunde und Adresse im Schnitt): Das
+ * Panel selbst kommt dort nie hin – seine laufenden Meldungen kommen über den WebSocket –, ein
+ * Anschluss mit vielen Menschen dahinter ebenso wenig, und ein Werkzeug, das eine Liste
+ * durchzählt, sofort. Die Dienst-Bereiche bleiben außen vor: Der Discord-Bot und die Standorte
+ * sprechen im Takt ihrer eigenen Ereignisse und weisen sich ohnehin mit einem Token aus.
+ */
+const apiWindow = slidingWindow({ windowMs: 60_000, max: 900 });
+app.use('/api', (req, _res, next) => {
+  if (SERVICE_API.test(req.path)) return next();
+  if (apiWindow(req.ip)) return next();
+  next(
+    new HttpError(429, 'Zu viele Anfragen. Bitte einen Moment warten.', {
+      en: 'Too many requests. Please wait a moment.',
+    })
+  );
+});
+
 // Anmeldung und Wiederherstellung sind absichtlich teure Vorgänge. Ein kleines, lokales Fenster
 // bremst Passwort-Raten und verhindert, dass fremde Websites den Prozess als CPU-DoS missbrauchen.
-const authAttempts = new Map();
-const AUTH_WINDOW_MS = 15 * 60_000;
-const AUTH_MAX = 30;
+//
+// **Zwei Zähler, nicht einer.** Der erste zählt je Endpunkt: dreißig Versuche an `/auth/login`.
+// Allein war er zu umgehen – es gibt ein Dutzend Endpunkte unter `/api/auth`, und wer sie
+// abwechselnd benutzt, hat dreißig Versuche **je Adresse und Pfad**. Der zweite zählt deshalb
+// alles zusammen, was von einer Adresse an die Anmeldung geht.
+const authPath = slidingWindow({ windowMs: 15 * 60_000, max: 30, cap: 5_000 });
+const authTotal = slidingWindow({ windowMs: 15 * 60_000, max: 120, cap: 5_000 });
 app.use('/api/auth', (req, _res, next) => {
   if (req.method !== 'POST') return next();
-  const now = Date.now();
-  const key = `${req.ip}:${req.path}`;
-  const recent = (authAttempts.get(key) || []).filter((at) => now - at < AUTH_WINDOW_MS);
-  if (recent.length >= AUTH_MAX) {
-    return next(new HttpError(429, 'Zu viele Versuche. Bitte später erneut versuchen.', {
+  if (authPath(`${req.ip}:${req.path}`) && authTotal(req.ip)) return next();
+  next(
+    new HttpError(429, 'Zu viele Versuche. Bitte später erneut versuchen.', {
       en: 'Too many attempts. Please try again later.',
-    }));
-  }
-  recent.push(now);
-  authAttempts.set(key, recent);
-  if (authAttempts.size > 5_000) {
-    for (const [entry, times] of authAttempts) {
-      if (!times.some((at) => now - at < AUTH_WINDOW_MS)) authAttempts.delete(entry);
-    }
-  }
-  next();
+    })
+  );
 });
 
 app.use(express.json({ limit: '256kb' }));
@@ -212,7 +289,23 @@ app.use('/api/bot', botRouter);
 // Die Standorte holen sich hier ihre Client-Dateien – mit ihrem Token, nicht mit einer Sitzung.
 app.use('/api/node', nodeRouter);
 
+/**
+ * Läuft der Dienst?
+ *
+ * Diese Adresse ist absichtlich offen: `install.sh`, `cutover.sh`, der Discord-Bot und jeder
+ * Standort prüfen damit, ob das Panel überhaupt antwortet. Was sie dafür brauchen, ist ein 200 –
+ * mehr nicht.
+ *
+ * Die Zahlen dahinter (Laufzeit, laufende Bots, Client-Fassung) standen bisher für jeden im Netz
+ * da. Das ist keine große Lücke, aber es ist auch keine Auskunft, die irgendwem außerhalb zusteht:
+ * „Wie viele Bots laufen gerade?“ ist eine Geschäftszahl, und „seit wann läuft der Prozess?“ sagt
+ * einem Angreifer, ob ein Neustart nach einer Aktualisierung noch aussteht. Beides gibt es
+ * weiterhin – für eine Administratorsitzung und für Aufrufe von dieser Maschine selbst, und das
+ * sind genau die beiden Fälle, für die es gedacht war.
+ */
 app.get('/api/health', (req, res) => {
+  const local = ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress || '');
+  if (req.user?.role !== 'admin' && !local) return res.json({ ok: true });
   res.json({
     ok: true,
     uptime: Math.round(process.uptime()),
@@ -359,6 +452,7 @@ function maintenanceGuard(req, res, next) {
     .send(
       pages.render('maintenance', lang, {
         robotsTag: NOINDEX,
+        shield: protect.uiLocked() ? '1' : '0',
         title: `${pages.t('error.maintenance.title', lang)} – ${config.brand}`,
         // Maskiert: Der Wartungstext ist ein Feld für einen Satz ("wir sind in einer Stunde
         // zurück") und wurde roh in die Seite gesetzt. Was dort steht, geht damit als HTML an
@@ -425,6 +519,10 @@ const renderApp = (lang) =>
     robotsTag: NOINDEX,
     path: '/app',
     title: `${pages.t('nav.dashboard', lang)} – ${config.brand}`,
+    // Der Browser holt das Modul und seinen statischen Abhängigkeitsbaum direkt nach dem kritischen
+    // Stylesheet. Das konkrete Ansichtsmodul wählt app.js anschließend passend zur URL, damit ein
+    // direkter Aufruf der Einstellungen nicht nebenbei die Übersicht lädt.
+    resourceHints: `<link rel="modulepreload" href="/assets/v/${assetVersion}/js/app.js" />`,
   });
 
 // Ohne Sprache in der Adresse: dorthin schicken, wo die Sprache drinsteht.
@@ -490,6 +588,7 @@ app.use((req, res) => {
       // stand auf der 404-Seite als einziger Seite der Website wörtlich `{{footerDiscord}}`.
       pages.render('404', lang, {
         ...landing.commonVars(lang),
+        shield: protect.uiLocked() ? '1' : '0',
         robotsTag: NOINDEX,
         title: `${pages.t('error.404.title', lang)} – ${config.brand}`,
       })
@@ -509,6 +608,7 @@ app.use((error, req, res, _next) => {
       .send(
         pages.render('404', lang, {
           ...landing.commonVars(lang),
+          shield: protect.uiLocked() ? '1' : '0',
           robotsTag: NOINDEX,
           title: `${config.brand}`,
         })
@@ -534,9 +634,17 @@ app.use((error, req, res, _next) => {
 // ---------------------------------------------------------------- WebSocket
 
 const server = http.createServer(app);
-const wss = new WebSocketServer({ noServer: true });
+// Langsame oder kopfzeilenreiche Verbindungen sollen keine Ressourcen unbegrenzt festhalten.
+server.requestTimeout = 30_000;
+server.headersTimeout = 15_000;
+server.keepAliveTimeout = 5_000;
+server.maxHeadersCount = 100;
+
+// Der Browser schickt ausschließlich kleine Ping-Nachrichten; der Discord-Bot strukturierte
+// Ereignisse. Die ws-Vorgabe von 100 MB wäre für beide ein unnötig großer DoS-Hebel.
+const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 });
 /** Eigener Server für die Bot-Leitung: andere Anmeldung, andere Nachrichten. */
-const botSockets = new WebSocketServer({ noServer: true });
+const botSockets = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 /**
  * Und einer für die Standorte. Sie melden sich mit dem Token ihres Eintrags an.
  *
@@ -549,6 +657,21 @@ const nodeSockets = new WebSocketServer({ noServer: true, maxPayload: 6 * 1024 *
 
 /** user_id -> Menge offener Verbindungen. */
 const sockets = new Map();
+
+/**
+ * Wie viele Leitungen ein Konto gleichzeitig offen halten darf.
+ *
+ * Ein Mensch hat das Panel in zwei, drei Reitern offen, auf dem Rechner und auf dem Handy – zwölf
+ * ist dafür reichlich. Ein Skript mit einem gültigen Cookie hatte dagegen gar keine Grenze: Jede
+ * Verbindung ist ein offener Socket samt Puffer, und jede Zustandsmeldung eines Bots wird an jede
+ * einzelne davon geschrieben. Ein Konto konnte damit den Speicher des Dienstes belegen und jede
+ * Meldung vervielfachen, die für alle anderen mitläuft.
+ *
+ * Übrig bleiben die **jüngsten**: Wer eine dreizehnte aufmacht, verliert seine älteste. Anders
+ * herum („die dreizehnte wird abgewiesen“) sperrte eine Handvoll hängengebliebener Leitungen den
+ * Kunden aus seinem eigenen Panel aus, und das merkt er erst, wenn nichts mehr live nachkommt.
+ */
+const MAX_SOCKETS_PER_USER = 12;
 
 /**
  * Niemand sieht mehr zu – Live-Ansichten abschalten.
@@ -575,9 +698,15 @@ function idlePov(userId) {
 }
 
 server.on('upgrade', (req, socket, head) => {
+  let upgradePath;
+  try {
+    upgradePath = new URL(req.url || '/', 'http://localhost').pathname;
+  } catch {
+    return socket.destroy();
+  }
   // Die Leitung zum Discord-Bot. Sie hängt nicht an einer Sitzung, sondern am gemeinsamen
   // Geheimnis – der Bot ist kein Nutzer.
-  if (req.url.startsWith('/api/bot/stream')) {
+  if (upgradePath === '/api/bot/stream') {
     const header = String(req.headers.authorization || '');
     // Dieselbe Zählung wie bei den HTTP-Endpunkten des Bots: Ohne sie war der Aufbau einer
     // Leitung ein Ratefeld ohne Grenze, während dieselbe Prüfung nebenan nach zwanzig Fehlversuchen
@@ -605,10 +734,17 @@ server.on('upgrade', (req, socket, head) => {
 
   // Die Leitung zu einem Standort. Der andere Rechner ruft an, nicht wir – so braucht er weder
   // eine öffentliche Adresse noch ein Zertifikat noch eine offene Portfreigabe.
-  if (req.url.startsWith('/api/node/stream')) {
-    const node = nodeByToken(req);
+  if (upgradePath === '/api/node/stream') {
+    // Dieselbe Zählung wie bei den HTTP-Endpunkten des Standorts: Ohne sie wäre der Aufbau einer
+    // Leitung ein Ratefeld ohne Grenze, während dieselbe Prüfung nebenan nach zwanzig
+    // Fehlversuchen zumacht.
+    const { status, node } = tryNodeToken(req.socket.remoteAddress || 'unknown', req);
     if (!node) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.write(
+        status === 'throttled'
+          ? 'HTTP/1.1 429 Too Many Requests\r\n\r\n'
+          : 'HTTP/1.1 401 Unauthorized\r\n\r\n'
+      );
       return socket.destroy();
     }
     return nodeSockets.handleUpgrade(req, socket, head, (ws) => {
@@ -621,20 +757,13 @@ server.on('upgrade', (req, socket, head) => {
     });
   }
 
-  if (!req.url.startsWith('/api/ws')) return socket.destroy();
+  if (upgradePath !== '/api/ws') return socket.destroy();
   if (!trustedOrigin(req)) {
     socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
     return socket.destroy();
   }
   const value = auth.readCookie(req, 'afk_session');
-  const row = value
-    ? db
-        .prepare(
-          `SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-           WHERE s.token = ? AND s.expires_at > ?`
-        )
-        .get(value, Date.now())
-    : null;
+  const row = auth.userForSession(value);
   if (!row || row.blocked) {
     socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
     return socket.destroy();
@@ -643,7 +772,18 @@ server.on('upgrade', (req, socket, head) => {
     ws.userId = row.id;
     ws.isAlive = true;
     if (!sockets.has(row.id)) sockets.set(row.id, new Set());
-    sockets.get(row.id).add(ws);
+    const open = sockets.get(row.id);
+    // Eine Menge behält ihre Einfügereihenfolge – die ältesten stehen vorn.
+    while (open.size >= MAX_SOCKETS_PER_USER) {
+      const oldest = open.values().next().value;
+      open.delete(oldest);
+      try {
+        oldest.close(1013, 'Zu viele offene Verbindungen.');
+      } catch {
+        oldest.terminate?.();
+      }
+    }
+    open.add(ws);
     // Wer wieder da ist, hat seine Ansicht nicht aufgegeben (siehe idlePov).
     clearTimeout(povIdleTimers.get(row.id));
     povIdleTimers.delete(row.id);

@@ -899,9 +899,9 @@ function passwordBody() {
       <div class="field"><label for="old">${escapeHtml(tr('set.passwordOld'))}</label>
         <input id="old" type="password" autocomplete="current-password"></div>
       <div class="field"><label for="new">${escapeHtml(tr('set.passwordNew'))}</label>
-        <input id="new" type="password" autocomplete="new-password" minlength="8"></div>
+        <input id="new" type="password" autocomplete="new-password" minlength="12" maxlength="256"></div>
       <div class="field"><label for="new2">${escapeHtml(tr('set.passwordNew2'))}</label>
-        <input id="new2" type="password" autocomplete="new-password" minlength="8">
+        <input id="new2" type="password" autocomplete="new-password" minlength="12" maxlength="256">
         <span class="hint">${escapeHtml(tr('set.passwordHint'))}</span></div>
       <div><button class="btn btn-primary" id="save-password">${escapeHtml(tr('set.password'))}</button></div>
     </div>`;

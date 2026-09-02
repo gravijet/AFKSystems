@@ -6,14 +6,32 @@
 // vergleichen. Bezahlt wird nicht nach Stunden, sondern je Serverplatz und Monat – und ein Monat
 // sind hier immer genau 30 Tage (siehe MONTH_MS in billing.js).
 
+import fs from 'node:fs';
 import Database from 'better-sqlite3';
-import { paths } from './config.js';
+import { paths, tighten } from './config.js';
 import { PRIVACY_DE, PRIVACY_EN, TERMS_DE, TERMS_EN, VAT_NOTE_DE, VAT_NOTE_EN } from './legal.js';
 
 export const db = new Database(paths.db);
 db.pragma('journal_mode = WAL');
 db.pragma('foreign_keys = ON');
 db.pragma('busy_timeout = 5000');
+
+/**
+ * Die Datenbank geht nur den Dienst etwas an.
+ *
+ * Darin stehen Passwort-Hashes, Sitzungen, die Token der Standorte und das Geheimnis des Bots.
+ * Das systemd-Unit setzt `UMask=0077`, aber das gilt nur für Dateien, die **dieser** Dienst neu
+ * anlegt – eine von Hand kopierte Datenbank, ein Bestand aus einer älteren Fassung oder ein Umzug
+ * mit `scp` bringt seine eigenen Rechte mit, und die sind gewöhnlich `0644`. Auf einer Maschine
+ * mit einem zweiten Benutzer ist das der ganze Betrieb zum Mitlesen.
+ *
+ * **Nach** dem Öffnen und nach `journal_mode = WAL`: Erst dann liegen `-wal` und `-shm` da, und
+ * die tragen dieselben Daten wie die Hauptdatei. Eine davon mitzunehmen und die anderen zu
+ * vergessen wäre sinnlos.
+ */
+for (const suffix of ['', '-wal', '-shm']) {
+  if (fs.existsSync(`${paths.db}${suffix}`)) tighten(`${paths.db}${suffix}`, 0o600);
+}
 
 const migrations = [
   {

@@ -803,7 +803,13 @@ admin.patch(
       );
     }
     if (body.password) {
-      if (String(body.password).length < 8) throw bad('Das Passwort braucht 8 Zeichen.');
+      // Dieselbe Prüfung wie im Formular des Kunden – Länge, keine der bekannten Handvoll und
+      // nicht der eigene Name. Ein Passwort, das ein Administrator setzt, ist nicht weniger ein
+      // Zugang zu diesem Konto, und es bleibt oft länger stehen als eines, das jemand selbst wählt.
+      auth.checkPasswordPair(body.password, body.password, {
+        username: user.username,
+        email: user.email,
+      });
       db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(body.password), id);
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(id);
       audit(req.user.id, 'admin-password', { user: id });
@@ -992,7 +998,11 @@ admin.post(
     if (!user) throw notFound('Benutzer gibt es nicht.');
     auth.createSession(res, user, req, {
       impersonatorId: req.user.id,
-      parentToken: req.sessionToken,
+      // Der Datenbankwert ist bereits ein HMAC, nicht das gültige Cookie des Administrators.
+      parentToken: req.sessionStorageToken,
+      // Eine geliehene Ansicht ist ein Generalschlüssel zu einem fremden Konto und läuft deshalb
+      // nach einer Stunde ab – nicht nach dreißig Tagen wie eine gewöhnliche Anmeldung.
+      maxAgeMs: auth.IMPERSONATION_MS,
     });
     audit(req.user.id, 'admin-impersonate', { user: id });
     res.json({ ok: true, user: auth.publicUser(user) });

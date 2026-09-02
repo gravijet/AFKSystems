@@ -75,7 +75,7 @@ function attachment(file) {
   const href = `/api/tickets/files/${file.id}`;
   if (file.image) {
     return `<a class="chat-image" href="${href}" target="_blank" rel="noopener"
-      title="${escapeHtml(file.name)}"><img src="${href}" alt="${escapeHtml(file.name)}" loading="lazy"></a>`;
+      title="${escapeHtml(file.name)}"><img src="${href}" alt="${escapeHtml(file.name)}" loading="lazy" decoding="async"></a>`;
   }
   return `<a class="chat-file" href="${href}?download=1" download="${escapeHtml(file.name)}">
     ${icon('download')}<span class="truncate">${escapeHtml(file.name)}</span>

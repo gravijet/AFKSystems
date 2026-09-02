@@ -66,6 +66,7 @@ export const S = {
   'common.dark': { en: 'Dark', de: 'Dunkel' },
   'common.system': { en: 'Match system', de: 'Wie das System' },
   'common.language': { en: 'Language', de: 'Sprache' },
+  'common.switchLanguage': { en: 'Switch to {language}', de: 'Zu {language} wechseln' },
   'common.optional': { en: 'optional', de: 'optional' },
   'common.remove': { en: 'Remove', de: 'Entfernen' },
   'common.more': { en: 'Read more', de: 'Mehr dazu' },
@@ -388,7 +389,7 @@ export const S = {
     de: '3–24 Zeichen: Buchstaben, Ziffern, Punkt, Unterstrich, Bindestrich.',
   },
   'auth.register.password': { en: 'Password', de: 'Passwort' },
-  'auth.register.passwordHint': { en: 'At least 8 characters.', de: 'Mindestens 8 Zeichen.' },
+  'auth.register.passwordHint': { en: '12–256 characters.', de: '12–256 Zeichen.' },
   'auth.register.password2': { en: 'Repeat password', de: 'Passwort wiederholen' },
   'auth.register.mismatch': {
     en: 'The two passwords are not the same.',

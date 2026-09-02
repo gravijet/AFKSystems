@@ -322,7 +322,7 @@ export async function render(root) {
             data-server="${escapeHtml(profile.name.toLowerCase())}" data-rank="${status === 'online' ? 0 : status === 'attention' ? 1 : 2}">
           <td><input type="checkbox" class="pick-bot" data-pick-bot="${profile.id}:${member.account_id}"
             aria-label="${escapeHtml(member.name)}"></td>
-          <td><span class="row"><img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy">
+          <td><span class="row"><img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy" decoding="async">
             ${escapeHtml(member.name)}</span></td>
           <td><a href="#/servers/${profile.id}/connect" class="row" style="gap:.4rem">
             ${escapeHtml(profile.name)}<span class="small muted mono">${escapeHtml(profile.address)}</span></a></td>

@@ -45,8 +45,48 @@ export function nodeByToken(req) {
   return db.prepare('SELECT * FROM nodes WHERE token = ? AND active = 1').get(token) || null;
 }
 
-router.use((req, res, next) => {
+/**
+ * Falsche Standort-Token bremsen.
+ *
+ * Dasselbe wie beim gemeinsamen Geheimnis des Bots (routes/bot.js), und aus demselben Grund: Ein
+ * Token, das beliebig oft geraten werden darf, ist ein Passwort ohne Sperre. Hinter diesem einen
+ * Wert liegen die Client-Dateien **und** die Leitung, über die ein Standort Prozesse startet und
+ * Dateien in Kontoverzeichnisse zurückschreibt – das ist die teuerste Tür des ganzen Panels, und
+ * sie war die einzige ohne Zähler.
+ *
+ * Zwanzig Fehlversuche je Adresse und Viertelstunde: Ein echter Standort hat sein Token in der
+ * `.env` stehen und liegt beim ersten Versuch richtig.
+ */
+const failures = new Map();
+const FAIL_WINDOW_MS = 15 * 60_000;
+const FAIL_MAX = 20;
+
+export function tryNodeToken(ip, req) {
+  const now = Date.now();
+  const key = String(ip || 'unknown');
+  const recent = (failures.get(key) || []).filter((at) => now - at < FAIL_WINDOW_MS);
+  if (recent.length >= FAIL_MAX) {
+    failures.set(key, recent);
+    return { status: 'throttled', node: null };
+  }
   const node = nodeByToken(req);
+  if (!node) {
+    recent.push(now);
+    failures.set(key, recent);
+    if (failures.size > 5_000) {
+      for (const [entry, times] of failures) {
+        if (!times.some((at) => now - at < FAIL_WINDOW_MS)) failures.delete(entry);
+      }
+    }
+    return { status: 'wrong', node: null };
+  }
+  failures.delete(key);
+  return { status: 'ok', node };
+}
+
+router.use((req, res, next) => {
+  const { status, node } = tryNodeToken(req.ip, req);
+  if (status === 'throttled') return res.status(429).json({ error: 'Zu viele Versuche.' });
   if (!node) return res.status(401).json({ error: 'Unbekannter Standort.' });
   req.node = node;
   db.prepare('UPDATE nodes SET last_seen = ? WHERE id = ?').run(Date.now(), node.id);

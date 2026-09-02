@@ -122,7 +122,7 @@ export function renderDiscord(raw, { mentions = {}, locale = 'en', unknown = 'un
     hold(
       `<img class="dc-emoji" src="https://cdn.discordapp.com/emojis/${id}.${
         animated ? 'gif' : 'png'
-      }?size=44" alt=":${escapeHtml(name)}:" title=":${escapeHtml(name)}:" loading="lazy">`
+      }?size=44" alt=":${escapeHtml(name)}:" title=":${escapeHtml(name)}:" loading="lazy" decoding="async">`
     )
   );
 

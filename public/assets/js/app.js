@@ -116,6 +116,16 @@ let socket = null;
 let retry = 0;
 let ticketStatsTimer = null;
 let notificationStatsTimer = null;
+let sideFrame = null;
+
+/** Mehrere Bot-Ereignisse in demselben Bild brauchen nur eine neue Seitenleiste. */
+function scheduleSideDraw() {
+  if (sideFrame !== null) return;
+  sideFrame = requestAnimationFrame(() => {
+    sideFrame = null;
+    drawSide();
+  });
+}
 
 /**
  * Ticketzähler nie aus einzelnen Push-Nachrichten hochzählen: mehrere Antworten an einem
@@ -129,7 +139,7 @@ function refreshTicketStats() {
       .then((data) => {
         state.stats = data.stats;
         state.todos = data.todos || [];
-        drawSide();
+        scheduleSideDraw();
       })
       .catch(() => {});
   }, 180);
@@ -142,7 +152,7 @@ function refreshNotificationStats() {
     api('/me/notifications?limit=1')
       .then((data) => {
         if (state.stats) state.stats.notifications_unread = data.unread || 0;
-        drawSide();
+        scheduleSideDraw();
         const badge = document.querySelector('.appbar-bell > span');
         const button = document.querySelector('.appbar-bell');
         const unread = data.unread || 0;
@@ -210,14 +220,14 @@ function connect() {
         member.last_error = message.state.last_error;
         profile.online = profile.accounts.filter((entry) => entry.online).length;
       }
-      drawSide();
+      scheduleSideDraw();
       refreshNotificationStats();
       state.onLive?.({ type: 'state', key: message.key, state: message.state });
       return;
     }
     if (message.type === 'credits') {
       if (state.me) state.me.credits = message.balance;
-      drawSide();
+      scheduleSideDraw();
       refreshNotificationStats();
       state.onLive?.({ type: 'credits' });
       return;
@@ -229,7 +239,7 @@ function connect() {
         profile.active = false;
       }
       toast(tr('dash.suspended', { name: message.name }), 'bad');
-      drawSide();
+      scheduleSideDraw();
       refreshNotificationStats();
       state.onLive?.({ type: 'suspended', profile_id: message.profile_id });
     }
@@ -540,11 +550,17 @@ function adminSection() {
 // ---------------------------------------------------------------- Zeichnen
 
 export function drawSide() {
+  if (sideFrame !== null) {
+    cancelAnimationFrame(sideFrame);
+    sideFrame = null;
+  }
   applySideLayout();
   const route = state.route;
   const unread = state.stats?.tickets_unread || 0;
   const todoCount = state.todos?.length || 0;
   const side = $('#side');
+  side.classList.remove('boot-side');
+  side.removeAttribute('aria-busy');
 
   // Wer gerade tippt, darf beim Neuzeichnen nicht die Schreibmarke verlieren – und die Leiste
   // wird bei jedem Zustandswechsel eines Bots neu gezeichnet.
@@ -1023,6 +1039,7 @@ export async function draw() {
     $('#retry-view').addEventListener('click', () => location.reload());
   } finally {
     drawing = false;
+    $('#main').removeAttribute('aria-busy');
     banner();
     discordBanner();
     announcements();
@@ -1175,8 +1192,14 @@ window.addEventListener('hashchange', draw);
 
 async function boot() {
   try {
-    state.meta = await api('/meta');
-    await refresh();
+    // Netzwerk, Datenbank und den Code der ersten Ansicht gleichzeitig anstoßen. Früher begann
+    // `/me`, `/profiles` und `/accounts` erst nach `/meta`, und das Ansichtsmodul sogar erst nach
+    // allen vier Antworten – zwei vermeidbare Wasserfälle vor dem ersten echten Panel-Inhalt.
+    const firstRoute = parseRoute();
+    const metaJob = api('/meta').then((meta) => { state.meta = meta; });
+    const dataJob = refresh();
+    const viewJob = VIEWS[firstRoute.name]();
+    await Promise.all([metaJob, dataJob, viewJob]);
     applyPreferences(state.me?.id);
     if (!location.hash) history.replaceState(null, '', startHash(state.me?.id, state.profiles));
     connect();

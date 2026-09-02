@@ -18,7 +18,7 @@ export async function render(root) {
       return `<article class="card">
         <div class="row spread" style="align-items:flex-start">
           <div class="row">
-            <img class="head lg" src="${escapeHtml(account.head)}" alt="" loading="lazy">
+            <img class="head lg" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
             <div>
               <div class="strong">${escapeHtml(account.name)}</div>
               <div class="small muted">${escapeHtml(
