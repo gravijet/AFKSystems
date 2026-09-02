@@ -3718,8 +3718,48 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.match(privacy, /Art\. 6 Abs\. 1 lit\. b DSGVO/);
   const terms = await (await fetch(`${base}/en/terms`)).text();
   assert.match(terms, /<h2>5\. Prices, credits and renewal<\/h2>/);
-  assert.equal((await fetch(`${base}/en/imprint`)).status, 404);
-  assert.doesNotMatch(await (await fetch(`${base}/sitemap.xml`)).text(), /imprint/);
+  // Das Impressum hat als einzige Rechtsseite keine Systemvorgabe – Name und Anschrift kann nur
+  // der Betreiber eintragen. Ohne sie sagt die Seite genau das, statt ein halbes Impressum zu
+  // zeigen, das die Pflicht nicht erfüllt.
+  const emptyImprint = await fetch(`${base}/de/imprint`);
+  assert.equal(emptyImprint.status, 200);
+  assert.match(await emptyImprint.text(), /Diese Seite muss der Betreiber noch ausfüllen/);
+  assert.ok(staffTodos('de').some((row) => row.key === 'staff-imprint'));
+
+  setSetting('company_name', 'Beispiel Betrieb e.U.');
+  setSetting('company_address', 'Musterstraße 1\n1010 Wien\nÖsterreich');
+  setSetting('company_vat_id', 'ATU12345678');
+  const imprint = await (await fetch(`${base}/de/imprint`)).text();
+  assert.match(imprint, /<h2>Diensteanbieter<\/h2>/);
+  assert.match(imprint, /Beispiel Betrieb e\.U\.<br \/>Musterstraße 1<br \/>1010 Wien/);
+  assert.match(imprint, /<h2>Umsatzsteuer-Identifikationsnummer<\/h2><p>ATU12345678<\/p>/);
+  // Dieselben Angaben, dieselbe Seite, andere Überschriften.
+  assert.match(await (await fetch(`${base}/en/imprint`)).text(), /<h2>Service provider<\/h2>/);
+  // Und wer mehr braucht als die vier Blöcke, schreibt es selbst – dann gilt nur sein Text.
+  setSetting('legal_imprint', '## Firmenbuch\n\nFN 123456a, Handelsgericht Wien');
+  const own = await (await fetch(`${base}/de/imprint`)).text();
+  assert.match(own, /<h2>Firmenbuch<\/h2>/);
+  assert.doesNotMatch(own, /Diensteanbieter/);
+  assert.ok(!staffTodos('de').some((row) => row.key === 'staff-imprint'));
+  for (const key of ['company_name', 'company_address', 'company_vat_id', 'legal_imprint']) {
+    setSetting(key, '');
+  }
+  assert.match(await (await fetch(`${base}/sitemap.xml`)).text(), /\/de\/imprint<\/loc>/);
+
+  // Die Sprache in der Adresse schlägt Cookie und Browsereinstellung. Für die bekannten Seiten war
+  // das immer so – ihre Route liest sie selbst aus dem Pfad. Die Fehlerseite kam aber woanders her
+  // und antwortete auf `/de/…` englisch, wenn der Browser englisch sprach.
+  const wrongLang = { 'accept-language': 'en-US,en', cookie: 'lang=en' };
+  const missingDe = await fetch(`${base}/de/gibt-es-nicht`, { headers: wrongLang });
+  assert.equal(missingDe.status, 404);
+  assert.match(await missingDe.text(), /<h1>Hier ist nichts<\/h1>/);
+  assert.match(
+    await (await fetch(`${base}/en/gibt-es-nicht`, { headers: { cookie: 'lang=de' } })).text(),
+    /<h1>Nothing here<\/h1>/
+  );
+  // Ohne Sprache im Pfad bleibt es beim Cookie – sonst wäre die Weiterleitung von `/` beliebig.
+  const rootRedirect = await fetch(`${base}/`, { headers: wrongLang, redirect: 'manual' });
+  assert.equal(rootRedirect.headers.get('location'), '/en');
 
   const crossSite = await fetch(`${base}/api/auth/logout`, {
     method: 'POST',

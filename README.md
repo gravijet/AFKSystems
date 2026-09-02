@@ -39,6 +39,9 @@ dieses README, nicht in den Verkaufstext.
 /en/features   /de/features     Funktionsliste nach Gruppen
 /en/pricing    /de/pricing      Tarife, Zusätze, Aufladepakete, Abrechnungsfragen
 /en/faq        /de/faq          Fragen und Antworten
+/en/privacy    /de/privacy      Datenschutzerklärung (Systemvorgabe, überschreibbar)
+/en/terms      /de/terms        Nutzungsbedingungen (Systemvorgabe, überschreibbar)
+/en/imprint    /de/imprint      Impressum – siehe unten: das baut sich selbst
 /en/login      /de/login        …und so weiter für alle festen Seiten
 /en/app        /de/app          Dashboard
 ```
@@ -415,6 +418,22 @@ Marken darin, kein Stylesheet von außen, kein JavaScript. Am Bildschirm sieht s
 Panel, auf Papier ist sie schwarz auf weiß, und der Browser macht daraus ein PDF. Wer verkauft,
 steht unter *Administration → Einstellungen → Verkäufer und Belege*; ohne diese Angaben trägt der
 Beleg nur die Marke, und das ist auf einer Rechnung zu wenig.
+
+### Das Impressum baut sich aus denselben Angaben
+
+Datenschutzerklärung und Nutzungsbedingungen haben eine vollständige Systemvorgabe, weil dort
+steht, was dieser Dienst technisch tut – und das ist bei jedem Betreiber dasselbe. Beim Impressum
+geht das nicht: Es besteht aus Namen und Anschrift einer bestimmten Person oder Firma. Eine Vorgabe
+dafür wäre erfunden oder die Anschrift von jemand anderem.
+
+Also steht dort nichts Erfundenes, sondern das, was ohnehin schon eingetragen ist: Verkäufername
+und Anschrift aus den Belegangaben, die Kontaktadresse aus dem Seitenfuß, die USt-IdNr. von der
+Rechnung. `/de/imprint` und `/en/imprint` setzen daraus vier Blöcke zusammen – Diensteanbieter,
+Kontakt, Umsatzsteuer, Unternehmensgegenstand – in der jeweiligen Sprache. Fehlt die Anschrift,
+zeigt die Seite genau das und nicht ein halbes Impressum, das die Pflicht nicht erfüllt; im
+Admin-Bereich steht dann eine offene Aufgabe mit dem Weg dorthin. Wer mehr braucht als die vier
+Blöcke – Firmenbuchnummer, Kammer, Aufsichtsbehörde, ein Wort zur Streitbeilegung –, schreibt unter
+*Recht* seinen eigenen Text; dann gilt nur der.
 
 ## Der Serverplatz
 

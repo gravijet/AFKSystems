@@ -571,6 +571,24 @@ export function staffTodos(lang = 'en') {
     });
   }
 
+  // Datenschutz und Bedingungen haben eine Systemvorgabe, das Impressum kann keine haben: Name und
+  // Anschrift kennt nur der Betreiber. Solange beides fehlt, steht auf der verlinkten Seite ein
+  // Hinweis statt eines Impressums – für einen Dienst, der Geld nimmt, ist das kein Schönheits-
+  // fehler, sondern eine offene Pflicht. Die Anschrift ist dieselbe, die auf den Belegen steht;
+  // eingetragen wird sie also ohnehin.
+  if (!String(getSetting('company_address') || '').trim() && !String(getSetting('legal_imprint') || '').trim()) {
+    add({
+      key: 'staff-imprint',
+      kind: 'warn',
+      title: en ? 'The legal notice is empty' : 'Das Impressum ist leer',
+      text: en
+        ? 'Seller name and postal address fill both the legal notice page and every receipt. Until they are entered, the page linked in the footer only says so.'
+        : 'Verkäufername und Anschrift füllen die Impressumsseite und jeden Beleg. Bis sie eingetragen sind, steht auf der im Fuß verlinkten Seite nur genau das.',
+      href: '#/admin/settings?group=seller',
+      label: en ? 'Seller details' : 'Verkäuferangaben',
+    });
+  }
+
   if (!safeUrl(getSetting('discord_invite'))) {
     add({
       key: 'staff-invite',
