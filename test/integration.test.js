@@ -20,6 +20,8 @@ process.env.PUBLIC_URL = 'http://127.0.0.1';
 
 const { db, cached, prepareOnce, setSetting } = await import('../server/db.js');
 const assets = await import('../server/assets.js');
+const strings = await import('../server/strings.js');
+const { t, S } = await import('../public/assets/js/i18n.js');
 const billing = await import('../server/billing.js');
 const stripe = await import('../server/stripe.js');
 const vat = await import('../server/vat.js');
@@ -2854,6 +2856,88 @@ test('assets are packed once and served without compressing them again', () => {
   assert.equal(ask('/app.css?v=1', { 'accept-encoding': 'br' }).url, '/app.css.br?v=1');
 
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the browser gets one language of the texts, and it really is a module', async () => {
+  const { fileFor } = strings;
+  const handler = strings.handler({
+    cacheControl: (_name, current) =>
+      current ? 'private, max-age=31536000, immutable' : 'private, max-age=60',
+    current: (version) => version === 'jetzt',
+  });
+
+  const ask = (url, headers = {}) => {
+    let sent = null;
+    let passed = false;
+    const res = {
+      statusCode: 200,
+      headers: {},
+      setHeader(name, value) {
+        this.headers[name.toLowerCase()] = value;
+      },
+      getHeader(name) {
+        return this.headers[name.toLowerCase()];
+      },
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      end(body) {
+        sent = body ?? null;
+        return this;
+      },
+    };
+    handler({ url, path: url, method: 'GET', headers }, res, () => {
+      passed = true;
+    });
+    return { res, sent, passed };
+  };
+
+  assert.equal(fileFor('de'), 'i18n.de.js');
+  assert.equal(fileFor('en'), 'i18n.en.js');
+  assert.equal(fileFor('kl'), 'i18n.en.js', 'eine unbekannte Sprache fällt auf die Vorgabe zurück');
+
+  const german = ask('/assets/v/jetzt/js/i18n.de.js', { 'accept-encoding': 'identity' });
+  assert.equal(german.res.statusCode, 200);
+  assert.equal(german.res.headers['content-type'], 'text/javascript; charset=UTF-8');
+  assert.match(german.res.headers['cache-control'], /immutable/);
+  assert.equal(german.res.headers.vary, 'Accept-Encoding');
+
+  // Wirklich ein Modul, und wirklich nur eine Sprache darin.
+  const source = german.sent.toString();
+  const module = await import(`data:text/javascript,${encodeURIComponent(source)}`);
+  assert.equal(module.LANG, 'de');
+  assert.equal(module.t('nav.dashboard'), t('nav.dashboard', 'de'));
+  assert.equal(module.t('bill.title'), t('bill.title', 'de'));
+  assert.equal(module.t('den.gibt.es.nicht'), 'den.gibt.es.nicht');
+  assert.equal(module.t('common.switchLanguage', { language: 'X' }), t('common.switchLanguage', 'de', { language: 'X' }));
+  // Der Zugriff darf nicht an der Prototypenkette landen.
+  assert.equal(module.t('constructor'), 'constructor');
+  // Und kein englischer Text hat sich hineinverirrt.
+  assert.equal(source.includes(S['nav.features'].en) && S['nav.features'].en !== S['nav.features'].de, false);
+
+  const english = ask('/assets/v/jetzt/js/i18n.en.js', { 'accept-encoding': 'identity' });
+  const englishModule = await import(`data:text/javascript,${encodeURIComponent(english.sent.toString())}`);
+  assert.equal(englishModule.LANG, 'en');
+  assert.equal(englishModule.t('nav.dashboard'), t('nav.dashboard', 'en'));
+
+  // Gepackt kommt es kleiner heraus – und entpackt ist es dasselbe.
+  const packed = ask('/assets/v/jetzt/js/i18n.de.js', { 'accept-encoding': 'br, gzip' });
+  assert.equal(packed.res.headers['content-encoding'], 'br');
+  assert.ok(packed.sent.length < german.sent.length);
+  assert.equal(zlib.brotliDecompressSync(packed.sent).toString(), source);
+
+  // Ein zweiter Abruf mit demselben ETag holt nichts mehr.
+  const again = ask('/assets/v/jetzt/js/i18n.de.js', { 'if-none-match': german.res.headers.etag });
+  assert.equal(again.res.statusCode, 304);
+  assert.equal(again.sent, null);
+
+  // Ein alter Fingerabdruck bekommt dieselbe Datei, aber nur kurz haltbar.
+  assert.match(ask('/assets/v/frueher/js/i18n.de.js').res.headers['cache-control'], /max-age=60/);
+  // Alles andere geht diesen Handler nichts an.
+  assert.equal(ask('/assets/v/jetzt/js/i18n.kl.js').passed, true);
+  assert.equal(ask('/assets/v/jetzt/js/app.js').passed, true);
+  assert.equal(ask('/assets/js/i18n.de.js').passed, true);
 });
 
 test('numbers and dates are formatted through one cached formatter per language', () => {

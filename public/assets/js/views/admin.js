@@ -476,12 +476,16 @@ function statsPanels(stats) {
     return (cent) => `${(cent / 100).toFixed(digits)} €`;
   };
   const asEuro = euroScale([stats.totals.revenue_cent]);
-  const count = (value) => Number(value || 0).toLocaleString(langCode);
-  const hours = (seconds) => `${Math.round(seconds / 3600).toLocaleString(langCode)} h`;
+  // Je ein Formatierer, nicht einer je Datenpunkt: Die Diagramme hier zeichnen dreißig Tage und
+  // sechs Monate, und jede Achsenbeschriftung ging vorher durch einen frisch gebauten `Intl`.
+  const numbers = new Intl.NumberFormat(langCode);
+  const months = new Intl.DateTimeFormat(langCode, { month: 'short' });
+  const count = (value) => numbers.format(Number(value || 0));
+  const hours = (seconds) => `${numbers.format(Math.round(seconds / 3600))} h`;
   const dayShort = (key) => key.slice(8);
   const monthShort = (key) => {
     const [year, month] = key.split('-');
-    return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(langCode, { month: 'short' });
+    return months.format(new Date(Number(year), Number(month) - 1, 1));
   };
 
   const revenueDays = stats.revenue_days || [];

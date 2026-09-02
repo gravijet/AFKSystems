@@ -20,6 +20,7 @@ import * as nodes from './nodes.js';
 import * as pages from './pages.js';
 import * as protect from './protect.js';
 import * as assets from './assets.js';
+import * as strings from './strings.js';
 import * as landing from './landing.js';
 import * as tickets from './tickets.js';
 import * as attachments from './attachments.js';
@@ -367,6 +368,17 @@ const assetsDir = path.join(paths.public, 'assets');
 // kommt gar nicht erst bis zum Ausliefern. Siehe server/protect.js.
 app.use('/assets', protect.assetGuard(allowedOrigins));
 
+// Die Texte des Panels, je Sprache einzeln. Sie liegen nicht als Datei da, sondern werden beim
+// Hochfahren aus derselben Tabelle gerechnet, die der Server für die festen Seiten benutzt –
+// siehe server/strings.js. Steht **vor** den Dateihandlern, weil es zu diesen Adressen keine
+// Dateien gibt.
+app.use(
+  strings.handler({
+    cacheControl: protect.cacheControl,
+    current: (version) => version === assetVersion,
+  })
+);
+
 /**
  * Die Kopfzeilen einer Asset-Antwort.
  *
@@ -492,6 +504,9 @@ function maintenanceGuard(req, res, next) {
 
 const NOINDEX = '<meta name="robots" content="noindex, nofollow" />';
 
+/** Was die Anmeldeseiten zum ersten Bild brauchen. Die Texte kommen in pages.preload dazu. */
+const AUTH_MODULES = ['auth.js', 'ui.js', 'chatlog.js'];
+
 const PAGES = {
   '': { view: 'landing', vars: landing.homeVars },
   features: {
@@ -507,11 +522,14 @@ const PAGES = {
     vars: landing.pricingVars,
   },
   faq: { view: 'faq', title: 'faq.title', description: 'meta.faq.description' },
-  login: { view: 'login', title: 'auth.login.title', noindex: true },
-  register: { view: 'register', title: 'auth.register.title' },
-  forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true },
-  reset: { view: 'reset', title: 'auth.reset.title', noindex: true },
-  verify: { view: 'verify', title: 'auth.verify.title', noindex: true },
+  // Die fünf Anmeldeseiten teilen sich ein Modul (auth.js), und das zieht ui.js und die Texte
+  // nach. Ohne diese Ansage findet der Browser sie erst, wenn er auth.js gelesen hat – ausgerechnet
+  // auf der Seite, die für die meisten Besucher die erste mit JavaScript ist.
+  login: { view: 'login', title: 'auth.login.title', noindex: true, modules: AUTH_MODULES },
+  register: { view: 'register', title: 'auth.register.title', modules: AUTH_MODULES },
+  forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true, modules: AUTH_MODULES },
+  reset: { view: 'reset', title: 'auth.reset.title', noindex: true, modules: AUTH_MODULES },
+  verify: { view: 'verify', title: 'auth.verify.title', noindex: true, modules: AUTH_MODULES },
   privacy: { view: 'legal', legal: 'privacy' },
   terms: { view: 'legal', legal: 'terms' },
 };
@@ -529,6 +547,7 @@ function renderPage(slug, lang) {
     ...landing.commonVars(lang),
   };
   if (entry.noindex) vars.robotsTag = NOINDEX;
+  if (entry.modules) vars.resourceHints = pages.preload(lang, entry.modules);
   if (entry.title) vars.title = `${pages.t(entry.title, lang)} – ${config.brand}`;
   if (entry.description) vars.description = pages.t(entry.description, lang);
   if (entry.legal) Object.assign(vars, landing.legalVars(entry.legal, lang));
@@ -550,7 +569,7 @@ const renderApp = (lang) =>
     // Der Browser holt das Modul und seinen statischen Abhängigkeitsbaum direkt nach dem kritischen
     // Stylesheet. Das konkrete Ansichtsmodul wählt app.js anschließend passend zur URL, damit ein
     // direkter Aufruf der Einstellungen nicht nebenbei die Übersicht lädt.
-    resourceHints: `<link rel="modulepreload" href="/assets/v/${assetVersion}/js/app.js" />`,
+    resourceHints: pages.preload(lang, ['app.js', 'ui.js', 'preferences.js', 'chatlog.js']),
   });
 
 // Ohne Sprache in der Adresse: dorthin schicken, wo die Sprache drinsteht.

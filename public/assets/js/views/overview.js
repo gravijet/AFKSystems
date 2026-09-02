@@ -15,9 +15,14 @@ import {
   ok,
   api,
   debounce,
+  locale,
 } from '../ui.js';
 import { state, appbar, refresh, drawSide, draw } from '../app.js';
 import * as chart from '../charts.js';
+
+// Achsenbeschriftungen: ein Formatierer für alle Punkte statt einer je Punkt (siehe ui.js).
+const MONTH_SHORT = new Intl.DateTimeFormat(locale, { month: 'short' });
+const COUNT = new Intl.NumberFormat(locale);
 
 /**
  * Die Zahlen für die Diagramme.
@@ -240,13 +245,12 @@ export async function render(root) {
       </div>`;
     }
 
-    const lang = document.documentElement.lang === 'de' ? 'de-DE' : 'en-GB';
     const monthName = (key) => {
       const [year, month] = key.split('-');
-      return new Date(Number(year), Number(month) - 1, 1).toLocaleDateString(lang, { month: 'short' });
+      return MONTH_SHORT.format(new Date(Number(year), Number(month) - 1, 1));
     };
     const asEuro = (value) => `${(value / 100).toFixed(value >= 10_000 ? 0 : 2)} €`;
-    const hours = (seconds) => `${Math.round(seconds / 3600).toLocaleString(lang)} h`;
+    const hours = (seconds) => `${COUNT.format(Math.round(seconds / 3600))} h`;
 
     return `<div class="grid three" style="margin-bottom:1.5rem">
       ${chart.card({

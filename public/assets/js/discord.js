@@ -49,17 +49,35 @@ function safeUrl(raw) {
  * aus, und hier ebenso. Alles andere ist ein Datum in der Sprache und Zeitzone dessen, der es
  * liest; genau das ist der Sinn dieser Schreibweise.
  */
+const STYLES = {
+  t: { hour: '2-digit', minute: '2-digit' },
+  T: { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+  d: { day: '2-digit', month: '2-digit', year: 'numeric' },
+  D: { day: 'numeric', month: 'long', year: 'numeric' },
+  f: { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' },
+  F: { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' },
+};
+
+/**
+ * Die Formatierer, einmal je Sprache und Schreibweise.
+ *
+ * Ein `Intl`-Objekt zu bauen kostet ein Vielfaches des Formatierens selbst, und ein Ticketverlauf
+ * ist eine Liste: Jede Nachricht kann Zeitstempel enthalten, und jeder baute bisher seinen eigenen.
+ */
+const formatters = new Map();
+function formatter(kind, locale, build) {
+  const key = `${kind}:${locale}`;
+  let found = formatters.get(key);
+  if (!found) {
+    found = build();
+    formatters.set(key, found);
+  }
+  return found;
+}
+
 function timestamp(seconds, style, locale) {
   const at = new Date(Number(seconds) * 1000);
   if (Number.isNaN(at.getTime())) return null;
-  const options = {
-    t: { hour: '2-digit', minute: '2-digit' },
-    T: { hour: '2-digit', minute: '2-digit', second: '2-digit' },
-    d: { day: '2-digit', month: '2-digit', year: 'numeric' },
-    D: { day: 'numeric', month: 'long', year: 'numeric' },
-    f: { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' },
-    F: { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' },
-  };
   if (style === 'R') {
     const diff = at.getTime() - Date.now();
     const units = [
@@ -71,12 +89,14 @@ function timestamp(seconds, style, locale) {
       ['second', 1000],
     ];
     const [unit, size] = units.find(([, ms]) => Math.abs(diff) >= ms) || ['second', 1000];
-    return new Intl.RelativeTimeFormat(locale, { numeric: 'auto' }).format(
-      Math.round(diff / size),
-      unit
-    );
+    return formatter(
+      'R',
+      locale,
+      () => new Intl.RelativeTimeFormat(locale, { numeric: 'auto' })
+    ).format(Math.round(diff / size), unit);
   }
-  return at.toLocaleString(locale, options[style] || options.f);
+  const kind = STYLES[style] ? style : 'f';
+  return formatter(kind, locale, () => new Intl.DateTimeFormat(locale, STYLES[kind])).format(at);
 }
 
 /**
