@@ -129,7 +129,7 @@ router.get(
   '/resources/:version',
   wrap((req, res) => {
     const file = resources.pathFor(String(req.params.version || ''));
-    if (!file) throw notFound('Für diese Version liegt hier keine Datei.');
+    if (!file) throw notFound('Für diese Version liegt hier keine Datei.', { en: 'No file here for that version.' });
     res.setHeader('Content-Type', 'application/java-archive');
     res.setHeader('Cache-Control', 'no-store');
     fs.createReadStream(file).pipe(res);
@@ -141,9 +141,9 @@ router.get(
   '/binaries/:name',
   wrap((req, res) => {
     const name = String(req.params.name || '');
-    if (!RUNNABLE.has(name)) throw notFound('Diese Datei gehört nicht zum Client.');
+    if (!RUNNABLE.has(name)) throw notFound('Diese Datei gehört nicht zum Client.', { en: 'That file is not part of the client.' });
     const file = path.join(paths.bin, name);
-    if (!fs.existsSync(file)) throw notFound('Diese Datei liegt hier nicht.');
+    if (!fs.existsSync(file)) throw notFound('Diese Datei liegt hier nicht.', { en: 'That file is not here.' });
     res.setHeader('Content-Type', 'application/octet-stream');
     res.setHeader('Cache-Control', 'no-store');
     fs.createReadStream(file).pipe(res);

@@ -334,7 +334,7 @@ async function renderProfile(root, route) {
          Einstellungen – wer beitreten musste, fand dort trotzdem keinen Server, sondern nur die
          Verknüpfung. Der Weg dorthin gehört an die Stelle, an der das Problem steht. -->
     ${joinBox(profile)}
-    <nav class="tabs">${tabs
+    <nav class="tabs wrap">${tabs
       .map(
         (tab) =>
           `<a class="${current === tab.key ? 'active' : ''}" href="#/servers/${profile.id}/${tab.key}">${escapeHtml(
@@ -668,7 +668,7 @@ async function tabConnect(root, profile) {
           <span class="dot" style="color:var(--bad-text);margin-top:.4rem"></span>
           <div class="grow" style="min-width:0">
             <div class="strong">${escapeHtml(tr('srv.statusOffline'))}</div>
-            <div class="small muted">${escapeHtml(data.error || '')}</div>
+            <div class="small muted">${escapeHtml(tr(`mcstatus.${data.error || 'unknown'}`))}</div>
           </div>
           <button class="btn btn-ghost btn-sm" id="status-retry"
             title="${escapeHtml(tr('srv.statusCheck'))}"

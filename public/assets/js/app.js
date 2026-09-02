@@ -478,8 +478,8 @@ export const tabsFor = (profile) =>
 // ---------------------------------------------------------------- Bausteine
 
 /** Ein Eintrag der Navigation: Symbol, Beschriftung, optional eine Zahl. */
-function navItem({ href, label, iconName, active, badge = 0, tone = '' }) {
-  return `<a class="side-item ${active ? 'active' : ''} ${tone}" href="${href}"
+function navItem({ href, label, iconName, active, badge = 0 }) {
+  return `<a class="side-item ${active ? 'active' : ''}" href="${href}"
     title="${escapeHtml(label)}" data-find="${escapeHtml(label.toLowerCase())}"
     ${active ? 'aria-current="page"' : ''}>
     <span class="side-item-icon">${icon(iconName)}</span>
@@ -488,14 +488,22 @@ function navItem({ href, label, iconName, active, badge = 0, tone = '' }) {
   </a>`;
 }
 
-/** Ein Serverplatz in der Liste – Zustandspunkt, Name, wie viele Bots davon laufen. */
+/**
+ * Ein Serverplatz in der Liste – Zustandspunkt, Name, wie viele Bots davon laufen.
+ *
+ * Der Zustand steht als `is-…` am Punkt, nicht als nacktes Wort. `empty` allein war schon einmal
+ * eine Klasse zu viel: Im Stylesheet gehört sie dem leeren Zustand einer ganzen Ansicht (`.empty`
+ * – 3 rem Innenabstand, Fläche, Ring). Ein Serverplatz ohne zugewiesenes Konto bekam damit statt
+ * eines Punktes von 8 px einen grauen Kasten von 48 × 96 px in die Seitenleiste gelegt, der die
+ * Namen darunter verdeckte. Das traf jedes frisch angelegte Konto.
+ */
 function serverItem(profile, active) {
   const tone = profile.suspended ? 'warn' : profile.online ? 'ok' : profile.total ? 'idle' : 'empty';
   const favorite = isFavoriteServer(state.me?.id, profile.id);
   return `<a class="side-item side-server ${active ? 'active' : ''}"
     href="#/servers/${profile.id}/connect" title="${escapeHtml(profile.name)}"
     data-find="${escapeHtml(profile.name.toLowerCase())}">
-    <span class="side-item-icon"><span class="side-dot ${tone}"></span></span>
+    <span class="side-item-icon"><span class="side-dot is-${tone}"></span></span>
     <span class="side-item-label">${escapeHtml(profile.name)}</span>
     ${favorite ? `<span class="side-favorite" aria-label="${escapeHtml(tr('srv.favorite'))}">${icon('star')}</span>` : ''}
     <span class="side-count">${profile.online}/${profile.total}</span>

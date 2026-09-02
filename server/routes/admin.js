@@ -674,7 +674,7 @@ admin.get(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Benutzer');
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!user) throw notFound('Benutzer gibt es nicht.');
+    if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
     const lang = langOf(req);
     res.json({
       user: userRow(user),
@@ -746,13 +746,13 @@ admin.patch(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Benutzer');
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!user) throw notFound('Benutzer gibt es nicht.');
+    if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
     const body = req.body || {};
     let discordRolesChanged = false;
 
     if (body.credits_delta !== undefined) {
       const delta = Math.trunc(Number(body.credits_delta));
-      if (!Number.isFinite(delta) || delta === 0) throw bad('Betrag fehlt.');
+      if (!Number.isFinite(delta) || delta === 0) throw bad('Betrag fehlt.', { en: 'The amount is missing.' });
       // Ins Minus geht es nirgends im Panel – auch hier nicht. Ein negativer Stand wäre eine
       // stille Schuld beim Kunden: Aufladen fühlt sich danach an wie Bezahlen für nichts, und
       // jede Rechnung, die auf „Guthaben ≥ Preis“ prüft, rechnet plötzlich mit Vorzeichen.
@@ -768,8 +768,8 @@ admin.patch(
       audit(req.user.id, 'admin-credits', { user: id, delta });
     }
     if (body.role !== undefined) {
-      if (!['user', 'admin'].includes(body.role)) throw bad('Unbekannte Rolle.');
-      if (id === req.user.id && body.role !== 'admin') throw bad('Sich selbst kann man nicht herabstufen.');
+      if (!['user', 'admin'].includes(body.role)) throw bad('Unbekannte Rolle.', { en: 'Unknown role.' });
+      if (id === req.user.id && body.role !== 'admin') throw bad('Sich selbst kann man nicht herabstufen.', { en: 'You cannot demote yourself.' });
       db.prepare('UPDATE users SET role = ? WHERE id = ?').run(body.role, id);
       discordRolesChanged = true;
     }
@@ -783,16 +783,16 @@ admin.patch(
     }
     if (body.email !== undefined) {
       const address = String(body.email).trim().toLowerCase();
-      if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(address)) throw bad('Keine gültige E-Mail-Adresse.');
+      if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(address)) throw bad('Keine gültige E-Mail-Adresse.', { en: 'That is not a valid email address.' });
       if (db.prepare('SELECT 1 FROM users WHERE email = ? AND id != ?').get(address, id)) {
-        throw bad('Diese Adresse hat schon jemand.');
+        throw bad('Diese Adresse hat schon jemand.', { en: 'Someone already uses that address.' });
       }
       db.prepare('UPDATE users SET email = ? WHERE id = ?').run(address, id);
     }
     if (body.username !== undefined) {
       const name = requireString(body.username, 'Benutzername', { max: 24 });
       if (db.prepare('SELECT 1 FROM users WHERE username = ? COLLATE NOCASE AND id != ?').get(name, id)) {
-        throw bad('Diesen Namen hat schon jemand.');
+        throw bad('Diesen Namen hat schon jemand.', { en: 'Someone already uses that name.' });
       }
       db.prepare('UPDATE users SET username = ? WHERE id = ?').run(name, id);
     }
@@ -822,7 +822,7 @@ admin.patch(
       let until = null;
       if (body.premium_until) {
         until = Math.trunc(Number(body.premium_until));
-        if (!Number.isFinite(until) || until < 0) throw bad('Kein gültiges Datum für Premium.');
+        if (!Number.isFinite(until) || until < 0) throw bad('Kein gültiges Datum für Premium.', { en: 'That is not a valid premium date.' });
       }
       db.prepare('UPDATE users SET premium_until = ? WHERE id = ?').run(until, id);
       discordRolesChanged = true;
@@ -978,7 +978,7 @@ admin.post(
   wrap(async (req, res) => {
     const id = requireInt(req.params.id, 'Benutzer');
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!user) throw notFound('Benutzer gibt es nicht.');
+    if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
     const result = await auth.resendVerification(user);
     if (result && result.ok === false) throw bad(result.error);
     res.json({ ok: true });
@@ -993,9 +993,9 @@ admin.post(
   '/users/:id/impersonate',
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Benutzer');
-    if (id === req.user.id) throw bad('Sich selbst ansehen bringt nichts.');
+    if (id === req.user.id) throw bad('Sich selbst ansehen bringt nichts.', { en: 'Looking at your own account achieves nothing.' });
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!user) throw notFound('Benutzer gibt es nicht.');
+    if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
     auth.createSession(res, user, req, {
       impersonatorId: req.user.id,
       // Der Datenbankwert ist bereits ein HMAC, nicht das gültige Cookie des Administrators.
@@ -1058,11 +1058,11 @@ function planValues(body, existing = {}) {
       out[field] = body[field] ? 1 : 0;
     }
   }
-  if (out.name_de !== undefined && !out.name_de.trim()) throw bad('Der Tarif braucht einen Namen.');
-  if (out.max_accounts !== undefined && out.max_accounts < 1) throw bad('Mindestens ein Konto je Server.');
+  if (out.name_de !== undefined && !out.name_de.trim()) throw bad('Der Tarif braucht einen Namen.', { en: 'The plan needs a name.' });
+  if (out.max_accounts !== undefined && out.max_accounts < 1) throw bad('Mindestens ein Konto je Server.', { en: 'At least one account per server.' });
   if (out.discord_role !== undefined) {
     const value = String(out.discord_role).trim();
-    if (value && !/^\d{5,25}$/.test(value)) throw bad('Eine Discord-Rollen-ID besteht nur aus Ziffern.');
+    if (value && !/^\d{5,25}$/.test(value)) throw bad('Eine Discord-Rollen-ID besteht nur aus Ziffern.', { en: 'A Discord role ID is digits only.' });
     out.discord_role = value || null;
   }
   return { ...existing, ...out };
@@ -1075,8 +1075,8 @@ admin.post(
     const slug = String(body.slug || '')
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, '');
-    if (!slug) throw bad('Der Tarif braucht ein Kürzel (nur a–z, 0–9 und -).');
-    if (db.prepare('SELECT 1 FROM plans WHERE slug = ?').get(slug)) throw bad('Dieses Kürzel gibt es schon.');
+    if (!slug) throw bad('Der Tarif braucht ein Kürzel (nur a–z, 0–9 und -).', { en: 'The plan needs a slug (a–z, 0–9 and - only).' });
+    if (db.prepare('SELECT 1 FROM plans WHERE slug = ?').get(slug)) throw bad('Dieses Kürzel gibt es schon.', { en: 'That slug is already taken.' });
     const values = planValues(body, {
       name_de: slug,
       name_en: slug,
@@ -1121,16 +1121,16 @@ admin.patch(
   '/plans/:id',
   wrap((req, res) => {
     const plan = billing.planById(requireInt(req.params.id, 'Tarif'));
-    if (!plan) throw notFound('Diesen Tarif gibt es nicht.');
+    if (!plan) throw notFound('Diesen Tarif gibt es nicht.', { en: 'No such plan.' });
     const values = planValues(req.body || {});
     const keys = Object.keys(values);
-    if (!keys.length) throw bad('Nichts zu ändern.');
+    if (!keys.length) throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
     // Es muss immer genau einen kostenlosen Tarif geben, sonst gäbe es keinen Gratis-Platz mehr.
     if (values.free_slot === 1) {
       db.prepare('UPDATE plans SET free_slot = 0 WHERE id != ?').run(plan.id);
     } else if (values.free_slot === 0 && plan.free_slot) {
       const others = db.prepare('SELECT COUNT(*) AS n FROM plans WHERE free_slot = 1 AND id != ?').get(plan.id).n;
-      if (!others) throw bad('Ein Tarif muss der kostenlose Platz bleiben.');
+      if (!others) throw bad('Ein Tarif muss der kostenlose Platz bleiben.', { en: 'One plan has to remain the free slot.' });
     }
     db.prepare(`UPDATE plans SET ${keys.map((key) => `${key} = @${key}`).join(', ')} WHERE id = @id`).run({
       ...values,
@@ -1146,10 +1146,14 @@ admin.delete(
   '/plans/:id',
   wrap((req, res) => {
     const plan = billing.planById(requireInt(req.params.id, 'Tarif'));
-    if (!plan) throw notFound('Diesen Tarif gibt es nicht.');
+    if (!plan) throw notFound('Diesen Tarif gibt es nicht.', { en: 'No such plan.' });
     const used = db.prepare('SELECT COUNT(*) AS n FROM profiles WHERE plan_id = ?').get(plan.id).n;
-    if (used) throw bad(`${used} Serverplatz/-plätze nutzen diesen Tarif. Lieber auf "inaktiv" stellen.`);
-    if (plan.free_slot) throw bad('Der kostenlose Tarif lässt sich nicht löschen.');
+    if (used) {
+      throw bad(`${used} Serverplatz/-plätze nutzen diesen Tarif. Lieber auf "inaktiv" stellen.`, {
+        en: `${used} server slot(s) use this plan. Set it to "inactive" instead.`,
+      });
+    }
+    if (plan.free_slot) throw bad('Der kostenlose Tarif lässt sich nicht löschen.', { en: 'The free plan cannot be deleted.' });
     db.prepare('DELETE FROM plans WHERE id = ?').run(plan.id);
     audit(req.user.id, 'plan-delete', { slug: plan.slug });
     bridge.emit('discord.config', { keys: ['plans'] });
@@ -1319,7 +1323,7 @@ admin.post(
     const body = req.body || {};
     const label = requireString(body.label, 'Bezeichnung', { max: 60 });
     const { host, port } = parseAddress(body.address || `${body.host}:${body.port}`);
-    if (!port) throw bad('Ein Proxy braucht einen Port.');
+    if (!port) throw bad('Ein Proxy braucht einen Port.', { en: 'A proxy needs a port.' });
     const kind = ['socks5', 'socks4', 'http'].includes(body.kind) ? body.kind : 'socks5';
     const assigned = body.assigned_to ? requireInt(body.assigned_to, 'Nutzer') : null;
     const info = db
@@ -1349,7 +1353,7 @@ admin.patch(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Proxy');
     const proxy = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id);
-    if (!proxy) throw notFound('Diesen Proxy gibt es nicht.');
+    if (!proxy) throw notFound('Diesen Proxy gibt es nicht.', { en: 'No such proxy.' });
     const body = req.body || {};
     const set = [];
     const values = [];
@@ -1360,7 +1364,7 @@ admin.patch(
     if (body.assigned_to !== undefined) {
       const target = body.assigned_to ? requireInt(body.assigned_to, 'Nutzer') : null;
       if (target && !db.prepare('SELECT 1 FROM users WHERE id = ?').get(target)) {
-        throw notFound('Diesen Nutzer gibt es nicht.');
+        throw notFound('Diesen Nutzer gibt es nicht.', { en: 'No such user.' });
       }
       // Wechselt der Besitzer, dürfen die alten Zuordnungen nicht bleiben.
       if (target !== proxy.assigned_to) {
@@ -1390,7 +1394,7 @@ admin.patch(
       set.push('note = ?');
       values.push(String(body.note || '').slice(0, 200) || null);
     }
-    if (!set.length) throw bad('Nichts zu ändern.');
+    if (!set.length) throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
     values.push(id);
     db.prepare(`UPDATE proxies SET ${set.join(', ')} WHERE id = ?`).run(...values);
     res.json({ ok: true });
@@ -1621,7 +1625,7 @@ admin.patch(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Ankündigung');
     const row = db.prepare('SELECT * FROM announcements WHERE id = ?').get(id);
-    if (!row) throw notFound('Diese Ankündigung gibt es nicht.');
+    if (!row) throw notFound('Diese Ankündigung gibt es nicht.', { en: 'No such announcement.' });
     const body = req.body || {};
     const set = [];
     const values = [];
@@ -1636,7 +1640,7 @@ admin.patch(
     if (body.kind !== undefined) put('kind', ['info', 'warn', 'bad'].includes(body.kind) ? body.kind : 'info');
     if (body.link !== undefined) put('link', String(body.link || '').slice(0, 300) || null);
     if (body.active !== undefined) put('active', body.active ? 1 : 0);
-    if (!set.length) throw bad('Nichts zu ändern.');
+    if (!set.length) throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
     values.push(id);
     db.prepare(`UPDATE announcements SET ${set.join(', ')} WHERE id = ?`).run(...values);
     res.json({ ok: true });
@@ -1653,12 +1657,12 @@ admin.patch(
 admin.post(
   '/announcements/:id/mail',
   wrap(async (req, res) => {
-    if (!mail.configured()) throw bad('Es ist kein SMTP-Server hinterlegt.');
+    if (!mail.configured()) throw bad('Es ist kein SMTP-Server hinterlegt.', { en: 'No SMTP server is configured.' });
     const id = requireInt(req.params.id, 'Ankündigung');
     const row = db.prepare('SELECT * FROM announcements WHERE id = ?').get(id);
-    if (!row) throw notFound('Diese Ankündigung gibt es nicht.');
+    if (!row) throw notFound('Diese Ankündigung gibt es nicht.', { en: 'No such announcement.' });
     if (row.mailed_at && !req.body?.again) {
-      throw bad('Diese Ankündigung wurde schon verschickt. Mit "noch einmal" geht es trotzdem.');
+      throw bad('Diese Ankündigung wurde schon verschickt. Mit "noch einmal" geht es trotzdem.', { en: 'This announcement has already gone out. "Send again" sends it anyway.' });
     }
 
     const test = Boolean(req.body?.test);
@@ -1800,7 +1804,7 @@ admin.delete(
   '/settings/:key',
   wrap((req, res) => {
     const entry = Object.hasOwn(settingSchema, req.params.key) ? settingSchema[req.params.key] : null;
-    if (!entry?.secret) throw notFound('Dieses Feld gibt es nicht.');
+    if (!entry?.secret) throw notFound('Dieses Feld gibt es nicht.', { en: 'No such field.' });
     setSetting(entry.key, '');
     audit(req.user.id, 'admin-settings-clear', { key: entry.key }, req.ip);
     if (entry.key.startsWith('discord_') || entry.key.startsWith('free_discord_')) {
@@ -1907,7 +1911,7 @@ admin.get(
   '/mails/:id',
   wrap((req, res) => {
     const row = db.prepare('SELECT * FROM mails WHERE id = ?').get(requireInt(req.params.id, 'Nachricht'));
-    if (!row) throw notFound('Diese Nachricht gibt es nicht.');
+    if (!row) throw notFound('Diese Nachricht gibt es nicht.', { en: 'No such message.' });
     res.json({ mail: row });
   })
 );
@@ -2120,7 +2124,7 @@ admin.post(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Konto');
     const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(id);
-    if (!account) throw notFound('Dieses Minecraft-Konto gibt es nicht.');
+    if (!account) throw notFound('Dieses Minecraft-Konto gibt es nicht.', { en: 'No such Minecraft account.' });
     const suspended = req.body?.suspended !== false;
     const reason = String(req.body?.reason || '').trim().slice(0, 200) || null;
     db.prepare('UPDATE mc_accounts SET suspended = ?, suspend_reason = ? WHERE id = ?').run(
@@ -2181,7 +2185,7 @@ admin.patch(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Server');
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(id);
-    if (!profile) throw notFound('Diesen Server gibt es nicht.');
+    if (!profile) throw notFound('Diesen Server gibt es nicht.', { en: 'No such server.' });
     const body = req.body || {};
     if (body.extend_days !== undefined) {
       const days = requireInt(body.extend_days, 'Tage', { min: 1, max: 3650 });
@@ -2198,7 +2202,7 @@ admin.patch(
     }
     if (body.plan_id !== undefined) {
       const plan = billing.planById(requireInt(body.plan_id, 'Tarif'));
-      if (!plan) throw notFound('Diesen Tarif gibt es nicht.');
+      if (!plan) throw notFound('Diesen Tarif gibt es nicht.', { en: 'No such plan.' });
       const current = billing.planOf(profile);
       const chatLimit = current.free_slot
         ? plan.chat_limit
@@ -2226,7 +2230,7 @@ admin.delete(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Server');
     const profile = db.prepare('SELECT user_id FROM profiles WHERE id = ?').get(id);
-    if (!profile) throw notFound('Diesen Server gibt es nicht.');
+    if (!profile) throw notFound('Diesen Server gibt es nicht.', { en: 'No such server.' });
     supervisor.stopProfile(id, 'Von der Verwaltung gelöscht.', { keepWanted: false });
     db.prepare('DELETE FROM profiles WHERE id = ?').run(id);
     roles.changed(profile.user_id);
@@ -2737,7 +2741,7 @@ admin.delete(
   '/security/blocks/:id',
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Sperre');
-    if (!security.removeBlock(id, req.user.id)) throw notFound('Diese Sperre gibt es nicht.');
+    if (!security.removeBlock(id, req.user.id)) throw notFound('Diese Sperre gibt es nicht.', { en: 'No such block.' });
     res.json({ blocks: security.listBlocks() });
   })
 );
@@ -2746,7 +2750,7 @@ admin.delete(
   '/security/sessions/:id',
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Sitzung');
-    if (!security.revokeSession(id, req.user.id)) throw notFound('Diese Sitzung gibt es nicht mehr.');
+    if (!security.revokeSession(id, req.user.id)) throw notFound('Diese Sitzung gibt es nicht mehr.', { en: 'That session is gone.' });
     res.json({ sessions: security.sessions(200) });
   })
 );
@@ -2862,14 +2866,14 @@ function addonValues(body, existing = {}) {
     else out[field] = body[field] ? 1 : 0;
   }
   if (body.kind !== undefined) {
-    if (!['flag', 'slot'].includes(body.kind)) throw bad('Ein Zusatz ist entweder "flag" oder "slot".');
+    if (!['flag', 'slot'].includes(body.kind)) throw bad('Ein Zusatz ist entweder "flag" oder "slot".', { en: 'An add-on is either "flag" or "slot".' });
     out.kind = body.kind;
   }
   if (out.key !== undefined) {
     out.key = String(out.key).toLowerCase().replace(/[^a-z0-9-]/g, '');
-    if (!out.key) throw bad('Der Zusatz braucht ein Kürzel (nur a–z, 0–9 und -).');
+    if (!out.key) throw bad('Der Zusatz braucht ein Kürzel (nur a–z, 0–9 und -).', { en: 'The add-on needs a slug (a–z, 0–9 and - only).' });
   }
-  if (out.name_de !== undefined && !String(out.name_de).trim()) throw bad('Der Zusatz braucht einen Namen.');
+  if (out.name_de !== undefined && !String(out.name_de).trim()) throw bad('Der Zusatz braucht einen Namen.', { en: 'The add-on needs a name.' });
   return { ...existing, ...out };
 }
 
@@ -2895,7 +2899,7 @@ admin.post(
       sort: 50,
     });
     if (db.prepare('SELECT 1 FROM addons WHERE key = ?').get(values.key)) {
-      throw bad('Dieses Kürzel gibt es schon.');
+      throw bad('Dieses Kürzel gibt es schon.', { en: 'That slug is already taken.' });
     }
     const info = db
       .prepare(
@@ -2912,10 +2916,10 @@ admin.patch(
   '/addons/:id',
   wrap((req, res) => {
     const addon = billing.addonById(requireInt(req.params.id, 'Zusatz'));
-    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.');
+    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.', { en: 'No such add-on.' });
     const values = addonValues(req.body || {});
     const keys = Object.keys(values);
-    if (!keys.length) throw bad('Nichts zu ändern.');
+    if (!keys.length) throw bad('Nichts zu ändern.', { en: 'Nothing to change.' });
     db.prepare(`UPDATE addons SET ${keys.map((key) => `${key} = @${key}`).join(', ')} WHERE id = @id`).run({
       ...values,
       id: addon.id,
@@ -2929,9 +2933,13 @@ admin.delete(
   '/addons/:id',
   wrap((req, res) => {
     const addon = billing.addonById(requireInt(req.params.id, 'Zusatz'));
-    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.');
+    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.', { en: 'No such add-on.' });
     const used = db.prepare('SELECT COUNT(*) AS n FROM profile_addons WHERE addon_id = ?').get(addon.id).n;
-    if (used) throw bad(`${used} Serverplätze haben diesen Zusatz gebucht. Lieber auf "nicht buchbar" stellen.`);
+    if (used) {
+      throw bad(`${used} Serverplätze haben diesen Zusatz gebucht. Lieber auf "nicht buchbar" stellen.`, {
+        en: `${used} server slot(s) have booked this add-on. Set it to "not bookable" instead.`,
+      });
+    }
     db.prepare('DELETE FROM addons WHERE id = ?').run(addon.id);
     audit(req.user.id, 'addon-delete', { key: addon.key }, req.ip);
     res.json({ ok: true });
@@ -2949,7 +2957,7 @@ admin.get(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Server');
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(id);
-    if (!profile) throw notFound('Diesen Server gibt es nicht.');
+    if (!profile) throw notFound('Diesen Server gibt es nicht.', { en: 'No such server.' });
     const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(profile.user_id);
     const lang = langOf(req);
     const features = billing.featuresOf(profile);
@@ -3110,7 +3118,7 @@ admin.post(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Server');
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(id);
-    if (!profile) throw notFound('Diesen Server gibt es nicht.');
+    if (!profile) throw notFound('Diesen Server gibt es nicht.', { en: 'No such server.' });
     const locked = req.body?.locked !== false;
     const reason = String(req.body?.reason || '').slice(0, 200) || null;
     db.prepare('UPDATE profiles SET locked = ?, lock_reason = ? WHERE id = ?').run(
@@ -3143,10 +3151,10 @@ admin.post(
     // Ohne diese Zeile legte eine erfundene Nummer eine Zeile an, die zu keinem Serverplatz gehört
     // und die niemand je wieder sieht.
     if (!db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(id)) {
-      throw notFound('Diesen Server gibt es nicht.');
+      throw notFound('Diesen Server gibt es nicht.', { en: 'No such server.' });
     }
     const addon = billing.addonById(requireInt(req.body?.addon_id, 'Zusatz'));
-    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.');
+    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.', { en: 'No such add-on.' });
     const qty = requireInt(req.body?.qty ?? 1, 'Menge', { min: 0, max: addon.max_qty });
     if (qty > 0) {
       // `paid_credits` bleibt bei 0: Von Hand gelegt heißt geschenkt, und was nie bezahlt wurde,
@@ -3177,7 +3185,7 @@ admin.post(
   wrap(async (req, res) => {
     const id = requireInt(req.params.id, 'Benutzer');
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!user) throw notFound('Benutzer gibt es nicht.');
+    if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
     const subject = requireString(req.body?.subject, 'Betreff', { max: 160 });
     const body = requireString(req.body?.body, 'Nachricht', { max: 8000 });
     const category = ['announcement', 'security', 'billing', 'server', 'ticket'].includes(req.body?.category)
@@ -3190,11 +3198,13 @@ admin.post(
       { force: Boolean(req.body?.force) }
     );
     if (!result.ok) {
-      throw bad(
-        result.skipped
-          ? 'Dieser Kunde hat Nachrichten dieser Sorte abbestellt. Mit "trotzdem senden" geht es.'
-          : `E-Mail ließ sich nicht verschicken: ${result.error}`
-      );
+      throw result.skipped
+        ? bad('Dieser Kunde hat Nachrichten dieser Sorte abbestellt. Mit "trotzdem senden" geht es.', {
+            en: 'This customer has unsubscribed from mail of that kind. "Send anyway" sends it.',
+          })
+        : bad(`E-Mail ließ sich nicht verschicken: ${result.error}`, {
+            en: `The mail could not be sent: ${result.error}`,
+          });
     }
     audit(req.user.id, 'admin-mail', { user: id, subject }, req.ip);
     res.json({ ok: true });
@@ -3207,7 +3217,7 @@ admin.post(
   wrap((req, res) => {
     const id = requireInt(req.params.id, 'Benutzer');
     const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-    if (!owner) throw notFound('Benutzer gibt es nicht.');
+    if (!owner) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
     const ticket = tickets.create(owner, req.body || {}, {
       by: req.user.id,
       source: 'staff',
