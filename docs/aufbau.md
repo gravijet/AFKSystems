@@ -570,6 +570,25 @@ Die wichtigsten Tabellen:
 laufen beim Start, jede genau einmal, in einer Transaktion. Es gibt kein Zurück – ein Rückbau wäre
 eine neue Migration.
 
+### Zwei Dinge, die man beim Schreiben von Abfragen wissen sollte
+
+**`db.prepare(sql)` gibt dasselbe Statement zurück, wenn der Text derselbe ist.** SQL zu übersetzen
+kostet, und `db.prepare(...)` steht im Panel überall dort, wo die Abfrage gebraucht wird – im Profil
+des laufenden Dienstes war das Übersetzen der größte Einzelposten der Serverzeit. Ein geteiltes
+Statement ist unbedenklich, solange nur `.get()`, `.all()` und `.run()` benutzt werden; die tragen
+keinen Zustand von einem Aufruf zum nächsten. `.iterate()` täte es (ein halb gelesener Cursor),
+und `.pluck()`, `.raw()` und `.expand()` schalten das Statement dauerhaft um und träfen damit auch
+den nächsten Aufrufer. Wer eines davon braucht, baut sein Statement mit `prepareOnce(sql)`.
+
+**`cached(fn)` merkt sich ein Ergebnis, bis irgendwo geschrieben wird.** Damit stehen die Tarife,
+die Zusätze und die Einstellungen im Speicher statt in dutzenden Abfragen je Seitenaufruf. Wann der
+gemerkte Wert wegfällt, entscheidet SQLite und keine Liste von Stellen, die sich melden müssen:
+`total_changes()` zählt, was diese Verbindung geschrieben hat, `PRAGMA data_version` ändert sich,
+wenn eine **andere** Verbindung etwas festgeschrieben hat – und die gibt es wirklich, `npm run
+admin:credits` ist eine. Beide zusammen decken jeden Schreibvorgang ab, also kann der
+Zwischenspeicher nicht veralten; er wird nur öfter neu gebaut als nötig, und das kostet eine
+Abfrage über drei Zeilen. Der zurückgegebene Wert wird geteilt: lesen, nicht verändern.
+
 ---
 
 <a id="oberflaeche"></a>
@@ -584,7 +603,7 @@ public/
   assets/js/
     app.js          Dashboard: Rahmen, Seitenleiste, Router, WebSocket
     ui.js           Symbole, API-Aufrufe, Meldungen, Aussehen
-    i18n.js         alle Texte, beide Sprachen – von Server und Browser genutzt
+    i18n.js         alle Texte, beide Sprachen – die Quelle für Server und Browser
     chatlog.js      Chatzeilen zusammenlegen, §-Farben zerlegen – ebenfalls von beiden
     countries.js    die Länder der Rechnungsadresse – ebenfalls von beiden
     discord.js      Discord-Nachrichten als HTML: Erwähnungen mit Namen statt Zahlen
@@ -596,6 +615,20 @@ public/
 **Adressen mit Fingerabdruck:** `/assets/v/<hash>/css/app.css`. Der Hash steht über allem unter
 `public/assets`; ändert sich eine Datei, ändert sich die Adresse. Erst damit darf man lange cachen,
 ohne dass nach einem Deployment neues HTML auf altes CSS trifft.
+
+**Vorgepackt statt bei jeder Anfrage gepackt.** `deploy/install.sh` minimiert die Frontend-Dateien
+und legt zu jeder eine Brotli- und eine gzip-Fassung daneben (`app.css.br`, `app.css.gz` – siehe
+`scripts/protect-assets.mjs` und `server/assets.js`). Der Server liefert die passende aus, statt zu
+komprimieren. Weil das Packen damit einmal beim Ausrollen passiert und nicht bei jedem Besucher,
+darf es gründlich sein: Das Stylesheet geht mit 16 kB über die Leitung statt mit 20, und der Server
+verbraucht dafür keine Rechenzeit mehr. Gibt es die gepackten Dateien nicht (Entwicklung), läuft
+alles wie zuvor über `compression`.
+
+**Der Modulbaum steht im `<head>`.** Ein Browser findet ein Modul erst, wenn er das gelesen hat,
+das es importiert – app.js, daraus ui.js, daraus die Texte: drei Runden hintereinander, die größte
+Datei zuletzt. `pages.preload()` nennt den Baum deshalb vollständig als `modulepreload`, und alles
+lädt nebeneinander. Genannt wird nur, was für das erste Bild nötig ist; die Ansichten unter
+`views/` holt app.js weiterhin erst, wenn jemand hinsieht.
 
 **Die Seitenleiste** (`app.js`, Abschnitt *Seitenleiste*) ist ein Raster aus drei Zeilen: Kopf mit
 Marke und Suchfeld, scrollende Mitte, stehender Fuß mit Guthaben und Konto. Das Suchfeld filtert
@@ -614,9 +647,19 @@ beim Wechsel wird die Anmeldung zurückgesetzt.
 
 Englisch ist die Hauptsprache, Deutsch die zweite. Beide sind echte Adressen: `/en/…` und `/de/…`.
 
-Alle sichtbaren Texte stehen in **einer** Datei: `public/assets/js/i18n.js`. Node rendert daraus
-die festen Seiten, der Browser das Dashboard, und Fehlermeldungen der API kommen in derselben
-Sprache zurück (`HttpError` trägt beide Fassungen).
+Alle sichtbaren Texte stehen in **einer** Datei: `public/assets/js/i18n.js`, jeder Text in beiden
+Sprachen nebeneinander. Node rendert daraus die festen Seiten, und Fehlermeldungen der API kommen
+in derselben Sprache zurück (`HttpError` trägt beide Fassungen).
+
+**Der Browser bekommt nur eine Sprache.** Beide zu laden hieße rund tausendvierhundert Schlüssel
+doppelt – hundertdreißig Kilobyte JavaScript, das größte Stück auf dem Weg zum ersten Bild, und die
+Hälfte davon ungelesen. `server/strings.js` rechnet beim Hochfahren aus derselben Tabelle je Sprache
+ein eigenes Modul und liefert es unter `/assets/v/<hash>/js/i18n.<sprache>.js` aus; welches gilt,
+steht als `data-strings` am `<html>`, und `ui.js` lädt genau das.
+
+Wer einen Text ändert, ändert also weiterhin nur `i18n.js` – es gibt keine erzeugte Datei im
+Projekt und keinen Bauschritt, der vergessen werden könnte. Das `t()` im Browser nimmt deshalb
+**keine** Sprache mehr entgegen: Dort gibt es nur eine, und ein Wechsel lädt die Seite neu.
 
 Gemerkt wird die Sprache im Browser (`localStorage['afk-lang']`) und im Cookie `lang`, das der
 Server liest. Beim allerersten Besuch entscheidet `Accept-Language`. Angemeldete Konten speichern
@@ -635,7 +678,8 @@ sudo ./deploy/install.sh
 ```
 
 Kopiert nach `/opt/afksystems` (ohne `data/`), installiert Abhängigkeiten, minimiert die
-Frontend-Dateien, schreibt die systemd-Units, richtet nginx ein und startet neu.
+Frontend-Dateien und legt zu jeder eine gepackte Fassung daneben, schreibt die systemd-Units,
+richtet nginx ein und startet neu.
 
 ### Sichern
 
