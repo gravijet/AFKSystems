@@ -1010,7 +1010,24 @@ test('the Minecraft ping reads a real status packet and lets nothing from a stra
   await new Promise((resolve) => dead.close(resolve));
   const gone = await mcping.ping('127.0.0.1', deadPort);
   assert.equal(gone.online, false);
-  assert.match(gone.error, /Port lauscht nichts|Verbindung/);
+
+  // **Der Grund ist ein Schlüssel und kein Satz.** Vorher standen hier fertige deutsche Sätze,
+  // und die gingen genau so in den Browser: Wer das Panel auf Englisch benutzte, bekam unter der
+  // englischen Überschrift eine deutsche Begründung. Der Wortlaut steht seither in i18n.js, und
+  // dieser Test hält beides zusammen – ein neuer Grund ohne Übersetzung fällt hier auf und nicht
+  // erst bei einem Kunden, dessen Server gerade aus ist.
+  const { S: STRINGS } = await import('../public/assets/js/i18n.js');
+  assert.equal(gone.error, 'refused');
+  for (const key of ['dns', 'refused', 'timeout', 'reset', 'unreachable', 'closed', 'oversize', 'protocol', 'malformed', 'unknown']) {
+    const entry = STRINGS[`mcstatus.${key}`];
+    assert.ok(entry, `mcstatus.${key} fehlt in i18n.js`);
+    assert.ok(entry.de && entry.en, `mcstatus.${key} fehlt eine Sprache`);
+  }
+  // Und was der Ping wirklich zurückgibt, ist genau einer davon.
+  const reasons = fs.readFileSync(new URL('../server/mcping.js', import.meta.url), 'utf8');
+  for (const [, key] of reasons.matchAll(/failed\('([a-z]+)'\)/g)) {
+    assert.ok(STRINGS[`mcstatus.${key}`], `mcping meldet "${key}", i18n.js kennt es nicht`);
+  }
 });
 
 /**
@@ -3002,6 +3019,85 @@ test('the browser gets one language of the texts, and it really is a module', as
   assert.equal(ask('/assets/v/jetzt/js/i18n.kl.js').passed, true);
   assert.equal(ask('/assets/v/jetzt/js/app.js').passed, true);
   assert.equal(ask('/assets/v/jetzt/js/views/i18n.de.js').passed, true);
+});
+
+/**
+ * Jede Fehlermeldung, die ein Mensch zu sehen bekommt, gibt es in beiden Sprachen.
+ *
+ * Das Panel hat zwei echte Sprachen, und `HttpError` trägt beide Fassungen – aber nur, wenn die
+ * Aufrufstelle die englische mitgibt. Fünfundfünfzig Stellen in der Verwaltung taten das nicht:
+ * Wer das Panel auf Englisch benutzte, bekam dort deutsche Sätze wie "Diesen Tarif gibt es
+ * nicht." Dasselbe galt für die Feldnamen der Eingabeprüfungen – "Sichtweite has to be a number."
+ *
+ * Beides ist nichts, was beim Programmieren auffällt: Der Weg funktioniert ja, er antwortet nur
+ * in der falschen Sprache, und wer ihn baut, liest ohnehin Deutsch. Deshalb steht die Prüfung
+ * hier und nicht in einer Sichtprüfung, die jemand einmal macht.
+ */
+test('every error a person reads exists in both languages', () => {
+  const dir = fileURLToPath(new URL('../server', import.meta.url));
+  const files = [];
+  const walk = (at) => {
+    for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.js')) files.push(full);
+    }
+  };
+  walk(dir);
+
+  /** Vom Aufruf bis zur schließenden Klammer – Zeichenketten zählen dabei nicht mit. */
+  const callAt = (source, from) => {
+    let index = from;
+    let depth = 1;
+    let quote = null;
+    let escaped = false;
+    while (index < source.length && depth > 0) {
+      const char = source[index];
+      if (quote) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === quote) quote = null;
+      } else if (char === "'" || char === '"' || char === '`') quote = char;
+      else if (char === '(') depth += 1;
+      else if (char === ')') depth -= 1;
+      index += 1;
+    }
+    return source.slice(from, index);
+  };
+
+  const missing = [];
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    const calls = /(?:new HttpError\(|(?<![\w.])(?:bad|forbidden|notFound)\()/g;
+    let match;
+    while ((match = calls.exec(source))) {
+      // Beispiele in Kommentaren sind keine Aufrufe.
+      const lineStart = source.lastIndexOf('\n', match.index) + 1;
+      if (/^\s*(\*|\/\/)/.test(source.slice(lineStart, match.index))) continue;
+      const call = callAt(source, calls.lastIndex);
+      // Ohne festen Text gibt es nichts zu übersetzen: `bad(result.error)` reicht eine fremde
+      // Meldung durch, `forbidden()` nimmt die zweisprachige Vorgabe.
+      if (!/['"`]/.test(call)) continue;
+      if (/\ben\s*:/.test(call)) continue;
+      const line = source.slice(0, match.index).split('\n').length;
+      missing.push(`${path.relative(dir, file)}:${line}  ${call.replace(/\s+/g, ' ').slice(0, 70)}`);
+    }
+  }
+  assert.deepEqual(missing, [], `Fehlermeldungen ohne englische Fassung:\n${missing.join('\n')}`);
+
+  // Und die Feldnamen der Eingabeprüfungen. Sie stehen im Aufruf auf Deutsch; die Tabelle in
+  // util.js macht daraus das englische Wort.
+  const utilSource = fs.readFileSync(path.join(dir, 'util.js'), 'utf8');
+  const table = utilSource.slice(utilSource.indexOf('const FIELD_EN'), utilSource.indexOf('const fieldEn'));
+  const known = new Set([...table.matchAll(/^\s*'?([^':\n]+?)'?:\s*'/gm)].map((entry) => entry[1].trim()));
+  const untranslated = new Set();
+  for (const file of files) {
+    const source = fs.readFileSync(file, 'utf8');
+    for (const [, name] of source.matchAll(/require(?:String|Int)\([^,]+,\s*'([^']+)'/g)) {
+      if (!known.has(name)) untranslated.add(name);
+    }
+  }
+  assert.deepEqual([...untranslated], [], 'Feldnamen ohne englische Fassung');
 });
 
 test('merging only the tail of a chat history gives exactly the full result', () => {

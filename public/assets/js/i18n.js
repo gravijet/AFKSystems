@@ -840,6 +840,50 @@ export const S = {
   'srv.statusPlayers': { en: '{n} of {max} players', de: '{n} von {max} Spielern' },
   'srv.statusSrv': { en: 'points to {host}', de: 'zeigt auf {host}' },
 
+  // Warum der Zielserver nicht geantwortet hat. Die Schlüssel kommen aus `server/mcping.js`; dort
+  // steht seit dieser Fassung nur noch, *was* los war, und der Wortlaut hier. Jeder Satz nennt
+  // die wahrscheinliche Ursache – „Verbindung abgelehnt“ allein hat noch niemandem geholfen.
+  'mcstatus.dns': {
+    en: 'There is no such address (DNS). Check it for typos.',
+    de: 'Diese Adresse gibt es nicht (DNS). Bitte auf Tippfehler prüfen.',
+  },
+  'mcstatus.refused': {
+    en: 'The address answers, but nothing is listening on that port.',
+    de: 'Die Adresse antwortet, aber auf diesem Port lauscht nichts.',
+  },
+  'mcstatus.timeout': {
+    en: 'No answer within five seconds – the server is off, or a firewall sits in between.',
+    de: 'Keine Antwort innerhalb von fünf Sekunden – der Server ist aus, oder eine Firewall sitzt dazwischen.',
+  },
+  'mcstatus.reset': {
+    en: 'The server dropped the connection.',
+    de: 'Der Server hat die Verbindung abgebrochen.',
+  },
+  'mcstatus.unreachable': {
+    en: 'There is no route to that address.',
+    de: 'Zu dieser Adresse führt kein Weg.',
+  },
+  'mcstatus.closed': {
+    en: 'The server closed the connection without a word.',
+    de: 'Der Server hat die Verbindung ohne ein Wort geschlossen.',
+  },
+  'mcstatus.oversize': {
+    en: 'The answer was absurdly large and was discarded.',
+    de: 'Die Antwort war unsinnig groß und wurde verworfen.',
+  },
+  'mcstatus.protocol': {
+    en: 'The server answered, but not with a Minecraft status.',
+    de: 'Der Server hat geantwortet, aber nicht mit einem Minecraft-Status.',
+  },
+  'mcstatus.malformed': {
+    en: 'The server answered with something that is not a Minecraft status.',
+    de: 'Der Server hat etwas geantwortet, das kein Minecraft-Status ist.',
+  },
+  'mcstatus.unknown': {
+    en: 'The connection failed for an unknown reason.',
+    de: 'Die Verbindung ist aus unbekanntem Grund gescheitert.',
+  },
+
   'srv.clientOldHint': {
     en: 'This bot started with that version. A newer one is on disk.',
     de: 'Mit dieser Fassung ist der Bot gestartet. Auf der Platte liegt eine neuere.',

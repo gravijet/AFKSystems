@@ -163,7 +163,10 @@ async function exchange(entry, code) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw bad(`${entry.label}: ${data?.error_description || data?.error || response.status}`);
+    // Der Wortlaut kommt vom Anbieter und ist auf Englisch – in beiden Sprachen steht deshalb
+    // dasselbe. Übersetzt ist nur das, was wir selbst dazu sagen: von wem die Absage kommt.
+    const why = data?.error_description || data?.error || response.status;
+    throw bad(`${entry.label}: ${why}`, { en: `${entry.label}: ${why}` });
   }
   return data.access_token;
 }

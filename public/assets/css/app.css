@@ -2394,21 +2394,25 @@ body.site {
   font-variant-numeric: tabular-nums;
 }
 
-/* Der Zustandspunkt eines Serverplatzes: läuft, steht, stillgelegt, leer. */
+/* Der Zustandspunkt eines Serverplatzes: läuft, steht, stillgelegt, leer.
+ *
+ * Die Zustände tragen ein `is-` vor sich. Ohne das hieß „dieser Platz hat noch kein Konto“
+ * schlicht `empty` – und `.empty` weiter oben ist der leere Zustand einer ganzen Ansicht, mit
+ * 3 rem Innenabstand und Fläche. Aus einem Punkt von 8 px wurde damit ein grauer Kasten. */
 .side-dot {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 999px;
   background: var(--line);
 }
-.side-dot.ok {
+.side-dot.is-ok {
   background: var(--ok);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent);
 }
-.side-dot.idle {
+.side-dot.is-idle {
   background: var(--text-2);
 }
-.side-dot.warn {
+.side-dot.is-warn {
   background: var(--warn);
 }
 
@@ -3197,8 +3201,34 @@ dialog.palette {
 
 /* Die Unterreiter eines Serverplatzes in der Seitenleiste. */
 
+/*
+ * Reiterleisten, die umbrechen dürfen.
+ *
+ * Die schmale Fassung von `.tabs` schiebt alles in eine Zeile und lässt sie seitlich scrollen.
+ * Für vier Reiter ist das richtig. Ein Serverplatz mit Ultra-Tarif hat elf – Verbinden bis
+ * Einstellungen –, und die letzten beiden standen damit auf einem 1440-px-Bildschirm einfach
+ * außerhalb: kein Pfeil, kein Schatten, nichts, was sie ankündigt. Sie waren nur über die
+ * Seitenleiste erreichbar, und wer die eingeklappt hatte, fand sie gar nicht.
+ *
+ * Umgebrochen ist jeder Reiter zu sehen. `flex: 0 1 auto` gehört dazu: Ohne das wüchsen die zwei
+ * Reiter der zweiten Zeile auf je eine halbe Bildschirmbreite an.
+ */
 .tabs.wrap {
   flex-wrap: wrap;
+}
+.tabs.wrap a {
+  flex: 0 1 auto;
+  padding-inline: 0.95rem;
+}
+/* Auf dem Handy bleibt es beim Scrollen: elf Reiter untereinander wären dort vier Zeilen und
+   damit das halbe Bild, bevor der Inhalt anfängt. */
+@media (max-width: 640px) {
+  .tabs.wrap {
+    flex-wrap: nowrap;
+  }
+  .tabs.wrap a {
+    flex: 1 0 7.5rem;
+  }
 }
 
 /* Der Streifen, wenn ein Administrator ein fremdes Konto ansieht. */

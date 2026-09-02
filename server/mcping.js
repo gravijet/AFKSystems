@@ -132,17 +132,17 @@ export function ping(host, port = 25565, { timeout = TIMEOUT_MS } = {}) {
     };
     const failed = (message) => finish({ online: false, error: message });
 
-    const timer = setTimeout(() => failed('Keine Antwort innerhalb von fünf Sekunden.'), timeout);
+    const timer = setTimeout(() => failed('timeout'), timeout);
     timer.unref?.();
 
     const socket = net.createConnection({ host, port, timeout });
     socket.setNoDelay(true);
 
     socket.on('error', (error) => failed(reason(error)));
-    socket.on('timeout', () => failed('Keine Antwort innerhalb von fünf Sekunden.'));
+    socket.on('timeout', () => failed('timeout'));
     // Ein Server, der die Verbindung ohne ein Wort schließt, ist online und redet nicht mit uns –
     // das ist etwas anderes als „nicht erreichbar“ und gehört auch anders dazustehen.
-    socket.on('close', () => failed('Der Server hat die Verbindung ohne Antwort geschlossen.'));
+    socket.on('close', () => failed('closed'));
 
     socket.on('connect', () => {
       socket.write(
@@ -157,13 +157,13 @@ export function ping(host, port = 25565, { timeout = TIMEOUT_MS } = {}) {
 
     socket.on('data', (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
-      if (buffer.length > MAX_RESPONSE) return failed('Die Antwort ist unsinnig groß.');
+      if (buffer.length > MAX_RESPONSE) return failed('oversize');
       try {
         if (expected === null) {
           const length = readVarInt(buffer);
           if (!length) return; // Das Längenpräfix ist noch nicht vollständig da.
           expected = length.size + length.value;
-          if (length.value > MAX_RESPONSE) return failed('Die Antwort ist unsinnig groß.');
+          if (length.value > MAX_RESPONSE) return failed('oversize');
         }
         if (buffer.length < expected) return; // Noch nicht alles da – weiter sammeln.
 
@@ -171,13 +171,13 @@ export function ping(host, port = 25565, { timeout = TIMEOUT_MS } = {}) {
         let offset = readVarInt(buffer).size;
         const id = readVarInt(buffer, offset);
         offset += id.size;
-        if (id.value !== 0x00) return failed('Der Server antwortet nicht mit einem Status.');
+        if (id.value !== 0x00) return failed('protocol');
         const size = readVarInt(buffer, offset);
         offset += size.size;
         const json = buffer.subarray(offset, offset + size.value).toString('utf8');
         finish({ ...view(JSON.parse(json)), online: true, latency_ms: Date.now() - started });
       } catch {
-        failed('Der Server hat etwas geantwortet, das kein Minecraft-Status ist.');
+        failed('malformed');
       }
     });
   });
@@ -189,14 +189,27 @@ const portBytes = (port) => {
   return out;
 };
 
-/** Aus dem Fehler des Betriebssystems ein Satz, mit dem jemand etwas anfangen kann. */
+/**
+ * Aus dem Fehler des Betriebssystems ein Schlüssel, kein Satz.
+ *
+ * Hier standen fertige deutsche Sätze, und die gingen genau so in den Browser: Wer das Panel auf
+ * Englisch benutzte, bekam unter der englischen Überschrift „The Minecraft server did not answer“
+ * die Zeile „Diese Adresse gibt es nicht (DNS)“. Der Wortlaut gehört dorthin, wo jeder andere
+ * sichtbare Text steht – in `i18n.js`, in beiden Sprachen –, und die Antwort der API sagt nur
+ * noch, *was* los war. Die Schlüssel heißen `mcstatus.<name>`.
+ */
+const REASONS = {
+  ENOTFOUND: 'dns',
+  EAI_AGAIN: 'dns',
+  ECONNREFUSED: 'refused',
+  ETIMEDOUT: 'timeout',
+  ECONNRESET: 'reset',
+  EHOSTUNREACH: 'unreachable',
+  ENETUNREACH: 'unreachable',
+};
+
 function reason(error) {
-  const code = error?.code || '';
-  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'Diese Adresse gibt es nicht (DNS).';
-  if (code === 'ECONNREFUSED') return 'Die Adresse antwortet, aber auf diesem Port lauscht nichts.';
-  if (code === 'ETIMEDOUT') return 'Keine Antwort – der Server ist aus oder eine Firewall dazwischen.';
-  if (code === 'ECONNRESET') return 'Der Server hat die Verbindung abgebrochen.';
-  return error?.message || 'Unbekannter Fehler.';
+  return REASONS[error?.code || ''] || 'unknown';
 }
 
 // ---------------------------------------------------------------- Was davon ins Panel darf
