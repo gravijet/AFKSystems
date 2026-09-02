@@ -1041,7 +1041,7 @@ async function tabConnect(root, profile) {
   }
 
   async function attach() {
-    if (!free.length) return toast(tr('common.none'));
+    if (!free.length) return toast(tr('srv.addNoneLeft'));
     const data = await formDialog(
       tr('srv.addAccounts'),
       [
@@ -2208,7 +2208,7 @@ async function tabProxies(root, profile) {
                     member.name
                   )}</span></td>
                   <td><select data-proxy="${member.account_id}" style="max-width:22rem">
-                    <option value="">${escapeHtml(tr('common.none'))}</option>
+                    <option value="">${escapeHtml(tr('common.nothing'))}</option>
                     ${data.proxies
                       .map(
                         (proxy) =>
@@ -2810,7 +2810,7 @@ async function tabPlan(root, profile) {
         value: String(node.id),
         label: `${node.name}${node.region ? ` · ${node.region}` : ''}`,
       }));
-    if (!options.length) return toast(tr('common.none'));
+    if (!options.length) return toast(tr('nd.noneLeft'));
     const answer = await formDialog(
       tr('nd.change'),
       [

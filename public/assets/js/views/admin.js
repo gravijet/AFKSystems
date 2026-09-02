@@ -35,7 +35,7 @@ const bilingual = (row, field) =>
   String((lang === 'de' ? row?.[`${field}_de`] : row?.[`${field}_en`]) || row?.[`${field}_de`] || row?.[`${field}_en`] || '');
 
 const accountKindLabel = (kind) =>
-  tr(kind === 'offline' ? 'acc.kind.offline' : kind === 'microsoft' ? 'acc.kind.microsoft' : 'common.none');
+  tr(kind === 'offline' ? 'acc.kind.offline' : kind === 'microsoft' ? 'acc.kind.microsoft' : 'common.unknown');
 
 const accountStatusLabel = (status) => {
   const keys = { ok: 'acc.ok', pending: 'acc.pending', error: 'acc.error' };

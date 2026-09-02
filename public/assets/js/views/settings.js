@@ -868,7 +868,7 @@ function loginCodeBody(data) {
                   <span class="device-icon">${icon(deviceIcon(entry.agent))}</span>
                   <div class="grow" style="min-width:0">
                     <div class="row" style="gap:.5rem">
-                      <span class="strong truncate">${escapeHtml(entry.device || tr('common.none'))}</span>
+                      <span class="strong truncate">${escapeHtml(entry.device || tr('set.deviceUnknown'))}</span>
                       ${
                         entry.current
                           ? `<span class="pill primary">${escapeHtml(tr('set.deviceCurrent'))}</span>`
@@ -917,7 +917,7 @@ function sessionsBody(sessions) {
             <span class="device-icon">${icon(deviceIcon(session.agent))}</span>
             <div class="grow" style="min-width:0">
               <div class="row" style="gap:.5rem">
-                <span class="strong truncate">${escapeHtml(session.device || tr('common.none'))}</span>
+                <span class="strong truncate">${escapeHtml(session.device || tr('set.deviceUnknown'))}</span>
                 ${
                   session.current
                     ? `<span class="pill primary">${escapeHtml(tr('set.sessionCurrent'))}</span>`
