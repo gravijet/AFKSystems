@@ -109,6 +109,14 @@ else
   echo "Kein nginx mit sites-available gefunden, Schritt übersprungen."
 fi
 
+echo "== Externe Sicherung =="
+if [ -f /etc/afksystems/backup.conf ]; then
+  "$QUELLE/deploy/install-backup.sh"
+  echo "Vorhandene externe Sicherung aktualisiert."
+else
+  echo "Nicht eingerichtet – optional mit deploy/install-backup.sh einrichten."
+fi
+
 echo
 echo "Fertig. Prüfen:"
 echo "  curl -s localhost:3010/api/health"

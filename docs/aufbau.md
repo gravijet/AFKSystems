@@ -740,6 +740,36 @@ sqlite3 /opt/afksystems/data/afksystems.db ".backup '/pfad/sicherung.db'"
 Dazu gehört `data/users/` (die Microsoft-Anmeldungen). Ohne die müssten alle Konten neu verbunden
 werden – und weil sie in keine Sicherung aus dem Browser gehören, bleiben sie dort auch draußen.
 
+### Sicherung auf einen zweiten Server
+
+`deploy/install-backup.sh` richtet zusätzlich einen systemd-Timer ein. Er überträgt alle sechs
+Stunden einen vollständigen Wiederherstellungsstand auf einen zweiten Server: eine mit der
+SQLite-Online-Sicherung erzeugte Datenbank, `data/users/`, die übrigen dauerhaften Panel-Daten
+sowie die `.env`-Dateien von Panel und Discord-Bot. `data/backups/` wird ausgelassen, weil die
+externe Sicherung selbst bereits versioniert ist.
+
+```bash
+sudo BACKUP_REMOTE=benj@server \
+  BACKUP_DEST=/var/backups/afksystems \
+  ./deploy/install-backup.sh
+```
+
+Der Installer erzeugt einen eigenen SSH-Schlüssel. Nur dessen öffentlichen Teil am Ziel unter
+`~/.ssh/authorized_keys` hinterlegen und den Ziel-Hostschlüssel lokal in
+`/etc/afksystems/backup_known_hosts` aufnehmen; ein SSH-Passwort wird nirgends gespeichert. Danach:
+
+```bash
+sudo systemctl start afksystems-backup.service
+systemctl status afksystems-backup.service
+systemctl list-timers afksystems-backup.timer
+```
+
+Jeder Stand wird zunächst unter `.incoming-*` übertragen und per SHA-256 geprüft. Erst danach wird
+er zu `snapshot-<UTC-Zeit>` umbenannt und `latest` darauf gesetzt. Unveränderte Dateien sind mit
+dem vorherigen Stand hart verlinkt, damit vier Sicherungen am Tag nicht viermal denselben Platz
+brauchen. Die Vorgabe behält 56 Stände (etwa 14 Tage); `BACKUP_KEEP` in
+`/etc/afksystems/backup.conf` ändert diese Grenze.
+
 ### Nachsehen
 
 ```bash

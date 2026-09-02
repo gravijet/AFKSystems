@@ -1,0 +1,11 @@
+[Unit]
+Description=AFKSystems alle sechs Stunden extern sichern
+
+[Timer]
+OnCalendar=*-*-* 00,06,12,18:17:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=afksystems-backup.service
+
+[Install]
+WantedBy=timers.target

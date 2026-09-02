@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Erstellt einen konsistenten Stand der dauerhaften Panel-Daten und uebertraegt ihn per SSH.
+# Die Verbindung und das Ziel kommen aus /etc/afksystems/backup.conf; Passwoerter gehoeren dort
+# nicht hinein. Fuer den unbeaufsichtigten Betrieb wird ein eigener SSH-Schluessel verwendet.
+
+set -euo pipefail
+
+SOURCE="${BACKUP_SOURCE:-/opt/afksystems}"
+REMOTE="${BACKUP_REMOTE:?BACKUP_REMOTE fehlt}"
+DEST="${BACKUP_DEST:?BACKUP_DEST fehlt}"
+KEEP="${BACKUP_KEEP:-56}"
+IDENTITY="${BACKUP_IDENTITY:-/etc/afksystems/backup_ed25519}"
+KNOWN_HOSTS="${BACKUP_KNOWN_HOSTS:-/etc/afksystems/backup_known_hosts}"
+
+[[ "$SOURCE" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "Ungueltiger Quellpfad." >&2; exit 2; }
+[[ "$REMOTE" =~ ^[A-Za-z0-9._-]+@[A-Za-z0-9._-]+$ ]] || { echo "Ungueltiges SSH-Ziel." >&2; exit 2; }
+[[ "$DEST" =~ ^/[A-Za-z0-9._/-]+$ ]] || { echo "Ungueltiger Zielpfad." >&2; exit 2; }
+[[ "$KEEP" =~ ^[0-9]+$ ]] && (( KEEP >= 2 && KEEP <= 1000 )) || {
+  echo "BACKUP_KEEP muss zwischen 2 und 1000 liegen." >&2
+  exit 2
+}
+[[ -r "$SOURCE/data/afksystems.db" ]] || { echo "Panel-Datenbank fehlt." >&2; exit 1; }
+[[ -r "$IDENTITY" && -r "$KNOWN_HOSTS" ]] || { echo "SSH-Schluessel oder known_hosts fehlt." >&2; exit 1; }
+
+exec 9>/run/lock/afksystems-backup.lock
+flock -n 9 || { echo "Eine Sicherung laeuft bereits." >&2; exit 0; }
+
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+SNAPSHOT="snapshot-$STAMP"
+INCOMING=".incoming-$STAMP"
+STAGE="$(mktemp -d /var/tmp/afksystems-backup.XXXXXX)"
+SSH=(ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+  -o "UserKnownHostsFile=$KNOWN_HOSTS" -o "IdentityFile=$IDENTITY" "$REMOTE")
+COMPLETE=0
+
+cleanup() {
+  rm -rf -- "$STAGE"
+  if (( COMPLETE == 0 )); then
+    "${SSH[@]}" bash -s -- "$DEST" "$INCOMING" <<'REMOTE_CLEANUP' >/dev/null 2>&1 || true
+set -e
+base="$1"
+incoming="$2"
+[[ "$base" =~ ^/[A-Za-z0-9._/-]+$ && "$incoming" =~ ^\.incoming-[0-9]{8}T[0-9]{6}Z$ ]] || exit 2
+rm -rf -- "$base/$incoming"
+REMOTE_CLEANUP
+  fi
+}
+trap cleanup EXIT
+
+umask 077
+install -d -m 0700 "$STAGE/data" "$STAGE/bot"
+
+# Der Datenbestand darf weiterlaufen. Nur die SQLite-Dateien werden ausgelassen und anschliessend
+# ueber die eingebaute Online-Sicherung konsistent erzeugt. Lokale Datenbank-Sicherungen werden
+# nicht noch einmal vervielfacht; Xeon2 bekommt bei jedem Lauf einen eigenen aktuellen Stand.
+rsync -a --no-owner --no-group --no-perms \
+  --exclude '/afksystems.db' \
+  --exclude '/afksystems.db-shm' \
+  --exclude '/afksystems.db-wal' \
+  --exclude '/backups/' \
+  "$SOURCE/data/" "$STAGE/data/"
+sqlite3 "$SOURCE/data/afksystems.db" ".backup '$STAGE/data/afksystems.db'"
+chmod 0600 "$STAGE/data/afksystems.db"
+[[ "$(sqlite3 "$STAGE/data/afksystems.db" 'PRAGMA integrity_check;')" == 'ok' ]] || {
+  echo "Die erzeugte Datenbank-Sicherung ist nicht integer." >&2
+  exit 1
+}
+
+if [[ -f "$SOURCE/.env" ]]; then
+  install -m 0600 "$SOURCE/.env" "$STAGE/.env"
+fi
+if [[ -f "$SOURCE/bot/.env" ]]; then
+  install -m 0600 "$SOURCE/bot/.env" "$STAGE/bot/.env"
+fi
+
+printf '%s\n' \
+  'AFKSystems-Sicherung' \
+  "Erstellt (UTC): $STAMP" \
+  'Rueckspielung: Panel stoppen, data/ und die benoetigten .env-Dateien zurueckkopieren,' \
+  'Eigentuemer auf afksystems:afksystems und Rechte auf 0700/0600 setzen, Panel starten.' \
+  >"$STAGE/RESTORE.txt"
+
+( cd "$STAGE" && find . -type f ! -name MANIFEST.sha256 -print0 | sort -z | xargs -0 sha256sum ) \
+  >"$STAGE/MANIFEST.sha256"
+
+"${SSH[@]}" bash -s -- "$DEST" "$INCOMING" <<'REMOTE_PREPARE'
+set -euo pipefail
+umask 077
+base="$1"
+incoming="$2"
+[[ "$base" =~ ^/[A-Za-z0-9._/-]+$ && "$incoming" =~ ^\.incoming-[0-9]{8}T[0-9]{6}Z$ ]] || exit 2
+install -d -m 0700 "$base"
+test ! -e "$base/$incoming"
+mkdir -m 0700 "$base/$incoming"
+REMOTE_PREPARE
+
+rsync -a --no-owner --no-group --checksum --whole-file --delete --link-dest='../latest' \
+  -e "ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KNOWN_HOSTS -o IdentityFile=$IDENTITY" \
+  "$STAGE/" "$REMOTE:$DEST/$INCOMING/"
+
+"${SSH[@]}" bash -s -- "$DEST" "$INCOMING" "$SNAPSHOT" "$KEEP" <<'REMOTE_FINISH'
+set -euo pipefail
+base="$1"
+incoming="$2"
+snapshot="$3"
+keep="$4"
+[[ "$base" =~ ^/[A-Za-z0-9._/-]+$ ]] || exit 2
+[[ "$incoming" =~ ^\.incoming-[0-9]{8}T[0-9]{6}Z$ ]] || exit 2
+[[ "$snapshot" =~ ^snapshot-[0-9]{8}T[0-9]{6}Z$ ]] || exit 2
+[[ "$keep" =~ ^[0-9]+$ ]] || exit 2
+
+( cd "$base/$incoming" && sha256sum --quiet -c MANIFEST.sha256 )
+mv -- "$base/$incoming" "$base/$snapshot"
+ln -sfn -- "$snapshot" "$base/latest"
+
+mapfile -t snapshots < <(find "$base" -mindepth 1 -maxdepth 1 -type d -name 'snapshot-*' -printf '%f\n' | sort)
+remove=$(( ${#snapshots[@]} - keep ))
+if (( remove > 0 )); then
+  for (( i = 0; i < remove; i++ )); do
+    [[ "${snapshots[$i]}" =~ ^snapshot-[0-9]{8}T[0-9]{6}Z$ ]] || exit 2
+    rm -rf -- "$base/${snapshots[$i]}"
+  done
+fi
+REMOTE_FINISH
+
+COMPLETE=1
+echo "Sicherung $SNAPSHOT erfolgreich nach $REMOTE:$DEST uebertragen."
