@@ -854,6 +854,14 @@ export const S = {
   },
   'srv.retryOf': { en: 'Attempt {n}/{max}', de: 'Versuch {n}/{max}' },
 
+  // Ereignisverlauf je Bot: nicht nur der aktuelle Zustand, sondern was wirklich passiert ist.
+  'srv.eventsTitle': { en: 'History', de: 'Verlauf' },
+  'srv.eventsEmpty': { en: 'Nothing recorded yet.', de: 'Noch nichts aufgezeichnet.' },
+  'srv.eventsCsv': { en: 'Download as CSV', de: 'Als CSV herunterladen' },
+  'srv.eventWorld': { en: 'Changed world', de: 'Welt gewechselt' },
+  'srv.eventDeath': { en: 'Died', de: 'Gestorben' },
+  'srv.eventDropped': { en: 'Lines dropped', de: 'Zeilen ausgelassen' },
+
   // Die neue Client-Fassung. Der Ton ist absichtlich ruhig: Nichts ist kaputt – ein Bot mit der
   // Fassung von letzter Woche tut, was er letzte Woche getan hat. Neu ist nur, dass es etwas
   // Neueres gibt, und dass der Weg dorthin durch einen Neustart führt.

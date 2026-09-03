@@ -1059,6 +1059,34 @@ router.delete(
   })
 );
 
+// ---------------------------------------------------------------- Ereignisverlauf
+//
+// Anders als der Chat (`historyOf`, aus dem Speicher des laufenden Prozesses) liest das hier aus
+// der Datenbank (`bot_events`, siehe supervisor.js `logEvent`/`eventsOf`) – ein Bot, der gerade
+// nicht läuft oder seit dem letzten Neustart des Panels ein neues `Bot`-Objekt ist, hat trotzdem
+// seinen Verlauf.
+
+router.get(
+  '/:id/events',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const since = Number(req.query.since) || 0;
+    const only = req.query.accounts
+      ? String(req.query.accounts).split(',').map(Number).filter(Boolean)
+      : null;
+
+    const events = [];
+    for (const member of membersOf(profile)) {
+      if (only && !only.includes(member.account_id)) continue;
+      for (const entry of supervisor.eventsOf(profile.id, member.account_id, since)) {
+        events.push({ ...entry, account_id: member.account_id, account: member.name });
+      }
+    }
+    events.sort((a, b) => a.t - b.t);
+    res.json({ events, now: Date.now() });
+  })
+);
+
 // ---------------------------------------------------------------- Chat
 
 router.get(

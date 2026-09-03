@@ -1805,6 +1805,63 @@ test('a bot that was in game comes back on its own – one that never got in doe
 });
 
 /**
+ * Bisher überschrieb jeder Zustandswechsel den vorherigen in `bots.state` – im Nachhinein ließ
+ * sich nur sagen, wo ein Bot gerade steht, nie, was in der letzten Stunde wirklich passiert ist.
+ * `bot_events` hält jeden nennenswerten Übergang für sich fest.
+ */
+test('meaningful bot transitions land in a durable timeline, transient ones do not, and old rows sweep away', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const bot = new Bot(
+    { emit: () => {}, macros: { onWorldChange: () => {}, onDeath: () => {}, onDisconnect: () => {} } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+
+  // `connecting`/`starting` sind Sekundenbruchteile zwischen zwei anderen Einträgen – Rauschen.
+  bot.setState('connecting', 'spielserver.de:25565');
+  bot.setState('starting');
+  assert.equal(supervisor.eventsOf(profile.id, account.id).length, 0);
+
+  bot.setState('online', 'Steve');
+  bot.onEvent('@event world grund=unterserver');
+  bot.onEvent('@event death');
+  bot.onEvent('@event output ausgelassen');
+  bot.setState('reconnecting', 'Versuch 1, in 5 s');
+
+  // Ein schneller Testlauf erzeugt alle fünf Zeilen leicht in derselben Millisekunde – genau der
+  // Fall, den auch eine echte Neuverbindungsschleife auslöst. Die Zeitstempel deshalb auseinander-
+  // ziehen (statt sich auf `Date.now()` zu verlassen), damit Reihenfolge und `since`-Filter beide
+  // etwas Eindeutiges zum Prüfen haben.
+  const ids = db
+    .prepare('SELECT id FROM bot_events WHERE profile_id = ? AND account_id = ? ORDER BY id ASC')
+    .all(profile.id, account.id)
+    .map((row) => row.id);
+  assert.equal(ids.length, 5);
+  const base = Date.now() - 5000;
+  ids.forEach((id, index) => db.prepare('UPDATE bot_events SET created_at = ? WHERE id = ?').run(base + index * 1000, id));
+
+  const events = supervisor.eventsOf(profile.id, account.id);
+  assert.deepEqual(events.map((entry) => entry.type), ['online', 'world', 'death', 'dropped', 'reconnecting']);
+  assert.equal(events[1].detail, 'unterserver');
+  assert.equal(events[3].detail, 'ausgelassen');
+  assert.equal(events[4].detail, 'Versuch 1, in 5 s');
+
+  // Nur ab einem Zeitpunkt – wie beim Chatverlauf.
+  const later = supervisor.eventsOf(profile.id, account.id, events[2].t);
+  assert.deepEqual(later.map((entry) => entry.type), ['dropped', 'reconnecting']);
+
+  // Uralte Zeilen räumt das stündliche Aufräumen weg, frische bleiben stehen.
+  db.prepare("UPDATE bot_events SET created_at = ? WHERE type = 'world'").run(
+    Date.now() - 40 * 24 * 60 * 60 * 1000
+  );
+  supervisor.cleanupEvents();
+  const survivors = supervisor.eventsOf(profile.id, account.id).map((entry) => entry.type);
+  assert.ok(!survivors.includes('world'));
+  assert.ok(survivors.includes('online') && survivors.includes('reconnecting'));
+});
+
+/**
  * Der Webhook eines Kunden meldet, was er bestellt hat – und leer heißt alles.
  *
  * Die Regel steht auf beiden Seiten (server/notify.js und views/settings.js) und ist die einzige
