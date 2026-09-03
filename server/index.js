@@ -178,6 +178,12 @@ const SERVICE_API = /^\/(bot|node|stripe)(\/|$)/;
 app.use('/api', (req, _res, next) => {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   if (SERVICE_API.test(req.path)) return next();
+  // Ein eigenes API-Token (siehe auth.js `attachUser`) ist gegen Website-übergreifendes Fälschen
+  // von sich aus gefeit: Ein fremdes Formular kann einen geheimen Bearer-Kopf nicht mitschicken,
+  // den es nicht kennt – anders als ein Cookie, das der Browser von sich aus anhängt. Ob das
+  // Token wirklich gültig ist, entscheidet ohnehin erst `requireUser` dahinter; ein geratener Kopf
+  // landet dort mit 401, nicht hier mit einer Ausnahme, die er nicht verdient hätte.
+  if (/^Bearer\s+\S+$/i.test(String(req.headers.authorization || ''))) return next();
   const reject = () =>
     next(
       new HttpError(403, 'Anfrage von einer fremden Website abgelehnt.', {
@@ -257,6 +263,31 @@ app.use((req, res, next) => {
   if (req.user?.role === 'admin') return next();
   if (!security.blockFor(req.ip)) return next();
   res.status(403).type('text/plain').send('Forbidden');
+});
+
+/**
+ * Ein API-Token ist enger als eine Sitzung im Browser: Es kann den eigenen Bot-Status lesen und
+ * Bots starten oder stoppen, sonst nichts. Kein Zugriff auf Zahlungen, Zugangsdaten, das Konto
+ * selbst oder – wichtig – auf die Tokenverwaltung: Ein einzelnes geleaktes Token darf sich nicht
+ * selbst weitere ausstellen. Was dazukommen soll, kommt hier dazu, nicht durch ein weiter
+ * gefasstes Token.
+ */
+const API_TOKEN_ALLOW = [
+  { method: 'GET', path: /^\/me$/ },
+  { method: 'GET', path: /^\/profiles$/ },
+  { method: 'GET', path: /^\/profiles\/\d+$/ },
+  { method: 'POST', path: /^\/profiles\/\d+\/start$/ },
+  { method: 'POST', path: /^\/profiles\/\d+\/stop$/ },
+];
+app.use('/api', (req, _res, next) => {
+  if (!req.apiToken) return next();
+  const allowed = API_TOKEN_ALLOW.some((rule) => rule.method === req.method && rule.path.test(req.path));
+  if (allowed) return next();
+  next(
+    new HttpError(403, 'Dieses Token darf diesen Weg nicht benutzen.', {
+      en: 'This token may not be used for this endpoint.',
+    })
+  );
 });
 
 app.use('/api', coreRouter);

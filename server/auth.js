@@ -4,7 +4,16 @@
 import { createHash, createHmac } from 'node:crypto';
 import { db, audit, getSetting } from './db.js';
 import { config } from './config.js';
-import { token, hashPassword, verifyPassword, passwordNeedsRehash, deviceOf, HttpError, bad } from './util.js';
+import {
+  token,
+  referralCode,
+  hashPassword,
+  verifyPassword,
+  passwordNeedsRehash,
+  deviceOf,
+  HttpError,
+  bad,
+} from './util.js';
 import { grant, planOf, isPayingUser, monthlyCost, freeAccess } from './billing.js';
 import * as mail from './mail.js';
 import * as linkedRoles from './linked-roles.js';
@@ -123,6 +132,68 @@ export function consumeAdminLoginLink(raw, adminId, ip = null) {
   return result;
 }
 
+// ---------------------------------------------------------------- API-Token
+
+/**
+ * Ein eigenes Zugangs-Token für Skripte und Automatisierung außerhalb des Panels.
+ *
+ * Der rohe Wert verlässt diese Funktion genau einmal – wie beim Einmal-Link oben steht in
+ * SQLite nur sein HMAC. Anders als eine Sitzung hat ein Token keine eigene Ablaufzeit: Es gilt,
+ * bis der Kunde es in den Einstellungen widerruft. Das Vorzeichen `afk_` macht es beim
+ * Wiederfinden in Protokollen oder einem versehentlich geteilten Bildschirm erkennbar.
+ */
+export function createApiToken(userId, label) {
+  const raw = `afk_${token(24)}`;
+  const now = Date.now();
+  db.prepare('INSERT INTO api_tokens (user_id, token, label, created_at) VALUES (?, ?, ?, ?)').run(
+    userId,
+    capabilityDigest('api-token', raw),
+    label,
+    now
+  );
+  audit(userId, 'api-token-created', { label });
+  return { token: raw, created_at: now };
+}
+
+export function apiTokensOf(userId) {
+  return db
+    .prepare(
+      'SELECT id, label, created_at, last_used_at FROM api_tokens WHERE user_id = ? ORDER BY created_at DESC'
+    )
+    .all(userId);
+}
+
+export function deleteApiToken(userId, id) {
+  const result = db.prepare('DELETE FROM api_tokens WHERE id = ? AND user_id = ?').run(id, userId);
+  if (result.changes) audit(userId, 'api-token-revoked', { id });
+  return result.changes > 0;
+}
+
+/**
+ * Wie `userForSession`, nur für den `Authorization`-Kopf statt des Sitzungs-Cookies.
+ *
+ * Genutzt wird höchstens alle paar Minuten geschrieben (siehe `SEEN_MS`) – dieselbe Zurückhaltung
+ * wie beim „zuletzt gesehen“ einer Sitzung, aus demselben Grund: Ein Skript, das im Sekundentakt
+ * den Bot-Status abfragt, soll dafür nicht im Sekundentakt eine Schreibzeile auslösen.
+ */
+export function userForApiToken(rawToken) {
+  const candidates = capabilityCandidates('api-token', rawToken);
+  if (!candidates.length) return null;
+  const row = db
+    .prepare(
+      `SELECT u.*, t.id AS token_id, t.last_used_at
+         FROM api_tokens t JOIN users u ON u.id = t.user_id
+        WHERE t.token IN (?, ?)`
+    )
+    .get(...candidates);
+  if (!row) return null;
+  const { token_id: tokenId, last_used_at: lastUsedAt, ...user } = row;
+  if (!lastUsedAt || Date.now() - lastUsedAt > SEEN_MS) {
+    db.prepare('UPDATE api_tokens SET last_used_at = ? WHERE id = ?').run(Date.now(), tokenId);
+  }
+  return user;
+}
+
 export function createSession(
   res,
   user,
@@ -209,6 +280,20 @@ export function attachUser(req, _res, next) {
       // ausgelöst, für eine Zahl, die auf die Minute genau niemanden interessiert.
       if (!user.last_seen_at || Date.now() - user.last_seen_at > SEEN_MS) {
         db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), user.id);
+      }
+    }
+  }
+  // Kein Sitzungs-Cookie getroffen: ein `Authorization`-Kopf könnte eines der eigenen API-Token
+  // eines Kunden sein. Beides gleichzeitig zu prüfen wäre unnötig – ein Browser mit Cookie schickt
+  // nie zusätzlich einen Bearer-Kopf, und ein Skript mit Token nie ein Cookie dieses Panels.
+  if (!req.user) {
+    const header = String(req.headers.authorization || '');
+    const match = /^Bearer\s+(\S+)$/i.exec(header);
+    if (match) {
+      const user = userForApiToken(match[1]);
+      if (user) {
+        req.user = user;
+        req.apiToken = true;
       }
     }
   }
@@ -333,7 +418,23 @@ export function checkPasswordPair(password, repeat, identity = null) {
   }
 }
 
-export function register({ email, username, password, password2, language = 'en' }) {
+/** Ein neuer, noch nicht vergebener Empfehlungscode. */
+export function newReferralCode() {
+  let code;
+  do {
+    code = referralCode();
+  } while (db.prepare('SELECT 1 FROM users WHERE referral_code = ?').get(code));
+  return code;
+}
+
+/** Wer hinter einem Empfehlungscode steht – oder niemand, wenn er nicht (mehr) existiert. */
+export function referrerFor(code) {
+  const value = String(code || '').trim().toUpperCase();
+  if (!value) return null;
+  return db.prepare('SELECT id FROM users WHERE referral_code = ?').get(value)?.id || null;
+}
+
+export function register({ email, username, password, password2, language = 'en', ref = null }) {
   const mailAddress = String(email || '').trim().toLowerCase();
   const name = String(username || '').trim();
   if (!EMAIL.test(mailAddress)) {
@@ -368,12 +469,16 @@ export function register({ email, username, password, password2, language = 'en'
   const role = count === 0 || (config.adminEmail && config.adminEmail === mailAddress) ? 'admin' : 'user';
   const needsVerification = mail.verifyRequired() && role !== 'admin';
   const verificationToken = needsVerification ? token(24) : null;
+  // Wer geworben hat, steht ab hier fest und lässt sich nicht mehr nachträglich setzen (siehe
+  // Migration 037). Ein unbekannter oder fehlender Code ist kein Fehler – die Anmeldung soll
+  // deswegen nicht scheitern, nur ohne Werber weitergehen.
+  const referredBy = referrerFor(ref);
 
   const info = db
     .prepare(
       `INSERT INTO users (email, username, password_hash, role, language, email_verified, verify_token,
-                          verify_sent_at, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                          verify_sent_at, created_at, referral_code, referred_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       mailAddress,
@@ -384,13 +489,15 @@ export function register({ email, username, password, password2, language = 'en'
       needsVerification ? 0 : 1,
       verificationToken ? capabilityDigest('verify-email', verificationToken) : null,
       needsVerification ? Date.now() : null,
-      Date.now()
+      Date.now(),
+      newReferralCode(),
+      referredBy
     );
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
   const bonus = Number(getSetting('signup_bonus')) || 0;
   if (bonus > 0) grant(user.id, bonus, 'bonus', 'Startguthaben');
-  audit(user.id, 'register', { role });
+  audit(user.id, 'register', { role, referred_by: referredBy });
   if (needsVerification) mail.sendVerification(user, verificationToken);
   return db.prepare('SELECT * FROM users WHERE id = ?').get(user.id);
 }

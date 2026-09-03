@@ -613,6 +613,11 @@ export const S = {
     en: 'Credits are running low: {credits} left, {cost} due per month.',
     de: 'Das Guthaben wird knapp: noch {credits}, fällig sind {cost} im Monat.',
   },
+  'ov.pov': { en: 'Live views', de: 'Live-Ansichten' },
+  'ov.povHint': {
+    en: '{n} bot(s) currently streaming a picture',
+    de: '{n} Bot(s) senden gerade ein Bild',
+  },
   'ov.quick': { en: 'Quick links', de: 'Schnellzugriff' },
 
   // ---------------------------------------------------------------- Zu erledigen
@@ -1169,6 +1174,16 @@ export const S = {
     de: 'Überweise den Betrag mit diesem Verwendungszweck. Die Credits kommen, sobald das Geld da ist.',
   },
   'bill.reference': { en: 'Reference', de: 'Verwendungszweck' },
+  'bill.referral': { en: 'Refer a friend', de: 'Freunde werben' },
+  'bill.referralSub': {
+    en: 'You and your friend each get {credits} credits on their first top-up.',
+    de: 'Du und dein Freund bekommt je {credits} Credits bei dessen erster Aufladung.',
+  },
+  'bill.referralLink': { en: 'Your referral link', de: 'Dein Empfehlungslink' },
+  'bill.referralStats': {
+    en: '{referred} signed up through your link so far, {rewarded} of them topped up and paid out.',
+    de: '{referred} haben sich bisher über deinen Link angemeldet, {rewarded} davon haben aufgeladen und ausgezahlt bekommen.',
+  },
   'bill.open': { en: 'Open top-ups', de: 'Offene Aufladungen' },
   'bill.history': { en: 'Movements', de: 'Bewegungen' },
   'bill.spend': { en: 'Spent per month', de: 'Ausgaben je Monat' },
@@ -1178,6 +1193,7 @@ export const S = {
   'bill.kind.refund': { en: 'Refund', de: 'Gutschrift' },
   'bill.kind.admin': { en: 'By an administrator', de: 'Durch Administrator' },
   'bill.kind.bonus': { en: 'Bonus', de: 'Bonus' },
+  'bill.kind.referral': { en: 'Referral', de: 'Empfehlung' },
   'bill.noHistory': { en: 'Nothing booked yet.', de: 'Noch nichts gebucht.' },
 
   // Die Diagramme im Guthaben-Bereich. Jede Überschrift ist eine Frage, die das Bild beantwortet.
@@ -1304,6 +1320,37 @@ export const S = {
   'set.logoutAllAsk': {
     en: 'Sign out everywhere? You will have to log in again.',
     de: 'Überall abmelden? Du musst dich danach neu anmelden.',
+  },
+
+  'set.tokens': { en: 'API access', de: 'API-Zugang' },
+  'set.tokensSub': {
+    en: 'A token for your own scripts – check bot status, start or stop bots, without a browser.',
+    de: 'Ein Token für eigene Skripte – Bot-Status abfragen, Bots starten oder stoppen, ohne Browser.',
+  },
+  'set.tokenCreate': { en: 'Create token', de: 'Token erstellen' },
+  'set.tokenLabel': { en: 'Label', de: 'Bezeichnung' },
+  'set.tokenLabelHint': {
+    en: 'So you know later which script this is, e.g. “status page”.',
+    de: 'Damit du später weißt, welches Skript das ist, z. B. „Statusseite“.',
+  },
+  'set.tokenCreatedAt': { en: 'created {when}', de: 'erstellt {when}' },
+  'set.tokenLastUsed': { en: 'last used {when}', de: 'zuletzt benutzt {when}' },
+  'set.tokenNeverUsed': { en: 'never used', de: 'noch nie benutzt' },
+  'set.tokenRevoke': { en: 'Revoke', de: 'Widerrufen' },
+  'set.tokenRevokeAsk': {
+    en: 'Revoke this token? Any script still using it stops working immediately.',
+    de: 'Dieses Token widerrufen? Ein Skript, das es noch benutzt, funktioniert danach sofort nicht mehr.',
+  },
+  'set.tokenRevoked': { en: 'Token revoked.', de: 'Token widerrufen.' },
+  'set.tokenCreated': { en: 'Token created', de: 'Token erstellt' },
+  'set.tokenShownOnce': {
+    en: 'This value is shown only now. Copy it – it cannot be shown again, only revoked and replaced.',
+    de: 'Dieser Wert wird nur jetzt angezeigt. Kopiere ihn – er lässt sich nicht erneut anzeigen, nur widerrufen und ersetzen.',
+  },
+  'set.tokenValue': { en: 'Token', de: 'Token' },
+  'set.tokenAck': {
+    en: 'I have copied the token.',
+    de: 'Ich habe das Token kopiert.',
   },
 
   // ---------------------------------------------------------------- Aktivitätszentrale

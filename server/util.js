@@ -8,6 +8,19 @@ export function token(bytes = 32) {
   return crypto.randomBytes(bytes).toString('base64url');
 }
 
+/**
+ * Ein Empfehlungscode: kurz genug zum Vorlesen, ohne Zeichen, die sich beim Abtippen verwechseln
+ * lassen (kein 0/O, kein 1/I). Eindeutigkeit stellt der Aufrufer sicher – siehe `referral_code` in
+ * db.js und `auth.js` `register()`.
+ */
+const REFERRAL_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function referralCode(length = 7) {
+  const bytes = crypto.randomBytes(length);
+  let out = '';
+  for (let i = 0; i < length; i += 1) out += REFERRAL_ALPHABET[bytes[i] % REFERRAL_ALPHABET.length];
+  return out;
+}
+
 /** Passwort-Hash mit parametrisierter, speicherharter scrypt-Konfiguration. */
 const SCRYPT = { N: 65_536, r: 8, p: 1, maxmem: 128 * 1024 * 1024 };
 
@@ -241,6 +254,7 @@ const FIELD_EN = {
   Text: 'Text',
   Ticket: 'Ticket',
   Titel: 'Title',
+  Token: 'Token',
   Uhrzeit: 'Time',
   Verzögerung: 'Delay',
   Von: 'From',

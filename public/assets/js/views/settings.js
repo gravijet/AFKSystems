@@ -808,21 +808,24 @@ function showMail(mail) {
 // ================================================================ Reiter: Sicherheit
 
 async function tabSecurity(root) {
-  const [sessions, signins, devices, twoFactor] = await Promise.all([
+  const [sessions, signins, devices, twoFactor, tokens] = await Promise.all([
     api('/me/sessions').catch(() => ({ sessions: [] })),
     api('/me/signins').catch(() => ({ attempts: [] })),
     api('/me/devices').catch(() => ({ devices: [], login_code: false, mail_ready: false })),
     api('/me/totp').catch(() => ({ enabled: false, recovery_left: 0, recovery_total: 10 })),
+    api('/me/tokens').catch(() => ({ tokens: [] })),
   ]);
   root.innerHTML = `
     ${section('key', tr('set.password'), tr('set.securitySub'), passwordBody())}
     ${section('shield', tr('set.totp'), tr('set.totpSub'), totpBody(twoFactor))}
     ${section('lock', tr('set.loginCode'), tr('set.loginCodeSub'), loginCodeBody(devices, twoFactor))}
     ${section('monitor', tr('set.sessions'), tr('set.sessionsSub'), sessionsBody(sessions.sessions || []))}
+    ${section('terminal', tr('set.tokens'), tr('set.tokensSub'), tokensBody(tokens.tokens || []))}
     ${section('shield', tr('set.signIns'), tr('set.signInsSub'), signinsBody(signins.attempts || []))}`;
   bindCommon();
   bindSecurity();
   bindTotp(twoFactor);
+  bindTokens();
 
   // Wer sich gerade mit einem Wiederherstellungscode angemeldet hat, kommt mit `?recovery=<n>`
   // hier an (siehe auth.js). Er soll wissen, wie viele noch da sind, bevor er es beim letzten
@@ -984,6 +987,40 @@ function sessionsBody(sessions) {
         .join('')}
     </ul>
     <button class="btn" id="logout-all" style="margin-top:1rem">${escapeHtml(tr('set.logoutAll'))}</button>`;
+}
+
+/**
+ * Eigene API-Token: Zugriff für Skripte statt für einen Browser mit Sitzungs-Cookie.
+ *
+ * Dasselbe Bild wie bei den Sitzungen darüber (Liste, Knopf zum Beenden) – nur dass ein Token
+ * keinen Browser und keinen Ort hat, den man anzeigen könnte, sondern eine Bezeichnung, die der
+ * Kunde selbst vergibt ("Statusseite", "Nagios"), damit er später weiß, welches Skript welches ist.
+ */
+function tokensBody(tokens) {
+  const list = tokens.length
+    ? `<ul class="plain-list">
+        ${tokens
+          .map(
+            (entry) => `<li class="row spread" style="gap:.5rem">
+              <div class="grow" style="min-width:0">
+                <div class="strong truncate">${escapeHtml(entry.label)}</div>
+                <p class="small muted">${escapeHtml(tr('set.tokenCreatedAt', { when: since(entry.created_at) }))}
+                  · ${escapeHtml(
+                    entry.last_used_at
+                      ? tr('set.tokenLastUsed', { when: since(entry.last_used_at) })
+                      : tr('set.tokenNeverUsed')
+                  )}</p>
+              </div>
+              <button class="btn btn-sm btn-danger" data-revoke-token="${entry.id}">${escapeHtml(
+                tr('set.tokenRevoke')
+              )}</button>
+            </li>`
+          )
+          .join('')}
+      </ul>`
+    : `<p class="small muted" style="margin:0 0 1rem">${escapeHtml(tr('common.none'))}</p>`;
+  return `${list}
+    <button class="btn" id="token-create" style="margin-top:1rem">${escapeHtml(tr('set.tokenCreate'))}</button>`;
 }
 
 /** Ein Symbol, das zum Gerät passt – Handy, Rechner, sonst ein Fenster. */
@@ -1151,6 +1188,84 @@ function recoveryDialog(codes) {
     });
     dialog.showModal();
   });
+}
+
+/**
+ * Der rohe Tokenwert – genau einmal, direkt nach dem Erzeugen. Dasselbe Gerüst wie
+ * `recoveryDialog`: Escape schließt erst, wenn das Häkchen gesetzt ist.
+ */
+function tokenCreatedDialog(raw) {
+  return new Promise((resolve) => {
+    const dialog = document.createElement('dialog');
+    dialog.className = 'totp-dialog';
+    dialog.innerHTML = `
+      <header><h3>${escapeHtml(tr('set.tokenCreated'))}</h3></header>
+      <div class="body stack">
+        <div class="note warn">${icon('alert')}<div>${escapeHtml(tr('set.tokenShownOnce'))}</div></div>
+        <div class="field">
+          <label for="token-value">${escapeHtml(tr('set.tokenValue'))}</label>
+          <div class="row" style="gap:.5rem">
+            <input id="token-value" class="grow mono" readonly value="${escapeHtml(raw)}">
+            <button class="btn btn-sm" type="button" id="token-copy">${escapeHtml(tr('common.copy'))}</button>
+          </div>
+        </div>
+        <label class="check"><input type="checkbox" id="token-ack"><span>${escapeHtml(
+          tr('set.tokenAck')
+        )}</span></label>
+      </div>
+      <footer><button class="btn btn-primary" type="button" id="token-done" disabled>${escapeHtml(
+        tr('common.close')
+      )}</button></footer>`;
+    document.body.append(dialog);
+
+    $('#token-copy', dialog).addEventListener('click', () => {
+      navigator.clipboard?.writeText(raw).then(() => ok(tr('common.copied'))).catch(() => {});
+    });
+    $('#token-ack', dialog).addEventListener('change', (event) => {
+      $('#token-done', dialog).disabled = !event.target.checked;
+    });
+    $('#token-done', dialog).addEventListener('click', () => dialog.close());
+    dialog.addEventListener('cancel', (event) => {
+      if (!$('#token-ack', dialog).checked) event.preventDefault();
+    });
+    dialog.addEventListener('close', () => {
+      dialog.remove();
+      resolve();
+    });
+    dialog.showModal();
+  });
+}
+
+function bindTokens() {
+  $('#token-create')?.addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('set.tokenCreate'),
+      [{ key: 'label', label: tr('set.tokenLabel'), hint: tr('set.tokenLabelHint'), required: true }],
+      { submit: tr('common.create') }
+    );
+    if (!answer) return;
+    try {
+      const result = await api('/me/tokens', { method: 'POST', body: { label: answer.label } });
+      await tokenCreatedDialog(result.token);
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $$('[data-revoke-token]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      const sure = await confirmDialog(tr('set.tokenRevokeAsk'), { confirm: tr('set.tokenRevoke') });
+      if (!sure) return;
+      try {
+        await api(`/me/tokens/${button.dataset.revokeToken}`, { method: 'DELETE' });
+        ok(tr('set.tokenRevoked'));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    })
+  );
 }
 
 function bindTotp(status) {

@@ -834,7 +834,29 @@ const settle = db.transaction((topupId, note = '', force = false) => {
     String(topupId)
   );
   audit(topup.user_id, 'topup-paid', { id: topupId, provider: topup.provider });
-  return { topup: db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId), balance, already: false };
+
+  // **Die Empfehlungsprämie hängt an der ersten echten Aufladung, nicht an der Anmeldung.** Eine
+  // Anmeldung kostet nichts und ließe sich beliebig oft wiederholen; eine Aufladung nicht.
+  // `referral_rewarded` wird in derselben Transaktion gesetzt wie die Gutschrift – zwei
+  // Aufladungen kurz hintereinander können die Prämie also nicht zweimal auslösen.
+  let referral = null;
+  if (buyer?.referred_by && !buyer.referral_rewarded) {
+    const bonus = Math.round(Number(getSetting('referral_bonus'))) || 0;
+    if (bonus > 0 && db.prepare('SELECT 1 FROM users WHERE id = ?').get(buyer.referred_by)) {
+      db.prepare('UPDATE users SET referral_rewarded = 1 WHERE id = ?').run(buyer.id);
+      move(buyer.referred_by, bonus, 'referral', `Empfehlung: ${buyer.username} hat aufgeladen`, String(buyer.id));
+      move(buyer.id, bonus, 'referral', 'Willkommensbonus über eine Empfehlung', String(buyer.referred_by));
+      audit(buyer.referred_by, 'referral-rewarded', { referred: buyer.id, credits: bonus });
+      referral = { referrer: buyer.referred_by, referred: buyer.id, credits: bonus };
+    }
+  }
+
+  return {
+    topup: db.prepare('SELECT * FROM topups WHERE id = ?').get(topupId),
+    balance,
+    already: false,
+    referral,
+  };
 });
 
 /**
@@ -845,7 +867,7 @@ const settle = db.transaction((topupId, note = '', force = false) => {
  * Transaktion raus – ein hängender Mailserver darf keine Buchung aufhalten.
  */
 export function settleTopup(topupId, note = '', { force = false } = {}) {
-  const { topup, balance, already } = settle(topupId, note, force);
+  const { topup, balance, already, referral } = settle(topupId, note, force);
   if (!already) {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(topup.user_id);
     if (user) {
@@ -859,6 +881,10 @@ export function settleTopup(topupId, note = '', { force = false } = {}) {
       // Gutschrift liegen Sekunden bis Minuten – wer in dieser Zeit nicht im Panel sitzt, erfährt
       // sonst gar nicht, dass sein Geld angekommen ist.
       notify.topupPaid(user.id, topup.credits, balance);
+    }
+    if (referral) {
+      notify.referralBonus(referral.referrer, referral.credits, true);
+      notify.referralBonus(referral.referred, referral.credits, false);
     }
   }
   return topup;

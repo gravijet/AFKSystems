@@ -34,9 +34,32 @@ const COUNT = new Intl.NumberFormat(locale);
  */
 let insights = null;
 
+/**
+ * Läuft die Übersicht gerade eine eigene Bilderschleife, muss sie enden, bevor die nächste
+ * anfängt – sonst zeichnet ein Zustandswechsel (`state.onLive`, siehe unten) die Kacheln neu,
+ * während die alte Schleife munter weiter auf längst entfernte `<img>`-Knoten schreibt.
+ */
+let stopPovThumbnails = () => {};
+
 export async function render(root) {
+  stopPovThumbnails();
   const bots = [...state.bots.values()].filter((bot) => bot.state && bot.state !== 'offline');
   const online = bots.filter((bot) => bot.online).length;
+  // Nur Bots, die gerade wirklich ein Bild senden – nicht jeder Serverplatz mit gebuchter
+  // Live-Ansicht, sondern nur die, bei denen `pov.web` (der texturierte Viewer des Clients) an ist.
+  const povTargets = [];
+  for (const profile of state.profiles) {
+    for (const member of profile.accounts) {
+      if (member.online && member.pov?.web) {
+        povTargets.push({
+          profileId: profile.id,
+          profileName: profile.name,
+          accountId: member.account_id,
+          accountName: member.name,
+        });
+      }
+    }
+  }
   const monthly = state.me.monthly_cost || 0;
   const monthsLeft = monthly > 0 ? Math.floor(state.me.credits / monthly) : null;
   const todos = state.todos || [];
@@ -130,6 +153,32 @@ export async function render(root) {
         }
       </div>
     </section>
+
+    ${
+      povTargets.length
+        ? `<section class="panel" style="margin-bottom:1.5rem">
+      <header>
+        <h3>${escapeHtml(tr('ov.pov'))}</h3>
+        <span class="small muted">${escapeHtml(tr('ov.povHint', { n: povTargets.length }))}</span>
+      </header>
+      <div class="body">
+        <div class="pov-mini-grid">
+          ${povTargets
+            .map(
+              (target) => `<a class="pov-mini" href="#/servers/${target.profileId}/pov"
+                data-pov-key="${target.profileId}:${target.accountId}">
+                <img class="pov-mini-frame" alt="" width="160" height="90" loading="lazy" />
+                <span class="pov-mini-label">${escapeHtml(target.accountName)}<small>${escapeHtml(
+                  target.profileName
+                )}</small></span>
+              </a>`
+            )
+            .join('')}
+        </div>
+      </div>
+    </section>`
+        : ''
+    }
 
     <section class="panel">
       <header><h3>${escapeHtml(tr('ov.quick'))}</h3></header>
@@ -521,5 +570,63 @@ export async function render(root) {
     if (event.type === 'credits' || event.type === 'suspended') insights = null;
     if (event.type === 'state' || event.type === 'credits' || event.type === 'suspended') redraw();
   };
+  stopPovThumbnails = startPovThumbnails(root, povTargets);
   drawSide();
+}
+
+/**
+ * Die kleinen Vorschaubilder auf der Übersicht. Bewusst ein eigener, langsamerer Weg statt der
+ * Schleife aus live.js: Dort steht höchstens eine Ansicht gleichzeitig, hier potenziell ein
+ * Dutzend Kacheln nebeneinander – ein Bild alle paar Sekunden je Kachel reicht für eine Vorschau
+ * und bleibt auch bei vielen laufenden Bots leicht.
+ */
+function startPovThumbnails(root, targets) {
+  const stages = targets
+    .map((target) => ({
+      ...target,
+      node: root.querySelector(`[data-pov-key="${target.profileId}:${target.accountId}"] .pov-mini-frame`),
+      urls: [],
+      timer: null,
+      dead: false,
+    }))
+    .filter((stage) => stage.node);
+  if (!stages.length) return () => {};
+
+  const alive = () => state.route.name === 'overview';
+
+  async function pull(stage) {
+    if (stage.dead || !alive()) return;
+    let wait = 2500;
+    if (document.hidden) {
+      wait = 4000;
+    } else {
+      try {
+        const response = await api(`/profiles/${stage.profileId}/pov/${stage.accountId}/frame.png?w=160&h=90`, {
+          raw: true,
+        });
+        if (response.ok) {
+          const url = URL.createObjectURL(await response.blob());
+          stage.urls.push(url);
+          while (stage.urls.length > 2) URL.revokeObjectURL(stage.urls.shift());
+          stage.node.src = url;
+          stage.node.closest('.pov-mini')?.classList.add('has-frame');
+        } else {
+          wait = 4000;
+        }
+      } catch {
+        wait = 4000;
+      }
+    }
+    stage.timer = setTimeout(() => pull(stage), wait);
+  }
+
+  for (const stage of stages) pull(stage);
+
+  return () => {
+    for (const stage of stages) {
+      stage.dead = true;
+      clearTimeout(stage.timer);
+      for (const url of stage.urls) URL.revokeObjectURL(url);
+    }
+  };
 }
