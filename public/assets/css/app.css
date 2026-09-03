@@ -4775,6 +4775,140 @@ hr.rule {
   background: var(--line);
 }
 
+/* Der Anfang der letzten Nachricht in einer Ticketzeile. Zwei Zeilen wären eine Vorschau, eine
+   ist eine Auskunft – mehr passt neben Betreff, Kunde und Zeit nicht, ohne die Liste zu sprengen. */
+.ticket-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.ticket-row .tk-avatar {
+  flex: none;
+}
+/* Das Kästchen zum Auswählen. Es ist größer als das Kästchen selbst: Wer eine Warteschlange
+   abhakt, trifft sonst die Zeile darunter. */
+.tk-pick {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 1.75rem;
+  height: 1.75rem;
+  margin: -0.4rem 0 -0.4rem -0.35rem;
+  border-radius: var(--r-md);
+  cursor: pointer;
+}
+.tk-pick:hover {
+  background: var(--surface-2);
+}
+.tk-select-all {
+  padding: 0.55rem 1.1rem;
+  box-shadow: inset 0 -1px 0 var(--line-soft);
+  color: var(--text-2);
+}
+
+/* Die Kacheln über der Warteschlange: eine Zahl, ein Wort, ein Filter. */
+.tk-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+.tk-tile {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+  color: inherit;
+}
+a.tk-tile:hover {
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--primary);
+  text-decoration: none;
+}
+.tk-tile-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+.tk-tile-label {
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+/* Eine Kachel mit einer Zahl darauf ist ein Hinweis; eine mit einer Null ist keiner. Sie bleibt
+   stehen – die Warteschlange soll ihre Form nicht ändern, sobald man sie abgearbeitet hat –,
+   tritt aber zurück. */
+.tk-tile.is-empty .tk-tile-value {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.tk-tile.primary:not(.is-empty) .tk-tile-value {
+  color: var(--primary);
+}
+.tk-tile.warn:not(.is-empty) .tk-tile-value {
+  color: var(--warn-text);
+}
+.tk-tile.bad:not(.is-empty) .tk-tile-value {
+  color: var(--bad-text);
+}
+.tk-tile.is-static {
+  background: var(--surface-2);
+}
+
+/* Mehrere Tickets auf einmal. Klebt oben, damit die Auswahl nicht wegscrollt.
+   Die eigene `[hidden]`-Regel ist nötig: Das `display: flex` unten ist stärker als das
+   `display: none`, das der Browser einem versteckten Element gibt – ohne sie stünde die Leiste
+   immer da, auch ohne Auswahl. */
+.tk-bulk[hidden] {
+  display: none;
+}
+.tk-bulk {
+  position: sticky;
+  top: 0.5rem;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.75rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--r-xl);
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
+
+/* Die Kopfzeile eines Ticketvorgangs: Zustand, Dringlichkeit, Zuständigkeit, Wartezeit. */
+.ticket-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem 1.25rem;
+  margin-bottom: 1rem;
+  padding: 0.8rem 1rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ticket-facts .fact {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+.ticket-facts .fact-label {
+  color: var(--text-2);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.ticket-facts .fact-value {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+  font-size: 0.875rem;
+}
+
 .ticket {
   display: grid;
   gap: 1.25rem;
@@ -5064,6 +5198,60 @@ h5.dc-head {
   padding: 0.2rem 0.7rem;
   border-radius: var(--r-md);
   background: var(--surface);
+}
+/* Eine Systemzeile, die nur das Team sieht – etwa wer ein Ticket übernommen hat. Sie trägt
+   dieselbe Farbe wie eine interne Notiz, damit im Verlauf nie unklar ist, was der Kunde liest. */
+.chat-system.is-internal span {
+  background: color-mix(in srgb, var(--warn) 14%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
+/* „Neue Nachrichten“: der Strich, an dem man beim letzten Mal aufgehört hat. Er ist bewusst
+   auffällig – seine ganze Aufgabe ist es, das Auge an die richtige Stelle zu ziehen. */
+.chat-divider {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin: 0.2rem 0;
+  color: var(--primary);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.chat-divider::before,
+.chat-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--primary) 45%, transparent);
+}
+
+/* Der Haken unter der letzten eigenen Nachricht. Er steht auf derselben Seite wie sie. */
+.chat-receipt {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  align-self: flex-end;
+  max-width: min(46rem, 88%);
+  margin-top: -0.5rem;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  text-align: right;
+}
+.receipt-mark {
+  display: inline-flex;
+  flex: none;
+  color: var(--text-2);
+}
+/* Zwei Haken überlappen, wie man es kennt – der zweite rückt in den ersten hinein. */
+.receipt-mark .icon {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+.receipt-mark .icon + .icon {
+  margin-left: -0.45rem;
+}
+.receipt-mark.is-seen {
+  color: var(--ok);
 }
 
 .typing {
@@ -6559,6 +6747,7 @@ dialog.shortcuts {
 
 /* Server suchen, filtern, favorisieren und je nach Bildschirm lesen. */
 .server-tools,
+.account-tools,
 .overview-bot-tools,
 .activity-tools {
   display: flex;
@@ -6568,6 +6757,7 @@ dialog.shortcuts {
   margin-bottom: 1rem;
 }
 .server-search,
+.account-search,
 .overview-bot-search,
 .activity-search {
   position: relative;
@@ -6577,6 +6767,7 @@ dialog.shortcuts {
   max-width: 26rem;
 }
 .server-search .icon,
+.account-search .icon,
 .overview-bot-search .icon,
 .activity-search .icon {
   position: absolute;
@@ -6586,6 +6777,7 @@ dialog.shortcuts {
   pointer-events: none;
 }
 .server-search input,
+.account-search input,
 .overview-bot-search input,
 .activity-search input {
   height: 2.35rem;
@@ -6593,8 +6785,174 @@ dialog.shortcuts {
   font-size: 0.85rem;
 }
 .server-tools > .small,
+.account-count,
 .activity-count {
   margin-left: auto;
+}
+
+/* Minecraft-Konten: erst der Zustand des Bestands, dann die einzelne Identität. Die vier Kacheln
+   sind zugleich Filter – eine rote Zwei ist damit nicht nur eine Warnung, sondern der direkte Weg
+   zu den zwei Konten, die eine neue Anmeldung brauchen. */
+.account-summary {
+  margin-bottom: 1rem;
+}
+.account-stat {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 0.75rem;
+  width: 100%;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.account-stat:hover,
+.account-stat[aria-pressed='true'] {
+  box-shadow: inset 0 0 0 1px var(--primary), var(--shadow);
+}
+.account-stat-icon {
+  display: grid;
+  grid-row: 1 / 3;
+  align-self: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  place-items: center;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: var(--primary-text);
+}
+.account-stat-icon .icon {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+.account-stat .v,
+.account-stat .k {
+  line-height: 1.15;
+}
+.account-tools {
+  padding: 0.7rem;
+  border-radius: var(--r-xl);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.account-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+}
+.account-card.needs-attention {
+  box-shadow: inset 3px 0 0 var(--bad), inset 0 0 0 1px var(--line), var(--shadow);
+}
+.account-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+}
+.account-name {
+  margin: 0;
+  font-size: 1rem;
+}
+.account-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0 1.1rem 0.8rem;
+  padding: 0.6rem 0.7rem;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--warn) 10%, transparent);
+  color: var(--warn-text);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+.account-problem.bad {
+  background: color-mix(in oklab, var(--bad) 9%, transparent);
+  color: var(--bad-text);
+}
+.account-problem .icon {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  margin-top: 0.1rem;
+}
+.account-assignments {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem 1.1rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.account-server-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.account-server-list .pill {
+  gap: 0.35rem;
+  color: var(--text);
+}
+.account-server-list .dot {
+  width: 0.4rem;
+  height: 0.4rem;
+}
+.account-unused {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+}
+.account-unused .icon {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+.account-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 0;
+  padding: 0.85rem 1.1rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.account-facts div {
+  display: grid;
+  gap: 0.15rem;
+}
+.account-facts dt {
+  color: var(--text-2);
+  font-size: 0.7rem;
+}
+.account-facts dd {
+  margin: 0;
+  font-size: 0.8rem;
+}
+.account-actions {
+  margin-top: auto;
+  padding: 0.85rem 1.1rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.account-no-results {
+  grid-column: 1 / -1;
+}
+
+.proxy-summary {
+  margin-bottom: 1.5rem;
+}
+.proxy-destinations {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.85rem;
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.proxy-destinations .pill {
+  gap: 0.35rem;
+  color: var(--text);
+}
+.proxy-destinations .icon {
+  width: 0.85rem;
+  height: 0.85rem;
 }
 .server-card {
   position: relative;
@@ -6818,19 +7176,55 @@ dialog.shortcuts {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 0.9rem;
   min-height: 5rem;
-  padding: 0.85rem 1rem;
   color: var(--text);
 }
 .activity-item + .activity-item {
   box-shadow: inset 0 1px 0 var(--line-soft);
 }
-.activity-item:hover {
+.activity-item:hover,
+.activity-item:focus-within {
   background: color-mix(in oklab, var(--primary) 4%, transparent);
 }
 .activity-item.is-unread {
   background: color-mix(in oklab, var(--primary) 6%, transparent);
+}
+.activity-main {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  flex: 1;
+  align-self: stretch;
+  min-width: 0;
+  padding: 0.85rem 1rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.activity-again {
+  display: grid;
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  margin-right: 0.7rem;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-lg);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.activity-again:hover,
+.activity-again:focus-visible {
+  background: var(--surface);
+  color: var(--text);
+}
+.activity-again .icon {
+  width: 1rem;
+  height: 1rem;
 }
 .activity-mark {
   display: grid;
@@ -6895,6 +7289,24 @@ dialog.shortcuts {
   border-radius: var(--r-xl);
   background: var(--surface-2);
   color: var(--text-2);
+}
+.activity-more,
+.activity-loading {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 4rem;
+  padding: 1rem;
+}
+.activity-loading .icon,
+.activity-more button:disabled .icon {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* Kompakt heißt weniger Weg, nicht kleinere Schrift. */
@@ -7009,7 +7421,13 @@ html[data-motion='reduced'] *::after {
   }
   .activity-item {
     align-items: flex-start;
+  }
+  .activity-main {
+    align-items: flex-start;
     padding: 0.85rem;
+  }
+  .activity-again {
+    margin: 0.7rem 0.5rem 0 0;
   }
   .activity-new {
     position: absolute;

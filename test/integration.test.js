@@ -1863,6 +1863,48 @@ test('account activity is kept without Discord, deduplicated and readable on eve
   assert.equal(notify.notificationsFor(user.id, 'de').length, 0);
 });
 
+test('account activity paginates without duplicates and can be put back on the unread list', () => {
+  const user = createUser();
+  const insert = db.prepare(
+    `INSERT INTO user_notifications
+       (user_id, event, tone, title_de, title_en, body_de, body_en, created_at, read_at)
+     VALUES (?, ?, 'info', ?, ?, '', '', ?, ?)`
+  );
+  for (let index = 0; index < 7; index++) {
+    insert.run(
+      user.id,
+      index % 2 ? 'billing' : 'ticket',
+      `Meldung ${index}`,
+      `Notice ${index}`,
+      Date.now() + index,
+      index < 2 ? Date.now() : null
+    );
+  }
+
+  const first = notify.notificationsFor(user.id, 'en', { limit: 3 });
+  const second = notify.notificationsFor(user.id, 'en', { limit: 3, before: first.at(-1).id });
+  assert.equal(first.length, 3);
+  assert.equal(second.length, 3);
+  assert.ok(first.every((entry) => !second.some((other) => other.id === entry.id)));
+  assert.deepEqual(
+    [...first, ...second].map((entry) => entry.id),
+    [...first, ...second].map((entry) => entry.id).sort((a, b) => b - a)
+  );
+
+  const billing = notify.notificationsFor(user.id, 'de', { limit: 10, event: 'billing' });
+  assert.equal(billing.length, 3);
+  assert.ok(billing.every((entry) => entry.event === 'billing'));
+
+  const alreadyRead = notify.notificationsFor(user.id, 'en', { limit: 10 }).find((entry) => entry.read_at);
+  assert.equal(notify.markUnread(user.id, [alreadyRead.id]), 1);
+  assert.equal(
+    notify.notificationsFor(user.id, 'en', { limit: 10 }).find((entry) => entry.id === alreadyRead.id).read_at,
+    null
+  );
+  // Fremde und ungültige IDs verändern nichts.
+  assert.equal(notify.markUnread(user.id, [alreadyRead.id, -1, 999_999]), 0);
+});
+
 /** Die To-do-Liste des Teams zählt Warteschlangen – und schweigt, wenn nichts wartet. */
 test('the staff to-do list names what is waiting', () => {
   const owner = createUser();
@@ -1990,6 +2032,134 @@ test('an administrator changes the priority and the ticket history says so', () 
     lines
   );
   assert.throws(() => tickets.setPriority(raised, 'sofort', staff.id), /Dringlichkeit/);
+});
+
+/**
+ * **Bis wohin hat die andere Seite gelesen?**
+ *
+ * Der Ungelesen-Punkt beantwortet das nicht: Er verschwindet, sobald jemand ein Ticket aufmacht –
+ * auch dann, wenn die Antwort erst danach geschrieben wird. Die Marke je Person hält deshalb die
+ * Nummer der letzten gesehenen Nachricht und geht nur vorwärts.
+ */
+test('a read mark says who saw how far, moves only forward, and knows two roles per person', () => {
+  const owner = createUser();
+  const staff = createUser({ role: 'admin' });
+  const row = (id) => db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+  const markOf = (ticketId, userId, asStaff) =>
+    tickets.reads(ticketId).find((entry) => entry.user_id === userId && entry.staff === asStaff);
+
+  const ticket = tickets.create(owner, { subject: 'Bot hängt', body: 'Beim Login.' });
+
+  // Wer schreibt, hat gelesen: Die erste Nachricht steht nicht als ungelesen beim eigenen Autor.
+  const first = db
+    .prepare('SELECT MAX(id) AS id FROM ticket_messages WHERE ticket_id = ?')
+    .get(ticket.id).id;
+  assert.equal(markOf(ticket.id, owner.id, false).last_message_id, first);
+  assert.equal(markOf(ticket.id, staff.id, true), undefined);
+
+  // Das Team liest – und bekommt zurück, wo es vorher stand. Daraus entsteht der Strich
+  // „Neue Nachrichten“ im Verlauf.
+  assert.equal(tickets.markRead(row(ticket.id), staff, { staff: true }), 0);
+  assert.equal(markOf(ticket.id, staff.id, true).last_message_id, first);
+
+  // Ein zweites Öffnen ohne neue Nachricht verschiebt nichts.
+  const at = markOf(ticket.id, staff.id, true).read_at;
+  assert.equal(tickets.markRead(row(ticket.id), staff, { staff: true }), first);
+  assert.equal(markOf(ticket.id, staff.id, true).read_at, at);
+
+  // Die Antwort des Teams steht beim Kunden als ungelesen: Seine Marke bleibt auf der ersten
+  // Nachricht stehen, obwohl er das Ticket längst offen hatte.
+  tickets.reply(row(ticket.id), staff, 'Schau in die Konsole.', { staff: true });
+  const second = db
+    .prepare('SELECT MAX(id) AS id FROM ticket_messages WHERE ticket_id = ?')
+    .get(ticket.id).id;
+  assert.equal(markOf(ticket.id, owner.id, false).last_message_id, first);
+  assert.equal(markOf(ticket.id, staff.id, true).last_message_id, second);
+
+  // Erst wenn er sie aufmacht, rückt sie vor – und die Teamliste sagt „gelesen“.
+  const listed = () => tickets.listAll({ status: null }).find((entry) => entry.id === ticket.id);
+  assert.equal(listed().seen_at, null);
+  tickets.markRead(row(ticket.id), owner, { staff: false });
+  assert.equal(markOf(ticket.id, owner.id, false).last_message_id, second);
+  assert.ok(listed().seen_at);
+
+  // Derselbe Mensch in zwei Rollen: Ein Administrator, der sein *eigenes* Ticket unter „Support“
+  // liest, darf damit nicht die Marke des Teams setzen – und umgekehrt.
+  const own = tickets.create(staff, { subject: 'Eigenes', body: 'Frage.' });
+  tickets.markRead(row(own.id), staff, { staff: false });
+  assert.ok(markOf(own.id, staff.id, false));
+  assert.equal(markOf(own.id, staff.id, true), undefined);
+});
+
+/**
+ * Die Zahlen, an denen sich ein Support messen lässt: Wann kam die erste Antwort, wer war zuletzt
+ * am Zug. Eine **interne Notiz** zählt dabei nicht als Antwort – wer eine Notiz schreibt, hat dem
+ * Kunden nichts gesagt.
+ */
+test('a ticket records when the team first answered, and an internal note is not an answer', () => {
+  const owner = createUser();
+  const staff = createUser({ role: 'admin' });
+  const row = (id) => db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+
+  const ticket = tickets.create(owner, { subject: 'Proxy', body: 'Bitte einen.' });
+  assert.equal(row(ticket.id).first_reply_at, null);
+  assert.ok(row(ticket.id).last_customer_at);
+  assert.equal(row(ticket.id).last_staff_at, null);
+
+  tickets.reply(row(ticket.id), staff, 'Kümmere mich.', { staff: true, internal: true });
+  assert.equal(row(ticket.id).first_reply_at, null);
+  assert.equal(row(ticket.id).last_staff_at, null);
+
+  tickets.reply(row(ticket.id), staff, 'Ist eingerichtet.', { staff: true });
+  const answered = row(ticket.id).first_reply_at;
+  assert.ok(answered);
+
+  // Die erste Antwort bleibt die erste, auch nach der zweiten.
+  tickets.reply(row(ticket.id), staff, 'Und noch etwas.', { staff: true });
+  assert.equal(row(ticket.id).first_reply_at, answered);
+  assert.ok(row(ticket.id).last_staff_at >= answered);
+
+  // Ein Ticket, das das Team selbst mit einer Nachricht aufmacht, hat nie auf eine Antwort
+  // gewartet – es steht deshalb nicht in der Liste der unbeantworteten.
+  const staffMade = tickets.create(owner, { subject: 'Hinweis', body: 'Wir haben umgestellt.' }, { by: staff.id });
+  assert.ok(row(staffMade.id).first_reply_at);
+  assert.ok(!tickets.listAll({ unanswered: true }).some((entry) => entry.id === staffMade.id));
+});
+
+/**
+ * Ein Zustandswechsel und ein Wechsel der Zuständigkeit sind Entscheidungen – sie gehören in den
+ * Verlauf. Wer ein Ticket später aufmacht, soll sehen, wer es geschlossen hat, statt sich zu
+ * fragen, ob es jemand abgeschlossen oder nur weggeklickt hat. **Wer** von uns es übernommen hat,
+ * ist dagegen Arbeitsteilung und bleibt intern.
+ */
+test('status and assignment write a line in the history, and the assignment line stays internal', () => {
+  const owner = createUser();
+  const staff = createUser({ role: 'admin' });
+  const row = (id) => db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+  const seenBy = (ticketId, asStaff) =>
+    tickets.messages(ticketId, { staff: asStaff }).filter((entry) => entry.role === 'system');
+
+  const ticket = tickets.create(owner, { subject: 'Frage', body: 'Kurz.' });
+
+  tickets.setAssignee(row(ticket.id), staff.id, staff.id);
+  assert.equal(row(ticket.id).assigned_to, staff.id);
+  assert.equal(seenBy(ticket.id, false).length, 0, 'die Zuweisung geht den Kunden nichts an');
+  assert.equal(seenBy(ticket.id, true).at(-1).meta.key, 'took');
+
+  // Dieselbe Zuweisung noch einmal schreibt keine zweite Zeile.
+  const lines = seenBy(ticket.id, true).length;
+  tickets.setAssignee(row(ticket.id), staff.id, staff.id);
+  assert.equal(seenBy(ticket.id, true).length, lines);
+
+  tickets.setStatus(row(ticket.id), 'closed', staff.id, { staff: true });
+  const closed = seenBy(ticket.id, false).at(-1);
+  assert.equal(closed.meta.key, 'status.closed');
+  assert.match(closed.body, /closed/);
+
+  // Und derselbe Zustand noch einmal bleibt still.
+  const after = seenBy(ticket.id, false).length;
+  tickets.setStatus(row(ticket.id), 'closed', staff.id, { staff: true });
+  assert.equal(seenBy(ticket.id, false).length, after);
 });
 
 /**

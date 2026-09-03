@@ -924,9 +924,14 @@ supervisor.on('bot-view', ({ userId, key, kind, view }) => push(userId, { type: 
  * Ticket-Ereignisse an die Beteiligten und ans Team.
  *
  * Damit ist der Support-Chat live: Wer ein Ticket offen hat, sieht eine Antwort in dem Moment,
- * in dem sie geschrieben wird, und dass gerade jemand tippt – ohne die Seite neu zu laden.
+ * in dem sie geschrieben wird, dass gerade jemand tippt, und dass die andere Seite gelesen hat –
+ * ohne die Seite neu zu laden.
+ *
+ * `ticket.read` läuft denselben Weg, obwohl es den Discord-Bot nichts angeht: Er hört auf die
+ * Arten, die er kennt, und lässt alles andere liegen. Eine zweite Leitung nur für dieses eine
+ * Ereignis wäre ein zweiter Ort, an dem später jemand vergisst, Rechte zu prüfen.
  */
-for (const type of ['ticket.message', 'ticket.status', 'ticket.typing', 'ticket.created']) {
+for (const type of ['ticket.message', 'ticket.status', 'ticket.typing', 'ticket.created', 'ticket.read']) {
   bridge.on(type, (message) => {
     // **Zuerst: sieht überhaupt jemand zu?** Was hier folgt, sind drei Abfragen – das Ticket, das
     // Team, die Beteiligten –, und am Ende steht `push`, das ohne offene Leitung nichts tut. Zu

@@ -1457,6 +1457,88 @@ const migrations = [
       }
     },
   },
+  {
+    // **Wer hat wie weit gelesen – und wie lange hat es gedauert.**
+    //
+    // Bis hierher wusste ein Ticket nur, ob für eine Seite *irgendetwas* ungelesen ist: ein Punkt,
+    // der verschwand, sobald jemand das Ticket aufmachte. Für den Kunden reicht das. Für das Team
+    // reicht es nicht: Die häufigste Frage im Support ist „hat er es überhaupt gesehen?“, und
+    // darauf antwortet ein gelöschter Punkt nicht. Er sagt nicht, **wer** gelesen hat – bei einem
+    // Ticket mit mehreren Beteiligten ist das ein Unterschied –, nicht **wann**, und vor allem
+    // nicht **bis wohin**: Wer ein Ticket öffnet, bevor die Antwort geschrieben ist, hat sie nicht
+    // gelesen, und der Punkt war trotzdem weg.
+    //
+    // Deshalb steht hier je Person eine Marke: die letzte Nachricht, die sie gesehen hat, und wann.
+    // Daraus folgt beides – „gelesen“ ist `last_message_id >= id der Nachricht`, und die Zeit
+    // daneben ist echt und nicht geraten.
+    //
+    // `staff` gehört zum Schlüssel, weil dieselbe Person zwei Rollen haben kann: Ein Administrator
+    // liest sein eigenes Ticket unter „Support“ als Kunde und ein fremdes unter „Alle Tickets“ als
+    // Team. Ohne diese Spalte würde das eine das andere überschreiben, und der Kunde bekäme
+    // „gelesen“ angezeigt, weil jemand im Admin-Bereich vorbeigeschaut hat.
+    //
+    // Die drei Zeitstempel am Ticket sind Kennzahlen, keine Verzierung: Wie lange ein Kunde auf
+    // die **erste** Antwort gewartet hat, ist die eine Zahl, an der sich ein Support messen lässt.
+    // Sie ließe sich jedes Mal aus dem Verlauf errechnen – aber nicht in einer Liste über 300
+    // Tickets, und dort wird sie gebraucht.
+    name: '034-ticket-lesebestaetigungen-und-kennzahlen',
+    sql: `
+      CREATE TABLE ticket_reads (
+        ticket_id       INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+        user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        staff           INTEGER NOT NULL DEFAULT 0,
+        last_message_id INTEGER NOT NULL DEFAULT 0,
+        read_at         INTEGER NOT NULL,
+        PRIMARY KEY (ticket_id, user_id, staff)
+      );
+      CREATE INDEX ticket_reads_ticket ON ticket_reads(ticket_id, staff);
+
+      ALTER TABLE tickets ADD COLUMN first_reply_at   INTEGER;  -- die erste Antwort des Teams
+      ALTER TABLE tickets ADD COLUMN last_customer_at INTEGER;  -- zuletzt hat der Kunde geschrieben
+      ALTER TABLE tickets ADD COLUMN last_staff_at    INTEGER;  -- zuletzt hat das Team geschrieben
+
+      -- **Systemzeilen in der Sprache des Lesers.**
+      --
+      -- „The ticket was closed by Support.“ stand bisher auch in einem durchgehend deutschen
+      -- Panel, weil eine Systemzeile fertiger Text in der Datenbank ist. Sie bleibt es – der
+      -- Discord-Kanal spiegelt genau diesen Satz, und ein Verlauf, dessen Wortlaut sich mit der
+      -- Spracheinstellung des Lesers ändert, ist kein Verlauf mehr.
+      --
+      -- Daneben steht ab hier, **was** die Zeile sagt: ein Schlüssel und seine Werte. Wer das
+      -- lesen kann, zeigt den Satz in seiner Sprache; wer nicht, zeigt den englischen Text wie
+      -- bisher. Alte Zeilen haben diese Spalte leer und bleiben deshalb genau so stehen, wie sie
+      -- geschrieben wurden.
+      ALTER TABLE ticket_messages ADD COLUMN meta TEXT;
+    `,
+    run() {
+      // Die Kennzahlen aus dem Verlauf nachtragen. Ein Ticket, das es schon gibt, soll seine
+      // Antwortzeit haben und nicht erst ab dem nächsten Beitrag – sonst steht in der Auswertung
+      // ein halbes Jahr lang „keine Angabe“, wo eine Zahl längst im Verlauf steht.
+      db.prepare(
+        `UPDATE tickets SET
+           first_reply_at = (SELECT MIN(m.created_at) FROM ticket_messages m
+                              WHERE m.ticket_id = tickets.id AND m.role = 'staff' AND m.internal = 0),
+           last_staff_at  = (SELECT MAX(m.created_at) FROM ticket_messages m
+                              WHERE m.ticket_id = tickets.id AND m.role = 'staff' AND m.internal = 0),
+           last_customer_at = (SELECT MAX(m.created_at) FROM ticket_messages m
+                                WHERE m.ticket_id = tickets.id AND m.role = 'user')`
+      ).run();
+
+      // Und die Lesemarken: Wessen Punkt nicht mehr steht, hat gelesen – mehr weiß die Datenbank
+      // über die Vergangenheit nicht, und mehr zu behaupten wäre falsch. Als Zeitpunkt steht
+      // deshalb die letzte Bewegung am Ticket und nicht „jetzt“: „vor drei Monaten gelesen“ ist
+      // wahr, „gerade eben gelesen“ wäre eine Erfindung dieses Updates.
+      db.prepare(
+        `INSERT INTO ticket_reads (ticket_id, user_id, staff, last_message_id, read_at)
+         SELECT t.id, t.user_id, 0,
+                COALESCE((SELECT MAX(m.id) FROM ticket_messages m
+                           WHERE m.ticket_id = t.id AND m.internal = 0), 0),
+                t.updated_at
+           FROM tickets t WHERE t.unread_user = 0
+         ON CONFLICT(ticket_id, user_id, staff) DO NOTHING`
+      ).run();
+    },
+  },
 ];
 
 /**

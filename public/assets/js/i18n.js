@@ -701,6 +701,37 @@ export const S = {
     de: '{name} entfernen? Es wird von allen Serverplätzen genommen.',
   },
   'acc.usedOn': { en: 'on {n} server slot(s)', de: 'auf {n} Serverplatz/-plätzen' },
+  'acc.summary': { en: 'Account overview', de: 'Kontenübersicht' },
+  'acc.total': { en: 'All accounts', de: 'Alle Konten' },
+  'acc.ready': { en: 'Ready to start', de: 'Startklar' },
+  'acc.needsAttention': { en: 'Need attention', de: 'Handlungsbedarf' },
+  'acc.unused': { en: 'Not assigned', de: 'Nicht zugeordnet' },
+  'acc.search': { en: 'Search accounts or servers', de: 'Konten oder Server suchen' },
+  'acc.filter.all': { en: 'All accounts', de: 'Alle Konten' },
+  'acc.filter.ready': { en: 'Ready', de: 'Startklar' },
+  'acc.filter.attention': { en: 'Need attention', de: 'Handlungsbedarf' },
+  'acc.filter.unused': { en: 'Not assigned', de: 'Nicht zugeordnet' },
+  'acc.filter.offline': { en: 'Offline accounts', de: 'Offline-Konten' },
+  'acc.sort.name': { en: 'Name A–Z', de: 'Name A–Z' },
+  'acc.sort.usage': { en: 'Most used first', de: 'Häufig genutzt zuerst' },
+  'acc.sort.newest': { en: 'Newest first', de: 'Neueste zuerst' },
+  'acc.assignedServers': {
+    en: 'Assigned to {n} server slot(s)',
+    de: '{n} Serverplatz/-plätzen zugeordnet',
+  },
+  'acc.assignNow': { en: 'Assign to a server slot', de: 'Jetzt einem Serverplatz zuordnen' },
+  'acc.connections': { en: 'Connections so far', de: 'Verbindungen bisher' },
+  'acc.connectedSince': { en: 'Added', de: 'Hinzugefügt' },
+  'acc.errorHint': {
+    en: 'Microsoft rejected the saved sign-in. Sign in again to renew it.',
+    de: 'Microsoft hat die gespeicherte Anmeldung abgelehnt. Melde dich erneut an, um sie zu erneuern.',
+  },
+  'acc.noMatches': { en: 'No account matches', de: 'Kein Konto passt dazu' },
+  'acc.noMatchesText': {
+    en: 'Change the filter or search for another account or server name.',
+    de: 'Ändere den Filter oder suche nach einem anderen Konto- oder Servernamen.',
+  },
+  'acc.resetFilters': { en: 'Reset filters', de: 'Filter zurücksetzen' },
   'acc.ms.title': { en: 'Sign in with Microsoft', de: 'Bei Microsoft anmelden' },
   // Der Link enthält den Code schon – abtippen muss ihn niemand, und deshalb steht er auch
   // nirgends mehr im Fenster.
@@ -1087,6 +1118,17 @@ export const S = {
   'px.mine': { en: 'Assigned to you', de: 'Dir zugeteilt' },
   'px.none': { en: 'None assigned yet.', de: 'Noch keiner zugeteilt.' },
   'px.allowance': { en: 'You may use up to {n}.', de: 'Du darfst bis zu {n} nutzen.' },
+  'px.assigned': { en: 'Assigned', de: 'Zugewiesen' },
+  'px.readyToUse': { en: 'ready to be selected', de: 'direkt auswählbar' },
+  'px.limit': { en: 'Your limit', de: 'Dein Limit' },
+  'px.forAccount': { en: 'outgoing addresses', de: 'Ausgangsadressen' },
+  'px.paidOnly': { en: 'with a paid server slot', de: 'mit bezahltem Serverplatz' },
+  'px.available': { en: 'Still available', de: 'Noch verfügbar' },
+  'px.requestMore': { en: 'can still be requested', de: 'können noch angefragt werden' },
+  'px.limitReached': { en: 'current limit reached', de: 'aktuelles Limit erreicht' },
+  'px.noneAssigned': { en: 'none assigned yet', de: 'noch nichts zugewiesen' },
+  'px.configureOn': { en: 'Configure per account on:', de: 'Je Konto einrichten unter:' },
+  'px.added': { en: 'Assigned on', de: 'Zugewiesen am' },
   'px.unsupported': {
     en: 'Proxies cannot be used on this server at the moment.',
     de: 'Proxys lassen sich auf diesem Server gerade nicht nutzen.',
@@ -1295,6 +1337,11 @@ export const S = {
     en: 'Try another type, show read items, or shorten the search.',
     de: 'Wähle eine andere Art, zeige Gelesenes oder kürze die Suche.',
   },
+  'act.loadOlder': { en: 'Load older activity', de: 'Ältere Aktivitäten laden' },
+  'act.loadingOlder': { en: 'Loading older activity …', de: 'Ältere Aktivitäten werden geladen …' },
+  'act.allLoaded': { en: 'You have reached the beginning.', de: 'Du bist am Anfang angekommen.' },
+  'act.markUnread': { en: 'Mark as unread', de: 'Als ungelesen markieren' },
+  'act.markedUnread': { en: 'Marked as unread.', de: 'Als ungelesen markiert.' },
 
   // ---------------------------------------------------------------- Sprungmarke (Strg+K)
   'pal.title': { en: 'Search', de: 'Suche' },
@@ -2181,6 +2228,101 @@ export const S = {
     de: '{n} Zeichen · Entwurf auf diesem Gerät gespeichert',
   },
   'tk.priorityShort': { en: 'Priority', de: 'Dringlichkeit' },
+
+  // ---------------------------------------------------------------- Zeilen im Verlauf
+  //
+  // Was ohne Zutun eines Menschen im Ticket steht: dazugeholt, wieder geöffnet, hochgestuft,
+  // geschlossen, übernommen. In der Datenbank steht dazu ein englischer Satz – er geht so in den
+  // Discord-Kanal und bleibt der Wortlaut des Vorgangs. Gezeigt wird hier die Sprache des Lesers.
+  'tk.sys.added': { en: '{who} was added to the ticket.', de: '{who} wurde dazugeholt.' },
+  'tk.sys.removed': { en: '{who} was removed from the ticket.', de: '{who} wurde entfernt.' },
+  'tk.sys.reopened': {
+    en: 'A new reply reopened the ticket.',
+    de: 'Eine neue Antwort hat das Ticket wieder geöffnet.',
+  },
+  'tk.sys.priority': {
+    en: 'Priority changed from {from} to {to}.',
+    de: 'Dringlichkeit von {from} auf {to} geändert.',
+  },
+  'tk.sys.status.closed': { en: '{who} closed the ticket.', de: '{who} hat das Ticket geschlossen.' },
+  'tk.sys.status.open': {
+    en: '{who} set the ticket back to open.',
+    de: '{who} hat das Ticket wieder auf offen gesetzt.',
+  },
+  'tk.sys.status.answered': {
+    en: '{who} marked the ticket as answered.',
+    de: '{who} hat das Ticket als beantwortet markiert.',
+  },
+  'tk.sys.took': { en: '{who} took the ticket.', de: '{who} hat das Ticket übernommen.' },
+  'tk.sys.assigned': { en: '{by} assigned the ticket to {who}.', de: '{by} hat das Ticket an {who} gegeben.' },
+  'tk.sys.unassigned': { en: '{by} removed the assignment.', de: '{by} hat die Zuweisung aufgehoben.' },
+
+  // ---------------------------------------------------------------- Lesebestätigungen
+  //
+  // Ein Haken heißt zugestellt, zwei heißen gelesen. Der Text daneben sagt dasselbe in Worten:
+  // Ein Symbol allein ist für jeden unlesbar, der es nicht sieht.
+  'tk.delivered': { en: 'Delivered', de: 'Zugestellt' },
+  'tk.seenBySupport': { en: 'Read by support · {time}', de: 'Vom Support gelesen · {time}' },
+  'tk.seenBy': { en: 'Read by {who}', de: 'Gelesen von {who}' },
+  'tk.seenShort': { en: 'The customer has read this', de: 'Der Kunde hat das gelesen' },
+  'tk.notSeenYet': { en: 'Not read yet', de: 'Noch nicht gelesen' },
+  'tk.stillOpenFor': { en: 'not yet: {who}', de: 'noch nicht: {who}' },
+  'tk.readTitle': { en: 'Read receipts', de: 'Gelesen' },
+  'tk.neverOpened': { en: 'never opened', de: 'nie geöffnet' },
+  'tk.newSince': { en: 'New since your last visit', de: 'Neu seit deinem letzten Besuch' },
+
+  // ---------------------------------------------------------------- Kennzahlen am Ticket
+  'tk.firstReply': { en: 'First reply after', de: 'Erste Antwort nach' },
+  'tk.noReplyYet': { en: 'no reply yet', de: 'noch keine Antwort' },
+  'tk.lastActivity': { en: 'Last activity', de: 'Letzte Bewegung' },
+  'tk.waitingSince': { en: 'Waiting for us since', de: 'Wartet auf uns seit' },
+  'tk.closedAt': { en: 'Closed', de: 'Geschlossen' },
+  'tk.reopenedTimes': { en: 'Reopened', de: 'Wieder geöffnet' },
+  'tk.neverAnswered': { en: 'Never answered', de: 'Nie beantwortet' },
+  'tk.onlySubjectShort': { en: 'Subject only', de: 'Nur ein Betreff' },
+  'tk.customer': { en: 'Customer', de: 'Kunde' },
+  'tk.takeIt': { en: 'Take this ticket', de: 'Ticket übernehmen' },
+  'tk.assignedToYou': { en: 'Assigned to you', de: 'Dir zugewiesen' },
+
+  // Der Kunde neben dem Gespräch – wen man vor sich hat, bevor man antwortet.
+  'tk.ctxSince': { en: 'Customer since', de: 'Kunde seit' },
+  'tk.ctxCredits': { en: 'Credits', de: 'Guthaben' },
+  'tk.ctxTickets': { en: 'Tickets so far', de: 'Tickets bisher' },
+  'tk.ctxOpenOf': { en: '({n} open)', de: '({n} offen)' },
+  'tk.ctxSlots': { en: 'Server slots', de: 'Serverplätze' },
+  'tk.ctxLastTopup': { en: 'Last top-up', de: 'Letzte Aufladung' },
+  'tk.ctxLocalTime': { en: 'Local time', de: 'Ortszeit' },
+  'tk.mailUnverified': { en: 'Email unconfirmed', de: 'E-Mail unbestätigt' },
+
+  // ---------------------------------------------------------------- Die Warteschlange des Teams
+  'tk.tileWaiting': { en: 'Waiting for us', de: 'Wartet auf uns' },
+  'tk.tileUnanswered': { en: 'Never answered', de: 'Nie beantwortet' },
+  'tk.tileStale': { en: 'Quiet over 24 h', de: 'Über 24 h still' },
+  'tk.tileUrgent': { en: 'High or urgent', de: 'Hoch oder dringend' },
+  'tk.tileUnassigned': { en: 'Not assigned', de: 'Nicht zugewiesen' },
+  'tk.tileMine': { en: 'Yours', de: 'Deine' },
+  'tk.tileFirstReply': { en: 'First reply (30 d median)', de: 'Erste Antwort (Median 30 T)' },
+  'tk.unansweredOnly': { en: 'Never answered', de: 'Nie beantwortet' },
+  'tk.sort.queue': { en: 'Queue order', de: 'Warteschlange' },
+  'tk.sort.waiting': { en: 'Longest waiting first', de: 'Längste Wartezeit zuerst' },
+  'tk.sort.newest': { en: 'Newest first', de: 'Neueste zuerst' },
+  'tk.sort.priority': { en: 'By priority', de: 'Nach Dringlichkeit' },
+  'tk.noneHere': {
+    en: 'Nothing matches these filters.',
+    de: 'Zu diesen Filtern steht nichts an.',
+  },
+  'tk.selectAll': { en: 'Select all {n}', de: 'Alle {n} auswählen' },
+  'tk.pickOne': { en: 'Select ticket #{id}', de: 'Ticket #{id} auswählen' },
+  'tk.picked': { en: '{n} selected', de: '{n} ausgewählt' },
+  'tk.bulkTakeIt': { en: 'Assign to me', de: 'Mir zuweisen' },
+  'tk.bulkUnassign': { en: 'Unassign', de: 'Zuweisung aufheben' },
+  'tk.bulkUrgent': { en: 'Mark urgent', de: 'Auf dringend' },
+  'tk.bulkClose': { en: 'Close', de: 'Schließen' },
+  'tk.bulkCloseAsk': {
+    en: 'Close {n} tickets? Everyone on them gets a notification.',
+    de: '{n} Tickets schließen? Alle Beteiligten bekommen eine Nachricht.',
+  },
+  'tk.bulkDone': { en: '{n} tickets updated.', de: '{n} Tickets geändert.' },
 
   // ---------------------------------------------------------------- Guthaben (neu)
   'bill.topUpBig': { en: 'Top up credits', de: 'Guthaben aufladen' },

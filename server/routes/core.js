@@ -758,11 +758,20 @@ router.get(
   '/me/notifications',
   auth.requireUser,
   wrap((req, res) => {
-    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 100));
+    const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 40));
     const event = String(req.query.event || '').trim();
+    const before = Number(req.query.before);
+    // Eine Zeile mehr holen als ausgeliefert wird: So weiß der Browser, ob der Knopf „Ältere
+    // laden“ noch etwas finden kann, ohne eine zweite reine Zählabfrage zu brauchen.
+    const rows = notify.notificationsFor(req.user.id, langOf(req), {
+      limit: limit + 1,
+      event,
+      before: Number.isInteger(before) && before > 0 ? before : null,
+    });
     res.json({
-      notifications: notify.notificationsFor(req.user.id, langOf(req), { limit, event }),
+      notifications: rows.slice(0, limit),
       unread: notify.unreadFor(req.user.id),
+      has_more: rows.length > limit,
     });
   })
 );
@@ -778,7 +787,9 @@ router.patch(
     const ids = Array.isArray(raw)
       ? raw.map(Number).filter((id) => Number.isInteger(id) && id > 0).slice(0, 100)
       : null;
-    const changed = notify.markRead(req.user.id, ids);
+    const changed = req.body?.unread
+      ? notify.markUnread(req.user.id, ids || [])
+      : notify.markRead(req.user.id, ids);
     res.json({ ok: true, changed, unread: notify.unreadFor(req.user.id) });
   })
 );
@@ -1447,6 +1458,14 @@ router.get(
 
 // ---------------------------------------------------------------- Tickets
 
+/**
+ * Ein Ticket, wie es der Browser bekommt.
+ *
+ * Dazugekommen sind die Angaben, die eine Zeile lesbar machen, ohne sie zu öffnen: die letzte
+ * Nachricht als Vorschau, ob die andere Seite sie gesehen hat, und die drei Zeitpunkte, aus denen
+ * sich Wartezeit und Antwortzeit ergeben. Die Vorschau ist hier auf 200 Zeichen gekürzt – eine
+ * Liste braucht den ersten Satz, nicht acht Kilobyte Text je Zeile.
+ */
 export const ticketView = (row) => ({
   id: row.id,
   subject: row.subject,
@@ -1454,6 +1473,7 @@ export const ticketView = (row) => ({
   priority: row.priority,
   source: row.source,
   messages: row.messages ?? undefined,
+  files: row.files ?? undefined,
   shared: Boolean(row.shared),
   extra_users: row.extra_users ?? undefined,
   unread_user: Boolean(row.unread_user),
@@ -1461,11 +1481,27 @@ export const ticketView = (row) => ({
   discord: Boolean(row.discord_channel_id),
   assigned_to: row.assigned_to ?? null,
   assigned_name: row.assigned_name ?? null,
+  assigned_avatar: row.assigned_avatar ?? null,
   created_at: row.created_at,
   updated_at: row.updated_at,
   closed_at: row.closed_at,
+  first_reply_at: row.first_reply_at ?? null,
+  last_customer_at: row.last_customer_at ?? null,
+  last_staff_at: row.last_staff_at ?? null,
+  reopened: row.reopened ?? 0,
+  last_at: row.last_at ?? null,
+  last_role: row.last_role ?? null,
+  last_body: row.last_body ? String(row.last_body).slice(0, 200) : '',
+  // Wann die andere Seite die letzte Nachricht gesehen hat – oder `null`, solange nicht.
+  seen_at: row.seen_at ?? null,
+  user_id: row.user_id,
   username: row.username,
-  display_name: row.display_name || profile.displayNameOf(row),
+  // Nur, wenn die Zeile den Kunden überhaupt kennt. `displayNameOf` fällt sonst auf
+  // „Konto #<id>“ zurück – und `id` ist an einer Ticketzeile die Nummer des **Tickets**.
+  // Heraus kam damit ein Kundenname, den es nicht gibt, und zwar überall dort, wo die Ansicht
+  // gar keinen braucht: in der eigenen Ticketliste des Kunden.
+  display_name: row.display_name || (row.email ? profile.displayNameOf(row) : null),
+  avatar: row.avatar ?? null,
   email: row.email,
 });
 
@@ -1601,13 +1637,19 @@ router.get(
   auth.requireUser,
   wrap((req, res) => {
     const ticket = tickets.getForParticipant(requireInt(req.params.id, 'Ticket'), req.user);
-    tickets.markRead(ticket, req.user, { staff: false });
+    // Vor dem Markieren merken, wo man stehen geblieben war – daraus wird der Strich
+    // „Neue Nachrichten“ im Verlauf.
+    const seenUntil = tickets.markRead(ticket, req.user, { staff: false });
     const messages = tickets.messages(ticket.id, { staff: false, limit: 100, newest: true });
     res.json({
       ticket: ticketView(ticket),
       messages,
+      seen_until: seenUntil,
       has_more: messages.length === 100,
       participants: tickets.participants(ticket.id),
+      // Auch der Kunde sieht, ob seine Nachricht beim Team angekommen ist. Eine
+      // Lesebestätigung, die nur in eine Richtung geht, wäre eine Überwachung und keine Auskunft.
+      reads: tickets.reads(ticket.id),
       me: req.user.id,
     });
   })
@@ -1630,6 +1672,7 @@ router.get(
       ticket: ticketView(ticket),
       messages,
       has_more: messages.length === 100,
+      reads: tickets.reads(ticket.id),
     });
   })
 );
@@ -1656,6 +1699,7 @@ router.post(
       messages: Number.isInteger(after) && after >= 0
         ? tickets.messages(ticket.id, { staff: false, after, limit: 100 })
         : tickets.messages(ticket.id, { staff: false }),
+      reads: tickets.reads(ticket.id),
     });
   })
 );

@@ -890,6 +890,18 @@ function uptime(seconds) {
 //
 // Der Arbeitsbildschirm des Teams: alle Tickets, nach Zustand gefiltert, das Dringendste oben.
 // Angeklickt wird daraus dasselbe Gespräch, das der Kunde sieht – nur mit den Werkzeugen dazu.
+//
+// **Drei Dinge machen aus einer Liste eine Warteschlange.**
+//
+// Erstens: Man sieht ihre Größe, bevor man sie liest. Die Kacheln oben sind keine Verzierung,
+// sondern die Filter selbst – „vier unbeantwortet“ ist ein Satz und ein Klick zugleich.
+//
+// Zweitens: Eine Zeile sagt, worum es geht. Vorher stand dort „3 Nachrichten“ – eine Zahl über das
+// Ticket und nichts über die Sache. Jetzt steht dort der Anfang der letzten Nachricht, wer sie
+// geschrieben hat, und ob der Kunde unsere Antwort gelesen hat.
+//
+// Drittens: Man räumt sie nicht einzeln auf. Nach einer Störung liegen zwanzig Tickets zum selben
+// Thema da; sie zuzuweisen oder zu schließen darf nicht sechzig Klicks kosten.
 
 const TICKET_STATUS_PILL = { open: 'primary', answered: '', closed: '' };
 const TICKET_PRIORITY_PILL = { urgent: 'missing', high: 'primary', normal: '', low: '' };
@@ -899,28 +911,75 @@ async function staffTicket(root, id) {
   return renderStaffTicket(root, id);
 }
 
+/** Die Filter, die in der Adresszeile stehen – an einer Stelle, damit sie nirgends abweichen. */
+const ticketQuery = (params) => ({
+  status: params.get('status') || 'open',
+  priority: params.get('priority') || 'all',
+  assignment: params.get('assignment') || 'all',
+  sort: params.get('sort') || 'queue',
+  stale: params.get('stale') === '1',
+  unanswered: params.get('unanswered') === '1',
+  q: params.get('q') || '',
+});
+
+const ticketHash = (query) =>
+  `/admin/tickets?status=${query.status}&priority=${query.priority}&assignment=${query.assignment}` +
+  `&sort=${query.sort}&stale=${query.stale ? 1 : 0}&unanswered=${query.unanswered ? 1 : 0}` +
+  `&q=${encodeURIComponent(query.q)}`;
+
 async function staffTickets(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
-  const status = params.get('status') || 'open';
-  const priority = params.get('priority') || 'all';
-  const assignment = params.get('assignment') || 'all';
-  const stale = params.get('stale') === '1';
-  const search = params.get('q') || '';
+  const query = ticketQuery(params);
+  const { duration } = await import('./tickets.js');
 
-  const data = await api(
-    `/admin/tickets?status=${status}&priority=${priority}&assignment=${assignment}&stale=${stale ? 1 : 0}&q=${encodeURIComponent(search)}`
-  );
+  const data = await api(`/admin/tickets?${ticketHash(query).split('?')[1]}`);
+  const counts = data.counts || {};
+  /** Was gerade angehakt ist. Nach jedem Neuzeichnen leer – eine Auswahl über Filter hinweg wäre
+   *  eine Massenaktion auf Tickets, die man nicht mehr sieht. */
+  const picked = new Set();
+
+  /**
+   * Eine Kachel ist eine Zahl **und** ein Filter.
+   *
+   * Getrennt wäre beides schlechter: Eine Zahl ohne Weg dorthin lässt einen suchen, ein Filter
+   * ohne Zahl lässt einen raten, ob sich das Klicken lohnt.
+   */
+  const tile = (key, value, hash, tone = '') =>
+    `<a class="tk-tile ${tone} ${Number(value) ? '' : 'is-empty'}" href="#${hash}">
+      <span class="tk-tile-value">${Number(value) || 0}</span>
+      <span class="tk-tile-label">${escapeHtml(tr(key))}</span>
+    </a>`;
 
   root.innerHTML = `
     ${appbar(tr('adm.allTickets'), '', tr('adm.allTicketsSub'))}
+
+    <div class="tk-tiles">
+      ${tile('tk.tileWaiting', counts.waiting, ticketHash({ ...query, status: 'open', stale: false, unanswered: false, assignment: 'all' }), 'primary')}
+      ${tile('tk.tileUnanswered', counts.unanswered, ticketHash({ ...query, status: 'open', unanswered: true, stale: false }), 'bad')}
+      ${tile('tk.tileStale', counts.stale, ticketHash({ ...query, status: 'open', stale: true, unanswered: false }), 'warn')}
+      ${tile('tk.tileUrgent', counts.urgent, ticketHash({ ...query, status: 'open', priority: 'urgent', stale: false, unanswered: false }), 'warn')}
+      ${tile('tk.tileUnassigned', counts.unassigned, ticketHash({ ...query, status: 'open', assignment: 'unassigned', stale: false, unanswered: false }))}
+      ${tile('tk.tileMine', counts.mine, ticketHash({ ...query, status: 'all', assignment: 'mine', stale: false, unanswered: false }))}
+      <!-- Keine Zahl zum Anklicken, sondern die Auskunft, wie gut es gerade läuft: Wie lange ein
+           Kunde im Mittel auf die erste Antwort wartet. Ohne sie ist „viel zu tun“ ein Gefühl. -->
+      <div class="tk-tile is-static">
+        <span class="tk-tile-value">${
+          counts.first_reply_median === null || counts.first_reply_median === undefined
+            ? '–'
+            : escapeHtml(duration(counts.first_reply_median))
+        }</span>
+        <span class="tk-tile-label">${escapeHtml(tr('tk.tileFirstReply'))}</span>
+      </div>
+    </div>
+
     <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
       <div class="row wrap">
         <select id="tk-status" class="mini" style="max-width:13rem">
-          <option value="all" ${status === 'all' ? 'selected' : ''}>${escapeHtml(tr('common.all'))}</option>
+          <option value="all" ${query.status === 'all' ? 'selected' : ''}>${escapeHtml(tr('common.all'))}</option>
           ${(data.statuses || [])
             .map(
               (entry) =>
-                `<option value="${entry}" ${status === entry ? 'selected' : ''}>${escapeHtml(
+                `<option value="${entry}" ${query.status === entry ? 'selected' : ''}>${escapeHtml(
                   tr(`tk.status.${entry}`)
                 )}</option>`
             )
@@ -929,25 +988,37 @@ async function staffTickets(root) {
         <!-- Nach Dringlichkeit filtern konnte der Server längst; hier stand nur nie ein Feld
              dafür, und der Wert kam nie an. -->
         <select id="tk-priority" class="mini" style="max-width:13rem">
-          <option value="all" ${priority === 'all' ? 'selected' : ''}>${escapeHtml(tr('tk.priority'))}</option>
+          <option value="all" ${query.priority === 'all' ? 'selected' : ''}>${escapeHtml(tr('tk.priority'))}</option>
           ${(data.priorities || [])
             .map(
               (entry) =>
-                `<option value="${entry}" ${priority === entry ? 'selected' : ''}>${escapeHtml(
+                `<option value="${entry}" ${query.priority === entry ? 'selected' : ''}>${escapeHtml(
                   tr(`tk.priority.${entry}`)
                 )}</option>`
             )
             .join('')}
         </select>
         <select id="tk-assignment" class="mini" style="max-width:13rem">
-          <option value="all" ${assignment === 'all' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentAll'))}</option>
-          <option value="mine" ${assignment === 'mine' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentMine'))}</option>
-          <option value="unassigned" ${assignment === 'unassigned' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentNone'))}</option>
+          <option value="all" ${query.assignment === 'all' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentAll'))}</option>
+          <option value="mine" ${query.assignment === 'mine' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentMine'))}</option>
+          <option value="unassigned" ${query.assignment === 'unassigned' ? 'selected' : ''}>${escapeHtml(tr('tk.assignmentNone'))}</option>
         </select>
-        <label class="row small"><input id="tk-stale" type="checkbox" ${stale ? 'checked' : ''}>
+        <select id="tk-sort" class="mini" style="max-width:13rem">
+          ${['queue', 'waiting', 'newest', 'priority']
+            .map(
+              (entry) =>
+                `<option value="${entry}" ${query.sort === entry ? 'selected' : ''}>${escapeHtml(
+                  tr(`tk.sort.${entry}`)
+                )}</option>`
+            )
+            .join('')}
+        </select>
+        <label class="row small"><input id="tk-stale" type="checkbox" ${query.stale ? 'checked' : ''}>
           ${escapeHtml(tr('tk.stale'))}</label>
+        <label class="row small"><input id="tk-unanswered" type="checkbox" ${query.unanswered ? 'checked' : ''}>
+          ${escapeHtml(tr('tk.unansweredOnly'))}</label>
         <input id="tk-q" type="search" placeholder="${escapeHtml(tr('common.search'))}"
-          value="${escapeHtml(search)}" style="max-width:16rem">
+          value="${escapeHtml(query.q)}" style="max-width:16rem">
       </div>
       <div class="row wrap">
         ${exportButton('tickets')}
@@ -955,46 +1026,141 @@ async function staffTickets(root) {
       </div>
     </div>
 
+    <!-- Die Leiste für mehrere auf einmal. Sie steht erst da, wenn etwas ausgewählt ist: eine
+         Massenaktion, die immer sichtbar ist, wird irgendwann versehentlich angeklickt. -->
+    <div class="tk-bulk" id="tk-bulk" hidden>
+      <span class="strong" id="tk-bulk-count"></span>
+      <div class="row wrap grow" style="justify-content:flex-end">
+        <button class="btn btn-sm" data-bulk="assign-me">${icon('user')} ${escapeHtml(tr('tk.bulkTakeIt'))}</button>
+        <button class="btn btn-sm" data-bulk="unassign">${escapeHtml(tr('tk.bulkUnassign'))}</button>
+        <button class="btn btn-sm" data-bulk="urgent">${escapeHtml(tr('tk.bulkUrgent'))}</button>
+        <button class="btn btn-sm btn-danger" data-bulk="close">${escapeHtml(tr('tk.bulkClose'))}</button>
+        <button class="btn btn-sm btn-ghost" id="tk-bulk-clear">${escapeHtml(tr('common.cancel'))}</button>
+      </div>
+    </div>
+
     <section class="panel">
       <div class="body" style="padding:0">
         ${
           data.tickets.length
-            ? `<ul class="ticket-list">${data.tickets.map(staffRow).join('')}</ul>`
+            ? `<div class="tk-select-all">
+                 <label class="row small"><input type="checkbox" id="tk-all">
+                   ${escapeHtml(tr('tk.selectAll', { n: data.tickets.length }))}</label>
+               </div>
+               <ul class="ticket-list">${data.tickets.map(staffRow).join('')}</ul>`
             : `<div class="empty" style="box-shadow:none;background:transparent">
-                <h3>${escapeHtml(tr('tk.none'))}</h3></div>`
+                <h3>${escapeHtml(tr('tk.none'))}</h3>
+                <p>${escapeHtml(tr('tk.noneHere'))}</p></div>`
         }
       </div>
     </section>`;
 
+  // Der Klick auf die Zeile öffnet das Ticket – der Klick auf das Kästchen wählt es aus.
+  // `bindRows` lässt Bedienelemente in der Zeile schon von sich aus in Ruhe.
   bindRows('[data-open]', (node) => go(`/admin/tickets/${node.dataset.open}`));
+
+  const bulkBar = $('#tk-bulk');
+  const paintPicked = () => {
+    bulkBar.hidden = picked.size === 0;
+    $('#tk-bulk-count').textContent = tr('tk.picked', { n: picked.size });
+    for (const box of $$('[data-pick]')) box.checked = picked.has(Number(box.dataset.pick));
+    const all = $('#tk-all');
+    if (all) all.checked = picked.size > 0 && picked.size === data.tickets.length;
+  };
+
+  for (const box of $$('[data-pick]')) {
+    box.addEventListener('change', () => {
+      const id = Number(box.dataset.pick);
+      if (box.checked) picked.add(id);
+      else picked.delete(id);
+      paintPicked();
+    });
+  }
+  $('#tk-all')?.addEventListener('change', (event) => {
+    picked.clear();
+    if (event.target.checked) for (const entry of data.tickets) picked.add(entry.id);
+    paintPicked();
+  });
+  $('#tk-bulk-clear').addEventListener('click', () => {
+    picked.clear();
+    paintPicked();
+  });
+
+  const BULK = {
+    'assign-me': { action: 'assign', assigned_to: state.me?.id },
+    unassign: { action: 'assign', assigned_to: null },
+    urgent: { action: 'priority', priority: 'urgent' },
+    close: { action: 'status', status: 'closed' },
+  };
+  for (const button of $$('[data-bulk]')) {
+    button.addEventListener('click', async () => {
+      const body = BULK[button.dataset.bulk];
+      if (!body || !picked.size) return;
+      // Schließen trifft den Kunden: Er bekommt Post. Das fragt man einmal nach, bevor es zwanzig
+      // Menschen gleichzeitig betrifft.
+      if (
+        button.dataset.bulk === 'close' &&
+        !(await confirmDialog(tr('tk.bulkCloseAsk', { n: picked.size }), { danger: true }))
+      ) {
+        return;
+      }
+      try {
+        const result = await api('/admin/tickets/bulk', {
+          method: 'POST',
+          body: { ...body, ids: [...picked] },
+        });
+        ok(tr('tk.bulkDone', { n: result.done }));
+        picked.clear();
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+    });
+  }
 
   const reload = debounce(() => {
     go(
-      `/admin/tickets?status=${$('#tk-status').value}&priority=${$('#tk-priority').value}` +
-        `&assignment=${$('#tk-assignment').value}&stale=${$('#tk-stale').checked ? 1 : 0}` +
-        `&q=${encodeURIComponent($('#tk-q').value.trim())}`
+      ticketHash({
+        status: $('#tk-status').value,
+        priority: $('#tk-priority').value,
+        assignment: $('#tk-assignment').value,
+        sort: $('#tk-sort').value,
+        stale: $('#tk-stale').checked,
+        unanswered: $('#tk-unanswered').checked,
+        q: $('#tk-q').value.trim(),
+      })
     );
     draw();
   }, 300);
-  $('#tk-status').addEventListener('change', reload);
-  $('#tk-priority').addEventListener('change', reload);
-  $('#tk-assignment').addEventListener('change', reload);
-  $('#tk-stale').addEventListener('change', reload);
+  for (const id of ['#tk-status', '#tk-priority', '#tk-assignment', '#tk-sort', '#tk-stale', '#tk-unanswered']) {
+    $(id).addEventListener('change', reload);
+  }
   $('#tk-q').addEventListener('input', reload);
 
   $('#tk-new-for').addEventListener('click', () => ticketForCustomer());
 
-  // Kommt ein Ticket herein oder eine Antwort, ist die Liste sofort veraltet.
+  // Kommt ein Ticket herein oder eine Antwort, ist die Liste sofort veraltet. Eine Lesemarke
+  // ändert daran nichts Sichtbares in der Zeile außer dem Haken – und dafür lohnt kein Neuaufbau
+  // der ganzen Seite, während jemand gerade etwas anhakt.
   state.onLive = debounce((event) => {
     if (
       event.type === 'ticket' &&
+      event.event !== 'typing' &&
       event.message.audience?.staff &&
       state.route.name === 'admin' &&
-      state.route.tab === 'tickets'
+      state.route.tab === 'tickets' &&
+      !picked.size
     ) draw();
   }, 500);
 }
 
+/**
+ * Eine Zeile der Arbeitsliste.
+ *
+ * Sie beantwortet vier Fragen, ohne dass man das Ticket öffnet: Worum geht es (Betreff und der
+ * Anfang der letzten Nachricht), wer wartet (Kunde, mit Bild), wie lange schon (die Zeit seit
+ * seiner letzten Nachricht – nicht seit irgendeiner Bewegung), und wer sich darum kümmert.
+ */
 function staffRow(ticket) {
   // Dieselbe Regel wie in der Kundenansicht: Die Benachrichtigung steht **am Ticket**. Die Zahl
   // in der Seitenleiste sagt nur, dass etwas wartet, nicht worauf.
@@ -1003,18 +1169,55 @@ function staffRow(ticket) {
   // gelesen hat. An einem beantworteten oder geschlossenen Ticket hat das nichts verloren –
   // dort stand vorher trotzdem „Wartet“, weil allein der Ungelesen-Punkt gefragt wurde.
   const unread = Boolean(ticket.unread_staff) && ticket.status === 'open';
+  // Wie lange der Kunde schon auf uns wartet. Bei einem offenen Ticket ist das die Zeit seit
+  // seiner Nachricht – `updated_at` würde von einer internen Notiz zurückgesetzt, und das Ticket
+  // sähe frisch aus, obwohl der Kunde seit gestern wartet.
+  const waitingSince = ticket.status === 'open' ? ticket.last_customer_at || ticket.created_at : 0;
+  const overdue = waitingSince && Date.now() - waitingSince > 86_400_000;
+  const preview = ticket.last_body
+    ? `<span class="muted">${escapeHtml(
+        ticket.last_role === 'staff' ? tr('tk.staff') : ticket.display_name || tr('tk.customer')
+      )}:</span> ${escapeHtml(ticket.last_body.replace(/\s+/g, ' ').trim())}`
+    : escapeHtml(tr('tk.onlySubjectShort'));
+
   return `<li class="ticket-row ${unread ? 'is-unread' : ''}" data-open="${ticket.id}">
+    <label class="tk-pick" aria-label="${escapeHtml(tr('tk.pickOne', { id: ticket.id }))}">
+      <input type="checkbox" data-pick="${ticket.id}"></label>
     <span class="ticket-dot ${escapeHtml(ticket.status)}"></span>
+    ${avatar(ticket, { size: 28, klass: 'tk-avatar' })}
     <div class="grow" style="min-width:0">
       <div class="row" style="gap:.5rem">
         <span class="strong truncate">${escapeHtml(ticket.subject)}</span>
         <span class="small muted mono">#${ticket.id}</span>
         ${unread ? `<span class="pill unread">${icon('bell')} ${escapeHtml(tr('tk.unread'))}</span>` : ''}
+        ${
+          ticket.status === 'open' && !ticket.first_reply_at
+            ? `<span class="pill missing">${escapeHtml(tr('tk.neverAnswered'))}</span>`
+            : ''
+        }
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
+        ${ticket.files ? `<span class="pill" title="${escapeHtml(tr('tk.files'))}">${icon('paperclip')} ${ticket.files}</span>` : ''}
+        ${ticket.extra_users ? `<span class="pill">${icon('users')} ${ticket.extra_users + 1}</span>` : ''}
+      </div>
+      <div class="small muted truncate ticket-preview">
+        ${
+          ticket.last_role === 'staff'
+            ? `<span class="receipt-mark ${ticket.seen_at ? 'is-seen' : ''}" title="${escapeHtml(
+                ticket.seen_at ? tr('tk.seenShort') : tr('tk.notSeenYet')
+              )}">${icon('check')}${ticket.seen_at ? icon('check') : ''}</span>`
+            : ''
+        }${preview}
       </div>
       <div class="small muted truncate">
         ${escapeHtml(ticket.display_name || `#${ticket.user_id}`)}
-        ${ticket.assigned_name ? ` · ${escapeHtml(ticket.assigned_name)}` : ''}
+        ${
+          ticket.assigned_name
+            ? ` · <span class="row" style="display:inline-flex;gap:.25rem;vertical-align:middle">${avatar(
+                { display_name: ticket.assigned_name, avatar: ticket.assigned_avatar },
+                { size: 14 }
+              )}${escapeHtml(ticket.assigned_name)}</span>`
+            : ` · <span class="warn-text">${escapeHtml(tr('tk.unassigned'))}</span>`
+        }
       </div>
     </div>
     <div class="row" style="gap:.4rem">
@@ -1028,7 +1231,10 @@ function staffRow(ticket) {
       <span class="pill ${TICKET_STATUS_PILL[ticket.status] || ''}">${escapeHtml(
         tr(`tk.status.${ticket.status}`)
       )}</span>
-      <span class="small muted mono nowrap">${since(ticket.updated_at)}</span>
+      <span class="small mono nowrap ${overdue ? 'bad-text' : 'muted'}"
+        title="${escapeHtml(waitingSince ? tr('tk.waitingSince') : tr('tk.lastActivity'))}">${since(
+        waitingSince || ticket.updated_at
+      )}</span>
     </div>
   </li>`;
 }
