@@ -5299,6 +5299,10 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const plannedForecast = billingForecast.data.slots.find((slot) => slot.id === planned.id).forecast;
   assert.equal(plannedForecast.cost_credits, copyPlan.price_credits);
   assert.equal(plannedForecast.covered, true);
+  assert.equal(billingForecast.data.runway.next.id, planned.id);
+  assert.equal(billingForecast.data.runway.renewal_count, 1);
+  assert.equal(billingForecast.data.runway.covered_count, 1);
+  assert.equal(billingForecast.data.runway.first_uncovered, null);
   // Ein Tarifwechsel ist nie nur ein neuer Preis: Die Vorschau zeigt die Restgutschrift, die
   // neue Periode und den künftigen Monat getrennt – und bucht beim bloßen Ansehen nichts.
   const richerPlan = billing.planBySlug('ultra');
@@ -5389,6 +5393,8 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const uncovered = forecastAfterCopies.data.slots.find((slot) => slot.id === planned.id).forecast;
   assert.equal(uncovered.covered, false);
   assert.equal(uncovered.shortfall_credits, copyPlan.price_credits);
+  assert.equal(forecastAfterCopies.data.runway.first_uncovered.id, planned.id);
+  assert.equal(forecastAfterCopies.data.runway.first_uncovered.shortfall_credits, copyPlan.price_credits);
   const malformedCopySelection = await api(base, `/api/profiles/${planned.id}/copy`, {
     token: USER_TOKEN,
     method: 'POST',

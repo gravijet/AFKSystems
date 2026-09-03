@@ -1340,6 +1340,23 @@ export const S = {
   'bill.renewalCovered': { en: 'Covered from current balance', de: 'Aus aktuellem Guthaben gedeckt' },
   'bill.renewalGap': { en: 'Short by {credits}', de: 'Es fehlen {credits}' },
   'bill.renewalOff': { en: 'Automatic renewal is off', de: 'Automatische Verlängerung ist aus' },
+  'bill.runwayEyebrow': { en: 'Renewal coverage', de: 'Deckung der Verlängerungen' },
+  'bill.runwayGapTitle': { en: '“{name}” is not yet covered', de: '„{name}“ ist noch nicht gedeckt' },
+  'bill.runwayGapText': {
+    en: 'On {date}, {credits} more are needed for its automatic renewal.',
+    de: 'Für die automatische Verlängerung am {date} fehlen noch {credits}.',
+  },
+  'bill.runwayCovered': {
+    en: '{covered} of {total} upcoming renewal(s) covered from today’s balance',
+    de: '{covered} von {total} anstehenden Verlängerungen sind mit dem Guthaben von heute gedeckt',
+  },
+  'bill.runwayNext': { en: 'Next due: {date}', de: 'Nächste Fälligkeit: {date}' },
+  'bill.runwaySafeTitle': { en: '{n} upcoming renewal(s) covered', de: '{n} anstehende Verlängerung(en) gedeckt' },
+  'bill.runwaySafeText': {
+    en: 'The current balance still leaves {credits} after renewals through {date}.',
+    de: 'Nach den Verlängerungen bis {date} bleiben aus dem aktuellen Guthaben noch {credits}.',
+  },
+  'bill.runwayToday': { en: 'Calculated from today’s balance', de: 'Berechnet aus dem Guthaben von heute' },
   'bill.slots': { en: 'Server slots', de: 'Serverplätze' },
   'bill.slotsLine': { en: '{paid} paid · {free} free', de: '{paid} bezahlt · {free} gratis' },
   'bill.topUp': { en: 'Top up', de: 'Aufladen' },

@@ -25,6 +25,7 @@ export async function render(root) {
   const data = await api('/billing');
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const paidSlots = data.slots.filter((slot) => !slot.free_slot).length;
+  const runway = data.runway || { renewal_count: 0, covered_count: 0 };
   const renewalForecast = (slot) => {
     if (slot.free_slot || slot.suspended) return '';
     if (!slot.renew) {
@@ -87,6 +88,8 @@ export async function render(root) {
             )}</div></div>`
         : ''
     }
+
+    ${renewalRunway(runway)}
 
     <!-- Aufladen steht zuerst und quer: es ist das eine, wofür man auf diese Seite kommt.
          Vorher war es eine schmale Spalte rechts, unter der die Pakete untereinander in die
@@ -314,6 +317,45 @@ export async function render(root) {
     </div>`;
   }
 
+  /**
+   * Die Monatszahl oben ist absichtlich grob. Diese Karte beantwortet die operativ wichtigere
+   * Frage: welche *konkrete* automatische Verlängerung ist vom Guthabenstand jetzt gedeckt?
+   * Der Server liefert die Reihenfolge und Beträge, damit ein manipuliertes Frontend weder eine
+   * fällige Verlängerung verstecken noch einen beliebigen Zeitpunkt erfinden kann.
+   */
+  function renewalRunway(runway_) {
+    if (!runway_.renewal_count) return '';
+    const next = runway_.next;
+    const gap = runway_.first_uncovered;
+    if (gap) {
+      return `<section class="renewal-runway is-gap" aria-labelledby="renewal-runway-title">
+        <div class="renewal-runway-icon">${icon('alert')}</div>
+        <div class="renewal-runway-copy">
+          <p class="eyebrow">${escapeHtml(tr('bill.runwayEyebrow'))}</p>
+          <h2 id="renewal-runway-title">${escapeHtml(tr('bill.runwayGapTitle', { name: gap.name }))}</h2>
+          <p>${escapeHtml(tr('bill.runwayGapText', { date: date(gap.due_at), credits: credits(gap.shortfall_credits) }))}</p>
+          <div class="renewal-runway-meta">
+            <span>${escapeHtml(tr('bill.runwayCovered', { covered: runway_.covered_count, total: runway_.renewal_count }))}</span>
+            ${next ? `<span>${escapeHtml(tr('bill.runwayNext', { date: date(next.due_at) }))}</span>` : ''}
+          </div>
+        </div>
+        <button class="btn btn-primary btn-sm" type="button" data-runway-topup>${icon('wallet')} ${escapeHtml(tr('bill.topUp'))}</button>
+      </section>`;
+    }
+    return `<section class="renewal-runway is-covered" aria-labelledby="renewal-runway-title">
+      <div class="renewal-runway-icon">${icon('check')}</div>
+      <div class="renewal-runway-copy">
+        <p class="eyebrow">${escapeHtml(tr('bill.runwayEyebrow'))}</p>
+        <h2 id="renewal-runway-title">${escapeHtml(tr('bill.runwaySafeTitle', { n: runway_.covered_count }))}</h2>
+        <p>${escapeHtml(tr('bill.runwaySafeText', { date: date(runway_.covered_until), credits: credits(runway_.balance_after_covered) }))}</p>
+        <div class="renewal-runway-meta">
+          ${next ? `<span>${escapeHtml(tr('bill.runwayNext', { date: date(next.due_at) }))}</span>` : ''}
+          <span>${escapeHtml(tr('bill.runwayToday'))}</span>
+        </div>
+      </div>
+    </section>`;
+  }
+
   function ledgerRow(row, index) {
     return `<li class="${index >= 12 ? 'hide extra' : ''}">
       <span class="ledger-when small muted mono">${datetime(row.created_at)}</span>
@@ -431,6 +473,7 @@ export async function render(root) {
   );
   $('#topup').addEventListener('click', () => startTopup(data, data.packages.length - 1));
   $('#topup-other').addEventListener('click', () => startTopup(data, data.packages.length - 1));
+  $('[data-runway-topup]')?.addEventListener('click', () => startTopup(data, data.packages.length - 1));
 
   $('#more')?.addEventListener('click', (event) => {
     $$('.ledger .extra').forEach((node) => node.classList.remove('hide'));
