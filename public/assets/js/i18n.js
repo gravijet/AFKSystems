@@ -878,6 +878,8 @@ export const S = {
     de: 'Eine begrenzte Antwort auf eine passende Chatzeile. Text und Ziel vor der Nutzung anpassen.',
   },
   'srv.template.chatReplyName': { en: 'AFK reply', de: 'AFK-Antwort' },
+  'srv.copyMacro': { en: 'Copy to editor', de: 'In Editor kopieren' },
+  'srv.copyName': { en: '{name} (copy)', de: '{name} (Kopie)' },
   'srv.trigger': { en: 'Trigger', de: 'Auslöser' },
   'srv.steps': { en: 'Steps', de: 'Schritte' },
   'srv.premiumOnly': {
