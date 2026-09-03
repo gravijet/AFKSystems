@@ -1114,6 +1114,25 @@ test('the panel keeps the reconnect to itself, and hands the viewer its own Mine
   const at = own.args.indexOf('--pov-resources');
   assert.ok(at > 0);
   assert.equal(own.args[at + 1], resources.pathFor(profile.mc_version));
+
+  // Ausdrücklich abgeschaltet geht vor der hinterlegten Datei: Wer die 30 MB nicht will, will sie
+  // auch dann nicht, wenn eine Datei bereitläge. `args()` liest das Profil-Objekt direkt, das
+  // `build()` festhält – deshalb hier setzen und nicht nur in der Datenbank.
+  profile.pov_skip_resources = 1;
+  const skipped = build({ ...POV, povresourcesauto: true });
+  const skippedAt = skipped.args.indexOf('--pov-resources');
+  assert.ok(skippedAt > 0);
+  assert.equal(skipped.args[skippedAt + 1], 'aus');
+  assert.ok(skipped.args.includes('--pov-web'));
+
+  // Eine ältere Bauform kennt `aus` nicht – ihr bleibt die Einstellung verborgen, statt sie an
+  // einer unbekannten Option scheitern zu lassen.
+  const oldBuild = build(POV);
+  assert.ok(!oldBuild.args.includes('aus'));
+  const oldAt = oldBuild.args.indexOf('--pov-resources');
+  assert.equal(oldBuild.args[oldAt + 1], resources.pathFor(profile.mc_version));
+
+  profile.pov_skip_resources = 0;
   resources.remove(profile.mc_version);
 });
 

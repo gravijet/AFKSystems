@@ -101,6 +101,12 @@ Ansicht ist texturiert wie sonst auch – nur eben je Kunde einmal geladen. Bei 
 startet der Bot ohne `--pov-web`, und die Live-Ansicht bleibt die Voxelansicht; dann steht ein
 Voxelbild da, wo jemand für Texturen bezahlt hat.
 
+Wer die rund 30 MB gar nicht erst laden will – ein Standort mit schmaler Leitung, ein Konto, das
+die Ansicht nur ein paarmal im Monat kurz öffnet –, schaltet unter **Serverplatz → Einstellungen →
+Live-Ansicht ohne Texturen laden** ab. Der Viewer läuft dann trotzdem, nur ohne echte Blockbilder;
+er sucht und lädt gar nicht erst. Die Einstellung braucht eine Bauform ab 2.6.0 (`--pov-resources
+aus`) und wirkt erst nach einem Neustart des Bots.
+
 **Standorte holen sich ihre Kopie selbst.** Ein Bot zeichnet dort, wo er läuft; die JAR muss also
 auf derselben Maschine liegen. Sie steht deshalb im Manifest, das ein Standort ohnehin abruft
 (`GET /api/node/manifest`), und wird wie eine Client-Datei abgeglichen – nur was fehlt oder

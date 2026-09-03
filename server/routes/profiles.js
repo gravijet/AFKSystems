@@ -114,6 +114,7 @@ function profileView(profile, lang = 'en') {
     sneak: Boolean(profile.sneak),
     // 0 heißt "was der Client für richtig hält" – 2 Chunks, in den POV-Bauformen 6.
     view_distance: profile.view_distance || 0,
+    pov_skip_resources: Boolean(profile.pov_skip_resources),
     on_cooldown: profile.on_cooldown,
     // Der Wiederanlauf: Fällt ein Bot aus, der im Spiel war, holt ihn das Panel zurück – siehe
     // die Erklärung bei `RESTART_MAX_TRIES` in supervisor.js.
@@ -430,7 +431,8 @@ router.post(
     // `suspended`, nicht `locked`: Die Kopie ist frisch bezahlt und hat keine Vorgeschichte.
     const SETTINGS = [
       'join_delay', 'chat_delay', 'on_cooldown', 'auto_reconnect', 'reconnect_delay', 'max_backoff',
-      'movement', 'antiafk_sec', 'sneak', 'view_distance', 'fake_host', 'anti_afk', 'color', 'note',
+      'movement', 'antiafk_sec', 'sneak', 'view_distance', 'pov_skip_resources', 'fake_host', 'anti_afk',
+      'color', 'note',
     ];
     // `chat_limit` gehört nicht dazu: Es ist vom Tarif gedeckelt, und die Kopie kann einen anderen
     // haben. `createProfile` hat es schon auf das gesetzt, was dieser Tarif hergibt; ein höherer
@@ -605,6 +607,18 @@ router.patch(
         }
       }
       put('view_distance', chunks);
+    }
+    if (body.pov_skip_resources !== undefined) {
+      // Ohne gebuchte Live-Ansicht mit einer Bauform ab 2.6.0 tut die Einstellung nichts – siehe
+      // supervisor.js `args()`. Dieselbe Prüfung entscheidet auch, ob der Reiter überhaupt da ist.
+      if (body.pov_skip_resources && !capsOf(profile).povresourcesauto) {
+        throw new HttpError(
+          402,
+          'Das braucht eine gebuchte Live-Ansicht mit einer Client-Bauform ab 2.6.0.',
+          { en: 'This needs a booked live view with a client build from 2.6.0 on.' }
+        );
+      }
+      put('pov_skip_resources', body.pov_skip_resources ? 1 : 0);
     }
     if (body.on_cooldown !== undefined) {
       put('on_cooldown', requireInt(body.on_cooldown, 'Sperrzeit', { min: 1, max: 3600 }));

@@ -3002,6 +3002,13 @@ async function tabSettings(root, profile) {
             <input id="view_distance" type="number" min="0" max="32" value="${profile.view_distance || 0}"
               ${plan.premium ? '' : 'disabled'}>
             <span class="hint">${escapeHtml(tr('srv.viewDistanceHint'))}</span></div>
+          <!-- Nur mit gebuchter Live-Ansicht und einer Bauform ab 2.6.0 überhaupt etwas wert –
+               siehe supervisor.js, args(). Ohne beides bleibt das Feld da, aber abgeschaltet:
+               ein Häkchen, das nichts tut, ist schlimmer als kein Häkchen. -->
+          <label class="check"><input type="checkbox" id="pov_skip_resources"
+            ${profile.pov_skip_resources ? 'checked' : ''} ${profile.caps.povresourcesauto ? '' : 'disabled'}>
+            ${escapeHtml(tr('srv.povSkipResources'))}</label>
+          <p class="small muted" style="margin:0">${escapeHtml(tr('srv.povSkipResourcesHint'))}</p>
         </div>
       </section>
 
@@ -3090,6 +3097,7 @@ async function tabSettings(root, profile) {
       body.sneak = $('#sneak').checked;
       body.view_distance = Number($('#view_distance').value);
     }
+    if (profile.caps.povresourcesauto) body.pov_skip_resources = $('#pov_skip_resources').checked;
 
     try {
       const result = await api(`/profiles/${profile.id}`, { method: 'PATCH', body });
