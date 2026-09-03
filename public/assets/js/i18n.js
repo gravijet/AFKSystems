@@ -188,7 +188,6 @@ export const S = {
   },
   'features.premium': { en: 'Paid slot', de: 'Bezahlter Platz' },
   'features.ultra': { en: 'Ultra or add-on', de: 'Ultra oder Zusatz' },
-  'features.soon': { en: 'Coming later', de: 'Kommt später' },
 
   // ------------------------------------------------ Preise
   'pricing.title': { en: 'Plans and prices', de: 'Tarife und Preise' },

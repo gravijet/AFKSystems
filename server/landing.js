@@ -86,7 +86,6 @@ function featuresHtml(lang) {
   const tag = escape(t('features.premium', lang));
   const tags = {
     ultra: escape(t('features.ultra', lang)),
-    soon: escape(t('features.soon', lang)),
   };
 
   return [...groups.values()]
