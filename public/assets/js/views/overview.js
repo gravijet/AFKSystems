@@ -34,6 +34,11 @@ const COUNT = new Intl.NumberFormat(locale);
  */
 let insights = null;
 
+// Die Übersicht ist kein zweites, endlos nachladendes Aktivitätsarchiv. Für die kleine Vorschau
+// reichen die jüngsten echten Meldungen beim Öffnen. Der vollständige Verlauf bleibt unter
+// „Aktivität“; beim nächsten Öffnen der Übersicht wird diese Momentaufnahme wieder frisch geholt.
+let notificationPreview = null;
+
 /**
  * Läuft die Übersicht gerade eine eigene Bilderschleife, muss sie enden, bevor die nächste
  * anfängt – sonst zeichnet ein Zustandswechsel (`state.onLive`, siehe unten) die Kacheln neu,
@@ -63,7 +68,14 @@ export async function render(root) {
   const monthly = state.me.monthly_cost || 0;
   const monthsLeft = monthly > 0 ? Math.floor(state.me.credits / monthly) : null;
   const todos = state.todos || [];
-  if (!insights) insights = await api('/me/insights').catch(() => null);
+  if (!insights || !notificationPreview) {
+    const [nextInsights, nextNotifications] = await Promise.all([
+      insights ? Promise.resolve(insights) : api('/me/insights').catch(() => null),
+      notificationPreview ? Promise.resolve(notificationPreview) : api('/me/notifications?limit=4').catch(() => null),
+    ]);
+    insights = nextInsights;
+    notificationPreview = nextNotifications;
+  }
 
   root.innerHTML = `
     ${appbar(
@@ -76,6 +88,8 @@ export async function render(root) {
     ${onboarding()}
 
     ${todoList(todos)}
+
+    ${operatingFocus()}
 
     <!-- Die Diagramme stehen dort, wo vorher vier Kacheln mit denselben Zahlen standen.
          Guthaben und Monatskosten hatten damit jeweils zwei Plätze auf derselben Seite – einmal
@@ -255,6 +269,119 @@ export async function render(root) {
           )
           .join('')}
       </ol>
+    </section>`;
+  }
+
+  /**
+   * Was jetzt Aufmerksamkeit braucht – ausschließlich aus Zuständen, die das Panel wirklich
+   * kennt. Die Karte ist absichtlich keine „Bewertung“: Sie zählt weder harmlose Offline-Bots
+   * noch rät sie, warum etwas passiert sein könnte. Jeder Fund hat eine konkrete Zieladresse.
+   */
+  function operatingFocus() {
+    const issues = [];
+    const seen = new Set();
+    const add = (key, issue) => {
+      if (!seen.has(key)) {
+        seen.add(key);
+        issues.push(issue);
+      }
+    };
+
+    for (const profile of state.profiles) {
+      if (profile.suspended) {
+        add(`profile:${profile.id}`, {
+          icon: 'wallet',
+          tone: 'bad',
+          title: tr('ov.focus.slotPaused', { name: profile.name }),
+          text: tr('ov.focus.slotPausedText'),
+          href: `#/servers/${profile.id}/plan`,
+        });
+      } else if (profile.plan?.free_slot && profile.free_access?.ok === false) {
+        add(`profile:${profile.id}`, {
+          icon: 'discord',
+          tone: 'warn',
+          title: tr('ov.focus.freePaused', { name: profile.name }),
+          text: tr('ov.focus.freePausedText'),
+          href: `#/servers/${profile.id}/connect`,
+        });
+      }
+    }
+
+    for (const account of state.accounts) {
+      if (!account.suspended && account.status !== 'error') continue;
+      add(`account:${account.id}`, {
+        icon: 'alert',
+        tone: 'bad',
+        title: tr('ov.focus.accountNeedsLogin', { name: account.name }),
+        text: account.suspend_reason || account.last_error || tr('ov.focus.accountNeedsLoginText'),
+        href: '#/accounts',
+      });
+    }
+
+    for (const profile of state.profiles) {
+      for (const member of profile.accounts) {
+        const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
+        if (bot.state !== 'error') continue;
+        add(`bot:${profile.id}:${member.account_id}`, {
+          icon: 'bot',
+          tone: 'bad',
+          title: tr('ov.focus.botFailed', { name: member.name }),
+          text: bot.last_error || bot.detail || tr('ov.focus.botFailedText'),
+          href: `#/servers/${profile.id}/connect`,
+        });
+      }
+    }
+
+    if (monthly > 0 && state.me.credits < monthly) {
+      add('balance', {
+        icon: 'wallet',
+        tone: 'warn',
+        title: tr('ov.focus.balanceLow'),
+        text: tr('ov.lowCredits', { credits: credits(state.me.credits), cost: credits(monthly) }),
+        href: '#/credits',
+      });
+    }
+
+    const shown = issues.slice(0, 4);
+    const notifications = notificationPreview?.notifications || [];
+    const issueList = shown.length
+      ? `<div class="focus-list">${shown
+          .map(
+            (issue) => `<a class="focus-item ${issue.tone}" href="${issue.href}">
+              <span class="focus-icon">${icon(issue.icon)}</span>
+              <span class="focus-copy"><strong>${escapeHtml(issue.title)}</strong>
+                <small>${escapeHtml(issue.text)}</small></span>${icon('arrow')}
+            </a>`
+          )
+          .join('')}</div>`
+      : `<div class="focus-empty"><span class="focus-icon ok">${icon('check')}</span>
+          <div><strong>${escapeHtml(tr('ov.focus.clearTitle'))}</strong>
+            <small>${escapeHtml(tr('ov.focus.clearText', { online, total: bots.length }))}</small></div></div>`;
+    const notificationsList = notifications.length
+      ? `<div class="focus-activity-list">${notifications
+          .slice(0, 3)
+          .map((entry) => {
+            const tone = ['bad', 'warn', 'ok'].includes(entry.tone) ? entry.tone : 'info';
+            return `<a class="focus-activity ${entry.read_at ? '' : 'is-unread'}" href="#/activity">
+              <span class="focus-activity-dot ${tone}"></span><span class="truncate">${escapeHtml(entry.title)}</span>
+            </a>`;
+          })
+          .join('')}</div>`
+      : `<p class="small muted focus-activity-empty">${escapeHtml(tr('ov.focus.activityEmpty'))}</p>`;
+
+    return `<section class="panel operating-focus" style="margin-bottom:1.5rem">
+      <header><div><h3>${escapeHtml(tr('ov.focus.title'))}</h3>
+        <span class="small muted">${escapeHtml(
+          shown.length ? tr('ov.focus.open', { n: issues.length }) : tr('ov.focus.current')
+        )}</span></div>
+        ${issues.length > shown.length ? `<a class="btn btn-sm" href="#/activity">${escapeHtml(tr('ov.focus.viewAll'))}</a>` : ''}
+      </header>
+      <div class="operating-focus-body">
+        <div>${issueList}</div>
+        <aside class="focus-activity-panel"><div class="focus-activity-head"><strong>${escapeHtml(
+          tr('ov.focus.activity')
+        )}</strong><a href="#/activity">${escapeHtml(tr('ov.focus.viewAll'))}</a></div>${notificationsList}</aside>
+      </div>
     </section>`;
   }
 
