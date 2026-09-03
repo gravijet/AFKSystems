@@ -6075,6 +6075,21 @@ body.dash .main > .grid > .panel {
   .ticket-row {
     min-height: 3.25rem;
     padding-inline: 0.9rem;
+    flex-wrap: wrap;
+  }
+  /* Zustand, Dringlichkeit und Wartezeit schrumpfen nicht mit – am Handy drückten sie den Betreff
+     auf „#4“ zusammen und die Kennzeichen übereinander. Sie bekommen deshalb eine eigene Zeile
+     unter dem Text, statt sich mit ihm um dieselbe zu streiten. */
+  .ticket-row > .row:last-child {
+    flex-basis: 100%;
+  }
+  /* Und aus demselben Grund weichen die Kennzeichen neben dem Betreff nach unten aus, statt ihn
+     auf „Alle d…“ zu kürzen: Wovon das Ticket handelt, ist wichtiger als „Neu“ daneben. */
+  .ticket-row > .grow > .row {
+    flex-wrap: wrap;
+  }
+  .ticket-row > .grow > .row > .strong {
+    flex: 1 1 9rem;
   }
   .rules-note {
     padding: 1.1rem;
