@@ -1628,6 +1628,15 @@ const migrations = [
       CREATE INDEX bot_events_bot ON bot_events(profile_id, account_id, created_at DESC);
     `,
   },
+
+  {
+    // Wie oft ein Bot seit dem letzten menschlichen Start/Stopp die Verbindung verloren und selbst
+    // wiedergefunden hat – eine einzelne Zahl daneben sagt mehr über die Stabilität eines Servers
+    // als jeder einzelne Eintrag im Ereignisverlauf für sich. Siehe supervisor.js `planRestart`/
+    // `resetReconnectCount`.
+    name: '039-reconnect-zaehler',
+    sql: `ALTER TABLE bots ADD COLUMN reconnect_count INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];
 
 /**

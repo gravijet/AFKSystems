@@ -961,11 +961,9 @@ router.post(
     for (const accountId of targets(req, profile)) {
       const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(accountId);
       try {
-        results.push({
-          account_id: accountId,
-          ok: true,
-          bot: supervisor.start({ profile, account, user, plan }),
-        });
+        const bot = supervisor.start({ profile, account, user, plan });
+        supervisor.resetReconnectCount(profile.id, accountId);
+        results.push({ account_id: accountId, ok: true, bot });
       } catch (error) {
         results.push({
           account_id: accountId,
@@ -983,7 +981,10 @@ router.post(
   '/:id/stop',
   wrap((req, res) => {
     const profile = ownedProfile(req);
-    for (const accountId of targets(req, profile)) supervisor.stop(profile.id, accountId);
+    for (const accountId of targets(req, profile)) {
+      supervisor.stop(profile.id, accountId);
+      supervisor.resetReconnectCount(profile.id, accountId);
+    }
     res.json({ profile: profileView(profile, langOf(req)) });
   })
 );
@@ -1002,6 +1003,7 @@ router.post(
         const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(accountId);
         try {
           supervisor.start({ profile, account, user, plan });
+          supervisor.resetReconnectCount(profile.id, accountId);
         } catch {
           /* Fehler steht im Bot-Zustand */
         }

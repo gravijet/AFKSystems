@@ -604,7 +604,23 @@ async function tabConnect(root, profile) {
         </div>
         <div class="small muted truncate">
           ${stateBadge(bot.state || 'offline', bot.detail || bot.last_error || '')}
-          ${running && bot.since ? `<span class="mono">· ${since(bot.since)}</span>` : ''}
+          ${
+            running && bot.since
+              ? `<span class="mono" title="${escapeHtml(tr('srv.onlineSince', { at: datetime(bot.since) }))}">· ${since(
+                  bot.since
+                )}</span>`
+              : ''
+          }
+          <!-- Wie oft der Bot seit dem letzten eigenen Start/Stopp selbst die Verbindung verloren
+               und wiedergefunden hat. Nur bei mindestens einer, sonst stünde bei jedem stillen Bot
+               dieselbe Null in der Zeile – eine Zahl, die nie etwas sagt, ist nur Lärm. -->
+          ${
+            bot.reconnect_count > 0
+              ? `<span class="pill" title="${escapeHtml(tr('srv.reconnectCountHint'))}">${escapeHtml(
+                  tr('srv.reconnectCount', { n: bot.reconnect_count })
+                )}</span>`
+              : ''
+          }
           <!-- Wartet ein Wiederanlauf, gehört das hierher und nicht nur in den Tooltip: „Neuer
                Versuch“ allein sagt nicht, ob noch einer kommt oder ob das der letzte war. -->
           ${

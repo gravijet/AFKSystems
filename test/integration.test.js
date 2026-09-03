@@ -1862,6 +1862,42 @@ test('meaningful bot transitions land in a durable timeline, transient ones do n
 });
 
 /**
+ * Die Zahl soll etwas über die Stabilität *seit gerade eben* sagen, nicht über die ganze
+ * Lebenszeit des Bots – deshalb zählt jeder Wiederanlaufversuch, aber nur ein Mensch, der den Bot
+ * selbst startet oder stoppt, darf sie auf null zurücksetzen (siehe `resetReconnectCount`).
+ */
+test('the reconnect counter climbs with every retry and only a human start or stop resets it', () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  db.prepare('UPDATE profiles SET reconnect_delay = 1, max_backoff = 2 WHERE id = ?').run(profile.id);
+  db.prepare("INSERT INTO bots (profile_id, account_id, state) VALUES (?, ?, 'online')").run(
+    profile.id,
+    account.id
+  );
+
+  const bot = new Bot({ emit: () => {}, macros: {} }, { profile, account, user, plan: billing.featuresOf(profile) });
+  supervisor.bots.set(bot.key, bot);
+  after(() => supervisor.bots.delete(bot.key));
+
+  const stored = () =>
+    db
+      .prepare('SELECT reconnect_count FROM bots WHERE profile_id = ? AND account_id = ?')
+      .get(profile.id, account.id).reconnect_count;
+
+  assert.equal(supervisor.planRestart(bot, { wasOnline: 30_000 }), true);
+  assert.equal(supervisor.planRestart(bot, { wasOnline: 0 }), true);
+  assert.equal(bot.reconnectCount, 2);
+  assert.equal(bot.snapshot().reconnect_count, 2);
+  assert.equal(stored(), 2);
+
+  supervisor.cancelRestart(bot.key);
+  supervisor.resetReconnectCount(profile.id, account.id);
+  assert.equal(bot.reconnectCount, 0);
+  assert.equal(stored(), 0);
+});
+
+/**
  * Der Webhook eines Kunden meldet, was er bestellt hat – und leer heißt alles.
  *
  * Die Regel steht auf beiden Seiten (server/notify.js und views/settings.js) und ist die einzige

@@ -555,6 +555,8 @@ class Bot extends EventEmitter {
     this.since = Date.now();
     this.startedAt = null;
     this.connections = 0;
+    /** Neuverbindungen seit dem letzten menschlichen Start/Stopp (siehe `planRestart`). */
+    this.reconnectCount = 0;
     this.lastError = null;
     /** Warum der Server zuletzt getrennt hat – der Grund überlebt das Ende des Prozesses. */
     this.lastReason = null;
@@ -1911,6 +1913,7 @@ class Bot extends EventEmitter {
       since: this.since,
       online: this.online,
       connections: this.connections,
+      reconnect_count: this.reconnectCount,
       last_error: this.lastError,
       build: this.build,
       // Mit welcher Client-Fassung dieser Lauf gestartet ist, und ob sie inzwischen abgelöst
@@ -1995,6 +1998,15 @@ class Supervisor extends EventEmitter {
       return false;
     }
 
+    // Zählt, auch wenn dieser Versuch am Ende selbst wieder scheitert – "wie oft hat der Bot es
+    // versucht" ist die Frage, nicht "wie oft hat es geklappt". Zurückgesetzt wird sie nur, wenn
+    // ein Mensch den Bot selbst startet oder stoppt (siehe `resetReconnectCount`).
+    bot.reconnectCount = (bot.reconnectCount || 0) + 1;
+    db.prepare('UPDATE bots SET reconnect_count = reconnect_count + 1 WHERE profile_id = ? AND account_id = ?').run(
+      bot.profile.id,
+      bot.account.id
+    );
+
     const base = Math.max(1, profile.reconnect_delay || 5);
     const cap = Math.max(base, profile.max_backoff || 60);
     // Verdoppeln, bis die Obergrenze erreicht ist. `2 ** (tries - 1)` wächst schnell; deshalb
@@ -2055,6 +2067,23 @@ class Supervisor extends EventEmitter {
       entry.timer = setTimeout(() => this.runRestart(key), seconds * 1000);
       entry.timer.unref?.();
     }
+  }
+
+  /**
+   * Den Neuverbindungs-Zähler auf null – nur, wenn ein Mensch den Bot selbst startet oder stoppt.
+   *
+   * Nicht Teil von `start()`/`stop()` selbst: Beide laufen auch aus dem Wiederanlauf, einem
+   * Zeitplan und der Wiederherstellung beim Hochfahren, und jeder dieser Läufe würde die Zahl
+   * sonst genau dann auf null setzen, wenn sie am interessantesten wäre. Die Anrufer in
+   * `routes/profiles.js` (`/start`, `/restart`) rufen das deshalb ausdrücklich selbst auf.
+   */
+  resetReconnectCount(profileId, accountId) {
+    db.prepare('UPDATE bots SET reconnect_count = 0 WHERE profile_id = ? AND account_id = ?').run(
+      profileId,
+      accountId
+    );
+    const bot = this.get(profileId, accountId);
+    if (bot) bot.reconnectCount = 0;
   }
 
   /** Die Versuchskette dieses Bots beenden – gestoppt, aufgegeben oder lange genug gelaufen. */
