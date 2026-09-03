@@ -454,10 +454,9 @@ async function tabConnect(root, profile) {
           <div class="row">
             <label class="check small" title="${escapeHtml(tr('ch.autoscrollHint'))}">
               <input type="checkbox" id="autoscroll" checked> ${escapeHtml(tr('ch.autoscroll'))}</label>
-            <a class="btn btn-ghost btn-sm" id="export" download
-               href="/api/profiles/${profile.id}/chat.txt"
+            <button class="btn btn-ghost btn-sm" id="export"
                title="${escapeHtml(tr('ch.export'))}"
-               aria-label="${escapeHtml(tr('ch.export'))}">${icon('download')}</a>
+               aria-label="${escapeHtml(tr('ch.export'))}">${icon('download')}</button>
             <button class="btn btn-ghost btn-sm" id="clear" title="${escapeHtml(tr('ch.clear'))}">${icon('trash')}</button>
           </div>
         </header>
@@ -472,6 +471,11 @@ async function tabConnect(root, profile) {
             </span>
             <label class="check small" title="${escapeHtml(tr('ch.allHint'))}">
               <input type="checkbox" id="show-all"> ${escapeHtml(tr('ch.all'))}</label>
+            <label class="check small" title="${escapeHtml(tr('ch.markedHint'))}">
+              <input type="checkbox" id="show-marked"> ${escapeHtml(tr('ch.markedOnly'))}</label>
+            <button class="btn btn-ghost btn-sm" id="clear-marks" hidden
+              title="${escapeHtml(tr('ch.clearMarks'))}"
+              aria-label="${escapeHtml(tr('ch.clearMarks'))}">${icon('trash')}</button>
             <span class="grow"></span>
             <span class="small muted" id="chat-count"></span>
           </div>
@@ -915,6 +919,7 @@ async function tabConnect(root, profile) {
   const storageScope = `${state.me?.id || 0}-${profile.id}`;
   const draftKey = `afk-chat-draft-${storageScope}`;
   const historyKey = `afk-chat-history-${storageScope}`;
+  const marksKey = `afk-chat-marks-${storageScope}`;
   const writeLocal = (key, value) => {
     try {
       if (value) localStorage.setItem(key, value);
@@ -968,26 +973,39 @@ async function tabConnect(root, profile) {
   if (!receivers.length) receivers = members.map((member) => member.account_id);
 
   const nameOf = (id) => members.find((member) => member.account_id === id)?.name || '?';
+  // Markierungen sind persönliche Lesezeichen. Sie bleiben bewusst auf diesem Gerät: Ein
+  // Chatvermerk wie „dem Team schicken“ gehört weder in den Minecraft-Chat noch in ein
+  // gemeinsames Serverprotokoll und muss daher nicht auf den Server.
+  let marked = new Set();
+  try {
+    const stored = JSON.parse(localStorage.getItem(marksKey) || '[]');
+    if (Array.isArray(stored)) {
+      marked = new Set(stored.filter((key) => typeof key === 'string' && key.length <= 8_000).slice(-250));
+    }
+  } catch {
+    marked = new Set();
+  }
+  const lineKey = (entry) => `${entry.t}:${entry.type}:${entry.text || ''}`;
+  const saveMarks = () => {
+    try {
+      localStorage.setItem(marksKey, JSON.stringify([...marked].slice(-250)));
+    } catch {
+      // Voller Gerätespeicher darf eine Komfortfunktion nicht zum Chatfehler machen.
+    }
+  };
 
   /**
    * Der Download folgt exakt derselben Auswahl wie das Chatfenster. Der Kontenparameter bleibt
    * auch dann in der Adresse, wenn gerade alle markiert sind: "alle" ist ein bewusstes Ergebnis
    * der Auswahl und keine Berechtigung, nach einem späteren Umbau still mehr Verlauf anzuhängen.
    */
-  const updateExportLink = () => {
-    const link = $('#export');
-    if (!link) return;
-    const params = new URLSearchParams();
-    if ($('#show-all')?.checked) params.set('all', '1');
-    if (receivers.length) params.set('accounts', receivers.join(','));
-    const suffix = params.toString();
-    link.href = `/api/profiles/${profile.id}/chat.txt${suffix ? `?${suffix}` : ''}`;
+  const updateExportButton = () => {
+    const button = $('#export');
+    if (!button) return;
     const unavailable = !receivers.length;
-    link.classList.toggle('is-disabled', unavailable);
-    link.setAttribute('aria-disabled', String(unavailable));
-    link.tabIndex = unavailable ? -1 : 0;
-    link.title = tr('ch.exportScope', { n: receivers.length });
-    link.setAttribute('aria-label', link.title);
+    button.disabled = unavailable;
+    button.title = tr('ch.exportScope', { n: receivers.length });
+    button.setAttribute('aria-label', button.title);
   };
 
   /** Der Suchbegriff, kleingeschrieben. Leer heißt: nicht gesucht, alles steht da. */
@@ -1061,13 +1079,19 @@ async function tabConnect(root, profile) {
     if (needle) {
       lines = lines.filter((entry) => stripFormatting(entry.text || '').toLowerCase().includes(needle));
     }
+    if ($('#show-marked')?.checked) {
+      lines = lines.filter((entry) => marked.has(lineKey(entry)));
+    }
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
 
     box.innerHTML = lines.slice(-SHOWN).map(chatLine).join('');
+    highlightSearch(box);
     const counter = $('#chat-count');
     if (counter) {
-      counter.textContent = needle ? tr('ch.hits', { n: lines.length, total }) : '';
+      counter.textContent =
+        needle || $('#show-marked')?.checked ? tr('ch.hits', { n: lines.length, total }) : marked.size ? tr('ch.markedCount', { n: marked.size }) : '';
     }
+    $('#clear-marks')?.toggleAttribute('hidden', !marked.size);
     // Beim Suchen nicht nach unten springen: Wer nach oben gescrollt hat, um einen Treffer zu
     // lesen, will nicht bei jedem getippten Buchstaben ans Ende geworfen werden.
     if (!needle && (autoscroll.checked || atBottom)) box.scrollTop = box.scrollHeight;
@@ -1092,6 +1116,7 @@ async function tabConnect(root, profile) {
 
   function chatLine(entry) {
     const many = members.length > 1;
+    const key = lineKey(entry);
     // Wer nicht alles gehört hat, ist die Ausnahme – und die gehört dazugeschrieben.
     const heardBy =
       entry.type === 'chat' && many && entry.accounts.length && entry.accounts.length < receivers.length
@@ -1106,9 +1131,43 @@ async function tabConnect(root, profile) {
             many && entry.account_id ? ` · ${escapeHtml(nameOf(entry.account_id))}` : ''
           }:</span> `
         : '';
-    return `<div class="line ${entry.type}"><span class="t">${clock(entry.t)}</span>${heardBy}<span class="msg">${prefix}${mcText(
-      entry.text
-    )}</span></div>`;
+    return `<div class="line ${entry.type}${needle ? ' search-hit' : ''}${marked.has(key) ? ' is-marked' : ''}">
+      <span class="t">${clock(entry.t)}</span>${heardBy}<span class="msg">${prefix}${mcText(entry.text)}</span>
+      <button class="chat-mark" type="button" data-chat-mark="${escapeHtml(key)}"
+        aria-pressed="${marked.has(key)}" title="${escapeHtml(tr(marked.has(key) ? 'ch.unmark' : 'ch.mark'))}">
+        ${icon(marked.has(key) ? 'star' : 'bookmark')}</button>
+    </div>`;
+  }
+
+  // Die Minecraft-Formatierung kommt sicher als Spanstruktur aus `mcText`. Textknoten einzeln zu
+  // markieren bewahrt diese Farben und führt niemals Suchtext als HTML ein. Ein Treffer über zwei
+  // Farbbereiche bleibt durch die hervorgehobene Zeile trotzdem eindeutig erkennbar.
+  function highlightSearch(root) {
+    if (!needle) return;
+    const nodes = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent || parent.closest('.t, .who, .tag, .chat-mark')) return NodeFilter.FILTER_REJECT;
+        return node.nodeValue.toLowerCase().includes(needle) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+    for (const node of nodes) {
+      const text = node.nodeValue;
+      const lower = text.toLowerCase();
+      const fragment = document.createDocumentFragment();
+      let start = 0;
+      for (let index = lower.indexOf(needle, start); index !== -1; index = lower.indexOf(needle, start)) {
+        if (index > start) fragment.append(text.slice(start, index));
+        const mark = document.createElement('mark');
+        mark.textContent = text.slice(index, index + needle.length);
+        fragment.append(mark);
+        start = index + needle.length;
+      }
+      if (start < text.length) fragment.append(text.slice(start));
+      node.replaceWith(fragment);
+    }
   }
 
   // Verlauf vom Server holen – der Zwischenspeicher im Browser ist nach einem Neuladen leer.
@@ -1134,7 +1193,7 @@ async function tabConnect(root, profile) {
   paintBots();
   paintDiagnosis();
   paintChat();
-  updateExportLink();
+  updateExportButton();
   // Ohne `await`: Der Reiter soll dastehen, bevor ein fremder Server geantwortet hat. Fünf
   // Sekunden Zeitüberschreitung wären sonst fünf Sekunden leerer Bildschirm.
   checkStatus();
@@ -1147,13 +1206,11 @@ async function tabConnect(root, profile) {
       } catch {
         /* privater Modus: die Wahl gilt für diese Sitzung, gemerkt wird sie nicht */
       }
-      updateExportLink();
+      updateExportButton();
       paintChat();
     })
   );
-  $('#export').addEventListener('click', (event) => {
-    if (!receivers.length) event.preventDefault();
-  });
+  $('#export').addEventListener('click', openChatExport);
   $('#clear').addEventListener('click', () => {
     for (const member of members) state.lines.set(`${profile.id}:${member.account_id}`, []);
     paintChat();
@@ -1166,10 +1223,78 @@ async function tabConnect(root, profile) {
     }, 150)
   );
   $('#show-all').addEventListener('change', () => {
-    // Der Download folgt der Wahl: Wer alles sieht, will auch alles in der Datei.
-    updateExportLink();
     paintChat();
   });
+  $('#show-marked').addEventListener('change', paintChat);
+  $('#clear-marks').addEventListener('click', async () => {
+    if (!marked.size || !(await confirmDialog(tr('ch.clearMarksAsk')))) return;
+    marked.clear();
+    saveMarks();
+    paintChat();
+  });
+  box.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-chat-mark]');
+    if (!button) return;
+    const key = button.dataset.chatMark;
+    if (marked.has(key)) marked.delete(key);
+    else marked.add(key);
+    saveMarks();
+    paintChat();
+  });
+
+  async function openChatExport() {
+    if (!receivers.length) return;
+    const answer = await formDialog(
+      tr('ch.exportTitle'),
+      [
+        { type: 'note', label: tr('ch.exportLead', { n: receivers.length }) },
+        {
+          key: 'format',
+          type: 'select',
+          label: tr('ch.exportFormat'),
+          value: 'txt',
+          options: [
+            { value: 'txt', label: tr('ch.exportFormat.txt') },
+            { value: 'csv', label: tr('ch.exportFormat.csv') },
+            { value: 'json', label: tr('ch.exportFormat.json') },
+          ],
+        },
+        { key: 'from', type: 'date', label: tr('ch.exportFrom'), hint: tr('ch.exportDateHint') },
+        { key: 'until', type: 'date', label: tr('ch.exportUntil'), hint: tr('ch.exportDateHint') },
+        { key: 'all', type: 'checkbox', label: tr('ch.exportEvents'), value: $('#show-all').checked },
+        {
+          key: 'matches',
+          type: 'checkbox',
+          label: tr('ch.exportMatches', { query: needle || '—' }),
+          value: Boolean(needle),
+        },
+      ],
+      { submit: tr('ch.exportDownload') }
+    );
+    if (!answer) return;
+    const boundary = (value, end) => {
+      if (!value) return null;
+      const timestamp = new Date(`${value}T${end ? '23:59:59.999' : '00:00:00.000'}`).getTime();
+      return Number.isSafeInteger(timestamp) ? timestamp : null;
+    };
+    const from = boundary(answer.from, false);
+    const until = boundary(answer.until, true);
+    if ((answer.from && from === null) || (answer.until && until === null) || (from !== null && until !== null && from > until)) {
+      toast(tr('ch.exportDateBad'), 'bad');
+      return;
+    }
+    const params = new URLSearchParams({ format: answer.format, accounts: receivers.join(',') });
+    if (answer.all) params.set('all', '1');
+    if (from !== null) params.set('from', String(from));
+    if (until !== null) params.set('until', String(until));
+    if (answer.matches && needle) params.set('q', needle);
+    const link = document.createElement('a');
+    link.href = `/api/profiles/${profile.id}/chat/export?${params}`;
+    link.download = '';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  }
 
   const send = async () => {
     const input = messageInput;

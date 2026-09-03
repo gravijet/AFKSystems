@@ -4,7 +4,7 @@ import {
   api, icon, escapeHtml, credits, euro, datetime, date, tr, $, $$, ok, fail, toast, copy, formDialog,
   locale,
 } from '../ui.js';
-import { appbar, refresh, draw } from '../app.js';
+import { appbar, refresh, draw, state } from '../app.js';
 import * as chart from '../charts.js';
 
 // Ein Formatierer für die ganze Achse statt einer je Monat (siehe ui.js).
@@ -26,6 +26,8 @@ export async function render(root) {
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const paidSlots = data.slots.filter((slot) => !slot.free_slot).length;
   const runway = data.runway || { renewal_count: 0, covered_count: 0 };
+  const personalWarning = Number.isInteger(state.me?.low_balance_warning) && state.me.low_balance_warning >= 0;
+  const warningAmount = personalWarning ? state.me.low_balance_warning : data.recommended_low_balance;
   const renewalForecast = (slot) => {
     if (slot.free_slot || slot.suspended) return '';
     if (!slot.renew) {
@@ -88,6 +90,34 @@ export async function render(root) {
             )}</div></div>`
         : ''
     }
+
+    <section class="panel" style="margin-bottom:1.5rem">
+      <header>
+        <div>
+          <h3>${escapeHtml(tr('bill.warningTitle'))}</h3>
+          <span class="small muted">${escapeHtml(tr('bill.warningSub'))}</span>
+        </div>
+      </header>
+      <div class="body stack">
+        <label class="check">
+          <input type="checkbox" id="low-warning-custom" ${personalWarning ? 'checked' : ''}>
+          <span>${escapeHtml(tr('bill.warningCustom'))}</span>
+        </label>
+        <div class="row wrap" style="gap:.75rem;align-items:flex-end">
+          <div class="field" style="max-width:15rem;margin:0">
+            <label for="low-warning">${escapeHtml(tr('bill.warningAt'))}</label>
+            <input id="low-warning" type="number" min="0" max="1000000" step="1"
+              value="${warningAmount}" ${personalWarning ? '' : 'disabled'}>
+          </div>
+          <button class="btn btn-primary" id="save-low-warning">${escapeHtml(tr('common.save'))}</button>
+        </div>
+        <p class="small muted" style="margin:0">${escapeHtml(
+          personalWarning
+            ? tr('bill.warningPersonal', { credits: credits(warningAmount) })
+            : tr('bill.warningRecommended', { credits: credits(data.recommended_low_balance) })
+        )}</p>
+      </div>
+    </section>
 
     ${renewalRunway(runway)}
 
@@ -474,6 +504,25 @@ export async function render(root) {
   $('#topup').addEventListener('click', () => startTopup(data, data.packages.length - 1));
   $('#topup-other').addEventListener('click', () => startTopup(data, data.packages.length - 1));
   $('[data-runway-topup]')?.addEventListener('click', () => startTopup(data, data.packages.length - 1));
+  $('#low-warning-custom').addEventListener('change', (event) => {
+    $('#low-warning').disabled = !event.target.checked;
+  });
+  $('#save-low-warning').addEventListener('click', async () => {
+    const custom = $('#low-warning-custom').checked;
+    const value = Number($('#low-warning').value);
+    if (custom && (!Number.isInteger(value) || value < 0 || value > 1_000_000)) {
+      toast(tr('bill.warningBad'), 'bad');
+      return;
+    }
+    try {
+      await api('/me', { method: 'PATCH', body: { low_balance_warning: custom ? value : -1 } });
+      await refresh({ profiles: false, accounts: false });
+      ok(tr('bill.warningSaved'));
+      draw();
+    } catch (error) {
+      fail(error);
+    }
+  });
 
   $('#more')?.addEventListener('click', (event) => {
     $$('.ledger .extra').forEach((node) => node.classList.remove('hide'));

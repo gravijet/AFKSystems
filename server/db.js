@@ -1647,6 +1647,15 @@ const migrations = [
     name: '040-pov-ressourcen-ueberspringen',
     sql: `ALTER TABLE profiles ADD COLUMN pov_skip_resources INTEGER NOT NULL DEFAULT 0;`,
   },
+
+  {
+    // Die globale Warnschwelle ist ein brauchbarer Startwert, aber für einen Platz mit 49 Cent
+    // Monatskosten zu grob und für einen mit mehreren Bots oft zu spät. -1 heißt weiterhin:
+    // Betreiberempfehlung verwenden. Jede andere Zahl ist die bewusst gesetzte persönliche
+    // Schwelle in Credits und bleibt damit auch bei einer globalen Anpassung nachvollziehbar.
+    name: '041-persoenliche-guthabenwarnung',
+    sql: `ALTER TABLE users ADD COLUMN low_balance_warning INTEGER NOT NULL DEFAULT -1;`,
+  },
 ];
 
 /**

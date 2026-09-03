@@ -67,6 +67,13 @@ router.get(
       }));
 
     const monthly = billing.monthlyCost(user.id);
+    // Die Betreibergrenze ist nur der Startwert. Wer eigene Plätze mit sehr unterschiedlichen
+    // Preisen hat, entscheidet selbst, wann das Panel aufmerksam machen soll; -1 im Konto heißt
+    // ausdrücklich „weiter die Empfehlung verwenden“.
+    const recommendedWarning = Number(getSetting('low_balance'));
+    const personalWarning = Number.isInteger(user.low_balance_warning) && user.low_balance_warning >= 0
+      ? user.low_balance_warning
+      : null;
     // Der Monatswert allein beantwortet nicht, welcher Platz als Nächstes nicht mehr gedeckt ist.
     // Deshalb werden die kommenden Verlängerungen zeitlich durchgespielt: dieselbe Geldbörse,
     // aber jede Fälligkeit in ihrer wirklichen Reihenfolge. Einzahlungen und Tarifänderungen in
@@ -109,7 +116,9 @@ router.get(
       balance_euro: (user.credits / 100).toFixed(2),
       monthly_cost: monthly,
       months_left: monthly > 0 ? Math.floor(user.credits / monthly) : null,
-      low_balance: Number(getSetting('low_balance')),
+      low_balance: personalWarning ?? recommendedWarning,
+      recommended_low_balance: recommendedWarning,
+      personal_low_balance: personalWarning,
       month_days: billing.MONTH_DAYS,
       runway: {
         renewal_count: renewalQueue.length,

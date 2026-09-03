@@ -51,7 +51,7 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 - [x] Verbindungsansicht um eine klare Diagnoseleiste erweitern: letzter bekannter Zustand,
       Server-Ping, Wiederanlauf und Clientstand in einer Reihenfolge.
-- [ ] Chat-Suche, markierte Zeilen und ein kontrolliertes Exportformat ergänzen, sofern der
+- [x] Chat-Suche, markierte Zeilen und ein kontrolliertes Exportformat ergänzen, sofern der
       jeweilige Tarifverlauf dies zulässt.
 - [x] Makros und Zeitpläne mit Vorabprüfung auf widersprüchliche Zeiten, fehlende Konten und
       nicht verfügbare Client-Fähigkeiten versehen; kollidierende aktive Zeitpläne werden im
@@ -91,7 +91,7 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Belegarchiv um Filter, sichere Downloads und verständliche Zahlungsstatus erweitern:
       Belegnummer und Status lassen sich lokal filtern, Erstattungen sind markiert und ein
       eigens angeforderter Download kommt als privater Anhang statt als zwischenspeicherbare Seite.
-- [ ] Niedriges Guthaben als einstellbare, nachvollziehbare Warnung behandeln; keine
+- [x] Niedriges Guthaben als einstellbare, nachvollziehbare Warnung behandeln; keine
       unaufgeforderten Zahlungsaktionen.
 
 ### 6. Support ohne Informationsverlust

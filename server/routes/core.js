@@ -823,6 +823,11 @@ router.patch(
       fields.push('theme = ?');
       values.push(body.theme);
     }
+    if (body.low_balance_warning !== undefined) {
+      const warning = requireInt(body.low_balance_warning, 'Guthabenwarnung', { min: -1, max: 1_000_000 });
+      fields.push('low_balance_warning = ?');
+      values.push(warning);
+    }
     if (body.discord_webhook !== undefined) {
       const hook = String(body.discord_webhook || '').trim();
       // Die Länge gehört dazu: Ohne sie steht in der Spalte eine Adresse von einem Viertelmegabyte
