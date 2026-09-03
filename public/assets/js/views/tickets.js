@@ -535,6 +535,51 @@ async function one(root, id, { staff, backHash }) {
       ? duration(ticket.first_reply_at - ticket.created_at)
       : `<span class="warn-text">${escapeHtml(tr('tk.noReplyYet'))}</span>`;
 
+  /**
+   * Ein Ticketstatus ist nur ein Wort, bis klar ist, wer daraus welchen nächsten Schritt ableitet.
+   * Die Antwort wird aus dem tatsächlichen Status und der letzten Nachricht gebaut – keine
+   * erfundene SLA und kein Countdown, den niemand zugesagt hat.
+   */
+  const nextWork = () => {
+    if (ticket.status === 'closed') {
+      return {
+        who: tr('tk.workflow.done'),
+        text: tr(`tk.workflow.closed.${staff ? 'staff' : 'customer'}`),
+        at: ticket.closed_at || ticket.updated_at,
+      };
+    }
+    if (ticket.status === 'answered') {
+      return {
+        who: staff ? tr('tk.customer') : tr('tk.you'),
+        text: tr(`tk.workflow.answered.${staff ? 'staff' : 'customer'}`),
+        at: ticket.last_staff_at || ticket.updated_at,
+      };
+    }
+    return {
+      who: staff ? ticket.assigned_name || tr('tk.workflow.unassigned') : tr('tk.staff'),
+      text: tr(`tk.workflow.open.${staff ? 'staff' : 'customer'}`),
+      at: ticket.last_customer_at || ticket.created_at,
+    };
+  };
+
+  const workflow = () => {
+    const next = nextWork();
+    const stateIcon = ticket.status === 'closed' ? 'check' : ticket.status === 'open' ? 'message' : 'clock';
+    return `<section class="ticket-workflow ${ticket.status}" aria-live="polite">
+      <span class="ticket-workflow-icon">${icon(stateIcon)}</span>
+      <div class="grow" style="min-width:0">
+        <div class="row wrap" style="gap:.45rem">
+          <span class="pill ${STATUS_PILL[ticket.status] || ''}">${escapeHtml(tr(`tk.status.${ticket.status}`))}</span>
+          <strong>${escapeHtml(tr('tk.nextExpected'))}</strong>
+        </div>
+        <p>${escapeHtml(next.text)}</p>
+        <div class="small muted">${escapeHtml(tr('tk.workflowResponsible', { who: next.who }))}${
+          next.at ? ` · ${escapeHtml(tr('tk.workflowSince', { when: since(next.at) }))}` : ''
+        }</div>
+      </div>
+    </section>`;
+  };
+
   const factsStrip = () => `
     <div class="ticket-facts" id="facts">
       ${fact(
@@ -571,6 +616,7 @@ async function one(root, id, { staff, backHash }) {
         ticket.status === 'closed' ? tr('tk.closedAt') : tr('tk.lastActivity'),
         `<span class="mono">${since(ticket.status === 'closed' ? ticket.closed_at : ticket.updated_at)}</span>`
       )}
+      ${fact(tr('tk.nextExpected'), `<span class="truncate">${escapeHtml(nextWork().text)}</span>`)}
       ${
         Number(ticket.reopened) > 0
           ? fact(tr('tk.reopenedTimes'), `<span class="mono">${Number(ticket.reopened)}×</span>`)
@@ -756,7 +802,7 @@ async function one(root, id, { staff, backHash }) {
     // Ein Ticket darf ohne Text abgeschickt werden – dann steht hier zunächst nur der Betreff,
     // und der Kasten sagt das, statt leer zu bleiben wie ein Fehler.
     thread.innerHTML =
-      `${hasOlder ? `<button class="btn btn-sm ticket-load-history" id="load-older" ${
+      `${workflow()}${hasOlder ? `<button class="btn btn-sm ticket-load-history" id="load-older" ${
         loadingOlder ? 'disabled' : ''
       }>${escapeHtml(loadingOlder ? tr('common.loading') : tr('tk.loadOlder'))}</button>` : ''}` +
       (messages

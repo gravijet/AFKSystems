@@ -5076,6 +5076,53 @@ a.tk-tile:hover {
   gap: 1rem;
 }
 
+/* Der nächste Schritt gehört über den Verlauf, nicht in eine versteckte Statusauswahl. Die Karte
+   ist ein lesbarer Zwischenstand – Antworten und Systemzeilen darunter bleiben die Historie. */
+.ticket-workflow {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--r-xl);
+  background: color-mix(in oklab, var(--primary) 8%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 26%, var(--line));
+}
+.ticket-workflow.answered {
+  background: color-mix(in oklab, var(--ok) 8%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ok) 24%, var(--line));
+}
+.ticket-workflow.closed {
+  background: color-mix(in oklab, var(--text) 5%, var(--surface));
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.ticket-workflow-icon {
+  display: grid;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--primary) 13%, transparent);
+  color: var(--primary-text);
+}
+.ticket-workflow.answered .ticket-workflow-icon {
+  background: color-mix(in oklab, var(--ok) 14%, transparent);
+  color: var(--ok-text);
+}
+.ticket-workflow.closed .ticket-workflow-icon {
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.ticket-workflow-icon .icon {
+  width: 1rem;
+  height: 1rem;
+}
+.ticket-workflow p {
+  margin: 0.35rem 0 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
 /* Der Verlauf ist ein Gespräch, kein Formular: Blasen, eigene rechts, System in der Mitte. */
 .chat-thread {
   display: flex;

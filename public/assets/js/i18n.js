@@ -1434,6 +1434,35 @@ export const S = {
   'tk.status.open': { en: 'Open', de: 'Offen' },
   'tk.status.answered': { en: 'Answered', de: 'Beantwortet' },
   'tk.status.closed': { en: 'Closed', de: 'Geschlossen' },
+  'tk.nextExpected': { en: 'Next expected reply', de: 'Nächste erwartete Antwort' },
+  'tk.workflowResponsible': { en: 'Responsible: {who}', de: 'Zuständig: {who}' },
+  'tk.workflowSince': { en: 'Since {when}', de: 'Seit {when}' },
+  'tk.workflow.open.customer': {
+    en: 'Support will review your message and reply next.',
+    de: 'Der Support prüft deine Nachricht und antwortet als Nächstes.',
+  },
+  'tk.workflow.open.staff': {
+    en: 'Review the customer message and send the next reply.',
+    de: 'Prüfe die Kundennachricht und sende die nächste Antwort.',
+  },
+  'tk.workflow.answered.customer': {
+    en: 'Reply if you need anything else, or close the ticket when everything is settled.',
+    de: 'Antworte bei weiteren Fragen oder schließe das Ticket, wenn alles geklärt ist.',
+  },
+  'tk.workflow.answered.staff': {
+    en: 'The customer is expected to reply. Follow up only when new information arrives.',
+    de: 'Jetzt wird eine Kundenantwort erwartet. Bearbeite weiter, sobald neue Informationen kommen.',
+  },
+  'tk.workflow.closed.customer': {
+    en: 'No reply is expected. A new message reopens this ticket with its full history.',
+    de: 'Es wird keine Antwort erwartet. Eine neue Nachricht öffnet dieses Ticket mit seinem vollständigen Verlauf wieder.',
+  },
+  'tk.workflow.closed.staff': {
+    en: 'No reply is expected. A customer message reopens the ticket automatically.',
+    de: 'Es wird keine Antwort erwartet. Eine Kundennachricht öffnet das Ticket automatisch wieder.',
+  },
+  'tk.workflow.unassigned': { en: 'Support queue', de: 'Support-Warteschlange' },
+  'tk.workflow.done': { en: 'Nobody', de: 'Niemand' },
   'tk.staff': { en: 'Team', de: 'Team' },
   'tk.you': { en: 'You', de: 'Du' },
   'tk.internal': { en: 'Internal note', de: 'Interne Notiz' },
