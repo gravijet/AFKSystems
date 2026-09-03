@@ -2525,9 +2525,32 @@ async function tabMacros(root, profile) {
   );
   $$('[data-macro-test]').forEach((button) =>
     button.addEventListener('click', async () => {
+      const macro = macros.find((entry) => entry.id === Number(button.dataset.macroTest));
+      const online = profile.accounts.filter((member) => {
+        const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
+        return bot.online;
+      });
+      if (!macro || !online.length) return toast(tr('srv.noOnlineAccount'), 'warn');
+      const answer = await formDialog(
+        tr('srv.testMacro'),
+        [
+          {
+            key: 'account_id',
+            label: tr('ov.col.account'),
+            type: 'select',
+            value: String(online[0].account_id),
+            options: online.map((member) => ({ value: String(member.account_id), label: member.name })),
+          },
+        ],
+        { submit: tr('srv.testMacro'), note: tr('srv.testMacroHint') }
+      );
+      if (!answer) return;
       try {
-        await api(`/profiles/${profile.id}/macros/${button.dataset.macroTest}/test`, { method: 'POST' });
-        ok(tr('srv.saved'));
+        await api(`/profiles/${profile.id}/macros/${macro.id}/test`, {
+          method: 'POST',
+          body: { accounts: [Number(answer.account_id)] },
+        });
+        ok(tr('srv.testStarted', { name: online.find((member) => member.account_id === Number(answer.account_id))?.name }));
       } catch (error) {
         fail(error);
       }
