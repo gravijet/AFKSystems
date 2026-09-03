@@ -150,6 +150,13 @@ Die Wahl gehört dem Zuseher und nicht dem Serverplatz: Wer am Telefon zusieht, 
 Bild, und wer am Schreibtisch sitzt, ein großes. Sie steht deshalb im Browser (`localStorage`) und
 nicht in der Datenbank.
 
+Stehen mehrere Bots auf dem Platz, kommen zwei weitere Schalter dazu:
+
+| | |
+| --- | --- |
+| **Kompakt** | alle Bühnen kleiner, damit mehr auf einen Blick passen |
+| **Gemeinsam steuern** | zeigt an jeder Bühne ein Kästchen; ausgewählte hören auf dieselben Tasten |
+
 Im Voxelbetrieb kommen die drei bekannten Knöpfe dazu – **Live-Ansicht starten**, **Einzelbild**,
 **Stoppen**. Der texturierte Weg braucht sie nicht: Dort rechnet der Client genau dann ein Bild,
 wenn der Browser eines abholt. Ein Browser, der nicht fragt, kostet nichts.
@@ -195,11 +202,21 @@ Ohne Texturen bleibt beides trotzdem da: Dann kommen die Felder über `:menu` un
 und statt des Bildes steht ein Zeichen im Feld. Der Name und der Beschreibungstext stehen in beiden
 Fällen im Aufklapper, mit den Farben, die der Server geschickt hat.
 
-### Vollbild und Bildschirmfoto
+### Vollbild, Bild-im-Bild und Bildschirmfoto
 
 Oben rechts im Bild, sobald die Maus in der Nähe ist. **Vollbild** gibt dem Bild den ganzen Schirm;
 **Bild speichern** legt ein PNG ab, benannt nach Serverplatz, Konto und Zeitpunkt – ein
-Bildschirmfoto ist meistens der Anhang eines Tickets.
+Bildschirmfoto ist meistens der Anhang eines Tickets. **Bild-im-Bild** löst die Bühne in ein
+eigenes, immer obenauf schwebendes Fenster – zum Weiterschauen, während man im Panel etwas anderes
+erledigt. Der Knopf steht nur da, wo der Browser das kann (Chrome/Edge ab 116); ein Browser, der es
+nicht kann, bekommt keinen Knopf, der nichts täte.
+
+### Automatischer Schnappschuss
+
+Stirbt ein Bot oder verliert die Verbindung, zieht er sich – falls gerade ein texturierter Viewer
+läuft – selbst ein Bild in genau diesem Moment. Zu finden im **Ereignisverlauf** dieses Kontos
+(Serverplatz → Konten → Uhrsymbol neben dem Bot): Wer nicht rechtzeitig hinsehen konnte, sieht im
+Nachhinein trotzdem, was gerade passiert ist.
 
 ### Aufhören
 

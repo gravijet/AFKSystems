@@ -3671,6 +3671,15 @@ hr.rule {
   grid-template-columns: repeat(auto-fill, minmax(19rem, 42rem));
   justify-content: start;
 }
+/* Kompaktansicht: mehr Bots auf einen Blick, auf Kosten der Größe jedes Einzelnen – für einen
+   Serverplatz mit vielen Konten, wo die volle Größe vor allem Bildschirm frisst, den niemand
+   zugleich ansehen kann. */
+.pov-grid.compact {
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 15rem));
+}
+.pov-grid.compact .pov-stage {
+  min-height: 6rem;
+}
 .pov {
   display: flex;
   flex-direction: column;
@@ -3702,6 +3711,17 @@ hr.rule {
   background: rgba(255, 255, 255, 0.05);
   font-size: 0.8125rem;
   font-weight: 600;
+}
+/* Das Kästchen der Mehrfachauswahl. Verborgen, solange niemand die Gruppensteuerung eingeschaltet
+   hat – ein Kästchen an jeder Bühne, das die meiste Zeit niemand benutzt, ist nur eine Fläche
+   mehr, auf die jemand versehentlich klickt. */
+.pov-select {
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+.pov-select[hidden] {
+  display: none;
 }
 .pov > header .pov-status {
   font-family: var(--mono);
@@ -3880,6 +3900,12 @@ hr.rule {
 }
 .pov-tool:hover {
   background: rgba(0, 0, 0, 0.8);
+}
+/* Nötig wie bei .tk-bulk[hidden]: das `display: grid` oben ist stärker als das voreingestellte
+   Verhalten von [hidden], und der Bild-im-Bild-Knopf startet verborgen, bis die Fähigkeitsprüfung
+   ihn freigibt. */
+.pov-tool[hidden] {
+  display: none;
 }
 
 /* Der Satz, solange kein Bild da ist – und der Satz des Clients, wenn eines da ist und trotzdem
