@@ -5423,6 +5423,10 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(operations.response.status, 200);
   assert.ok(Array.isArray(operations.data.alerts));
   assert.equal(typeof operations.data.proxy.total, 'number');
+  const rolloutPreview = await api(base, '/api/admin/client/rollout-preview', { token: ADMIN_TOKEN });
+  assert.equal(rolloutPreview.response.status, 200);
+  assert.equal(rolloutPreview.data.spacing_ms, 5000);
+  assert.ok(Array.isArray(rolloutPreview.data.bots));
   assert.equal(report.data.webhook, false);
   assert.ok(Array.isArray(report.data.alerts));
   const notStaff = await api(base, '/api/admin/system/report', { token: USER_TOKEN });
