@@ -2507,6 +2507,15 @@ async function tabMacros(root, profile) {
       editMacro(profile, macros.find((macro) => macro.id === Number(button.dataset.macroEdit)))
     )
   );
+  $$('[data-macro-copy]').forEach((button) =>
+    button.addEventListener('click', () => {
+      const source = macros.find((macro) => macro.id === Number(button.dataset.macroCopy));
+      if (!source) return;
+      // Keine Kopie direkt in die Datenbank schreiben: Ein anderes Zielkonto oder ein inzwischen
+      // nicht mehr erlaubter Schritt muss vor dem Speichern sichtbar bleiben.
+      editMacro(profile, null, { ...source, name: tr('srv.copyName', { name: source.name }) });
+    })
+  );
   $$('[data-macro-del]').forEach((button) =>
     button.addEventListener('click', async () => {
       if (!(await confirmDialog(tr('common.delete'), { confirm: tr('common.delete') }))) return;
