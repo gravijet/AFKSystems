@@ -599,28 +599,50 @@ export async function render(root) {
   arrangeRows();
 
   async function actSelection(what, keys) {
+    const requested = [...keys];
+    if (!requested.length) return;
     const grouped = new Map();
-    for (const key of keys) {
+    for (const key of requested) {
       const [profileId, accountId] = key.split(':').map(Number);
       if (!grouped.has(profileId)) grouped.set(profileId, []);
       grouped.get(profileId).push(accountId);
     }
     const buttons = [$('#bulk-start'), $('#bulk-stop'), $('#start-all'), $('#stop-all')].filter(Boolean);
     buttons.forEach((button) => (button.disabled = true));
+    let succeeded = 0;
     let failures = 0;
+    // Ein Fehler gehört zur Aktion als Ganzes, nicht als Toast pro Serverplatz. Bei zwanzig
+    // ausgewählten Bots wäre eine Wand aus Meldungen keine Auswertung mehr, sondern ein weiteres
+    // Problem. Die betroffenen Zeilen bleiben nach dem Live-Update als „Braucht Hilfe“ sichtbar.
     await Promise.all(
       [...grouped].map(async ([profileId, accounts]) => {
         try {
           const answer = await api(`/profiles/${profileId}/${what}`, { method: 'POST', body: { accounts } });
-          failures += (answer.results || []).filter((entry) => !entry.ok).length;
+          // Start liefert für jedes Konto ein Ergebnis. Stoppen ist im Supervisor idempotent und
+          // liefert deshalb keine künstliche Ergebnisliste: Ist der Request gelungen, sind alle
+          // übergebenen Konten zuverlässig zum Stoppen vorgemerkt.
+          if (Array.isArray(answer.results)) {
+            const failed = answer.results.filter((entry) => !entry.ok);
+            failures += failed.length;
+            succeeded += answer.results.length - failed.length;
+          } else {
+            succeeded += accounts.length;
+          }
         } catch (error) {
           failures += accounts.length;
-          fail(error);
         }
       })
     );
-    if (!failures) ok(what === 'start' ? tr('ov.started') : tr('ov.stoppedAll'));
     buttons.forEach((button) => (button.disabled = false));
+    if (succeeded) {
+      ok(tr(what === 'start' ? 'ov.bulkStarted' : 'ov.bulkStopped', { n: succeeded }));
+    }
+    if (failures) {
+      fail(new Error(tr(what === 'start' ? 'ov.bulkStartFailed' : 'ov.bulkStopFailed', {
+        n: failures,
+        total: requested.length,
+      })));
+    }
   }
 
   $('#bulk-start')?.addEventListener('click', () => actSelection('start', selected));
@@ -669,19 +691,19 @@ export async function render(root) {
   );
 
   $('#stop-all')?.addEventListener('click', async () => {
+    const keys = [];
     for (const profile of state.profiles) {
       // `member.state !== 'offline'` traf auch auf ein Konto zu, dessen Zustand noch gar nicht
       // feststeht (`undefined`) – der Knopf schickte dann ein "Stopp" an Plätze, auf denen
       // nichts lief. Gefragt ist, ob dort wirklich etwas zu stoppen ist.
-      const running = profile.accounts.some((member) => {
+      for (const member of profile.accounts) {
         const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
-        return Boolean(bot.state) && bot.state !== 'offline';
-      });
-      if (running) {
-        await api(`/profiles/${profile.id}/stop`, { method: 'POST', body: {} }).catch(() => {});
+        if (Boolean(bot.state) && bot.state !== 'offline') {
+          keys.push(`${profile.id}:${member.account_id}`);
+        }
       }
     }
-    ok(tr('ov.stoppedAll'));
+    if (keys.length) actSelection('stop', keys);
   });
 
   // Zustandswechsel: neu zeichnen, aber gebündelt – beim Start mehrerer Bots kommen viele
