@@ -19,6 +19,7 @@ import {
   confirmDialog,
 } from '../ui.js';
 import { state, appbar, refresh, drawSide, draw } from '../app.js';
+import { preferences } from '../preferences.js';
 import * as chart from '../charts.js';
 
 // Achsenbeschriftungen: ein Formatierer für alle Punkte statt einer je Punkt (siehe ui.js).
@@ -46,6 +47,17 @@ let notificationPreview = null;
  * während die alte Schleife munter weiter auf längst entfernte `<img>`-Knoten schreibt.
  */
 let stopPovThumbnails = () => {};
+
+/** Onboarding und nächste Aufgaben bleiben fest oben; nur die großen Arbeitsbereiche sind sortierbar. */
+function arrangeOverviewWorkspace() {
+  const workspace = document.querySelector('[data-overview-workspace]');
+  if (!workspace) return;
+  const sections = new Map([...workspace.querySelectorAll('[data-overview-section]')].map((node) => [node.dataset.overviewSection, node]));
+  for (const key of preferences(state.me?.id).dashboardOrder) {
+    const section = sections.get(key);
+    if (section) workspace.append(section);
+  }
+}
 
 export async function render(root) {
   stopPovThumbnails();
@@ -90,6 +102,7 @@ export async function render(root) {
 
     ${todoList(todos)}
 
+    <div class="overview-workspace" data-overview-workspace>
     ${operatingFocus()}
 
     <!-- Die Diagramme stehen dort, wo vorher vier Kacheln mit denselben Zahlen standen.
@@ -98,7 +111,7 @@ export async function render(root) {
          beantwortet zusätzlich die Frage, ob es rauf oder runter geht. -->
     ${charts()}
 
-    <section class="panel" style="margin-bottom:1.5rem">
+    <section class="panel" data-overview-section="bots" style="margin-bottom:1.5rem">
       <header>
         <h3>${escapeHtml(tr('ov.bots'))}</h3>
         <span class="small muted">${escapeHtml(
@@ -171,7 +184,7 @@ export async function render(root) {
 
     ${
       povTargets.length
-        ? `<section class="panel" style="margin-bottom:1.5rem">
+        ? `<section class="panel" data-overview-section="pov" style="margin-bottom:1.5rem">
       <header>
         <h3>${escapeHtml(tr('ov.pov'))}</h3>
         <span class="small muted">${escapeHtml(tr('ov.povHint', { n: povTargets.length }))}</span>
@@ -195,7 +208,7 @@ export async function render(root) {
         : ''
     }
 
-    <section class="panel">
+    <section class="panel" data-overview-section="quick">
       <header><h3>${escapeHtml(tr('ov.quick'))}</h3></header>
       <div class="body stack">
         <a class="row spread" href="#/accounts">
@@ -210,7 +223,10 @@ export async function render(root) {
         <a class="row spread" href="#/settings">
           <span class="row">${icon('settings')} ${escapeHtml(tr('dash.settings'))}</span>${icon('arrow')}</a>
       </div>
-    </section>`;
+    </section>
+    </div>`;
+
+  arrangeOverviewWorkspace();
 
   /** Der Einstieg zeigt nur reale Schritte und verschwindet vollständig, wenn alles läuft. */
   function onboarding() {
@@ -370,7 +386,7 @@ export async function render(root) {
           .join('')}</div>`
       : `<p class="small muted focus-activity-empty">${escapeHtml(tr('ov.focus.activityEmpty'))}</p>`;
 
-    return `<section class="panel operating-focus" style="margin-bottom:1.5rem">
+    return `<section class="panel operating-focus" data-overview-section="focus" style="margin-bottom:1.5rem">
       <header><div><h3>${escapeHtml(tr('ov.focus.title'))}</h3>
         <span class="small muted">${escapeHtml(
           shown.length ? tr('ov.focus.open', { n: issues.length }) : tr('ov.focus.current')
@@ -407,7 +423,7 @@ export async function render(root) {
     // Achsenkreuz ist keine Auskunft. Wer gerade erst angefangen hat, bekommt stattdessen die
     // Zahlen als Kacheln – sie sind kurz, aber sie stimmen.
     if (!spend.some((month) => month.credits) && !ran.length && !paid.length) {
-      return `<div class="grid three" style="margin-bottom:1.5rem">
+      return `<div class="grid three" data-overview-section="analytics" style="margin-bottom:1.5rem">
         <div class="stat"><div class="k">${escapeHtml(tr('ov.balance'))}</div>
           <div class="v">${credits(state.me.credits)}</div>
           <div class="s">${escapeHtml(euro(state.me.credits))}</div></div>
@@ -429,7 +445,7 @@ export async function render(root) {
     const asEuro = (value) => `${(value / 100).toFixed(value >= 10_000 ? 0 : 2)} €`;
     const hours = (seconds) => `${COUNT.format(Math.round(seconds / 3600))} h`;
 
-    return `<div class="grid three" style="margin-bottom:1.5rem">
+    return `<div class="grid three" data-overview-section="analytics" style="margin-bottom:1.5rem">
       ${chart.card({
         title: tr('ov.chart.balance'),
         value: credits(insights.balance),

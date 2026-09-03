@@ -13,6 +13,8 @@
  * hat mehrere Serverplätze, eine Kontenliste, einen Chatverlauf und eine Übersicht offen und will
  * davon so viel wie möglich gleichzeitig sehen. „Bequem“ bleibt einen Klick entfernt.
  */
+export const DASHBOARD_SECTIONS = Object.freeze(['focus', 'analytics', 'bots', 'pov', 'quick']);
+
 const DEFAULTS = Object.freeze({
   density: 'compact',
   motion: 'system',
@@ -20,6 +22,9 @@ const DEFAULTS = Object.freeze({
   favoriteServers: [],
   lastRoute: '#/',
   serverView: 'cards',
+  // Die Reihenfolge ist eine Geräteentscheidung: Auf einem kleinen Bildschirm zählen andere
+  // Bereiche zuerst als auf einem großen. Gespeichert werden nur bekannte Abschnitte.
+  dashboardOrder: DASHBOARD_SECTIONS,
 });
 
 const allowed = {
@@ -65,6 +70,10 @@ function clean(raw) {
   }
   if (Array.isArray(raw.favoriteServers)) {
     next.favoriteServers = [...new Set(raw.favoriteServers.map(Number).filter(Number.isInteger))].slice(0, 100);
+  }
+  if (Array.isArray(raw.dashboardOrder)) {
+    const chosen = [...new Set(raw.dashboardOrder.filter((entry) => DASHBOARD_SECTIONS.includes(entry)))];
+    next.dashboardOrder = [...chosen, ...DASHBOARD_SECTIONS.filter((entry) => !chosen.includes(entry))];
   }
   if (typeof raw.lastRoute === 'string' && /^#\/(?:[a-z-]+)?(?:\/\d+)?(?:\/[a-z-]+)?$/.test(raw.lastRoute)) {
     next.lastRoute = raw.lastRoute;
@@ -118,6 +127,7 @@ function write(userId, value) {
 export function setPreference(userId, name, value) {
   const current = preferences(userId);
   if (name === 'favoriteServers') current.favoriteServers = value;
+  else if (name === 'dashboardOrder' && Array.isArray(value)) current.dashboardOrder = value;
   else if (allowed[name]?.includes(value)) current[name] = value;
   const next = write(userId, current);
   applyPreferences(userId);
