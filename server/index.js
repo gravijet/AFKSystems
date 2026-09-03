@@ -80,7 +80,15 @@ const CONTENT_SECURITY_POLICY = [
   // liefert sie unter `/api/heads/…` aus; der Browser des Kunden spricht mit niemandem sonst.
   // Damit ist die Zeile hier auch eine Zusicherung: Was ein Kunde beim Öffnen seiner Kontenliste
   // an Fremde schickt, ist genau das, was er selbst verknüpft hat.
-  "img-src 'self' data: https://cdn.discordapp.com https://gravatar.com https://*.gravatar.com https://*.googleusercontent.com",
+  //
+  // **`blob:` ist für die texturierte Live-Ansicht da.** Ein Bild von `:accountId/frame.png` holt
+  // das Panel per `fetch`, nicht per `<img src>` – nur so liest es die Absage des Clients als Text,
+  // wenn gerade keins da ist (siehe live.js `pullFrame`). Aus der Antwort wird ein Blob und daraus
+  // eine `blob:`-Adresse fürs `<img>`. Ohne diesen Eintrag blockiert genau dieses Bild lautlos: Die
+  // Anfrage geht durch, der Blob entsteht, nur zeichnen darf ihn niemand – am Bildschirm bleibt es
+  // schwarz, während „Bild speichern" (dieselbe Adresse, aber ein Download und kein Bildaufbau)
+  // ganz normal funktioniert.
+  "img-src 'self' data: blob: https://cdn.discordapp.com https://gravatar.com https://*.gravatar.com https://*.googleusercontent.com",
   "font-src 'self'",
   `connect-src 'self' ${websocketOrigin}`,
   "media-src 'none'",
