@@ -22,6 +22,13 @@ import { wrap, requireString, requireInt, bad, notFound, parseAddress, slugify, 
 export const router = express.Router();
 router.use(requireUser);
 
+/** Einstellungen, die einen Serverplatz beschreiben, aber keine Laufzeit oder Vorgeschichte sind. */
+const COPY_SETTINGS = Object.freeze([
+  'join_delay', 'chat_delay', 'on_cooldown', 'auto_reconnect', 'reconnect_delay', 'max_backoff',
+  'movement', 'antiafk_sec', 'sneak', 'view_distance', 'pov_skip_resources', 'fake_host', 'anti_afk',
+  'color', 'note',
+]);
+
 // ---------------------------------------------------------------- Hilfen
 
 function ownedProfile(req) {
@@ -86,6 +93,29 @@ function membersOf(profile) {
       head: heads.urlFor(row.uuid || row.name),
     };
   });
+}
+
+/**
+ * Kontenfilter aus der URL, ausschließlich innerhalb dieses Serverplatzes.
+ *
+ * Eine leere oder fremde Auswahl soll nie stillschweigend zu "alle Konten" werden. Gerade beim
+ * Export wäre das eine böse Überraschung: Die Auswahl im Panel ist eine Datenbegrenzung, keine
+ * bloße Ansichtseinstellung.
+ */
+function requestedMemberIds(profile, value) {
+  if (value === undefined) return null;
+  const parts = String(value).split(',');
+  if (!parts.length || parts.some((part) => !/^\d+$/.test(part.trim()))) {
+    throw bad('Kontenauswahl ist ungültig.', { en: 'Account selection is invalid.' });
+  }
+  const ids = [...new Set(parts.map((part) => requireInt(part.trim(), 'Konto', { min: 1 })))];
+  const available = new Set(membersOf(profile).map((member) => member.account_id));
+  if (ids.some((id) => !available.has(id))) {
+    throw bad('Ein ausgewähltes Konto gehört nicht zu diesem Serverplatz.', {
+      en: 'A selected account does not belong to this server slot.',
+    });
+  }
+  return ids;
 }
 
 function profileView(profile, lang = 'en') {
@@ -406,6 +436,25 @@ router.post(
  * Und was auch nicht mitkommt: die Zusätze. Sie sind bezahlt, je Platz, und eine Kopie, die
  * ungefragt Zusätze mitbucht, bucht ungefragt Geld ab.
  */
+router.get(
+  '/:id/copy-preview',
+  wrap((req, res) => {
+    const source = ownedProfile(req);
+    // Der Dialog braucht keine komplette Konfiguration und schon gar keine Makrotexte. Diese vier
+    // Zahlen beantworten seine Frage, ohne mehr zu übertragen als dort sichtbar wird.
+    const count = (table) =>
+      db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE profile_id = ?`).get(source.id).n;
+    res.json({
+      sections: {
+        settings: COPY_SETTINGS.length,
+        macros: count('macros'),
+        spam: count('spam'),
+        schedules: count('profile_schedules'),
+      },
+    });
+  })
+);
+
 router.post(
   '/:id/copy',
   wrap((req, res) => {
@@ -413,6 +462,17 @@ router.post(
     const body = req.body || {};
     const lang = langOf(req);
     const name = requireString(body.name ?? `${source.name} (2)`, 'Name', { max: 40 });
+    if (body.copy !== undefined && (!body.copy || typeof body.copy !== 'object' || Array.isArray(body.copy))) {
+      throw bad('Kopierauswahl ist ungültig.', { en: 'Copy selection is invalid.' });
+    }
+    // Fehlt die Auswahl (ältere Panel-Versionen/API-Nutzer), bleibt der bisherige vollständige
+    // Kopierablauf erhalten. Nur ein ausdrückliches `false` lässt einen Bereich zurück.
+    const selection = {
+      settings: body.copy?.settings !== false,
+      macros: body.copy?.macros !== false,
+      spam: body.copy?.spam !== false,
+      schedules: body.copy?.schedules !== false,
+    };
     const { host, port } =
       body.address === undefined ? { host: source.host, port: source.port } : parseAddress(body.address);
 
@@ -430,15 +490,12 @@ router.post(
 
     // Die Einstellungen. Nur Spalten, die Verhalten beschreiben – nicht `paid_until`, nicht
     // `suspended`, nicht `locked`: Die Kopie ist frisch bezahlt und hat keine Vorgeschichte.
-    const SETTINGS = [
-      'join_delay', 'chat_delay', 'on_cooldown', 'auto_reconnect', 'reconnect_delay', 'max_backoff',
-      'movement', 'antiafk_sec', 'sneak', 'view_distance', 'pov_skip_resources', 'fake_host', 'anti_afk',
-      'color', 'note',
-    ];
     // `chat_limit` gehört nicht dazu: Es ist vom Tarif gedeckelt, und die Kopie kann einen anderen
     // haben. `createProfile` hat es schon auf das gesetzt, was dieser Tarif hergibt; ein höherer
     // Wert vom Original würde eine Grenze überschreiben, die es aus gutem Grund gibt.
-    const carried = SETTINGS.filter((column) => source[column] !== undefined && source[column] !== null);
+    const carried = selection.settings
+      ? COPY_SETTINGS.filter((column) => source[column] !== undefined && source[column] !== null)
+      : [];
     if (carried.length) {
       db.prepare(`UPDATE profiles SET ${carried.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`).run(
         ...carried.map((column) => source[column]),
@@ -451,7 +508,10 @@ router.post(
     // Kopie richtig, eines für Konto 12 zeigte dort ins Leere.
     const copied = { macros: 0, spam: 0, schedules: 0 };
     db.transaction(() => {
-      for (const row of db.prepare('SELECT * FROM macros WHERE profile_id = ?').all(source.id)) {
+      const macros = selection.macros
+        ? db.prepare('SELECT * FROM macros WHERE profile_id = ?').all(source.id)
+        : [];
+      for (const row of macros) {
         db.prepare(
           `INSERT INTO macros (profile_id, name, event, config, actions, accounts, enabled,
                                cooldown_sec, chance, created_at)
@@ -459,14 +519,18 @@ router.post(
         ).run(copy.id, row.name, row.event, row.config, row.actions, row.enabled, row.cooldown_sec, row.chance, Date.now());
         copied.macros += 1;
       }
-      for (const row of db.prepare('SELECT * FROM spam WHERE profile_id = ?').all(source.id)) {
+      const spam = selection.spam ? db.prepare('SELECT * FROM spam WHERE profile_id = ?').all(source.id) : [];
+      for (const row of spam) {
         db.prepare(
           `INSERT INTO spam (profile_id, message, interval_sec, accounts, enabled, created_at)
            VALUES (?, ?, ?, '[]', ?, ?)`
         ).run(copy.id, row.message, row.interval_sec, row.enabled, Date.now());
         copied.spam += 1;
       }
-      for (const row of db.prepare('SELECT * FROM profile_schedules WHERE profile_id = ?').all(source.id)) {
+      const schedules = selection.schedules
+        ? db.prepare('SELECT * FROM profile_schedules WHERE profile_id = ?').all(source.id)
+        : [];
+      for (const row of schedules) {
         db.prepare(
           `INSERT INTO profile_schedules (profile_id, account_id, action, minutes, days, active, note, created_at)
            VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`
@@ -475,7 +539,7 @@ router.post(
       }
     })();
 
-    audit(req.user.id, 'profile-copy', { from: source.id, to: copy.id, ...copied });
+    audit(req.user.id, 'profile-copy', { from: source.id, to: copy.id, selection, ...copied });
     res.json({
       profile: profileView(db.prepare('SELECT * FROM profiles WHERE id = ?').get(copy.id), lang),
       copied,
@@ -1088,9 +1152,7 @@ router.get(
   wrap((req, res) => {
     const profile = ownedProfile(req);
     const since = Number(req.query.since) || 0;
-    const only = req.query.accounts
-      ? String(req.query.accounts).split(',').map(Number).filter(Boolean)
-      : null;
+    const only = requestedMemberIds(profile, req.query.accounts);
 
     const events = [];
     for (const member of membersOf(profile)) {
@@ -1166,8 +1228,10 @@ router.get(
   wrap((req, res) => {
     const profile = ownedProfile(req);
     const all = req.query.all === '1';
+    const only = requestedMemberIds(profile, req.query.accounts);
     const lines = [];
     for (const member of membersOf(profile)) {
+      if (only && !only.includes(member.account_id)) continue;
       for (const entry of supervisor.historyOf(profile.id, member.account_id)) {
         if (!all && entry.type !== 'chat' && entry.type !== 'sent') continue;
         lines.push({ ...entry, account: member.name });

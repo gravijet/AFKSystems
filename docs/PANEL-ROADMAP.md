@@ -59,8 +59,10 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Sichere Vorlagen für wiederkehrende Makros anbieten, aber nie ungeprüfte Befehle automatisch
       ausführen: Jede Vorlage und Kopie öffnet ausschließlich den Editor; Testläufe werden
       bewusst auf genau ein ausgewähltes Konto im Spiel begrenzt.
-- [ ] Konfigurationsvergleich und Kopierablauf ausbauen: nachvollziehbar auswählen, was kopiert
-      wird, und kostenpflichtige Folgen vorher zeigen.
+- [x] Konfigurationsvergleich und Kopierablauf ausbauen: Der Kopierdialog zeigt die realen Mengen
+      je Bereich, übernimmt nur ausdrücklich ausgewählte Einstellungen, Makros, Zeitpläne oder
+      wiederkehrende Nachrichten und weist vor dem kostenpflichtigen Anlegen darauf hin, dass
+      Konten und gebuchte Zusätze nie mitkommen.
 
 ## Konten, Abrechnung und Support
 
@@ -68,6 +70,9 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 - [ ] Sammelansicht für ablaufende/fehlerhafte Microsoft-Anmeldungen mit sicherem
       Wiederanmeldeweg.
+  - [x] Fehlerhafte Anmeldungen stehen zusätzlich als handlungsorientierte Warteliste mit ihren
+        tatsächlichen Platz- und Online-Auswirkungen bereit; jede Wiederanmeldung bleibt einzeln
+        und ordnet weder Bots noch Konten automatisch um.
 - [ ] Eindeutige Zuordnungsübersicht: welches Minecraft-Konto läuft auf welchen Plätzen und wo
       steht ein Konflikt an.
 - [ ] Vorgänge, die ein Konto entfernen oder neu verbinden, mit klarer Auswirkungsanzeige auf
@@ -75,10 +80,14 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 ### 5. Abrechnung transparent machen
 
-- [ ] Laufzeitprognose pro kostenpflichtigem Platz statt nur einer globalen Monatszahl.
+- [x] Laufzeitprognose pro kostenpflichtigem Platz statt nur einer globalen Monatszahl: Die
+      Abrechnung zeigt für jede kommende automatische Verlängerung in echter Fälligkeitsreihenfolge,
+      ob das aktuelle Guthaben reicht oder welcher Betrag fehlt.
 - [ ] Änderungen an Tarif/Zusatz als nachvollziehbare Vorher-Nachher-Rechnung mit
       anteiligem Betrag darstellen.
-- [ ] Belegarchiv um Filter, sichere Downloads und verständliche Zahlungsstatus erweitern.
+- [x] Belegarchiv um Filter, sichere Downloads und verständliche Zahlungsstatus erweitern:
+      Belegnummer und Status lassen sich lokal filtern, Erstattungen sind markiert und ein
+      eigens angeforderter Download kommt als privater Anhang statt als zwischenspeicherbare Seite.
 - [ ] Niedriges Guthaben als einstellbare, nachvollziehbare Warnung behandeln; keine
       unaufgeforderten Zahlungsaktionen.
 
