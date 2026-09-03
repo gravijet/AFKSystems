@@ -2548,17 +2548,6 @@ body.site > main {
   padding: 0.6rem 0.75rem calc(0.75rem + env(safe-area-inset-bottom));
   box-shadow: inset 0 1px 0 var(--line-soft);
 }
-/* Der Discord-Link führt aus dem Panel hinaus – er sieht deshalb anders aus als ein Menüpunkt. */
-.side-discord {
-  background: color-mix(in srgb, #5865f2 12%, transparent);
-  color: #5865f2;
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-.side-discord:hover {
-  background: #5865f2;
-  color: #fff;
-}
 .side-balance {
   display: flex;
   align-items: center;
@@ -6772,8 +6761,7 @@ dialog.shortcuts {
 /* Server suchen, filtern, favorisieren und je nach Bildschirm lesen. */
 .server-tools,
 .account-tools,
-.overview-bot-tools,
-.activity-tools {
+.overview-bot-tools {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -7161,6 +7149,10 @@ dialog.shortcuts {
   max-width: 62rem;
 }
 .activity-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
   position: sticky;
   top: 0;
   z-index: 4;
