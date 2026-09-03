@@ -5122,6 +5122,44 @@ a.tk-tile:hover {
   font-size: 0.84rem;
   line-height: 1.4;
 }
+.ticket-help header h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+.ticket-help header h3 .icon {
+  width: 1rem;
+  height: 1rem;
+  color: var(--primary-text);
+}
+.ticket-help-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+.ticket-help-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.ticket-help-link:hover {
+  background: color-mix(in oklab, var(--primary) 10%, var(--surface-2));
+}
+.ticket-help-link .icon {
+  flex: none;
+  width: 0.85rem;
+  height: 0.85rem;
+  color: var(--text-2);
+}
 
 /* Der Verlauf ist ein Gespräch, kein Formular: Blasen, eigene rechts, System in der Mitte. */
 .chat-thread {

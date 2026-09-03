@@ -1467,6 +1467,12 @@ export const S = {
   'tk.you': { en: 'You', de: 'Du' },
   'tk.internal': { en: 'Internal note', de: 'Interne Notiz' },
   'tk.hours': { en: 'We usually answer {hours}.', de: 'Wir antworten meist {hours}.' },
+  'tk.helpTitle': { en: 'Quick help before opening a ticket', de: 'Kurze Hilfe vor dem Ticket' },
+  'tk.helpText': {
+    en: 'These maintained answers solve common account, billing and server-rule questions. They open separately so your ticket draft stays where it is.',
+    de: 'Diese gepflegten Antworten lösen häufige Fragen zu Konto, Guthaben und Serverregeln. Sie öffnen getrennt, damit ein Ticketentwurf liegen bleibt.',
+  },
+  'tk.helpOpen': { en: 'Open answer', de: 'Antwort öffnen' },
 
   // ---------------------------------------------------------------- Einstellungen
   'set.title': { en: 'Settings', de: 'Einstellungen' },

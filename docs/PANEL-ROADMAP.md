@@ -101,7 +101,9 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Status, Verantwortlichkeit und nächste erwartete Antwort im Ticketverlauf klar machen:
       Eine sichtbare Verlaufskarte leitet aus dem echten Zustand ab, wer als Nächstes handelt,
       seit wann und was diesen Vorgang wieder öffnet – ohne eine erfundene Antwortfrist.
-- [ ] Wiederkehrende Lösungen als gepflegte Hilfsartikel verlinken, nicht als generierte Antworten.
+- [x] Wiederkehrende Lösungen als gepflegte Hilfsartikel verlinken, nicht als generierte Antworten:
+      Die Supportansicht verweist auf feste, getestete FAQ-Anker für Kontosicherheit, Guthaben,
+      Serverregeln und Verlängerungen.
 
 ## Betreiber und Plattform
 
