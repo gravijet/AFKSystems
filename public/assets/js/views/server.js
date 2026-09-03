@@ -2526,9 +2526,40 @@ async function tabMacros(root, profile) {
   );
 }
 
+/** Vorlagen wählen heißt immer: in den Editor übernehmen, nie unmittelbar speichern. */
+function showMacroTemplates(profile) {
+  const dialog = document.createElement('dialog');
+  dialog.className = 'macro-templates';
+  dialog.innerHTML = `
+    <header><div><h3>${escapeHtml(tr('srv.templates'))}</h3>
+      <p class="small muted">${escapeHtml(tr('srv.templatesHint'))}</p></div>
+      <button class="btn btn-ghost btn-sm" type="button" data-close aria-label="${escapeHtml(tr('common.close'))}">${icon('x')}</button></header>
+    <div class="body stack">${MACRO_TEMPLATES.map(
+      (template) => `<button class="macro-template" type="button" data-template="${template.id}">
+        <strong>${escapeHtml(tr(template.title))}</strong><span>${escapeHtml(tr(template.text))}</span>
+        <span class="macro-template-open">${escapeHtml(tr('srv.templateOpen'))} ${icon('arrow')}</span>
+      </button>`
+    ).join('')}</div>`;
+  document.body.append(dialog);
+  dialog.querySelector('[data-close]').addEventListener('click', () => dialog.close());
+  dialog.addEventListener('click', (event) => {
+    if (event.target === dialog) dialog.close();
+  });
+  dialog.addEventListener('close', () => dialog.remove());
+  dialog.querySelectorAll('[data-template]').forEach((button) =>
+    button.addEventListener('click', () => {
+      const template = MACRO_TEMPLATES.find((entry) => entry.id === button.dataset.template);
+      dialog.close();
+      if (template) editMacro(profile, null, template);
+    })
+  );
+  dialog.showModal();
+}
+
 /** Macro-Editor: Auslöser oben, darunter die Schritte in der Reihenfolge, in der sie laufen. */
-async function editMacro(profile, macro) {
-  const actions = structuredClone(macro?.actions || [{ type: 'chat', text: '/afk' }]);
+async function editMacro(profile, macro, template = null) {
+  const draft = macro || template;
+  const actions = structuredClone(draft?.actions || [{ type: 'chat', text: '/afk' }]);
   // Nur Schritte anbieten, die dieser Serverplatz auch ausführen kann.
   const available = state.meta.actions.filter((action) => !action.needs || profile.caps[action.needs]);
 
@@ -2546,11 +2577,11 @@ async function editMacro(profile, macro) {
   $('#cancel', dialog).addEventListener('click', () => dialog.close());
 
   const paint = () => {
-    const event = $('#event', dialog)?.value || macro?.event || 'join';
+    const event = $('#event', dialog)?.value || draft?.event || 'join';
     $('#editor', dialog).innerHTML = `
       <div class="field">
         <label for="name">${escapeHtml(tr('common.name'))}</label>
-        <input id="name" value="${escapeHtml(macro?.name || '')}">
+        <input id="name" value="${escapeHtml(draft?.name || (template ? tr(template.nameKey) : ''))}">
       </div>
 
       <div class="field">
@@ -2572,7 +2603,7 @@ async function editMacro(profile, macro) {
            verdrahtet – jeder neue Auslöser hätte seine Felder nur im Server gehabt und im Editor
            gar nicht, und das wäre nicht aufgefallen, bis jemand ihn benutzt. -->
       ${(state.meta.events.find((entry) => entry.type === event)?.config || [])
-        .map((field) => configField(field, macro?.config?.[field.key]))
+        .map((field) => configField(field, draft?.config?.[field.key]))
         .join('')}
 
       <div class="field">
@@ -2583,7 +2614,7 @@ async function editMacro(profile, macro) {
             .map(
               (member) =>
                 `<option value="${member.account_id}" ${
-                  macro?.accounts?.length === 1 && macro.accounts[0] === member.account_id ? 'selected' : ''
+                  draft?.accounts?.length === 1 && draft.accounts[0] === member.account_id ? 'selected' : ''
                 }>${escapeHtml(member.name)}</option>`
             )
             .join('')}
@@ -2597,12 +2628,12 @@ async function editMacro(profile, macro) {
       <div class="row wrap" style="gap:1rem;align-items:flex-end">
         <div class="field" style="max-width:11rem">
           <label for="cooldown">${escapeHtml(tr('srv.cooldown'))}</label>
-          <input id="cooldown" type="number" min="0" max="86400" value="${macro?.cooldown_sec ?? 0}">
+          <input id="cooldown" type="number" min="0" max="86400" value="${draft?.cooldown_sec ?? 0}">
           <span class="hint">${escapeHtml(tr('srv.cooldownHint'))}</span>
         </div>
         <div class="field" style="max-width:11rem">
           <label for="chance">${escapeHtml(tr('srv.chance'))}</label>
-          <input id="chance" type="number" min="1" max="100" value="${macro?.chance ?? 100}">
+          <input id="chance" type="number" min="1" max="100" value="${draft?.chance ?? 100}">
           <span class="hint">${escapeHtml(tr('srv.chanceHint'))}</span>
         </div>
       </div>
