@@ -903,6 +903,10 @@ export async function showPalette(initial = '') {
 }
 
 document.addEventListener('keydown', (event) => {
+  // Ein offener Dialog besitzt seinen eigenen Fokus und seine eigene Escape-Behandlung. Globale
+  // Sprünge darüber würden etwa eine Löschbestätigung im Hintergrund lassen, während die Ansicht
+  // wechselt – der Tastaturweg muss dieselbe Sicherheit haben wie ein Mausklick.
+  if (document.querySelector('dialog[open]')) return;
   if (event.key === 'Escape' && $('#side').classList.contains('open')) return toggleSide(false);
   if ((event.ctrlKey || event.metaKey) && !event.altKey && (event.key === 'k' || event.key === 'K')) {
     // Strg+K ist im Browser die Adresszeile. Hier ist es die Suche über alles, und das ist an
@@ -924,7 +928,14 @@ document.addEventListener('keydown', (event) => {
       return;
     }
     if (jumpKeysArmed) {
-      const target = { o: '#/', s: '#/servers', a: '#/accounts', t: '#/tickets' }[event.key.toLowerCase()];
+      const target = {
+        o: '#/',
+        s: '#/servers',
+        a: '#/accounts',
+        c: '#/credits',
+        n: '#/activity',
+        t: '#/tickets',
+      }[event.key.toLowerCase()];
       clearJumpKeys();
       if (target) {
         event.preventDefault();
@@ -976,6 +987,8 @@ export function showShortcuts() {
         ${row(['G', 'O'], tr('keys.overview'))}
         ${row(['G', 'S'], tr('keys.servers'))}
         ${row(['G', 'A'], tr('keys.accounts'))}
+        ${row(['G', 'C'], tr('keys.credits'))}
+        ${row(['G', 'N'], tr('keys.activity'))}
         ${row(['G', 'T'], tr('keys.support'))}
         ${row(['?'], tr('keys.help'))}
       </ul>

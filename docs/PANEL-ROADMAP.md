@@ -42,8 +42,10 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
       mit sichtbarem Zielkonto und Zielserver.
 - [x] Mehrfachaktionen mit Ergebniszusammenfassung statt stiller Teilfehler.
 - [x] Vor risikoreichen Massenaktionen Umfang, Auswirkung und eine Abbruchmöglichkeit zeigen.
-- [ ] Tastaturbedienung der wichtigsten Arbeitswege komplett prüfen: Fokus, Escape,
-      Fehlermeldungen und mobile Alternative.
+- [x] Tastaturbedienung der wichtigsten Arbeitswege prüfen: Fokus, Escape und Sprungfolgen sind
+      in offenen Dialogen gesperrt; Übersicht, Server, Konten, Guthaben, Aktivität und Support
+      sind über dokumentierte Kürzel erreichbar, auf Mobilgeräten bleibt die Navigation der
+      gleichwertige Weg.
 
 ### 3. Serverplatz als verlässlicher Arbeitsplatz
 

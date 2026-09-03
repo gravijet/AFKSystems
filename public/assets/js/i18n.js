@@ -1495,6 +1495,8 @@ export const S = {
   'keys.overview': { en: 'Go to overview', de: 'Zur Übersicht' },
   'keys.servers': { en: 'Go to servers', de: 'Zu den Servern' },
   'keys.accounts': { en: 'Go to Minecraft accounts', de: 'Zu den Minecraft-Konten' },
+  'keys.credits': { en: 'Go to credits', de: 'Zum Guthaben' },
+  'keys.activity': { en: 'Go to activity', de: 'Zur Aktivität' },
   'keys.support': { en: 'Go to support', de: 'Zum Support' },
   'keys.help': { en: 'Show these shortcuts', de: 'Diese Kürzel anzeigen' },
 
