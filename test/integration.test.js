@@ -5419,6 +5419,10 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   // Der Systembericht steht der Verwaltung offen und sonst niemandem.
   const report = await api(base, '/api/admin/system/report', { token: ADMIN_TOKEN });
   assert.equal(report.response.status, 200);
+  const operations = await api(base, '/api/admin/operations', { token: ADMIN_TOKEN });
+  assert.equal(operations.response.status, 200);
+  assert.ok(Array.isArray(operations.data.alerts));
+  assert.equal(typeof operations.data.proxy.total, 'number');
   assert.equal(report.data.webhook, false);
   assert.ok(Array.isArray(report.data.alerts));
   const notStaff = await api(base, '/api/admin/system/report', { token: USER_TOKEN });

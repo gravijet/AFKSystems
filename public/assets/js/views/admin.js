@@ -4865,7 +4865,7 @@ async function ops(root) {
   let timer = null;
   let onlyRunning = true;
 
-  const paint = (data, jobs) => {
+  const paint = (data, jobs, operations) => {
     const bots = data.bots.filter((bot) => (onlyRunning ? bot.state !== 'offline' : true));
     const nodes = data.nodes;
 
@@ -4876,6 +4876,23 @@ async function ops(root) {
         ${stat(tr('ops.slots'), String(new Set(data.bots.map((bot) => bot.profile_id)).size), tr('ops.slotsFoot'))}
         ${stat(tr('ops.errors'), String(data.bots.filter((bot) => bot.last_error).length), tr('ops.errorsFoot'))}
       </div>
+
+      ${
+        operations.alerts.length
+          ? panel(
+              tr('ops.attention'),
+              `<div class="stack">${operations.alerts
+                .map(
+                  (alert) => `<a class="note ${alert.severity === 'bad' ? 'bad' : 'warn'}" href="#${alert.route}" style="margin:0;text-decoration:none">
+                    ${icon('alert')}<div><strong>${escapeHtml(operationAlertText(alert))}</strong>
+                      <p class="small" style="margin:.2rem 0 0">${escapeHtml(operationAlertHint(alert))}</p></div>
+                    <span aria-hidden="true">${icon('chevron-right')}</span>
+                  </a>`
+                )
+                .join('')}</div>`
+            )
+          : `<div class="note" style="margin-bottom:1.5rem">${icon('check')}<div>${escapeHtml(tr('ops.attentionNone'))}</div></div>`
+      }
 
       ${
         nodes.length
@@ -4956,7 +4973,8 @@ async function ops(root) {
 
     $('#only-running').addEventListener('change', async (event) => {
       onlyRunning = event.target.checked;
-      paint(await api('/admin/bots'), (await api('/admin/jobs')).jobs);
+      const [bots, jobState, operationState] = await Promise.all([api('/admin/bots'), api('/admin/jobs'), api('/admin/operations')]);
+      paint(bots, jobState.jobs, operationState);
     });
     $$('[data-stop]').forEach((button) =>
       button.addEventListener('click', async () => {
@@ -4981,7 +4999,8 @@ async function ops(root) {
         if (answer && answer.job) {
           if (answer.job.last_error) toast(answer.job.last_error, 'bad');
           else ok(tr('ops.ranIn', { ms: answer.job.last_ms }));
-          paint(await api('/admin/bots'), answer.jobs);
+          const [bots, operationState] = await Promise.all([api('/admin/bots'), api('/admin/operations')]);
+          paint(bots, answer.jobs, operationState);
         } else button.disabled = false;
       })
     );
@@ -4990,10 +5009,10 @@ async function ops(root) {
   const load = async () => {
     if (state.route.name !== 'admin' || state.route.tab !== 'ops') return clearInterval(timer);
     try {
-      const [bots, jobs] = await Promise.all([api('/admin/bots'), api('/admin/jobs')]);
+      const [bots, jobs, operations] = await Promise.all([api('/admin/bots'), api('/admin/jobs'), api('/admin/operations')]);
       // Steht ein Dialog offen, wäre ein Neuzeichnen ein Griff unter der Hand weg.
       if (document.querySelector('dialog[open]')) return;
-      paint(bots, jobs.jobs);
+      paint(bots, jobs.jobs, operations);
     } catch {
       /* beim nächsten Mal wieder */
     }
@@ -5001,6 +5020,16 @@ async function ops(root) {
 
   await load();
   timer = setInterval(load, 5000);
+}
+
+/** Texte bleiben hier, weil die API nur Zustände und keine bereits gerenderten Operator-Sätze liefert. */
+function operationAlertText(alert) {
+  const names = { 'node-offline': 'ops.alert.nodeOffline', 'node-full': 'ops.alert.nodeFull', 'client-error': 'ops.alert.clientError', 'client-outdated': 'ops.alert.clientOutdated', 'job-failed': 'ops.alert.jobFailed', 'proxy-unused': 'ops.alert.proxyUnused' };
+  return tr(names[alert.kind] || 'ops.attention', { name: alert.name || '', n: alert.count || 0 });
+}
+function operationAlertHint(alert) {
+  const hints = { 'node-offline': 'ops.alert.nodeHint', 'node-full': 'ops.alert.nodeFullHint', 'client-error': 'ops.alert.clientHint', 'client-outdated': 'ops.alert.clientOutdatedHint', 'job-failed': 'ops.alert.jobHint', 'proxy-unused': 'ops.alert.proxyHint' };
+  return tr(hints[alert.kind] || 'common.open');
 }
 
 /** Ein Takt, wie ihn ein Mensch liest: „alle 30 s“, „stündlich“. */
