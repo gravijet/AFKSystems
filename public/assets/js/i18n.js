@@ -2773,6 +2773,13 @@ export const S = {
   'ops.alert.clientOutdatedHint': { en: 'Review the rollout before restarting affected bots.', de: 'Vor Neustarts den Rollout prüfen.' },
   'ops.alert.jobHint': { en: 'Open Operations to inspect and retry the job.', de: 'Im Betrieb prüfen und den Job gezielt erneut starten.' },
   'ops.alert.proxyHint': { en: 'Review the assignment; no account currently uses it.', de: 'Zuordnung prüfen; aktuell nutzt kein Konto ihn.' },
+  'adm.accountQueue': { en: '{n} account(s) need a login review', de: '{n} Konto/Konten brauchen eine Anmeldeprüfung' },
+  'adm.accountQueueHint': {
+    en: 'Open the owner or affected server slot to coordinate a new login. This list never reconnects accounts or moves bots automatically.',
+    de: 'Öffne Eigentümer oder betroffenen Serverplatz, um eine neue Anmeldung abzustimmen. Diese Liste verbindet keine Konten neu und verschiebt keine Bots automatisch.',
+  },
+  'adm.accountQueueNone': { en: 'No active Minecraft account currently reports a login error.', de: 'Kein aktives Minecraft-Konto meldet aktuell einen Anmeldefehler.' },
+  'adm.openOwner': { en: 'Open owner', de: 'Eigentümer öffnen' },
 
   // ---------------------------------------------------------------- Sicherungen
   'bak.title': { en: 'Backups', de: 'Sicherungen' },
