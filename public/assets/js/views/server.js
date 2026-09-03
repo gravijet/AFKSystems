@@ -2485,6 +2485,7 @@ async function tabMacros(root, profile) {
             }</div>
         </div>
         <span class="switch" role="switch" tabindex="0" aria-checked="${macro.enabled}"
+          aria-label="${escapeHtml(tr('srv.macroActive'))}"
           data-macro-toggle="${macro.id}"></span>
       </div>
       <p class="small mono muted" style="margin-top:.75rem">${escapeHtml(summary || '–')}</p>
