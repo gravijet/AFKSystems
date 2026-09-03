@@ -18,6 +18,7 @@ const KIND = {
   refund: 'bill.kind.refund',
   admin: 'bill.kind.admin',
   bonus: 'bill.kind.bonus',
+  referral: 'bill.kind.referral',
 };
 
 export async function render(root) {
@@ -118,6 +119,33 @@ export async function render(root) {
            einen Preis klickt, soll vorher gelesen haben, was ihn davon erwartet. -->
       <p class="small muted" style="margin:.75rem 0 0">${escapeHtml(data.vat?.note || '')}</p>
     </section>
+
+    ${
+      data.referral.bonus > 0
+        ? `<section class="panel" style="margin-top:1.5rem">
+            <header>
+              <h3>${escapeHtml(tr('bill.referral'))}</h3>
+              <span class="small muted">${escapeHtml(
+                tr('bill.referralSub', { credits: credits(data.referral.bonus) })
+              )}</span>
+            </header>
+            <div class="body stack">
+              <div class="field">
+                <label for="referral-link">${escapeHtml(tr('bill.referralLink'))}</label>
+                <div class="row" style="gap:.5rem">
+                  <input id="referral-link" class="grow mono" readonly value="${escapeHtml(data.referral.url)}">
+                  <button class="btn btn-sm" type="button" id="referral-copy">${escapeHtml(
+                    tr('common.copy')
+                  )}</button>
+                </div>
+              </div>
+              <p class="small muted" style="margin:0">${escapeHtml(
+                tr('bill.referralStats', { referred: data.referral.referred, rewarded: data.referral.rewarded })
+              )}</p>
+            </div>
+          </section>`
+        : ''
+    }
 
     ${
       data.topups.filter((topup) => topup.status === 'open').length
@@ -356,6 +384,8 @@ export async function render(root) {
     $$('.ledger .extra').forEach((node) => node.classList.remove('hide'));
     event.target.remove();
   });
+
+  $('#referral-copy')?.addEventListener('click', () => copy($('#referral-link').value));
 
   $('#voucher').addEventListener('click', async () => {
     const answer = await formDialog(

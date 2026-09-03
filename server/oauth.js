@@ -18,6 +18,7 @@ import * as mail from './mail.js';
 import { grant, freeGuildId } from './billing.js';
 import { bridge } from './bridge.js';
 import * as linkedRoles from './linked-roles.js';
+import { newReferralCode, referrerFor } from './auth.js';
 
 // ---------------------------------------------------------------- Anbieter
 
@@ -113,7 +114,10 @@ function newState(payload) {
  * Adresse, auf die der Browser geschickt wird.
  * `mode`: link (verknüpfen), login (anmelden oder anlegen), verify (Discord-Linked-Roles).
  */
-export function startUrl(key, { mode = 'link', userId = null, lang = 'en', next = '', binding = null } = {}) {
+export function startUrl(
+  key,
+  { mode = 'link', userId = null, lang = 'en', next = '', binding = null, ref = null } = {}
+) {
   const entry = provider(key);
   if (!configured(key)) {
     throw bad(`${entry.label} ist auf diesem Server nicht eingerichtet.`, {
@@ -141,7 +145,7 @@ export function startUrl(key, { mode = 'link', userId = null, lang = 'en', next 
     redirect_uri: redirectUri(key),
     response_type: 'code',
     scope: mode === 'verify' ? 'identify role_connections.write' : entry.scope,
-    state: newState({ provider: key, mode, userId, lang, next, binding }),
+    state: newState({ provider: key, mode, userId, lang, next, binding, ref }),
     ...entry.extra,
   });
   return `${entry.authorize}?${params}`;
@@ -299,7 +303,7 @@ export async function callback({ code, state: value, binding = null }) {
         en: 'New accounts are closed at the moment.',
       });
     }
-    user = createFromIdentity(which, account, entry.lang);
+    user = createFromIdentity(which, account, entry.lang, entry.ref);
     created = true;
   }
 
@@ -342,7 +346,7 @@ function writeIdentity(userId, which, account) {
 }
 
 /** Aus einer fremden Identität ein Konto machen. Der Benutzername wird eindeutig gemacht. */
-function createFromIdentity(which, account, lang) {
+function createFromIdentity(which, account, lang, ref = null) {
   const base =
     String(account.name || account.email.split('@')[0])
       .replace(/[^a-zA-Z0-9_.-]/g, '')
@@ -356,18 +360,31 @@ function createFromIdentity(which, account, lang) {
   // Es gibt kein Passwort – wer eines will, setzt es über "Passwort vergessen". Der gespeicherte
   // Hash ist deshalb der eines Zufallswerts, den niemand kennt, und kein leeres Feld: sonst wäre
   // die Prüfung eine Frage der Auslegung statt ein klares Nein.
+  //
+  // Der Werber (siehe auth.js `register`) gilt hier genauso: Auch wer sich über Discord oder
+  // Google anmeldet, kam vielleicht über einen Empfehlungslink hierher.
+  const referredBy = referrerFor(ref);
   const info = db
     .prepare(
-      `INSERT INTO users (email, username, password_hash, role, language, email_verified, created_at)
-       VALUES (?, ?, ?, 'user', ?, 1, ?)`
+      `INSERT INTO users (email, username, password_hash, role, language, email_verified, created_at,
+                          referral_code, referred_by)
+       VALUES (?, ?, ?, 'user', ?, 1, ?, ?, ?)`
     )
-    .run(account.email, username, hashPassword(randomToken(32)), lang === 'de' ? 'de' : 'en', Date.now());
+    .run(
+      account.email,
+      username,
+      hashPassword(randomToken(32)),
+      lang === 'de' ? 'de' : 'en',
+      Date.now(),
+      newReferralCode(),
+      referredBy
+    );
   writeIdentity(info.lastInsertRowid, which, account);
   // Das Startguthaben gilt für jedes neue Konto, egal auf welchem Weg es entstanden ist. Vorher
   // bekam es nur, wer sich über das Formular anmeldete.
   const bonus = Number(getSetting('signup_bonus')) || 0;
   if (bonus > 0) grant(info.lastInsertRowid, bonus, 'bonus', 'Startguthaben');
-  audit(info.lastInsertRowid, 'register', { via: which.key });
+  audit(info.lastInsertRowid, 'register', { via: which.key, referred_by: referredBy });
   return db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
 }
 

@@ -16,7 +16,7 @@
 import express from 'express';
 import { config } from '../config.js';
 import { db, getSetting } from '../db.js';
-import { requireUser } from '../auth.js';
+import { requireUser, newReferralCode } from '../auth.js';
 import * as billing from '../billing.js';
 import * as stripe from '../stripe.js';
 import * as vat from '../vat.js';
@@ -32,6 +32,13 @@ router.get(
   requireUser,
   wrap((req, res) => {
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
+    // Sollte eigentlich nie fehlen (Migration 037 vergibt ihn an jedes Konto, register() und
+    // createFromIdentity() an jedes neue) – aber ein fehlender Code darf keinen kaputten Link
+    // zeigen, sondern heilt sich hier selbst.
+    if (!user.referral_code) {
+      user.referral_code = newReferralCode();
+      db.prepare('UPDATE users SET referral_code = ? WHERE id = ?').run(user.referral_code, user.id);
+    }
     const lang = langOf(req);
     const slots = db
       .prepare(
@@ -105,6 +112,17 @@ router.get(
           }
         : null,
       paypal: config.bankTransfer.paypal || null,
+      // 0 = das Empfehlungsprogramm ist aus (Vorgabe, siehe settings-schema.js) – das Frontend
+      // blendet den ganzen Kasten dann aus, statt eine Prämie von null Credits zu bewerben.
+      referral: {
+        code: user.referral_code,
+        url: `${config.publicUrl}/${lang}/register?ref=${user.referral_code}`,
+        bonus: Number(getSetting('referral_bonus')) || 0,
+        referred: db.prepare('SELECT COUNT(*) AS n FROM users WHERE referred_by = ?').get(user.id).n,
+        rewarded: db
+          .prepare('SELECT COUNT(*) AS n FROM users WHERE referred_by = ? AND referral_rewarded = 1')
+          .get(user.id).n,
+      },
     });
   })
 );

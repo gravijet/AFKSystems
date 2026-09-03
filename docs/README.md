@@ -21,6 +21,7 @@ Alles zu AFKSystems an einer Stelle. Die kurze Fassung des Ganzen steht in der
 | **[verwaltung.md](verwaltung.md)** | Der Admin-Bereich: Suche über alles, Massenaktionen, Ausfuhr, Sicherheit, Sicherungen, Betrieb, Textbausteine, Rundmail, Erstattungen, Systemmeldungen, Belege, Kontolöschungen. |
 | **[live-ansicht.md](live-ansicht.md)** | Die Live-Ansicht (POV): die beiden Wege zu einem Bild, die Minecraft-Ressourcen, Steuern im Bild, Sichtweite, was sie kostet. |
 | **[schutz.md](schutz.md)** | Inhaltsschutz: was gegen Kopieren und Herunterladen getan wird – und was ehrlicherweise nicht geht. |
+| **[api.md](api.md)** | Eigene API-Token: Bot-Status abfragen und Bots starten/stoppen aus einem eigenen Skript, ohne Browser. |
 
 ## Sicherheitsbetrieb
 

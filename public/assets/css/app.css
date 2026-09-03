@@ -3730,6 +3730,50 @@ hr.rule {
   opacity: 1;
 }
 
+/* Die Vorschaukacheln auf der Übersicht – dieselbe Sprache wie .pov-frame (dunkler Grund, pixelig,
+   erst sichtbar mit .has-frame), aber klein und als Raster statt als einzelne große Bühne. */
+.pov-mini-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  padding: 1rem;
+}
+.pov-mini {
+  display: block;
+  border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--line);
+  overflow: hidden;
+  color: inherit;
+}
+.pov-mini:hover {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--primary) 40%, var(--line));
+  text-decoration: none;
+}
+.pov-mini-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #05070a;
+  image-rendering: pixelated;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.pov-mini.has-frame .pov-mini-frame {
+  opacity: 1;
+}
+.pov-mini-label {
+  display: flex;
+  flex-direction: column;
+  padding: 0.45rem 0.6rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+.pov-mini-label small {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
 /* Das Fadenkreuz. Zwei Striche, keine Textur: Es sitzt genau in der Mitte des Bildes und sagt,
    wohin `:use` und `:swing` zeigen. `mix-blend-mode` hält es auf hellem wie dunklem Grund
    sichtbar, ohne einen Kasten darum zu brauchen. */

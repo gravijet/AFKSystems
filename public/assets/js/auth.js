@@ -310,6 +310,11 @@ if (page === 'login') {
 // ---------------------------------------------------------------- Konto anlegen
 
 if (page === 'register') {
+  // `?ref=` steht in jedem Empfehlungslink (siehe billing.js `/billing` und settings.js). Er reist
+  // hier nur bis zum Absenden mit – gültig oder nicht, entscheidet erst `auth.js` `register()` auf
+  // dem Server, ein unbekannter Code lässt die Anmeldung also nicht scheitern.
+  const ref = query.get('ref') || '';
+
   api('/meta?scope=auth')
     .then((meta) => {
       if (!meta.registration_open) {
@@ -318,6 +323,12 @@ if (page === 'register') {
         return; // ist zu, dann auch über Discord und Google
       }
       showOauth(meta);
+      if (ref) {
+        for (const id of ['oauth-discord', 'oauth-google']) {
+          const link = document.getElementById(id);
+          if (link) link.href += `&ref=${encodeURIComponent(ref)}`;
+        }
+      }
     })
     .catch(() => {});
 
@@ -331,6 +342,7 @@ if (page === 'register') {
         username: $('#username').value.trim(),
         password: $('#password').value,
         password2: $('#password2').value,
+        ref: ref || undefined,
       },
     });
     if (!result.verify_pending) return location.assign(url('/app'));

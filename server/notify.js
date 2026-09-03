@@ -405,6 +405,29 @@ export const topupPaid = (userId, credits, balance) =>
     }
   );
 
+/** `asReferrer`: true für den Werber, false für den Geworbenen – nur der Text unterscheidet sich. */
+export const referralBonus = (userId, credits, asReferrer) =>
+  notify(
+    userId,
+    { de: 'Empfehlungsprämie gutgeschrieben', en: 'Referral bonus added' },
+    asReferrer
+      ? {
+          de: `Jemand ist über deinen Empfehlungslink beigetreten und hat aufgeladen: ${formatCredits(credits, 'de')} Credits sind da.`,
+          en: `Someone joined through your referral link and topped up: ${formatCredits(credits, 'en')} credits have arrived.`,
+        }
+      : {
+          de: `Willkommensbonus für deine erste Aufladung über eine Empfehlung: ${formatCredits(credits, 'de')} Credits sind da.`,
+          en: `Welcome bonus for your first top-up via a referral: ${formatCredits(credits, 'en')} credits have arrived.`,
+        },
+    {
+      key: `referral-${userId}-${Date.now()}`,
+      color: COLORS.ok,
+      quiet: QUIET.event,
+      event: 'billing',
+      url: `${config.publicUrl}/en/app#/credits`,
+    }
+  );
+
 // ---------------------------------------------------------------- Konten und Bots
 
 /**

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import Database from 'better-sqlite3';
 import { paths, tighten } from './config.js';
 import { PRIVACY_DE, PRIVACY_EN, TERMS_DE, TERMS_EN, VAT_NOTE_DE, VAT_NOTE_EN } from './legal.js';
+import { referralCode } from './util.js';
 
 export const db = new Database(paths.db);
 db.pragma('journal_mode = WAL');
@@ -1559,6 +1560,53 @@ const migrations = [
       CREATE INDEX admin_login_links_expiry ON admin_login_links(expires_at);
     `,
   },
+  {
+    // **Eigene API-Token für Kunden.** Dasselbe Muster wie bei Sitzungen: In der Datenbank steht
+    // nur der HMAC-Abdruck (siehe auth.js `capabilityDigest`), nie der Wert selbst – eine kopierte
+    // Datenbankdatei allein gibt damit kein gültiges Token her. Anders als eine Sitzung läuft ein
+    // Token nicht ab; es gilt, bis der Kunde es selbst widerruft.
+    name: '036-api-tokens',
+    sql: `
+      CREATE TABLE api_tokens (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token        TEXT NOT NULL UNIQUE,
+        label        TEXT NOT NULL,
+        created_at   INTEGER NOT NULL,
+        last_used_at INTEGER
+      );
+      CREATE INDEX api_tokens_user ON api_tokens(user_id);
+    `,
+  },
+  {
+    // **Kunden werben Kunden.** Jedes Konto bekommt einen eigenen Code, über den es andere werben
+    // kann. `referred_by` steht fest, sobald sich jemand darüber anmeldet – rückwirkend ändern
+    // lässt es sich nicht, sonst könnte ein Konto sich nachträglich einen Werber aussuchen.
+    // `referral_rewarded` sorgt dafür, dass die Gutschrift höchstens einmal passiert, auch wenn
+    // `settleTopup` aus irgendeinem Grund zweimal für dasselbe Konto anspringt (siehe billing.js).
+    // Belohnt wird erst bei der ersten **echten** Aufladung des Geworbenen, nicht bei der
+    // Anmeldung: Eine Anmeldung kostet nichts und ließe sich beliebig oft wiederholen, eine
+    // Aufladung nicht.
+    name: '037-empfehlungen',
+    sql: `
+      ALTER TABLE users ADD COLUMN referral_code     TEXT;
+      ALTER TABLE users ADD COLUMN referred_by       INTEGER REFERENCES users(id) ON DELETE SET NULL;
+      ALTER TABLE users ADD COLUMN referral_rewarded INTEGER NOT NULL DEFAULT 0;
+    `,
+    run() {
+      const users = db.prepare('SELECT id FROM users WHERE referral_code IS NULL').all();
+      const set = db.prepare('UPDATE users SET referral_code = ? WHERE id = ?');
+      const taken = db.prepare('SELECT 1 FROM users WHERE referral_code = ?');
+      for (const user of users) {
+        let code;
+        do {
+          code = referralCode();
+        } while (taken.get(code));
+        set.run(code, user.id);
+      }
+      db.exec('CREATE UNIQUE INDEX users_referral_code ON users(referral_code)');
+    },
+  },
 ];
 
 /**
@@ -1916,6 +1964,9 @@ const defaults = {
   free_slots: 1,
   // Startguthaben bei der Registrierung, in Credits (= Cent). 0 = keins, der Gratis-Server reicht.
   signup_bonus: 0,
+  // Gutschrift für Werber und Geworbenen, wenn Letzterer zum ersten Mal echt auflädt. 0 schaltet
+  // das Empfehlungsprogramm ab.
+  referral_bonus: 0,
   // Ab hier warnt das Panel (und schickt eine Discord-Nachricht, wenn hinterlegt).
   low_balance: 200,
   // Wie viele Tage vor Ablauf gewarnt wird.

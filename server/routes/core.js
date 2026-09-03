@@ -28,7 +28,7 @@ import * as account from '../account.js';
 import * as roles from '../roles.js';
 import { setLangCookie, t } from '../pages.js';
 import { bridge } from '../bridge.js';
-import { wrap, requireInt, bad, notFound, forbidden, token, HttpError, langOf, safeUrl } from '../util.js';
+import { wrap, requireInt, requireString, bad, notFound, forbidden, token, HttpError, langOf, safeUrl } from '../util.js';
 
 export const router = express.Router();
 
@@ -585,7 +585,13 @@ router.get(
       path: '/api/auth',
     });
     res.redirect(
-      oauth.startUrl(req.params.provider, { mode, userId: req.user?.id, lang: langOf(req), binding })
+      oauth.startUrl(req.params.provider, {
+        mode,
+        userId: req.user?.id,
+        lang: langOf(req),
+        binding,
+        ref: mode === 'login' ? String(req.query.ref || '').slice(0, 16) : null,
+      })
     );
   })
 );
@@ -1015,6 +1021,39 @@ router.delete(
     // schicken – für eine Aufräumaktion, die er selbst ausgelöst hat.
     logincode.remember(req.user, req, res);
     res.json({ ok: true, forgotten: gone, devices: logincode.devicesOf(req.user.id, logincode.readDeviceToken(req)) });
+  })
+);
+
+/**
+ * Eigene API-Token: Zugriff für Skripte statt für einen Browser mit Sitzungs-Cookie.
+ *
+ * Bewusst schmal gehalten (siehe server/index.js `API_TOKEN_ALLOW`): Ein Token kann den eigenen
+ * Bot-Status abfragen und Bots starten/stoppen, sonst nichts. Der rohe Wert steht nur in der
+ * Antwort auf das Erstellen – danach nie wieder, genau wie ein Wiederherstellungscode.
+ */
+router.get(
+  '/me/tokens',
+  auth.requireUser,
+  wrap((req, res) => res.json({ tokens: auth.apiTokensOf(req.user.id) }))
+);
+
+router.post(
+  '/me/tokens',
+  auth.requireUser,
+  wrap((req, res) => {
+    const label = requireString(req.body?.label, 'Bezeichnung', { max: 60 });
+    const created = auth.createApiToken(req.user.id, label);
+    res.json({ ...created, tokens: auth.apiTokensOf(req.user.id) });
+  })
+);
+
+router.delete(
+  '/me/tokens/:id',
+  auth.requireUser,
+  wrap((req, res) => {
+    const done = auth.deleteApiToken(req.user.id, requireInt(req.params.id, 'Token'));
+    if (!done) throw notFound('Dieses Token gibt es nicht (mehr).', { en: 'No such token (any more).' });
+    res.json({ ok: true, tokens: auth.apiTokensOf(req.user.id) });
   })
 );
 

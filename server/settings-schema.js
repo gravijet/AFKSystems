@@ -176,6 +176,21 @@ export const SETTINGS = [
     en: { label: 'Sign-up bonus', help: 'Credits a new account starts with. 1 credit = 1 cent.' },
   },
   {
+    key: 'referral_bonus',
+    group: 'money',
+    type: 'number',
+    min: 0,
+    max: 100_000,
+    de: {
+      label: 'Empfehlungsprämie',
+      help: 'Credits für Werber und Geworbenen, sobald Letzterer zum ersten Mal echt auflädt. 0 schaltet das Empfehlungsprogramm ab.',
+    },
+    en: {
+      label: 'Referral bonus',
+      help: 'Credits for both the referrer and the referred once the referred account makes its first real top-up. 0 turns the referral program off.',
+    },
+  },
+  {
     key: 'low_balance',
     group: 'money',
     type: 'number',
