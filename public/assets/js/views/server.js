@@ -2590,6 +2590,7 @@ function showMacroTemplates(profile) {
     })
   );
   dialog.showModal();
+  requestAnimationFrame(() => dialog.querySelector('[data-template]')?.focus());
 }
 
 /** Macro-Editor: Auslöser oben, darunter die Schritte in der Reihenfolge, in der sie laufen. */
