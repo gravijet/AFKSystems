@@ -2490,6 +2490,9 @@ async function tabMacros(root, profile) {
       <p class="small mono muted" style="margin-top:.75rem">${escapeHtml(summary || '–')}</p>
       <div class="row" style="margin-top:1rem">
         <button class="btn btn-sm" data-macro-test="${macro.id}">${escapeHtml(tr('srv.chatSend'))}</button>
+        <button class="btn btn-sm" data-macro-copy="${macro.id}">${icon('copy')} ${escapeHtml(
+          tr('srv.copyMacro')
+        )}</button>
         <button class="btn btn-sm" data-macro-edit="${macro.id}">${escapeHtml(tr('common.edit'))}</button>
         <button class="btn btn-ghost btn-sm btn-danger" data-macro-del="${macro.id}">${icon('trash')}</button>
       </div>
