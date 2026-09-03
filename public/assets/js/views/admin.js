@@ -2635,9 +2635,31 @@ async function serverDetail(root, id) {
 
 async function accounts(root) {
   const data = await api('/admin/accounts');
+  // Ein Login-Fehler zwischen hunderten gesunden Konten ist praktisch unsichtbar. Die
+  // Warteschlange ist nur eine zweite Ansicht derselben Antwort: keine Massen-Reauth, keine
+  // Änderung von Zuordnungen und kein Startversuch im Namen des Kunden.
+  const needsLogin = data.accounts.filter(
+    (account) => !account.suspended && (account.status === 'error' || Boolean(account.last_error))
+  );
   root.innerHTML = panel(
     `${data.accounts.length} ${tr('adm.accounts')}`,
-    table(
+    `${
+      needsLogin.length
+        ? `<section class="note warn" style="margin-bottom:1rem"><div>${icon('alert')}</div><div class="grow">
+            <strong>${escapeHtml(tr('adm.accountQueue', { n: needsLogin.length }))}</strong>
+            <p class="small" style="margin:.25rem 0 .65rem">${escapeHtml(tr('adm.accountQueueHint'))}</p>
+            <div class="stack">${needsLogin
+              .map(
+                (account) => `<div class="row wrap spread">
+                  <span><strong>${escapeHtml(account.name)}</strong><span class="small muted"> · ${escapeHtml(account.last_error || accountStatusLabel(account.status))}</span></span>
+                  <span class="row wrap"><a class="btn btn-sm" href="#/admin/users/${account.user_id}">${escapeHtml(tr('adm.openOwner'))}</a>
+                    ${account.servers.map((server) => `<a class="btn btn-sm" href="#/admin/servers/${server.id}">${escapeHtml(server.name)}</a>`).join('')}</span>
+                </div>`)
+              .join('')}</div>
+          </div></section>`
+        : `<div class="note" style="margin-bottom:1rem">${icon('check')}<div>${escapeHtml(tr('adm.accountQueueNone'))}</div></div>`
+    }
+    ${table(
       [tr('adm.users'), tr('ov.col.account'), tr('adm.servers'), tr('common.status'), tr('common.created'), ''],
       data.accounts.map(
         (account) => `<tr>
@@ -2669,7 +2691,7 @@ async function accounts(root) {
             )}</button></td>
         </tr>`
       )
-    )
+    )}`
   );
 
   $$('[data-account-suspend]').forEach((button) => {
