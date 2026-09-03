@@ -763,6 +763,11 @@ export const S = {
   'acc.total': { en: 'All accounts', de: 'Alle Konten' },
   'acc.ready': { en: 'Ready to start', de: 'Startklar' },
   'acc.needsAttention': { en: 'Need attention', de: 'Handlungsbedarf' },
+  'acc.attentionTitle': { en: 'Accounts needing attention', de: 'Konten mit Handlungsbedarf' },
+  'acc.attentionText': {
+    en: 'Restore each Microsoft account individually. No bot is stopped or reassigned by this step.',
+    de: 'Stelle jedes Microsoft-Konto einzeln wieder her. Dabei wird kein Bot gestoppt oder neu zugeordnet.',
+  },
   'acc.unused': { en: 'Not assigned', de: 'Nicht zugeordnet' },
   'acc.search': { en: 'Search accounts or servers', de: 'Konten oder Server suchen' },
   'acc.filter.all': { en: 'All accounts', de: 'Alle Konten' },
@@ -777,6 +782,10 @@ export const S = {
     en: 'Assigned to {n} server slot(s)',
     de: '{n} Serverplatz/-plätzen zugeordnet',
   },
+  'acc.onlineOn': {
+    en: 'Currently in game on {n} server slot(s)',
+    de: 'Gerade auf {n} Serverplatz/-plätzen im Spiel',
+  },
   'acc.assignNow': { en: 'Assign to a server slot', de: 'Jetzt einem Serverplatz zuordnen' },
   'acc.connections': { en: 'Connections so far', de: 'Verbindungen bisher' },
   'acc.connectedSince': { en: 'Added', de: 'Hinzugefügt' },
@@ -790,7 +799,20 @@ export const S = {
     de: 'Ändere den Filter oder suche nach einem anderen Konto- oder Servernamen.',
   },
   'acc.resetFilters': { en: 'Reset filters', de: 'Filter zurücksetzen' },
+  'acc.removeImpact': {
+    en: '{servers} assigned server slot(s), {online} bot(s) currently in game. Removing stops those bots and removes this account from every listed slot.',
+    de: '{servers} zugeordnete Serverplätze, {online} Bot(s) gerade im Spiel. Beim Entfernen werden diese Bots gestoppt und das Konto von allen aufgeführten Plätzen entfernt.',
+  },
+  'acc.removeUnused': {
+    en: 'This account is not assigned to a server slot.',
+    de: 'Dieses Konto ist keinem Serverplatz zugeordnet.',
+  },
   'acc.ms.title': { en: 'Sign in with Microsoft', de: 'Bei Microsoft anmelden' },
+  'acc.ms.renewTitle': { en: 'Restore {name}', de: '{name} wiederherstellen' },
+  'acc.ms.renewHint': {
+    en: 'Sign in as {name}. A different Microsoft account is added separately and is not assigned automatically.',
+    de: 'Melde dich als {name} an. Ein anderes Microsoft-Konto wird getrennt hinzugefügt und nicht automatisch zugeordnet.',
+  },
   // Der Link enthält den Code schon – abtippen muss ihn niemand, und deshalb steht er auch
   // nirgends mehr im Fenster.
   'acc.ms.step': {
@@ -1006,6 +1028,14 @@ export const S = {
     en: 'The copy is a server slot of its own and costs what its plan costs. Booked extras do not come along.',
     de: 'Die Kopie ist ein eigener Serverplatz und kostet, was ihr Tarif kostet. Gebuchte Zusätze kommen nicht mit.',
   },
+  'srv.copyScopeHint': {
+    en: 'Choose exactly what to carry over. Minecraft accounts and booked extras are never copied.',
+    de: 'Wähle genau aus, was übernommen wird. Minecraft-Konten und gebuchte Zusätze werden nie kopiert.',
+  },
+  'srv.copySettings': { en: 'Server settings ({n} values)', de: 'Servereinstellungen ({n} Werte)' },
+  'srv.copyMacros': { en: 'Macros ({n})', de: 'Makros ({n})' },
+  'srv.copySpam': { en: 'Repeated messages ({n})', de: 'Wiederkehrende Nachrichten ({n})' },
+  'srv.copySchedules': { en: 'Schedules ({n})', de: 'Zeitpläne ({n})' },
   'srv.copied': {
     en: 'Copied: {macros} macro(s), {schedules} schedule(s), {spam} repeated message(s).',
     de: 'Kopiert: {macros} Makro(s), {schedules} Zeitplan/Zeitpläne, {spam} wiederkehrende Nachricht(en).',
@@ -1271,6 +1301,10 @@ export const S = {
   'bill.monthly': { en: 'Due per month', de: 'Fällig im Monat' },
   'bill.monthsLeft': { en: 'Covers about', de: 'Reicht etwa' },
   'bill.months': { en: '{n} month(s)', de: '{n} Monat(e)' },
+  'bill.renewalForecast': { en: 'Next renewal', de: 'Nächste Verlängerung' },
+  'bill.renewalCovered': { en: 'Covered from current balance', de: 'Aus aktuellem Guthaben gedeckt' },
+  'bill.renewalGap': { en: 'Short by {credits}', de: 'Es fehlen {credits}' },
+  'bill.renewalOff': { en: 'Automatic renewal is off', de: 'Automatische Verlängerung ist aus' },
   'bill.slots': { en: 'Server slots', de: 'Serverplätze' },
   'bill.slotsLine': { en: '{paid} paid · {free} free', de: '{paid} bezahlt · {free} gratis' },
   'bill.topUp': { en: 'Top up', de: 'Aufladen' },
@@ -1936,6 +1970,10 @@ export const S = {
     de: 'Auch die Zustandsmeldungen des Clients zeigen – Verbinden, Kicks, Warnungen.',
   },
   'ch.export': { en: 'Download the history', de: 'Verlauf herunterladen' },
+  'ch.exportScope': {
+    en: 'Download the history from {n} selected account(s)',
+    de: 'Verlauf von {n} ausgewählten Konto/Konten herunterladen',
+  },
   'ch.historyHint': {
     en: 'Enter sends. Use ↑ and ↓ for recently sent messages.',
     de: 'Enter schickt ab. Mit ↑ und ↓ holst du zuletzt gesendete Nachrichten zurück.',
@@ -2545,6 +2583,12 @@ export const S = {
   'bill.amount': { en: 'Amount', de: 'Betrag' },
   'bill.receiptOpen': { en: 'Open receipt', de: 'Beleg öffnen' },
   'bill.receiptPrint': { en: 'Print or save as PDF', de: 'Drucken oder als PDF sichern' },
+  'bill.receiptDownload': { en: 'Download receipt', de: 'Beleg herunterladen' },
+  'bill.receiptSearch': { en: 'Search receipt number', de: 'Belegnummer suchen' },
+  'bill.receiptFilter.all': { en: 'All receipts', de: 'Alle Belege' },
+  'bill.receiptFilter.paid': { en: 'Paid', de: 'Bezahlt' },
+  'bill.receiptFilter.refunded': { en: 'Refunded', de: 'Erstattet' },
+  'bill.noReceiptMatches': { en: 'No receipt matches this filter.', de: 'Kein Beleg passt zu diesem Filter.' },
 
   // ---------------------------------------------------------------- Admin (neu)
   // ---------------------------------------------------------------- Textbausteine und Rundmail

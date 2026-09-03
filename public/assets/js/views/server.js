@@ -884,6 +884,27 @@ async function tabConnect(root, profile) {
 
   const nameOf = (id) => members.find((member) => member.account_id === id)?.name || '?';
 
+  /**
+   * Der Download folgt exakt derselben Auswahl wie das Chatfenster. Der Kontenparameter bleibt
+   * auch dann in der Adresse, wenn gerade alle markiert sind: "alle" ist ein bewusstes Ergebnis
+   * der Auswahl und keine Berechtigung, nach einem späteren Umbau still mehr Verlauf anzuhängen.
+   */
+  const updateExportLink = () => {
+    const link = $('#export');
+    if (!link) return;
+    const params = new URLSearchParams();
+    if ($('#show-all')?.checked) params.set('all', '1');
+    if (receivers.length) params.set('accounts', receivers.join(','));
+    const suffix = params.toString();
+    link.href = `/api/profiles/${profile.id}/chat.txt${suffix ? `?${suffix}` : ''}`;
+    const unavailable = !receivers.length;
+    link.classList.toggle('is-disabled', unavailable);
+    link.setAttribute('aria-disabled', String(unavailable));
+    link.tabIndex = unavailable ? -1 : 0;
+    link.title = tr('ch.exportScope', { n: receivers.length });
+    link.setAttribute('aria-label', link.title);
+  };
+
   /** Der Suchbegriff, kleingeschrieben. Leer heißt: nicht gesucht, alles steht da. */
   let needle = '';
 
@@ -1027,6 +1048,7 @@ async function tabConnect(root, profile) {
   paintAuth();
   paintBots();
   paintChat();
+  updateExportLink();
   // Ohne `await`: Der Reiter soll dastehen, bevor ein fremder Server geantwortet hat. Fünf
   // Sekunden Zeitüberschreitung wären sonst fünf Sekunden leerer Bildschirm.
   checkStatus();
@@ -1039,9 +1061,13 @@ async function tabConnect(root, profile) {
       } catch {
         /* privater Modus: die Wahl gilt für diese Sitzung, gemerkt wird sie nicht */
       }
+      updateExportLink();
       paintChat();
     })
   );
+  $('#export').addEventListener('click', (event) => {
+    if (!receivers.length) event.preventDefault();
+  });
   $('#clear').addEventListener('click', () => {
     for (const member of members) state.lines.set(`${profile.id}:${member.account_id}`, []);
     paintChat();
@@ -1055,7 +1081,7 @@ async function tabConnect(root, profile) {
   );
   $('#show-all').addEventListener('change', () => {
     // Der Download folgt der Wahl: Wer alles sieht, will auch alles in der Datei.
-    $('#export').href = `/api/profiles/${profile.id}/chat.txt${$('#show-all').checked ? '?all=1' : ''}`;
+    updateExportLink();
     paintChat();
   });
 
@@ -3278,6 +3304,13 @@ async function tabSettings(root, profile) {
   });
 
   $('#copy').addEventListener('click', async () => {
+    let preview;
+    try {
+      preview = await api(`/profiles/${profile.id}/copy-preview`);
+    } catch (error) {
+      fail(error);
+      return;
+    }
     const plans = state.meta.plans || [];
     const freeLeft = state.stats?.free_slots_left ?? 0;
     const options = plans
@@ -3310,14 +3343,32 @@ async function tabSettings(root, profile) {
           value: preferred || options[0]?.value,
           options,
         },
+        { key: 'copy_settings', label: tr('srv.copySettings', { n: preview.sections.settings }), type: 'checkbox', value: true },
+        { key: 'copy_macros', label: tr('srv.copyMacros', { n: preview.sections.macros }), type: 'checkbox', value: true },
+        { key: 'copy_spam', label: tr('srv.copySpam', { n: preview.sections.spam }), type: 'checkbox', value: true },
+        {
+          key: 'copy_schedules',
+          label: tr('srv.copySchedules', { n: preview.sections.schedules }),
+          type: 'checkbox',
+          value: true,
+        },
       ],
-      { submit: tr('srv.copy'), note: tr('srv.copyNote') }
+      { submit: tr('srv.copy'), note: `${tr('srv.copyScopeHint')} ${tr('srv.copyNote')}` }
     );
     if (!data) return;
     try {
       const result = await api(`/profiles/${profile.id}/copy`, {
         method: 'POST',
-        body: { ...data, plan_id: Number(data.plan_id) },
+        body: {
+          ...data,
+          plan_id: Number(data.plan_id),
+          copy: {
+            settings: data.copy_settings,
+            macros: data.copy_macros,
+            spam: data.copy_spam,
+            schedules: data.copy_schedules,
+          },
+        },
       });
       await refresh();
       ok(tr('srv.copied', { ...result.copied }));

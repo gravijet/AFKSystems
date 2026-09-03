@@ -67,6 +67,25 @@ router.get(
       }));
 
     const monthly = billing.monthlyCost(user.id);
+    // Der Monatswert allein beantwortet nicht, welcher Platz als Nächstes nicht mehr gedeckt ist.
+    // Deshalb werden die kommenden Verlängerungen zeitlich durchgespielt: dieselbe Geldbörse,
+    // aber jede Fälligkeit in ihrer wirklichen Reihenfolge. Einzahlungen und Tarifänderungen in
+    // der Zukunft sind bewusst nicht geraten – die Prognose zeigt genau den Stand von jetzt.
+    let projectedBalance = user.credits;
+    const forecastBySlot = new Map();
+    for (const slot of [...slots]
+      .filter((slot) => !slot.free_slot && slot.renew && !slot.suspended && slot.paid_until)
+      .sort((a, b) => a.paid_until - b.paid_until || a.id - b.id)) {
+      const before = projectedBalance;
+      const covered = before >= slot.price_credits;
+      forecastBySlot.set(slot.id, {
+        before_credits: before,
+        cost_credits: slot.price_credits,
+        covered,
+        shortfall_credits: covered ? 0 : slot.price_credits - before,
+      });
+      projectedBalance = Math.max(0, before - slot.price_credits);
+    }
     res.json({
       balance: user.credits,
       balance_text: formatCredits(user.credits, lang),
@@ -77,7 +96,7 @@ router.get(
       month_days: billing.MONTH_DAYS,
       free_slots: billing.freeSlots(),
       free_slots_left: Math.max(0, billing.freeSlots() - billing.usedFreeSlots(user.id)),
-      slots,
+      slots: slots.map((slot) => ({ ...slot, forecast: forecastBySlot.get(slot.id) || null })),
       plans: billing.plans().map((plan) => planView(plan, lang)),
       packages: billing.packages(),
       history: billing.history(user.id, 80),
@@ -174,6 +193,10 @@ router.get(
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     // Ein Beleg ist persönlich: Er darf in keinem gemeinsamen Zwischenspeicher landen.
     res.setHeader('Cache-Control', 'private, no-store');
+    if (req.query.download === '1') {
+      const name = `receipt-${String(row.receipt_no).replace(/[^A-Za-z0-9._-]/g, '-')}.html`;
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+    }
     res.send(receipt.html(row, owner, langOf(req)));
   })
 );

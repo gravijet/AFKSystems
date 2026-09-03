@@ -15,10 +15,15 @@ export async function render(root) {
     state.profiles.filter((profile) =>
       profile.accounts.some((member) => member.account_id === account.id)
     );
+  const onlineOn = (account) =>
+    usedOn(account).filter((profile) =>
+      profile.accounts.some((member) => member.account_id === account.id && member.online)
+    );
   const needsAttention = (account) => account.suspended || account.status === 'error';
   const ready = state.accounts.filter((account) => !needsAttention(account)).length;
   const attention = state.accounts.length - ready;
   const unused = state.accounts.filter((account) => !usedOn(account).length).length;
+  const attentionAccounts = state.accounts.filter(needsAttention);
 
   root.innerHTML = `
     ${appbar(
@@ -37,6 +42,23 @@ export async function render(root) {
 
     <div class="note warn" style="margin-bottom:1.5rem">${icon('alert')}
       <div><strong>${escapeHtml(tr('rules.title'))}</strong><br>${escapeHtml(tr('rules.text'))}</div></div>
+
+    ${
+      attentionAccounts.length
+        ? `<section class="panel account-attention" id="account-attention">
+            <header>
+              <h3>${icon('alert')} ${escapeHtml(tr('acc.attentionTitle'))}</h3>
+              <span class="pill missing">${attentionAccounts.length}</span>
+            </header>
+            <div class="body">
+              <p class="small muted" style="margin:0">${escapeHtml(tr('acc.attentionText'))}</p>
+              <div class="account-attention-list">
+                ${attentionAccounts.map(attentionRow).join('')}
+              </div>
+            </div>
+          </section>`
+        : ''
+    }
 
     ${
       state.accounts.length
@@ -80,6 +102,31 @@ export async function render(root) {
       <span class="v">${number}</span>
       <span class="k">${escapeHtml(tr(key))}</span>
     </button>`;
+  }
+
+  function attentionRow(account) {
+    const assigned = usedOn(account);
+    const live = onlineOn(account);
+    const detail = account.suspended
+      ? account.suspend_reason || tr('acc.suspendedHint')
+      : account.last_error || tr('acc.errorHint');
+    return `<div class="account-attention-row">
+      <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
+      <div class="grow" style="min-width:0">
+        <strong class="truncate">${escapeHtml(account.name)}</strong>
+        <span class="small muted truncate">${escapeHtml(detail)}</span>
+        <span class="small muted">${escapeHtml(
+          tr('acc.assignedServers', { n: assigned.length })
+        )} · ${escapeHtml(tr('acc.onlineOn', { n: live.length }))}</span>
+      </div>
+      ${
+        account.kind === 'microsoft' && !account.suspended
+          ? `<button class="btn btn-sm btn-primary" data-relogin="${account.id}">${icon('refresh')} ${escapeHtml(
+              tr('acc.renew')
+            )}</button>`
+          : ''
+      }
+    </div>`;
   }
 
   function visibleAccounts() {
@@ -143,6 +190,13 @@ export async function render(root) {
               : `<a class="account-unused" href="#/servers">${escapeHtml(tr('acc.assignNow'))} ${icon('arrow')}</a>`
           }
         </div>
+        ${
+          used.length
+            ? `<span class="small account-running ${onlineOn(account).length ? 'live' : ''}">${icon('play')} ${escapeHtml(
+                tr('acc.onlineOn', { n: onlineOn(account).length })
+              )}</span>`
+            : ''
+        }
       </div>
 
       <dl class="account-facts">
@@ -228,13 +282,30 @@ export async function render(root) {
     }
   });
 
+  const reloginFor = (id) => {
+    const account = state.accounts.find((entry) => entry.id === Number(id));
+    if (account?.kind === 'microsoft' && !account.suspended) startLogin({ account });
+  };
+  $('#account-attention')?.addEventListener('click', (event) => {
+    const relogin = event.target.closest('[data-relogin]');
+    if (relogin) reloginFor(relogin.dataset.relogin);
+  });
+
   $('#account-grid')?.addEventListener('click', async (event) => {
     const relogin = event.target.closest('[data-relogin]');
-    if (relogin) return startLogin();
+    if (relogin) return reloginFor(relogin.dataset.relogin);
     const button = event.target.closest('[data-remove]');
     if (button) {
       const account = state.accounts.find((entry) => entry.id === Number(button.dataset.remove));
-      const sure = await confirmDialog(tr('acc.removeAsk', { name: account.name }), {
+      if (!account) return;
+      const assignments = usedOn(account);
+      const question = [
+        tr('acc.removeAsk', { name: account.name }),
+        assignments.length
+          ? tr('acc.removeImpact', { servers: assignments.length, online: onlineOn(account).length })
+          : tr('acc.removeUnused'),
+      ].join('\n\n');
+      const sure = await confirmDialog(question, {
         confirm: tr('acc.remove'),
       });
       if (!sure) return;
@@ -255,10 +326,10 @@ export async function render(root) {
  * Der Gerätecode-Ablauf: Panel startet `afk --login`, zeigt Code und Adresse, fragt im Sekundentakt
  * nach dem Ergebnis. Der Link enthält den Code bereits – abtippen muss ihn niemand mehr.
  */
-async function startLogin() {
+async function startLogin({ account = null } = {}) {
   const dialog = document.createElement('dialog');
   dialog.innerHTML = `
-    <header><h3>${escapeHtml(tr('acc.ms.title'))}</h3></header>
+    <header><h3>${escapeHtml(account ? tr('acc.ms.renewTitle', { name: account.name }) : tr('acc.ms.title'))}</h3></header>
     <div class="body" id="login-body">
       <p class="muted">${escapeHtml(tr('common.loading'))}</p>
     </div>
@@ -296,6 +367,13 @@ async function startLogin() {
       const link = data.verification_uri_complete || data.verification_uri;
       body.innerHTML = `
         <div class="stack center" style="gap:1.25rem;padding:.5rem 0">
+          ${
+            account
+              ? `<p class="muted small" style="text-align:center;margin:0">${escapeHtml(
+                  tr('acc.ms.renewHint', { name: account.name })
+                )}</p>`
+              : ''
+          }
           <a class="btn btn-primary btn-block btn-lg" href="${escapeHtml(link)}" target="_blank" rel="noopener">
             ${escapeHtml(tr('acc.ms.open'))} ${icon('external')}</a>
           <p class="muted small" style="text-align:center;margin:0">${escapeHtml(tr('acc.ms.step'))}</p>

@@ -4637,6 +4637,23 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(exported.status, 200);
   assert.match(exported.headers.get('content-type'), /^text\/plain/);
   assert.match(exported.headers.get('content-disposition'), /attachment; filename\*=UTF-8''/);
+
+  // Der Export folgt der Kontenauswahl. Das ist nicht nur ein Filter für das Auge: Wer einen
+  // Verlauf weitergibt, gibt damit auch nur die ausgewählte Bot-Sicht weiter.
+  const otherAccount = createAccount(user, { name: 'OnlyInOtherExport' });
+  db.prepare('INSERT INTO profile_accounts (profile_id, account_id, wanted) VALUES (?, ?, 0)').run(
+    profile.id,
+    otherAccount.id
+  );
+  const selectedExport = await fetch(`${base}/api/profiles/${profile.id}/chat.txt?accounts=${otherAccount.id}`, {
+    headers: { cookie: `afk_session=${USER_TOKEN}` },
+  });
+  assert.equal(selectedExport.status, 200);
+  assert.match(selectedExport.headers.get('content-type'), /^text\/plain/);
+  const invalidSelection = await api(base, `/api/profiles/${profile.id}/chat.txt?accounts=999999`, {
+    token: USER_TOKEN,
+  });
+  assert.equal(invalidSelection.response.status, 400);
   // Und nur der eigene: Der Verlauf eines fremden Serverplatzes ist niemandes Sache.
   const foreignExport = await fetch(`${base}/api/profiles/${profile.id}/chat.txt`, {
     headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
@@ -5162,10 +5179,16 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   });
   assert.equal(page.status, 200);
   assert.match(page.headers.get('content-type') || '', /text\/html/);
+  assert.equal(page.headers.get('content-disposition'), null);
   // Persönlich heißt: in keinem gemeinsamen Zwischenspeicher.
   assert.match(page.headers.get('cache-control') || '', /private|no-store/);
   const receiptPage = await page.text();
   assert.match(receiptPage, /Hugo Muster/);
+  const downloadedReceipt = await fetch(`${base}/api/billing/receipts/${bought.id}?download=1`, {
+    headers: { cookie: 'afk_session=stranger-session' },
+  });
+  assert.equal(downloadedReceipt.status, 200);
+  assert.match(downloadedReceipt.headers.get('content-disposition') || '', /^attachment; filename\*=UTF-8''/);
   const foreign = await fetch(`${base}/api/billing/receipts/${bought.id}`, {
     headers: { cookie: `afk_session=${USER_TOKEN}` },
   });
@@ -5207,9 +5230,17 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     method: 'POST',
     body: { message: '/afk', interval_sec: 300 },
   });
+  const copyPreview = await api(base, `/api/profiles/${planned.id}/copy-preview`, { token: USER_TOKEN });
+  assert.equal(copyPreview.response.status, 200);
+  assert.deepEqual(copyPreview.data.sections, { settings: 15, macros: 1, spam: 1, schedules: 1 });
   // Genug Guthaben für einen zweiten bezahlten Platz – die Kopie ist einer und kostet auch so viel.
   const copyPlan = billing.planBySlug('premium');
   billing.grant(user.id, copyPlan.price_credits * 2, 'bonus', 'Guthaben für den Kopiertest');
+  const billingForecast = await api(base, '/api/billing', { token: USER_TOKEN });
+  assert.equal(billingForecast.response.status, 200);
+  const plannedForecast = billingForecast.data.slots.find((slot) => slot.id === planned.id).forecast;
+  assert.equal(plannedForecast.cost_credits, copyPlan.price_credits);
+  assert.equal(plannedForecast.covered, true);
   const beforeCopy = db.prepare('SELECT credits FROM users WHERE id = ?').get(user.id).credits;
   const copied = await api(base, `/api/profiles/${planned.id}/copy`, {
     token: USER_TOKEN,
@@ -5237,6 +5268,37 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   // Die Kontobindung geht dabei verloren: Ein Makro für ein Konto, das hier nicht sitzt, zeigte
   // ins Leere.
   assert.equal(copiedMacros[0].accounts, '[]');
+  // Die Auswahl ist eine echte Kopiergrenze, nicht nur ein Hinweis im Dialog. Eine frische
+  // Grundkonfiguration darf weder Automationen noch persönliche Einstellungen mitnehmen.
+  const selectiveCopy = await api(base, `/api/profiles/${planned.id}/copy`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: {
+      name: 'Leere Zeitplan-Kopie',
+      address: 'leer.example.test',
+      plan_id: copyPlan.id,
+      copy: { settings: false, macros: false, spam: false, schedules: false },
+    },
+  });
+  assert.equal(selectiveCopy.response.status, 200);
+  assert.deepEqual(selectiveCopy.data.copied, { macros: 0, spam: 0, schedules: 0 });
+  assert.equal(selectiveCopy.data.profile.note, '');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM macros WHERE profile_id = ?').get(selectiveCopy.data.profile.id).n, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM spam WHERE profile_id = ?').get(selectiveCopy.data.profile.id).n, 0);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS n FROM profile_schedules WHERE profile_id = ?').get(selectiveCopy.data.profile.id).n,
+    0
+  );
+  const forecastAfterCopies = await api(base, '/api/billing', { token: USER_TOKEN });
+  const uncovered = forecastAfterCopies.data.slots.find((slot) => slot.id === planned.id).forecast;
+  assert.equal(uncovered.covered, false);
+  assert.equal(uncovered.shortfall_credits, copyPlan.price_credits);
+  const malformedCopySelection = await api(base, `/api/profiles/${planned.id}/copy`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { name: 'Kaputte Kopie', copy: [] },
+  });
+  assert.equal(malformedCopySelection.response.status, 400);
   // Ein fremder Platz lässt sich nicht kopieren.
   const foreignCopy = await api(base, `/api/profiles/${planned.id}/copy`, {
     token: 'stranger-session',

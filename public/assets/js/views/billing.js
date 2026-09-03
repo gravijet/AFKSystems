@@ -25,6 +25,20 @@ export async function render(root) {
   const data = await api('/billing');
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const paidSlots = data.slots.filter((slot) => !slot.free_slot).length;
+  const renewalForecast = (slot) => {
+    if (slot.free_slot || slot.suspended) return '';
+    if (!slot.renew) {
+      return `<span class="renewal-state neutral">${escapeHtml(tr('bill.renewalOff'))}</span>`;
+    }
+    if (!slot.forecast) return '';
+    const key = slot.forecast.covered ? 'bill.renewalCovered' : 'bill.renewalGap';
+    const text = slot.forecast.covered
+      ? tr(key)
+      : tr(key, { credits: credits(slot.forecast.shortfall_credits) });
+    return `<span class="renewal-state ${slot.forecast.covered ? 'good' : 'bad'}" title="${escapeHtml(
+      tr('bill.renewalForecast')
+    )}">${escapeHtml(text)}</span>`;
+  };
 
   root.innerHTML = `
     ${appbar(
@@ -199,7 +213,7 @@ export async function render(root) {
                         : slot.paid_until
                           ? `${escapeHtml(tr('srv.daysLeft', { n: slot.days_left }))} · ${date(slot.paid_until)}`
                           : escapeHtml(tr('common.forever'))
-                    }</td>
+                    }${renewalForecast(slot) ? `<div>${renewalForecast(slot)}</div>` : ''}</td>
                   </tr>`
                 )
                 .join('') ||
@@ -333,6 +347,17 @@ export async function render(root) {
         <span class="small muted">${escapeHtml(tr('bill.receiptsSub'))}</span>
       </header>
       <div class="body" style="padding:0">
+        <div class="receipt-tools">
+          <label class="account-search">${icon('search')}
+            <input id="receipt-search" type="search" autocomplete="off"
+              placeholder="${escapeHtml(tr('bill.receiptSearch'))}"
+              aria-label="${escapeHtml(tr('bill.receiptSearch'))}"></label>
+          <select id="receipt-filter" class="mini" aria-label="${escapeHtml(tr('common.status'))}">
+            <option value="all">${escapeHtml(tr('bill.receiptFilter.all'))}</option>
+            <option value="paid">${escapeHtml(tr('bill.receiptFilter.paid'))}</option>
+            <option value="refunded">${escapeHtml(tr('bill.receiptFilter.refunded'))}</option>
+          </select>
+        </div>
         <div class="table-wrap"><table class="table">
           <thead><tr>
             <th>${escapeHtml(tr('bill.receiptNo'))}</th>
@@ -342,7 +367,8 @@ export async function render(root) {
           </tr></thead>
           <tbody>${list
             .map(
-              (entry) => `<tr>
+              (entry) => `<tr data-receipt-row data-receipt="${escapeHtml(entry.receipt_no.toLowerCase())}"
+                data-status="${escapeHtml(entry.status === 'refunded' ? 'refunded' : 'paid')}">
                 <td class="mono">${escapeHtml(entry.receipt_no)}
                   ${
                     entry.status === 'refunded'
@@ -354,13 +380,17 @@ export async function render(root) {
                 <td class="row" style="gap:.35rem;justify-content:flex-end">
                   <button class="btn btn-ghost btn-sm" data-print-receipt="${entry.id}"
                     title="${escapeHtml(tr('bill.receiptPrint'))}">${icon('download')}</button>
+                  <a class="btn btn-ghost btn-sm" href="/api/billing/receipts/${entry.id}?download=1" download
+                    title="${escapeHtml(tr('bill.receiptDownload'))}">${icon('download')}</a>
                   <a class="btn btn-ghost btn-sm" href="/api/billing/receipts/${entry.id}"
                     target="_blank" rel="noopener"
                     title="${escapeHtml(tr('bill.receiptOpen'))}">${icon('external')}</a>
                 </td>
               </tr>`
             )
-            .join('')}</tbody>
+            .join('')}<tr id="receipt-empty" hidden><td colspan="4" class="small muted" style="padding:1.25rem">${escapeHtml(
+              tr('bill.noReceiptMatches')
+            )}</td></tr></tbody>
         </table></div>
       </div>
     </section>`;
@@ -373,6 +403,28 @@ export async function render(root) {
   $$('[data-print-receipt]').forEach((button) =>
     button.addEventListener('click', () => printReceipt(button.dataset.printReceipt))
   );
+
+  let receiptNeedle = '';
+  let receiptStatus = 'all';
+  const paintReceiptFilters = () => {
+    let shown = 0;
+    $$('[data-receipt-row]').forEach((row) => {
+      const visible =
+        (!receiptNeedle || row.dataset.receipt.includes(receiptNeedle)) &&
+        (receiptStatus === 'all' || row.dataset.status === receiptStatus);
+      row.hidden = !visible;
+      if (visible) shown += 1;
+    });
+    $('#receipt-empty')?.toggleAttribute('hidden', shown > 0);
+  };
+  $('#receipt-search')?.addEventListener('input', (event) => {
+    receiptNeedle = String(event.target.value || '').trim().toLowerCase();
+    paintReceiptFilters();
+  });
+  $('#receipt-filter')?.addEventListener('change', (event) => {
+    receiptStatus = event.target.value;
+    paintReceiptFilters();
+  });
 
   $$('[data-pack]').forEach((button) =>
     button.addEventListener('click', () => startTopup(data, Number(button.dataset.pack)))

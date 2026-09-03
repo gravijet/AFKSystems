@@ -3508,6 +3508,10 @@ hr.rule {
   padding: 0.6rem 1.1rem;
   box-shadow: inset 0 -1px 0 var(--line-soft);
 }
+.console-panel #export[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
 
 /* Suchen und Filtern über dem Verlauf. Sie stehen dort, wo man sie braucht – ein Chatfenster,
    in dem man nichts wiederfindet, ist ein Protokoll, das man einmal liest. */
@@ -4748,6 +4752,32 @@ hr.rule {
 
 /* Der Kontoauszug als Liste – vier Spalten in einer Tabelle brauchten unten am Rand mehr Platz,
  * als da war, und landeten deshalb ganz nach unten. */
+.renewal-state {
+  display: inline-block;
+  margin-top: 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.renewal-state.good {
+  color: var(--ok-text);
+}
+.renewal-state.bad {
+  color: var(--bad-text);
+}
+.renewal-state.neutral {
+  color: var(--text-2);
+}
+.receipt-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--line-soft);
+}
+.receipt-tools .account-search {
+  min-width: min(100%, 15rem);
+}
 .ledger {
   margin: 0;
   padding: 0;
@@ -6989,6 +7019,41 @@ dialog.shortcuts {
 .account-summary {
   margin-bottom: 1rem;
 }
+.account-attention {
+  margin-bottom: 1.25rem;
+  border-color: color-mix(in oklab, var(--warn) 36%, var(--line));
+}
+.account-attention header h3 {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.account-attention header .icon {
+  width: 1rem;
+  height: 1rem;
+  color: var(--warn-text);
+}
+.account-attention-list {
+  display: grid;
+  gap: 0.6rem;
+  margin-top: 0.9rem;
+}
+.account-attention-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--warn) 7%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 18%, var(--line-soft));
+}
+.account-attention-row .grow {
+  display: grid;
+  gap: 0.15rem;
+}
+.account-attention-row .btn {
+  flex: none;
+}
 .account-stat {
   position: relative;
   display: grid;
@@ -7091,6 +7156,19 @@ dialog.shortcuts {
 .account-server-list .dot {
   width: 0.4rem;
   height: 0.4rem;
+}
+.account-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-2);
+}
+.account-running.live {
+  color: var(--ok-text);
+}
+.account-running .icon {
+  width: 0.85rem;
+  height: 0.85rem;
 }
 .account-unused {
   display: inline-flex;
