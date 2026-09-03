@@ -593,6 +593,16 @@ export const S = {
   'ov.stop': { en: 'Stop', de: 'Stoppen' },
   'ov.started': { en: 'Bot started.', de: 'Bot gestartet.' },
   'ov.stoppedAll': { en: 'All bots stopped.', de: 'Alle Bots gestoppt.' },
+  'ov.bulkStarted': { en: 'Start requested for {n} bot(s).', de: 'Start für {n} Bot(s) angefordert.' },
+  'ov.bulkStopped': { en: 'Stop requested for {n} bot(s).', de: 'Stopp für {n} Bot(s) angefordert.' },
+  'ov.bulkStartFailed': {
+    en: '{n} of {total} selected bot(s) could not be started. Check the affected rows.',
+    de: '{n} von {total} ausgewählten Bot(s) konnten nicht gestartet werden. Prüfe die betroffenen Zeilen.',
+  },
+  'ov.bulkStopFailed': {
+    en: '{n} of {total} selected bot(s) could not be stopped. Check the affected rows.',
+    de: '{n} von {total} ausgewählten Bot(s) konnten nicht gestoppt werden. Prüfe die betroffenen Zeilen.',
+  },
   'ov.col.account': { en: 'Account', de: 'Konto' },
   'ov.col.server': { en: 'Server', de: 'Server' },
   'ov.col.uptime': { en: 'Running for', de: 'Läuft seit' },
