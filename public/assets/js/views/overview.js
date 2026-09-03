@@ -731,8 +731,14 @@ export async function render(root) {
   }, 600);
   state.onLive = (event) => {
     // Ändert sich das Guthaben, stimmt auch die Kurve nicht mehr – dann eben doch neu holen.
+    // Dieselben Ereignisse können eine neue Kontomeldung ausgelöst haben. Die Vorschau ist sonst
+    // zwar beim nächsten Öffnen richtig, aber ausgerechnet während man die Übersicht betrachtet
+    // um einen Eintrag hinterher. Ein gebündeltes Neuladen bleibt bei vielen Bot-Events leicht.
     if (event.type === 'credits' || event.type === 'suspended') insights = null;
-    if (event.type === 'state' || event.type === 'credits' || event.type === 'suspended') redraw();
+    if (event.type === 'state' || event.type === 'credits' || event.type === 'suspended' || event.type === 'ticket') {
+      notificationPreview = null;
+      redraw();
+    }
   };
   stopPovThumbnails = startPovThumbnails(root, povTargets);
   drawSide();
