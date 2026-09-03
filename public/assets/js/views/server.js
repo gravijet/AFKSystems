@@ -2424,11 +2424,16 @@ async function tabMacros(root, profile) {
   const events = Object.fromEntries(state.meta.events.map((event) => [event.type, event.label]));
 
   root.innerHTML = `
-    <div class="row spread" style="margin-bottom:1rem">
+    <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
       <p class="small muted" style="max-width:44rem">${escapeHtml(tr('srv.macroHint'))}</p>
-      <button class="btn btn-primary btn-sm" id="add-macro">${icon('plus')} ${escapeHtml(
-        tr('srv.newMacro')
-      )}</button>
+      <div class="row wrap">
+        <button class="btn btn-sm" id="macro-templates">${icon('layers')} ${escapeHtml(
+          tr('srv.templates')
+        )}</button>
+        <button class="btn btn-primary btn-sm" id="add-macro">${icon('plus')} ${escapeHtml(
+          tr('srv.newMacro')
+        )}</button>
+      </div>
     </div>
 
     ${
@@ -2493,6 +2498,7 @@ async function tabMacros(root, profile) {
 
   $('#add-macro')?.addEventListener('click', () => editMacro(profile, null));
   $('#add-macro-2')?.addEventListener('click', () => editMacro(profile, null));
+  $('#macro-templates')?.addEventListener('click', () => showMacroTemplates(profile));
   $$('[data-macro-edit]').forEach((button) =>
     button.addEventListener('click', () =>
       editMacro(profile, macros.find((macro) => macro.id === Number(button.dataset.macroEdit)))
