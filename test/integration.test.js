@@ -4052,6 +4052,13 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.match(germanHome, /href="\/de"[^>]*data-language="de" aria-current="true">Deutsch<\/a>/);
   assert.match(germanHome, /href="\/en"[^>]*data-language="en"[^>]*>English<\/a>/);
   assert.match(germanHome, /class="site-menu-toggle"[^>]*aria-expanded="false"/);
+  // Support verlinkt auf feste, gepflegte FAQ-Abschnitte statt auf erzeugte Antworten. Die Anker
+  // gehören deshalb zur öffentlichen Seite und nicht nur zu einer zufälligen Panelansicht.
+  const faq = await (await fetch(`${base}/en/faq`)).text();
+  assert.match(faq, /<details id="faq-account-security">/);
+  assert.match(faq, /<details id="faq-balance">/);
+  assert.match(faq, /<details id="faq-rules">/);
+  assert.match(faq, /<details id="faq-renewal">/);
   assert.match(germanHome, /class="site-menu" id="site-menu"/);
   assert.doesNotMatch(germanHome, /\/js\/shield\.js/);
   setSetting('content_lock_ui', 1);

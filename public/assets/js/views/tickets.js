@@ -88,6 +88,21 @@ const attachments = (files) =>
   files?.length ? `<div class="chat-files">${files.map(attachment).join('')}</div>` : '';
 
 /**
+ * Keine erfundenen "Lösungen" neben einem Ticket: Diese Ziele verweisen auf konkrete, gepflegte
+ * Abschnitte der öffentlichen FAQ. Die Anker sind Teil der Vorlage (faq.html), damit ein Link
+ * auch nach einer Sprachumschaltung oder aus einer späteren Supportantwort stabil bleibt.
+ */
+const helpArticles = () => {
+  const lang = String(locale || '').startsWith('de') ? 'de' : 'en';
+  return [
+    ['faq-account-security', 'faq.2.q'],
+    ['faq-balance', 'faq.4.q'],
+    ['faq-rules', 'faq.5.q'],
+    ['faq-renewal', 'faq.7.q'],
+  ].map(([anchor, title]) => ({ href: `/${lang}/faq#${anchor}`, title: tr(title) }));
+};
+
+/**
  * Eine Systemzeile in der Sprache des Lesers.
  *
  * Der Satz steht als fertiger englischer Text in der Datenbank – daran hängt der Discord-Kanal,
@@ -178,6 +193,7 @@ async function list(root) {
   const personalAdmin = state.me?.role === 'admin';
   const title = personalAdmin ? tr('dash.myTickets') : tr('tk.title');
   const subtitle = personalAdmin ? tr('tk.mySub') : tr('tk.sub');
+  const articles = helpArticles();
 
   root.innerHTML = `
     ${appbar(
@@ -218,6 +234,22 @@ async function list(root) {
             <a href="mailto:${escapeHtml(supportMail)}">${escapeHtml(supportMail)}</a></p>`
         : ''
     }
+
+    <section class="panel ticket-help" style="margin-bottom:1rem">
+      <header><h3>${icon('info')} ${escapeHtml(tr('tk.helpTitle'))}</h3></header>
+      <div class="body">
+        <p class="small muted" style="margin:0">${escapeHtml(tr('tk.helpText'))}</p>
+        <div class="ticket-help-links">
+          ${articles
+            .map(
+              (article) => `<a class="ticket-help-link" href="${escapeHtml(article.href)}" target="_blank" rel="noopener">
+                <span class="truncate">${escapeHtml(article.title)}</span>${icon('external')}
+                <span class="visually-hidden">${escapeHtml(tr('tk.helpOpen'))}</span></a>`
+            )
+            .join('')}
+        </div>
+      </div>
+    </section>
 
     <section class="panel">
       <div class="body" style="padding:0">
