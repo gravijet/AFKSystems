@@ -2674,6 +2674,7 @@ async function editMacro(profile, macro, template = null) {
       paint();
     });
     $('#add-step', dialog).addEventListener('click', () => {
+      if (actions.length >= 40) return;
       actions.push({ type: 'chat', text: '' });
       paint();
     });
