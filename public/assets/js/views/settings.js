@@ -23,7 +23,7 @@ import {
   avatar, $, $$, ok, fail, toast, confirmDialog, formDialog, lang,
 } from '../ui.js';
 import { state, appbar, refresh, draw, go, showShortcuts } from '../app.js';
-import { preferences, setPreference } from '../preferences.js';
+import { DASHBOARD_SECTIONS, preferences, setPreference } from '../preferences.js';
 import { countryList, addressLines } from '../countries.js';
 
 /** Die Reiter. Reihenfolge und Namen stehen nur hier – Leiste und Router lesen dieselbe Liste. */
@@ -1457,9 +1457,38 @@ function experienceBody(me) {
         <option value="last" ${value.start === 'last' ? 'selected' : ''}>${escapeHtml(tr('set.start.last'))}</option>
       </select>
     </div>
+    <div class="preference-row preference-dashboard">
+      <div class="grow"><div class="strong">${escapeHtml(tr('set.dashboardOrder'))}</div>
+        <p class="small muted">${escapeHtml(tr('set.dashboardOrderSub'))}</p></div>
+      <div class="dashboard-order" role="list" aria-label="${escapeHtml(tr('set.dashboardOrder'))}">
+        ${dashboardOrder(value.dashboardOrder)}
+      </div>
+      <button class="btn btn-ghost btn-sm dashboard-order-reset" type="button" data-dashboard-reset
+        ${value.dashboardOrder.every((key, index) => key === DASHBOARD_SECTIONS[index]) ? 'disabled' : ''}>${escapeHtml(
+          tr('set.dashboardReset')
+        )}</button>
+    </div>
     <button class="btn" type="button" id="show-shortcuts">${icon('keyboard')} ${escapeHtml(
       tr('set.shortcuts')
     )}</button>`;
+}
+
+function dashboardOrder(order) {
+  return order
+    .map(
+      (key, index) => `<div class="dashboard-order-row" role="listitem">
+        <span class="dashboard-order-position">${index + 1}</span><strong class="grow">${escapeHtml(
+          tr(`set.dashboard.${key}`)
+        )}</strong>
+        <span class="dashboard-order-actions">
+          <button class="btn btn-ghost btn-sm" type="button" data-dashboard-move="${key}" data-direction="-1"
+            ${index === 0 ? 'disabled' : ''} aria-label="${escapeHtml(tr('set.dashboardMoveUp', { name: tr(`set.dashboard.${key}`) }))}">${escapeHtml(tr('set.up'))}</button>
+          <button class="btn btn-ghost btn-sm" type="button" data-dashboard-move="${key}" data-direction="1"
+            ${index === order.length - 1 ? 'disabled' : ''} aria-label="${escapeHtml(tr('set.dashboardMoveDown', { name: tr(`set.dashboard.${key}`) }))}">${escapeHtml(tr('set.down'))}</button>
+        </span>
+      </div>`
+    )
+    .join('');
 }
 
 function bindDisplay(me) {
@@ -1472,6 +1501,21 @@ function bindDisplay(me) {
     })
   );
   $('#start-page')?.addEventListener('change', (event) => setPreference(me.id, 'start', event.target.value));
+  $$('[data-dashboard-move]').forEach((button) =>
+    button.addEventListener('click', () => {
+      const order = [...preferences(me.id).dashboardOrder];
+      const index = order.indexOf(button.dataset.dashboardMove);
+      const next = index + Number(button.dataset.direction);
+      if (index < 0 || next < 0 || next >= order.length) return;
+      [order[index], order[next]] = [order[next], order[index]];
+      setPreference(me.id, 'dashboardOrder', order);
+      draw();
+    })
+  );
+  $('[data-dashboard-reset]')?.addEventListener('click', () => {
+    setPreference(me.id, 'dashboardOrder', [...DASHBOARD_SECTIONS]);
+    draw();
+  });
   $('#show-shortcuts')?.addEventListener('click', showShortcuts);
 }
 

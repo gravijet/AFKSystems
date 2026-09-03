@@ -6774,6 +6774,44 @@ dialog.shortcuts {
   padding: 0;
   place-items: center;
 }
+.preference-dashboard {
+  align-items: flex-start;
+}
+.dashboard-order {
+  flex: 0 1 29rem;
+  width: 100%;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.dashboard-order-row {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  min-height: 3.15rem;
+  padding: .45rem .55rem;
+  background: var(--surface);
+}
+.dashboard-order-row + .dashboard-order-row {
+  border-top: 1px solid var(--line-soft);
+}
+.dashboard-order-position {
+  display: grid;
+  width: 1.6rem;
+  height: 1.6rem;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+  font: 700 .72rem var(--mono);
+}
+.dashboard-order-actions {
+  display: inline-flex;
+  gap: .25rem;
+}
+.dashboard-order-reset {
+  margin-top: .5rem;
+}
 
 /* ---------------------------------------------------------------- Zeitpläne
  *
