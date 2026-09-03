@@ -2822,6 +2822,10 @@ async function editMacro(profile, macro, template = null) {
 
   paint();
 
+  // Ein neuer Entwurf beginnt beim Namen; beim Bearbeiten bleibt die erste wirkliche Änderung
+  // ebenfalls dort, statt dass der Fokus zufällig auf dem Dialograhmen landet.
+  requestAnimationFrame(() => $('#name', dialog)?.focus());
+
   $('#save', dialog).addEventListener('click', async () => {
     const event = $('#event', dialog).value;
     // Jedes Feld des Auslösers, das gerade im Formular steht – **alle**, auch die leeren. Ein
