@@ -1299,3 +1299,7 @@ async function boot() {
 }
 
 boot();
+
+// Macht das Panel installierbar (Startbildschirm-Icon). Cached bewusst nichts von app.css/app.js,
+// siehe server/index.js bei SW_JS.
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
