@@ -32,8 +32,9 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Neueste Kontomeldungen als knappe, lesbare Vorschau inklusive ungelesenem Zustand.
 - [x] Betriebszustand nach Live-Ereignissen aktualisieren, ohne Bild-, Speicher- oder
       Mehrfach-Request-Schleifen zu erzeugen.
-- [ ] Optionale, persönliche Reihenfolge der Übersichtsblöcke erst dann einführen, wenn sie
-      ohne versteckte oder schwer wiederherstellbare Zustände funktioniert.
+- [x] Optionale, persönliche Reihenfolge der Übersichtsblöcke: nur bekannte Bereiche, lokal
+      je Gerät gespeichert, bei neuen Bereichen automatisch ergänzt und jederzeit auf die
+      Standardreihenfolge zurücksetzbar.
 
 ### 2. Schnelle und sichere Aktionen
 
