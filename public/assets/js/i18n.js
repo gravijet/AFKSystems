@@ -853,6 +853,11 @@ export const S = {
     de: 'Die Wartezeit verdoppelt sich mit jedem Fehlversuch bis zu dieser Grenze. Nach acht Versuchen hintereinander bleibt der Bot aus, und du bekommst Bescheid. Ausgeschaltet beendet ein Kick oder Verbindungsabbruch die Sitzung, und du startest sie selbst wieder.',
   },
   'srv.retryOf': { en: 'Attempt {n}/{max}', de: 'Versuch {n}/{max}' },
+  'srv.povSkipResources': { en: 'Skip texture download for the live view', de: 'Live-Ansicht ohne Texturen laden' },
+  'srv.povSkipResourcesHint': {
+    en: 'The live view runs without real block textures instead of fetching the ~30 MB Minecraft file (once per account without a file deposited under Administration). Needs a booked live view with a client build from 2.6.0 on.',
+    de: 'Die Live-Ansicht läuft ohne echte Blocktexturen, statt sich die rund 30 MB große Minecraft-Datei zu holen (einmal je Konto, wenn unter Administration keine hinterlegt ist). Braucht eine gebuchte Live-Ansicht mit einer Client-Bauform ab 2.6.0.',
+  },
   'srv.onlineSince': { en: 'In this state since {at}', de: 'In diesem Zustand seit {at}' },
   'srv.reconnectCount': { en: '{n} reconnect(s)', de: '{n} Neuverbindung(en)' },
   'srv.reconnectCountHint': {

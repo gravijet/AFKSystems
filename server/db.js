@@ -1637,6 +1637,16 @@ const migrations = [
     name: '039-reconnect-zaehler',
     sql: `ALTER TABLE bots ADD COLUMN reconnect_count INTEGER NOT NULL DEFAULT 0;`,
   },
+
+  {
+    // Der texturierte Viewer sucht sich seit Client 2.6.0 selbst eine Original-JAR und lädt sie
+    // notfalls von Mojang – rund 30 MB, einmal je Kunde ohne hinterlegte Datei (siehe
+    // docs/live-ansicht.md). Wer die Live-Ansicht nur gelegentlich und über eine schmale Leitung
+    // öffnet, will das nicht: `--pov-resources aus` lässt den Viewer ohne Texturen laufen, statt
+    // erst zu suchen und zu laden. Siehe supervisor.js `args()`.
+    name: '040-pov-ressourcen-ueberspringen',
+    sql: `ALTER TABLE profiles ADD COLUMN pov_skip_resources INTEGER NOT NULL DEFAULT 0;`,
+  },
 ];
 
 /**

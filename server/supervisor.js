@@ -780,16 +780,24 @@ class Bot extends EventEmitter {
       // der Standort selbst ein (siehe agent/index.js). Das Panel schickt nur die Nummer und die
       // Version; welchen Pfad seine JAR hat, weiß nur die andere Maschine.
       if (this.webPort && !this.remote) {
-        const jar = resources.pathFor(profile.mc_version);
-        // **Die hinterlegte Datei geht vor, auch wenn der Client sich selbst helfen könnte.**
-        // Sie liegt einmal auf dieser Maschine und gilt für alle. Die Selbsthilfe des Clients legt
-        // sie dagegen unter `XDG_CONFIG_HOME` ab, und das ist hier das Verzeichnis **eines
-        // Kunden** (siehe `userDir`): Bei dreißig Kunden mit Live-Ansicht wären das dreißigmal
-        // dieselben dreißig Megabyte und dreißig Downloads bei Mojang.
-        if (jar) args.push('--pov-web', `127.0.0.1:${this.webPort}`, '--pov-resources', jar);
-        // Ohne hinterlegte Datei: Ab 2.6.0 findet der Client selbst eine, also bekommt der Kunde
-        // seine Texturen trotzdem. Ohne `--pov-resources` gilt dort die Vorgabe `auto`.
-        else if (caps.povresourcesauto) args.push('--pov-web', `127.0.0.1:${this.webPort}`);
+        // Wer das ausdrücklich abgeschaltet hat, bekommt weder die hinterlegte Datei noch die
+        // Selbsthilfe des Clients: Der Viewer läuft trotzdem, nur ohne Texturen – siehe
+        // docs/live-ansicht.md. Das geht nur mit einer Bauform, die `aus` auch versteht (2.6.0+);
+        // eine ältere kennt nur den zwingenden Dateipfad und bräche an einer unbekannten Option ab.
+        if (profile.pov_skip_resources && caps.povresourcesauto) {
+          args.push('--pov-web', `127.0.0.1:${this.webPort}`, '--pov-resources', 'aus');
+        } else {
+          const jar = resources.pathFor(profile.mc_version);
+          // **Die hinterlegte Datei geht vor, auch wenn der Client sich selbst helfen könnte.**
+          // Sie liegt einmal auf dieser Maschine und gilt für alle. Die Selbsthilfe des Clients
+          // legt sie dagegen unter `XDG_CONFIG_HOME` ab, und das ist hier das Verzeichnis **eines
+          // Kunden** (siehe `userDir`): Bei dreißig Kunden mit Live-Ansicht wären das dreißigmal
+          // dieselben dreißig Megabyte und dreißig Downloads bei Mojang.
+          if (jar) args.push('--pov-web', `127.0.0.1:${this.webPort}`, '--pov-resources', jar);
+          // Ohne hinterlegte Datei: Ab 2.6.0 findet der Client selbst eine, also bekommt der Kunde
+          // seine Texturen trotzdem. Ohne `--pov-resources` gilt dort die Vorgabe `auto`.
+          else if (caps.povresourcesauto) args.push('--pov-web', `127.0.0.1:${this.webPort}`);
+        }
       }
     }
 
