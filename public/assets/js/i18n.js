@@ -2780,6 +2780,10 @@ export const S = {
   },
   'adm.accountQueueNone': { en: 'No active Minecraft account currently reports a login error.', de: 'Kein aktives Minecraft-Konto meldet aktuell einen Anmeldefehler.' },
   'adm.openOwner': { en: 'Open owner', de: 'Eigentümer öffnen' },
+  'adm.accountFilterAll': { en: 'All accounts', de: 'Alle Konten' },
+  'adm.accountFilterLogin': { en: 'Needs login review', de: 'Anmeldung prüfen' },
+  'adm.accountFilterRunning': { en: 'Running now', de: 'Läuft gerade' },
+  'adm.accountFilterCount': { en: '{n} shown', de: '{n} angezeigt' },
 
   // ---------------------------------------------------------------- Sicherungen
   'bak.title': { en: 'Backups', de: 'Sicherungen' },

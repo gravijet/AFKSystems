@@ -2659,10 +2659,21 @@ async function accounts(root) {
           </div></section>`
         : `<div class="note" style="margin-bottom:1rem">${icon('check')}<div>${escapeHtml(tr('adm.accountQueueNone'))}</div></div>`
     }
+    <div class="row wrap" style="margin-bottom:.75rem">
+      <label class="account-search">${icon('search')}<input id="account-needle" type="search" autocomplete="off" placeholder="${escapeHtml(tr('common.search'))}"></label>
+      <select class="mini" id="account-state" aria-label="${escapeHtml(tr('common.status'))}">
+        <option value="all">${escapeHtml(tr('adm.accountFilterAll'))}</option>
+        <option value="needs-login">${escapeHtml(tr('adm.accountFilterLogin'))}</option>
+        <option value="running">${escapeHtml(tr('adm.accountFilterRunning'))}</option>
+        <option value="suspended">${escapeHtml(tr('acc.suspended'))}</option>
+      </select>
+      <span class="small muted" id="account-result-count"></span>
+    </div>
     ${table(
       [tr('adm.users'), tr('ov.col.account'), tr('adm.servers'), tr('common.status'), tr('common.created'), ''],
       data.accounts.map(
-        (account) => `<tr>
+        (account) => `<tr data-account-row data-account-name="${escapeHtml(`${account.name} ${account.display_name} ${account.servers.map((server) => server.name).join(' ')}`.toLowerCase())}"
+          data-account-state="${account.suspended ? 'suspended' : account.running ? 'running' : account.status === 'error' || account.last_error ? 'needs-login' : 'ready'}">
           <td class="small"><a href="#/admin/users/${account.user_id}">${escapeHtml(account.display_name || `#${account.user_id}`)}</a></td>
           <td><span class="strong">${escapeHtml(account.name || '')}</span>
             <span class="small muted"> · ${escapeHtml(accountKindLabel(account.kind))}</span></td>
@@ -2698,6 +2709,28 @@ async function accounts(root) {
     const account = data.accounts.find((entry) => entry.id === Number(button.dataset.accountSuspend));
     button.addEventListener('click', () => changeAccountSuspension(account));
   });
+
+  let accountNeedle = '';
+  let accountState = 'all';
+  const filterAccounts = () => {
+    let visible = 0;
+    $$('[data-account-row]').forEach((row) => {
+      const matches = (!accountNeedle || row.dataset.accountName.includes(accountNeedle)) &&
+        (accountState === 'all' || row.dataset.accountState === accountState);
+      row.hidden = !matches;
+      if (matches) visible += 1;
+    });
+    $('#account-result-count').textContent = tr('adm.accountFilterCount', { n: visible });
+  };
+  $('#account-needle').addEventListener('input', (event) => {
+    accountNeedle = String(event.target.value || '').trim().toLowerCase();
+    filterAccounts();
+  });
+  $('#account-state').addEventListener('change', (event) => {
+    accountState = event.target.value;
+    filterAccounts();
+  });
+  filterAccounts();
 }
 
 // ---------------------------------------------------------------- Standorte
