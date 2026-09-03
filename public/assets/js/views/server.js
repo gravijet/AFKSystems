@@ -2656,8 +2656,10 @@ async function editMacro(profile, macro, template = null) {
 
       <div>
         <div class="row spread" style="margin-bottom:.5rem">
-          <span class="strong small">${escapeHtml(tr('srv.steps'))}</span>
-          <button class="btn btn-sm" id="add-step">${icon('plus')}</button>
+          <span class="strong small">${escapeHtml(tr('srv.steps'))}
+            <span class="muted">${escapeHtml(tr('srv.stepCount', { n: actions.length, max: 40 }))}</span></span>
+          <button class="btn btn-sm" id="add-step" ${actions.length >= 40 ? 'disabled' : ''}
+            title="${escapeHtml(tr('srv.stepLimit', { max: 40 }))}">${icon('plus')}</button>
         </div>
         <p class="small muted" style="margin:0 0 .5rem">${escapeHtml(tr('srv.placeholders'))}</p>
         <div class="stack" id="steps">${
