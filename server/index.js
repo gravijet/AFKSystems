@@ -1398,6 +1398,8 @@ jobs.every(
     // Köpfe von Konten, die es längst nicht mehr gibt. Sie kosten nichts als Platz, aber der
     // Zwischenspeicher soll nicht ewig alles behalten, was einmal jemand angelegt hat.
     heads.cleanup();
+    // Ereigniszeilen der Bots (Verlauf im Serverplatz-Reiter), älter als die Aufbewahrungsfrist.
+    supervisor.cleanupEvents();
     // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
     // fällt an der jüngsten Datei – ein Neustart um drei Uhr nachts vergisst so keinen Tag.
     const made = backup.dailyTick();

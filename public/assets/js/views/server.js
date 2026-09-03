@@ -23,6 +23,25 @@ export async function render(root, route) {
   return renderProfile(root, route);
 }
 
+/** Welcher Übersetzungsschlüssel zu welcher Art Eintrag im Ereignisverlauf gehört. */
+const EVENT_LABELS = {
+  online: 'state.online',
+  reconnecting: 'state.reconnecting',
+  disconnected: 'state.disconnected',
+  error: 'state.error',
+  auth: 'state.auth',
+  offline: 'state.offline',
+  world: 'srv.eventWorld',
+  death: 'srv.eventDeath',
+  dropped: 'srv.eventDropped',
+};
+
+/** Ein CSV-Feld – in Anführungszeichen, sobald es welche selbst enthält oder mehrzeilig ist. */
+function csvCell(value) {
+  const text = String(value ?? '');
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
 // ---------------------------------------------------------------- Liste
 
 async function renderList(root) {
@@ -557,6 +576,14 @@ async function tabConnect(root, profile) {
         draw();
       })
     );
+
+    $$('[data-events]', box).forEach((button) =>
+      button.addEventListener('click', () => {
+        const accountId = Number(button.dataset.events);
+        const member = members.find((entry) => entry.account_id === accountId);
+        if (member) openEventLog(member);
+      })
+    );
   };
 
   function botRow(member) {
@@ -604,10 +631,71 @@ async function tabConnect(root, profile) {
           ${running || (profile.active && !member.suspended) ? '' : 'disabled'}>${escapeHtml(
             running ? tr('ov.stop') : tr('ov.start')
           )}</button>
+        <button class="btn btn-ghost btn-sm" data-events="${member.account_id}"
+          title="${escapeHtml(tr('srv.eventsTitle'))}">${icon('clock')}</button>
         <button class="btn btn-ghost btn-sm btn-danger" data-detach="${member.account_id}"
           title="${escapeHtml(tr('srv.remove'))}">${icon('x')}</button>
       </div>
     </li>`;
+  }
+
+  // ------------------------------------------------------------ Ereignisverlauf
+
+  /**
+   * Was in der letzten Zeit mit diesem Bot wirklich passiert ist, nicht nur, wo er gerade steht.
+   * Kommt aus `bot_events` (siehe supervisor.js `logEvent`) und überlebt deshalb auch einen
+   * Neustart des Panels – anders als der Chat, der im Speicher des laufenden Prozesses steckt.
+   */
+  async function openEventLog(member) {
+    const dialog = document.createElement('dialog');
+    dialog.innerHTML = `
+      <header><h3>${escapeHtml(tr('srv.eventsTitle'))} — ${escapeHtml(member.name)}</h3></header>
+      <div class="body"><p class="small muted">${escapeHtml(tr('common.loading'))}</p></div>
+      <footer>
+        <button class="btn" id="csv" disabled>${icon('download')} ${escapeHtml(tr('srv.eventsCsv'))}</button>
+        <button class="btn btn-primary" id="close">${escapeHtml(tr('common.close'))}</button>
+      </footer>`;
+    document.body.append(dialog);
+    dialog.showModal();
+    dialog.addEventListener('close', () => dialog.remove());
+    $('#close', dialog).addEventListener('click', () => dialog.close());
+
+    let rows = [];
+    try {
+      const result = await api(`/profiles/${profile.id}/events?accounts=${member.account_id}`);
+      rows = result.events || [];
+    } catch (error) {
+      fail(error);
+    }
+
+    const body = $('.body', dialog);
+    body.innerHTML = rows.length
+      ? `<ul class="eventlog">${rows
+          .slice()
+          .reverse()
+          .map(
+            (row) => `<li>
+              <span class="mono small muted" title="${escapeHtml(datetime(row.t))}">${escapeHtml(since(row.t))}</span>
+              <span class="strong">${escapeHtml(tr(EVENT_LABELS[row.type] || row.type))}</span>
+              ${row.detail ? `<span class="small muted">${escapeHtml(row.detail)}</span>` : ''}
+            </li>`
+          )
+          .join('')}</ul>`
+      : `<p class="small muted">${escapeHtml(tr('srv.eventsEmpty'))}</p>`;
+
+    const csvButton = $('#csv', dialog);
+    csvButton.disabled = !rows.length;
+    csvButton.addEventListener('click', () => {
+      const csv = [
+        ['Zeit', 'Art', 'Detail'].join(','),
+        ...rows.map((row) => [new Date(row.t).toISOString(), row.type, row.detail || ''].map(csvCell).join(',')),
+      ].join('\n');
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+      link.download = `${profile.slug || 'server'}-${member.name}-verlauf.csv`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 10_000);
+    });
   }
 
   // ------------------------------------------------------------ Der Zielserver

@@ -326,6 +326,18 @@ const RESTART_STABLE_MS = 5 * 60 * 1000;
 const LOG_MAX_BYTES = 5 * 1024 * 1024;
 
 /**
+ * Welche Zustände einen Eintrag im Ereignisverlauf wert sind (siehe Bot#logEvent).
+ *
+ * `starting`, `connecting` und `stopping` fehlen absichtlich: Sie stehen zwischen zwei anderen
+ * Einträgen immer nur Sekundenbruchteile und sagen nichts, was `online`/`disconnected` nicht
+ * ohnehin sagt. Mit ihnen bestünde der Verlauf zur Hälfte aus Rauschen.
+ */
+const TIMELINE_STATES = new Set(['online', 'reconnecting', 'disconnected', 'error', 'auth', 'offline']);
+
+/** So lange bleibt ein Eintrag im Ereignisverlauf stehen, bevor ihn das Aufräumen holt. */
+const EVENT_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
  * Wie lang eine Zeile ohne Zeilenumbruch werden darf, bevor der Puffer vorn beschnitten wird.
  *
  * Großzügig gewählt: Eine Bildzeile der Live-Ansicht sind 160 Zellen zu je gut dreißig Zeichen
@@ -1230,10 +1242,23 @@ class Bot extends EventEmitter {
         break;
       }
       case 'world':
+        this.logEvent('world', event.grund || event.text || '');
         this.supervisor.macros.onWorldChange(this);
         break;
       case 'death':
+        this.logEvent('death');
         this.supervisor.macros.onDeath(this);
+        break;
+      // Der Client meldet das, wenn seine eigene Ausgabe schneller war, als das Panel sie abholen
+      // konnte – ohne diesen Zweig fiel die Zeile bisher auf den `default`-Fall und war spurlos
+      // weg. Für jemanden, der später fragt "warum fehlt hier ein Stück Chat", ist genau das der
+      // Unterschied zwischen "nichts passiert" und "wir haben's, aber verloren".
+      case 'output':
+        this.logEvent('dropped', event.text || '');
+        this.push(
+          'status',
+          'Zeilen wurden ausgelassen: Die Ausgabe kam schneller, als das Panel sie lesen konnte.'
+        );
         break;
       case 'disconnect': {
         // Der Grund ist das Wertvollste, was in dieser Sitzung noch passiert – er sagt, warum es
@@ -1642,7 +1667,22 @@ class Bot extends EventEmitter {
       this.profile.id,
       this.account.id
     );
+    if (TIMELINE_STATES.has(state)) this.logEvent(state, detail);
     this.supervisor.emit('bot-state', { userId: this.userId, key: this.key, state: this.snapshot() });
+  }
+
+  /**
+   * Einen Eintrag im dauerhaften Ereignisverlauf dieses Bots ablegen.
+   *
+   * Anders als `state`/`detail` auf `bots` (die jeder Übergang überschreibt) bleibt hier jeder
+   * Übergang für sich stehen – die einzige Stelle, an der sich im Nachhinein nachvollziehen lässt,
+   * *wie oft* und *warum* ein Bot in der letzten Stunde die Verbindung verloren hat, statt nur, wo
+   * er gerade steht.
+   */
+  logEvent(type, detail = '') {
+    db.prepare(
+      'INSERT INTO bot_events (user_id, profile_id, account_id, type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(this.userId, this.profile.id, this.account.id, type, detail || null, Date.now());
   }
 
   /** Eine Zeile an den Client schicken. Mit '/' vorn ist es ein Serverbefehl. */
@@ -2595,6 +2635,30 @@ class Supervisor extends EventEmitter {
     const bot = this.get(profileId, accountId);
     if (!bot) return [];
     return since ? bot.chat.filter((entry) => entry.t > since) : bot.chat;
+  }
+
+  /**
+   * Der dauerhafte Ereignisverlauf eines Bots – anders als `historyOf()` aus der Datenbank und
+   * nicht aus dem Speicher des laufenden Prozesses, also auch dann da, wenn der Bot gerade nicht
+   * läuft oder seit dem letzten Neustart des Panels ein neues `Bot`-Objekt ist.
+   */
+  eventsOf(profileId, accountId, since = 0) {
+    // `id ASC` als zweiter Schlüssel: Zwei Übergänge in derselben Millisekunde sind auf einem
+    // schnellen Testlauf keine Seltenheit, und ohne ihn kehrt der `created_at DESC`-Index (der für
+    // die Anzeige gedacht ist) ihre Reihenfolge bei einer Gleichheit einfach um.
+    return db
+      .prepare(
+        `SELECT type, detail, created_at AS t FROM bot_events
+         WHERE profile_id = ? AND account_id = ? AND created_at > ?
+         ORDER BY created_at ASC, id ASC LIMIT 1000`
+      )
+      .all(profileId, accountId, since);
+  }
+
+  /** Ereignisse jenseits der Aufbewahrungsfrist weg – Teil des stündlichen Aufräumens in index.js. */
+  cleanupEvents() {
+    const cutoff = Date.now() - EVENT_RETENTION_MS;
+    return db.prepare('DELETE FROM bot_events WHERE created_at < ?').run(cutoff).changes;
   }
 }
 

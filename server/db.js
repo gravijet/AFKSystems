@@ -1607,6 +1607,27 @@ const migrations = [
       db.exec('CREATE UNIQUE INDEX users_referral_code ON users(referral_code)');
     },
   },
+
+  {
+    // Bisher galt je Bot nur der jeweils letzte Zustand – jeder Übergang davor war beim nächsten
+    // schon überschrieben. Diese Tabelle hält die Übergänge selbst fest (online, Neuverbindung
+    // samt Versuch, Trennungsgrund, Tod, Weltwechsel, ausgelassene Zeilen), damit sich im
+    // Nachhinein beantworten lässt, was mit einem Bot in der letzten Stunde wirklich passiert ist –
+    // nicht nur, wo er gerade steht. Siehe supervisor.js `logEvent`/`eventsOf`.
+    name: '038-bot-ereignisverlauf',
+    sql: `
+      CREATE TABLE bot_events (
+        id         INTEGER PRIMARY KEY,
+        user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,
+        profile_id INTEGER NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+        account_id INTEGER NOT NULL REFERENCES mc_accounts(id) ON DELETE CASCADE,
+        type       TEXT NOT NULL,
+        detail     TEXT,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX bot_events_bot ON bot_events(profile_id, account_id, created_at DESC);
+    `,
+  },
 ];
 
 /**

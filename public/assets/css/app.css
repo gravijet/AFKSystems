@@ -2904,6 +2904,33 @@ body.site > main {
   }
 }
 
+/* ---------------------------------------------------------------- Ereignisverlauf
+   Eine Zeile je Eintrag, neuester zuerst – dieselbe Sprache wie .todo-list, nur ohne die
+   Dringlichkeitsfarbe links: Hier brennt nichts, es steht nur da, was passiert ist. */
+
+.eventlog {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+.eventlog li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--line);
+}
+.eventlog li:first-child {
+  border-top: 0;
+}
+.eventlog li > .mono {
+  flex: none;
+  min-width: 4rem;
+}
+
 /* ---------------------------------------------------------------- Dialoge */
 
 dialog {
