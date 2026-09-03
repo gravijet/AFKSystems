@@ -1443,6 +1443,28 @@ async function users(root) {
  * dieselben Felder wäre die sichere Art, dass in der Verwaltung irgendwann „Ort“ steht, wo der
  * Kunde „Stadt“ eingetragen hat.
  */
+/**
+ * Ein Symbol, das zum Gerät passt – Handy, sonst ein Bildschirm.
+ *
+ * Dieselbe Unterscheidung wie in den Einstellungen des Kunden. Sie steht bewusst zweimal da und
+ * nicht in `ui.js`: Es sind vier Zeichen Regulärausdruck, und ein gemeinsamer Baustein für „welches
+ * Bildchen“ wäre eine Abhängigkeit zwischen zwei Bildschirmen, die sonst nichts miteinander zu tun
+ * haben.
+ */
+const deviceIcon = (agent) =>
+  /Android|iPhone|iPad|Mobile/.test(String(agent || '')) ? 'gamepad' : 'monitor';
+
+/** Woran ein Anmeldeversuch gescheitert ist – in einem Wort. */
+const signInLabel = (entry) => {
+  // Der Anmeldecode zuerst: „falsches Passwort“ stünde sonst über einem Versuch, bei dem das
+  // Passwort gestimmt hat – und genau diese Zeile ist die interessante.
+  if (entry.reason === 'code') return tr(entry.ok ? 'set.signInCodeOk' : 'set.signInCodeWrong');
+  if (entry.ok) return tr('set.signInOk');
+  if (entry.reason === 'blocked') return tr('set.signInBlocked');
+  if (entry.reason === 'throttled') return tr('set.signInThrottled');
+  return tr('set.signInFailed');
+};
+
 const PROFILE_LABELS = {
   full_name: 'set.fullName',
   company: 'set.company',
@@ -1531,7 +1553,10 @@ async function userDetail(root, id) {
     ${
       user.delete_due_at
         ? `<div class="note bad" style="margin-bottom:1.5rem">${icon('alert')}
-            <div>${escapeHtml(tr('adm.leavingOn', { date: date(user.delete_due_at) }))}</div></div>`
+            <div class="row wrap spread grow" style="gap:.75rem">
+              <span>${escapeHtml(tr('adm.leavingOn', { date: date(user.delete_due_at) }))}</span>
+              <button class="btn btn-sm" id="undelete">${escapeHtml(tr('adm.cancelDeletion'))}</button>
+            </div></div>`
         : ''
     }
 
@@ -1628,6 +1653,130 @@ async function userDetail(root, id) {
       )
     )}
 
+    <!-- **Der Block für „ich komme nicht mehr hinein“.** Zweiter Faktor, offene Geräte und die
+         letzten Versuche stehen nebeneinander, weil erst der Vergleich die Frage beantwortet:
+         Kommt überhaupt etwas an? Von welcher Adresse? Und scheitert es am Passwort oder am
+         Code danach? Getrennt wären das drei Bildschirme, zwischen denen niemand hin und her
+         sieht. -->
+    <section class="panel" style="margin-bottom:1.5rem">
+      <header><h3>${escapeHtml(tr('adm.access'))}</h3>
+        <span class="small muted">${escapeHtml(tr('adm.accessSub'))}</span></header>
+      <div class="body stack">
+        <div class="row wrap spread">
+          <div style="min-width:0">
+            <p class="small strong">${escapeHtml(tr('adm.totp'))}</p>
+            ${
+              data.totp?.enabled
+                ? `<span class="pill ok">${escapeHtml(tr('common.on'))}</span>
+                   <span class="small muted">${escapeHtml(
+                     tr('adm.totpSince', { when: data.totp.since ? date(data.totp.since) : '–' })
+                   )} · ${escapeHtml(
+                     tr('adm.totpRecovery', {
+                       left: data.totp.recovery_left,
+                       total: data.totp.recovery_total,
+                     })
+                   )}</span>`
+                : `<span class="small muted">${escapeHtml(tr('adm.totpOff'))}</span>`
+            }
+          </div>
+          ${
+            data.totp?.enabled
+              ? `<button class="btn btn-sm btn-danger" id="totp-reset">${escapeHtml(tr('adm.totpReset'))}</button>`
+              : ''
+          }
+        </div>
+        <hr class="rule">
+        <div>
+          <p class="small strong" style="margin-bottom:.25rem">${escapeHtml(tr('adm.sessions'))}</p>
+          <p class="small muted" style="margin-bottom:.5rem">${escapeHtml(tr('adm.sessionsSub'))}</p>
+          ${
+            (data.sessions || []).length
+              ? `<ul class="device-list">${data.sessions
+                  .map(
+                    (session) => `<li class="device">
+                      <span class="device-icon">${icon(deviceIcon(session.agent))}</span>
+                      <div class="grow" style="min-width:0">
+                        <div class="strong truncate">${escapeHtml(session.device || tr('set.deviceUnknown'))}</div>
+                        <p class="small muted truncate" title="${escapeHtml(session.agent || '')}">
+                          ${escapeHtml(session.ip || '–')} · ${escapeHtml(
+                            tr('set.sessionSince', { when: since(session.created_at) })
+                          )}</p>
+                      </div>
+                      <button class="btn btn-sm btn-danger" data-drop-session="${escapeHtml(session.ref)}">${escapeHtml(
+                        tr('adm.sessionEnd')
+                      )}</button>
+                    </li>`
+                  )
+                  .join('')}</ul>`
+              : `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`
+          }
+        </div>
+        <hr class="rule">
+        <div>
+          <p class="small strong" style="margin-bottom:.5rem">${escapeHtml(tr('adm.signIns'))}</p>
+          <p class="small muted" style="margin-bottom:.5rem">${escapeHtml(tr('adm.signInsSub'))}</p>
+          ${
+            (data.signins || []).length
+              ? `<ul class="plain-list">${data.signins
+                  .map(
+                    (entry) => `<li class="row spread small">
+                      <span class="row" style="gap:.5rem;min-width:0">
+                        <span class="signin-dot ${entry.ok ? 'ok' : 'bad'}"></span>
+                        <span class="mono truncate">${escapeHtml(entry.ip || '–')}</span>
+                        <span class="muted truncate">${escapeHtml(signInLabel(entry))}</span>
+                      </span>
+                      <span class="muted mono">${datetime(entry.created_at)}</span>
+                    </li>`
+                  )
+                  .join('')}</ul>`
+              : `<p class="small muted">${escapeHtml(tr('set.signInsNone'))}</p>`
+          }
+        </div>
+      </div>
+    </section>
+
+    ${
+      data.proxies.length
+        ? panel(
+            tr('px.title'),
+            table(
+              [tr('common.name'), tr('srv.address'), tr('common.created')],
+              data.proxies.map(
+                (proxy) => `<tr>
+                  <td>${escapeHtml(proxy.label || `#${proxy.id}`)}</td>
+                  <td class="mono small">${escapeHtml(
+                    `${proxy.kind === 'http' ? 'http' : 'socks5'}://${proxy.host}:${proxy.port}`
+                  )}</td>
+                  <td class="small muted mono">${datetime(proxy.created_at)}</td>
+                </tr>`
+              )
+            )
+          )
+        : ''
+    }
+
+    ${
+      data.topups.length
+        ? panel(
+            tr('adm.topups'),
+            table(
+              ['', tr('bill.method'), tr('common.credits'), tr('bill.amount'), tr('common.status')],
+              data.topups.map(
+                (topup) => `<tr>
+                  <td class="small muted mono">${datetime(topup.created_at)}</td>
+                  <td class="small">${escapeHtml(topup.provider)}</td>
+                  <td class="mono">${credits(topup.credits)}</td>
+                  <td class="mono small muted">${euro(topup.amount_cent)}</td>
+                  <td><span class="pill ${topup.status === 'paid' ? 'primary' : 'missing'}">${escapeHtml(
+                    topupStatus(topup.status)
+                  )}</span></td>
+                </tr>`
+              )
+            )
+          )
+        : ''
+    }
+
     ${panel(
       tr('adm.ledger'),
       table(
@@ -1661,6 +1810,43 @@ async function userDetail(root, id) {
           </tr>`
         )
       )
+    )}
+
+    ${
+      (data.mails || []).length
+        ? panel(
+            tr('adm.userMails'),
+            table(
+              ['', tr('tk.subject'), tr('common.status')],
+              data.mails.map(
+                (entry) => `<tr>
+                  <td class="small muted mono">${datetime(entry.created_at)}</td>
+                  <td class="small">${escapeHtml(entry.subject || entry.kind || '')}</td>
+                  <td><span class="pill ${entry.status === 'sent' ? 'primary' : 'missing'}">${escapeHtml(
+                    entry.status
+                  )}</span></td>
+                </tr>`
+              )
+            )
+          )
+        : ''
+    }
+
+    ${panel(
+      tr('adm.userAudit'),
+      table(
+        ['', '', ''],
+        (data.audit || []).map(
+          (entry) => `<tr>
+            <td class="small muted mono">${datetime(entry.created_at)}</td>
+            <td class="small mono">${escapeHtml(entry.action)}</td>
+            <td class="small muted">${escapeHtml(entry.summary || '')}</td>
+          </tr>`
+        )
+      ),
+      `<a class="btn btn-sm" href="#/admin/audit?q=${encodeURIComponent(user.username || '')}">${escapeHtml(
+        tr('adm.auditAll')
+      )}</a>`
     )}
 
     <section class="panel">
@@ -1844,6 +2030,29 @@ async function userDetail(root, id) {
     patch({ notes: $('#notes').value, proxy_allowance: Number($('#allowance').value) })
   );
 
+  $('#undelete')?.addEventListener('click', async () => {
+    if (!(await confirmDialog(tr('adm.cancelDeletionAsk'), { confirm: tr('adm.cancelDeletion') }))) return;
+    if (await send(`/admin/users/${id}/cancel-deletion`, { method: 'POST' })) draw();
+  });
+
+  $('#totp-reset')?.addEventListener('click', async () => {
+    if (!(await confirmDialog(tr('adm.totpResetAsk'), { confirm: tr('adm.totpReset'), danger: true }))) return;
+    if (await send(`/admin/users/${id}/totp-reset`, { method: 'POST' })) draw();
+  });
+
+  $$('[data-drop-session]').forEach((button) =>
+    button.addEventListener('click', async () => {
+      if (!(await confirmDialog(tr('adm.sessionEndAsk'), { confirm: tr('adm.sessionEnd'), danger: true }))) return;
+      if (
+        await send(`/admin/users/${id}/sessions/${encodeURIComponent(button.dataset.dropSession)}`, {
+          method: 'DELETE',
+        })
+      ) {
+        draw();
+      }
+    })
+  );
+
   bindAdminSwitches('[data-discord-role]', (field, enabled) => patch({ [field]: enabled }));
   $$('[data-account-suspend]').forEach((button) => {
     const account = data.accounts.find((entry) => entry.id === Number(button.dataset.accountSuspend));
@@ -1927,6 +2136,94 @@ async function serverDetail(root, id) {
   const data = await api(`/admin/servers/${id}`);
   const profile = data.profile;
 
+  /**
+   * Die Kontenliste als HTML.
+   *
+   * Steht als eigene Funktion da, weil sie zweimal gebraucht wird: einmal beim Aufbau der Seite und
+   * danach alle paar Sekunden, wenn sich der Zustand der Bots geändert hat. Vorher war die Liste
+   * ein Standbild vom Moment des Öffnens – wer hier auf „Neu starten“ drückte, sah bis zum nächsten
+   * Seitenwechsel weiterhin "offline" neben einem Bot, der längst wieder im Spiel war.
+   */
+  const accountRows = (accounts) =>
+    accounts
+      .map(
+        (account) => `<li class="botrow ${account.online ? 'is-on' : ''}">
+          <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
+          <div class="grow" style="min-width:0">
+            <div class="strong truncate">${escapeHtml(account.name)}</div>
+            <div class="small muted truncate">${escapeHtml(account.state)}
+              ${account.detail ? `· ${escapeHtml(account.detail)}` : ''}
+              ${account.pid ? `· PID ${account.pid}` : ''}</div>
+            ${
+              account.last_error && account.last_error !== account.detail
+                ? `<div class="small bad">${escapeHtml(account.last_error)}</div>`
+                : ''
+            }
+            ${
+              // **Womit dieser eine Bot gerade läuft.** Ein Prozess behält seine Client-Datei, auch
+              // wenn auf der Platte längst eine neuere liegt – die Zeile sagt beides, und der Knopf
+              // in der Kopfzeile löst es auf.
+              account.client_version
+                ? `<div class="small muted truncate">${escapeHtml(
+                    tr('adm.clientRunning', { version: account.client_version })
+                  )}${account.build ? ` · ${escapeHtml(account.build)}` : ''}
+                    ${
+                      account.outdated
+                        ? `<span class="pill missing">${escapeHtml(
+                            tr('adm.clientOutdated', { version: data.client_version || '?' })
+                          )}</span>`
+                        : ''
+                    }</div>`
+                : ''
+            }
+            <div class="small muted truncate">${
+              account.proxy
+                ? `${icon('shield')} ${escapeHtml(account.proxy.label || account.proxy.address)}`
+                : `<span style="opacity:.7">${escapeHtml(tr('adm.proxyDirect'))}</span>`
+            }${account.note ? ` · ${escapeHtml(account.note)}` : ''}</div>
+            ${
+              account.retry
+                ? `<div class="small" style="color:var(--warn-text)">${escapeHtml(
+                    tr('adm.retryIn', {
+                      n: `${account.retry.tries}/${account.retry.max}`,
+                      sec: Math.max(0, Math.round(((account.retry.at || Date.now()) - Date.now()) / 1000)),
+                    })
+                  )}</div>`
+                : ''
+            }
+            ${
+              account.suspended
+                ? `<div class="small" style="color:var(--warn-text)">${escapeHtml(
+                    account.suspend_reason || tr('acc.suspended')
+                  )}</div>`
+                : ''
+            }
+          </div>
+          <!-- **Ein Bot einzeln.** Von acht Bots hängt einer; „alle neu starten“ wirft die anderen
+               sieben mit aus dem Spiel. Deshalb hier je Zeile – und alles, was zu den Knöpfen
+               gehört, in einem Block, damit es beim Umbruch zusammenbleibt. -->
+          <div class="row wrap" style="gap:.35rem;margin-left:auto">
+            <span class="small muted mono">${account.since ? since(account.since) : '–'}</span>
+            <button class="btn btn-ghost btn-sm" title="${escapeHtml(tr('adm.botStart'))}"
+              aria-label="${escapeHtml(tr('adm.botStart'))}"
+              data-bot="start" data-account="${account.account_id}"
+              ${profile.locked || profile.suspended || account.suspended ? 'disabled' : ''}>${icon('play')}</button>
+            <button class="btn btn-ghost btn-sm" title="${escapeHtml(tr('adm.botRestart'))}"
+              aria-label="${escapeHtml(tr('adm.botRestart'))}"
+              data-bot="restart" data-account="${account.account_id}"
+              ${profile.locked || profile.suspended || account.suspended ? 'disabled' : ''}>${icon('refresh')}</button>
+            <button class="btn btn-ghost btn-sm" title="${escapeHtml(tr('adm.botStop'))}"
+              aria-label="${escapeHtml(tr('adm.botStop'))}"
+              data-bot="stop" data-account="${account.account_id}">${icon('stop')}</button>
+            <button class="btn btn-sm ${account.suspended ? '' : 'btn-danger'}"
+              data-account-suspend="${account.account_id}">${escapeHtml(
+                account.suspended ? tr('adm.resumeAccount') : tr('adm.suspendAccount')
+              )}</button>
+          </div>
+        </li>`
+      )
+      .join('') || `<li class="small muted" style="padding:1.25rem">${escapeHtml(tr('srv.noAccounts'))}</li>`;
+
   root.innerHTML = `
     <div class="row wrap spread" style="margin-bottom:1.25rem">
       <div>
@@ -1943,6 +2240,13 @@ async function serverDetail(root, id) {
         <button class="btn btn-sm" id="stop">${icon('stop')} ${escapeHtml(tr('srv.stopAll'))}</button>
         <button class="btn btn-sm" id="restart" ${profile.locked || profile.suspended ? 'disabled' : ''}>
           ${icon('refresh')}</button>
+        ${
+          data.outdated_bots
+            ? `<button class="btn btn-sm" id="rollout" title="${escapeHtml(tr('adm.rolloutHere'))}">
+                ${icon('download')} ${escapeHtml(tr('adm.rolloutHere'))}
+                <span class="pill missing">${data.outdated_bots}</span></button>`
+            : ''
+        }
         <button class="btn btn-sm ${profile.locked ? '' : 'btn-danger'}" id="lock">
           ${icon(profile.locked ? 'unlock' : 'lock')} ${escapeHtml(profile.locked ? tr('adm.unlock') : tr('adm.lock'))}</button>
       </div>
@@ -1969,39 +2273,12 @@ async function serverDetail(root, id) {
     <div class="split">
       <section class="panel">
         <header><h3>${escapeHtml(tr('ov.col.account'))}</h3>
-          <span class="small muted">${data.accounts.filter((a) => a.online).length}/${data.features.max_accounts}</span>
+          <span class="small muted" id="botcount">${
+            data.accounts.filter((a) => a.online).length
+          }/${data.features.max_accounts}</span>
         </header>
         <div class="body" style="padding:0">
-          <ul class="botlist">
-            ${
-              data.accounts
-                .map(
-                  (account) => `<li class="botrow ${account.online ? 'is-on' : ''}">
-                    <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
-                    <div class="grow" style="min-width:0">
-                      <div class="strong truncate">${escapeHtml(account.name)}</div>
-                      <div class="small muted truncate">${escapeHtml(account.state)}
-                        ${account.detail ? `· ${escapeHtml(account.detail)}` : ''}
-                        ${account.pid ? `· PID ${account.pid}` : ''}</div>
-                      ${
-                        account.suspended
-                          ? `<div class="small" style="color:var(--warn-text)">${escapeHtml(
-                              account.suspend_reason || tr('acc.suspended')
-                            )}</div>`
-                          : ''
-                      }
-                    </div>
-                    <span class="small muted mono">${account.since ? since(account.since) : '–'}</span>
-                    <button class="btn btn-sm ${account.suspended ? '' : 'btn-danger'}"
-                      data-account-suspend="${account.account_id}">${escapeHtml(
-                        account.suspended ? tr('adm.resumeAccount') : tr('adm.suspendAccount')
-                      )}</button>
-                  </li>`
-                )
-                .join('') ||
-              `<li class="small muted" style="padding:1.25rem">${escapeHtml(tr('srv.noAccounts'))}</li>`
-            }
-          </ul>
+          <ul class="botlist" id="botlist">${accountRows(data.accounts)}</ul>
         </div>
       </section>
 
@@ -2013,6 +2290,24 @@ async function serverDetail(root, id) {
         <div class="body" style="padding:0;display:flex;flex-direction:column;min-height:0">
           <div class="console grow" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}"></div>
           <div class="row send-row">
+            <!-- **An wen.** Bisher ging jede Zeile an jeden Bot des Platzes. Für /list ist das
+                 egal, für /warp oder ein :pov size ist es der Unterschied zwischen „einem Bot
+                 helfen“ und „acht Bots gleichzeitig etwas antun“. Steht der Kasten auf „alle
+                 Konten“, bleibt es wie bisher. -->
+            ${
+              data.accounts.length > 1
+                ? `<select id="target" class="mini" style="max-width:9rem"
+                     aria-label="${escapeHtml(tr('adm.sendTo'))}">
+                    <option value="">${escapeHtml(tr('adm.sendAll'))}</option>
+                    ${data.accounts
+                      .map(
+                        (account) =>
+                          `<option value="${account.account_id}">${escapeHtml(account.name)}</option>`
+                      )
+                      .join('')}
+                  </select>`
+                : ''
+            }
             <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))} — :board, :menu, /list"
               autocomplete="off">
             <button class="btn btn-primary" id="send">${icon('send')}</button>
@@ -2048,6 +2343,44 @@ async function serverDetail(root, id) {
             <button class="btn btn-sm" id="suspend">${escapeHtml(
               profile.suspended ? tr('adm.resumeBilling') : tr('adm.suspendBilling')
             )}</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- **Adresse und Protokollversion.** Der Kunde kann beides selbst – aber nicht mehr, sobald
+           sein Platz gesperrt ist, und genau dann ruft er an. Übrig blieb bisher der Griff in die
+           Datenbank. -->
+      <section class="panel">
+        <header><h3>${escapeHtml(tr('adm.connection'))}</h3>
+          <span class="small muted">${escapeHtml(tr('adm.connectionSub'))}</span></header>
+        <div class="body stack">
+          <div class="field"><label for="srv-name">${escapeHtml(tr('common.name'))}</label>
+            <input id="srv-name" type="text" maxlength="40" value="${escapeHtml(profile.name)}"></div>
+          <div class="field"><label for="srv-address">${escapeHtml(tr('srv.address'))}</label>
+            <input id="srv-address" type="text" value="${escapeHtml(profile.address)}"
+              placeholder="mc.example.net:25565" autocapitalize="off" spellcheck="false"></div>
+          <div class="field"><label for="srv-version">${escapeHtml(tr('srv.version'))}</label>
+            <select id="srv-version">
+              ${
+                // Die jetzige Version gehört immer in die Liste – auch wenn der Client sie nicht
+                // (mehr) kennt. Sonst stünde im Kasten eine andere, und ein Klick auf „Speichern“
+                // stellte den Platz stillschweigend um.
+                [...new Set([profile.mc_version, ...(data.client_versions || [])])]
+                  .map(
+                    (version) =>
+                      `<option value="${escapeHtml(version)}" ${
+                        version === profile.mc_version ? 'selected' : ''
+                      }>${escapeHtml(version)}</option>`
+                  )
+                  .join('')
+              }
+            </select></div>
+          <p class="small muted">${escapeHtml(tr('adm.connectionRestart'))}</p>
+          <div class="row">
+            <button class="btn btn-primary btn-sm" id="save-connection">${escapeHtml(tr('common.save'))}</button>
+            <div class="grow"></div>
+            <span class="small muted">${escapeHtml(tr('srv.macros'))}: ${data.macros} ·
+              ${escapeHtml(tr('srv.spam'))}: ${data.spam}</span>
           </div>
         </div>
       </section>
@@ -2110,12 +2443,28 @@ async function serverDetail(root, id) {
   };
   await load();
 
-  const send = async () => {
+  /**
+   * Eine Zeile in die Konsole schicken.
+   *
+   * **Sie heißt `sendChat` und nicht `send`.** So hieß sie einmal – und verdeckte damit in dieser
+   * ganzen Funktion den gleichnamigen Baustein oben in dieser Datei, der einen Aufruf abschickt und
+   * meldet, was daraus wurde. Jeder Knopf darunter rief also nicht das Backend, sondern diese
+   * Funktion hier: `send('/admin/servers/7/start', …)` las das leere Nachrichtenfeld, brach in der
+   * ersten Zeile ab und gab `undefined` zurück. „Alle starten“, „Alle stoppen“, Neustart, Sperren,
+   * +30 Tage, Abrechnung aussetzen, Tarifwechsel und Standortwechsel taten auf diesem Bildschirm
+   * seitdem nichts – ohne Fehlermeldung, denn es *ging* ja nichts schief.
+   */
+  const sendChat = async () => {
     const text = $('#msg').value.trim();
     if (!text) return;
     $('#msg').value = '';
+    // Leer heißt „alle“ – dann bleibt der Aufruf derselbe wie bisher.
+    const only = Number($('#target')?.value || 0);
     try {
-      const result = await api(`/admin/servers/${id}/send`, { method: 'POST', body: { text } });
+      const result = await api(`/admin/servers/${id}/send`, {
+        method: 'POST',
+        body: only ? { text, accounts: [only] } : { text },
+      });
       const failed = (result.results || []).filter((entry) => !entry.ok);
       if (failed.length === (result.results || []).length && failed.length) toast(failed[0].error, 'bad');
       setTimeout(load, 600);
@@ -2123,25 +2472,86 @@ async function serverDetail(root, id) {
       fail(error);
     }
   };
-  $('#send').addEventListener('click', send);
+  $('#send').addEventListener('click', sendChat);
   $('#msg').addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') send();
+    if (event.key === 'Enter') sendChat();
   });
 
+  // ------------------------------------------------------------ Die Kontenliste, laufend
+
+  /**
+   * Die Knöpfe an den Kontozeilen anbinden.
+   *
+   * Muss nach jedem Neuzeichnen der Liste wieder laufen: `innerHTML` ersetzt die Elemente, und mit
+   * ihnen sind auch die daran hängenden Ereignisse weg.
+   */
+  const bindAccounts = () => {
+    $$('[data-account-suspend]').forEach((button) => {
+      const account = accounts.find((entry) => entry.account_id === Number(button.dataset.accountSuspend));
+      button.addEventListener('click', () => changeAccountSuspension(account));
+    });
+    $$('[data-bot]').forEach((button) =>
+      button.addEventListener('click', async () => {
+        // Zweimal auf „Neu starten“ zu drücken, weil die Zeile noch nichts anzeigt, wäre ein
+        // zweiter Neustart mitten im ersten. Der Knopf geht deshalb sofort aus und kommt mit der
+        // nächsten Auffrischung der Liste von selbst wieder.
+        button.disabled = true;
+        await send(`/admin/servers/${id}/accounts/${button.dataset.account}/${button.dataset.bot}`, {
+          method: 'POST',
+        });
+        refresh();
+      })
+    );
+  };
+
+  /** Zustand, Fassung und Fehler der Bots neu holen – ohne den Rest der Seite anzufassen. */
+  let accounts = data.accounts;
+  const refresh = async () => {
+    try {
+      const fresh = await api(`/admin/servers/${id}`);
+      // Zwischen Absenden und Antwort kann die Seite gewechselt haben – dann gibt es die Liste
+      // nicht mehr, und in sie zu schreiben wäre ein Fehler in der Konsole ohne jeden Nutzen.
+      if (!$('#botlist')) return;
+      accounts = fresh.accounts;
+      $('#botlist').innerHTML = accountRows(accounts);
+      $('#botcount').textContent = `${accounts.filter((entry) => entry.online).length}/${
+        fresh.features.max_accounts
+      }`;
+      bindAccounts();
+    } catch {
+      /* beim nächsten Mal wieder */
+    }
+  };
+  bindAccounts();
+
   // Die Konsole hängt am selben Live-Kanal wie beim Kunden – aber nur für dessen eigene Bots.
-  // Für fremde Serverplätze kommt hier nichts an, deshalb wird zusätzlich nachgeladen.
+  // Für fremde Serverplätze kommt hier nichts an, deshalb wird zusätzlich nachgeladen. Die
+  // Kontenliste hängt mit dran: Sie war bisher ein Standbild vom Moment des Öffnens, und wer einen
+  // Bot startete, sah daneben minutenlang weiter "offline".
   const poll = setInterval(() => {
     if (state.route.name !== 'admin' || state.route.tab !== 'servers') return clearInterval(poll);
     load();
+    refresh();
   }, 5000);
 
   // ------------------------------------------------------------ Knöpfe
 
   for (const [selector, action] of [['#start', 'start'], ['#stop', 'stop'], ['#restart', 'restart']]) {
     $(selector).addEventListener('click', async () => {
-      await send(`/admin/servers/${id}/${action}`, { method: 'POST' });
+      if (await send(`/admin/servers/${id}/${action}`, { method: 'POST' })) refresh();
     });
   }
+
+  $('#rollout')?.addEventListener('click', async () => {
+    const confirmed = await confirmDialog(tr('adm.rolloutHereAsk', { n: data.outdated_bots }), {
+      confirm: tr('adm.rolloutHere'),
+    });
+    if (!confirmed) return;
+    const result = await send(`/admin/servers/${id}/client-rollout`, { method: 'POST' }, { done: false });
+    if (!result) return;
+    ok(tr('adm.rolloutDone', { n: result.restarted }));
+    setTimeout(draw, 2000);
+  });
 
   $('#lock').addEventListener('click', async () => {
     if (profile.locked) {
@@ -2171,11 +2581,6 @@ async function serverDetail(root, id) {
     })) draw();
   });
 
-  $$('[data-account-suspend]').forEach((button) => {
-    const account = data.accounts.find((entry) => entry.account_id === Number(button.dataset.accountSuspend));
-    button.addEventListener('click', () => changeAccountSuspension(account));
-  });
-
   $('#plan').addEventListener('change', async (event) => {
     if (await send(`/admin/profiles/${id}`, {
       method: 'PATCH',
@@ -2202,6 +2607,15 @@ async function serverDetail(root, id) {
       method: 'POST',
       body: { node_id: Number(answer.node_id) },
     })) draw();
+  });
+
+  $('#save-connection').addEventListener('click', async () => {
+    const body = {
+      name: $('#srv-name').value.trim(),
+      address: $('#srv-address').value.trim(),
+      mc_version: $('#srv-version').value,
+    };
+    if (await send(`/admin/profiles/${id}`, { method: 'PATCH', body })) draw();
   });
 
   $$('[data-addon]').forEach((input) =>

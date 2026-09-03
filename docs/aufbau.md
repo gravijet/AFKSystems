@@ -731,7 +731,7 @@ richtet nginx ein und startet neu.
 Die Datenbank ist eine Datei – aber eine, in die gerade geschrieben wird. Kopieren mit `cp` erwischt
 deshalb im besten Fall eine Datei ohne die letzten Buchungen. Das Panel sichert sie selbst: einmal
 am Tag nach `data/backups/`, dazu ein Knopf unter *Administration → System*
-([verwaltung.md, Abschnitt 5](verwaltung.md#sicherungen)). Von Hand geht es genauso:
+([verwaltung.md, Abschnitt 7](verwaltung.md#sicherungen)). Von Hand geht es genauso:
 
 ```bash
 sqlite3 /opt/afksystems/data/afksystems.db ".backup '/pfad/sicherung.db'"

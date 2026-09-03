@@ -33,7 +33,7 @@ const binaries = await import('../server/binaries.js');
 const resources = await import('../server/resources.js');
 const tickets = await import('../server/tickets.js');
 const { Tickets, resolveMentions } = await import('../bot/handlers/tickets.js');
-const { Bot, supervisor, simpleChatMacro, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
+const { Bot, supervisor, simpleChatMacro, disconnectText, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
   await import('../server/supervisor.js');
 const { macros: macroEngine } = await import('../server/macros.js');
 const notify = await import('../server/notify.js');
@@ -1212,6 +1212,16 @@ test('chat colours survive the way from the client to the panel', () => {
   assert.equal(line.text, '§e[Rang] §fSteve§r: hallo');
   // Macros sehen den nackten Text – sonst fände "hallo" nichts mehr, sobald der Server färbt.
   assert.deepEqual(heard, ['[Rang] Steve: hallo']);
+});
+
+test('technical resource-pack disconnects become a clean diagnosis', () => {
+  const expected =
+    'Der Server verlangt ein Resource-Pack. Der Client hat das verpflichtende Pack nicht bestätigt.';
+  assert.equal(disconnectText('\u001b[0mmultiplayer.requiredTexturePrompt.disconnect\u001b[0m'), expected);
+  // Ereigniszeilen ersetzen das ESC-Steuerzeichen, bevor sie über die Pipe gehen; auch dieses
+  // tatsächlich im Betrieb beobachtete Fragment darf nicht im Panel oder in Aktivitäten stehen.
+  assert.equal(disconnectText('[0mmultiplayer.requiredTexturePrompt.disconnect [0m'), expected);
+  assert.equal(disconnectText('{"text":"Du bist nicht auf der Whitelist"}'), 'Du bist nicht auf der Whitelist');
 });
 
 /**
@@ -4118,6 +4128,51 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(userInfo.response.status, 200);
   assert.deepEqual(userInfo.data.tickets.map((entry) => entry.id), [openTicket.id]);
 
+  // Die Kundenseite der Verwaltung beantwortet „ich komme nicht mehr hinein“ selbst: Hat das Konto
+  // einen zweiten Faktor, welche Geräte sind offen, und was hat die Verwaltung zuletzt daran
+  // geändert. Alles drei stand vorher in der Datenbank und nirgends auf dem Bildschirm.
+  assert.equal(userInfo.data.totp.enabled, false);
+  assert.ok(Array.isArray(userInfo.data.signins));
+  assert.ok(Array.isArray(userInfo.data.audit));
+  assert.ok(Array.isArray(userInfo.data.mails));
+  assert.equal(userInfo.data.deletion, null);
+  assert.ok(userInfo.data.sessions.length >= 1, 'die offenen Sitzungen des Kunden gehören in die Ansicht');
+  // Und der Kurzabdruck ist ein Abdruck: Das Sitzungstoken selbst darf die Antwort nie verlassen.
+  assert.ok(!JSON.stringify(userInfo.data.sessions).includes(USER_TOKEN));
+  const knownRefs = new Set(userInfo.data.sessions.map((entry) => entry.ref));
+
+  // Ohne zweiten Faktor gibt es nichts abzunehmen – und die Absage sagt das, statt still
+  // „gespeichert“ zu melden.
+  const noTotp = await api(base, `/api/admin/users/${user.id}/totp-reset`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+  });
+  assert.equal(noTotp.response.status, 400);
+
+  // Ein einzelnes Gerät abmelden, ohne den Kunden aus allen übrigen zu werfen. Ein erfundener
+  // Abdruck trifft nichts; danach ist genau diese eine Sitzung weg.
+  assert.equal(
+    (
+      await api(base, `/api/admin/users/${user.id}/sessions/deadbeefdeadbeef`, {
+        token: ADMIN_TOKEN,
+        method: 'DELETE',
+      })
+    ).response.status,
+    404
+  );
+  createSession(user, 'user-second-device');
+  const secondRef = (await api(base, `/api/admin/users/${user.id}`, { token: ADMIN_TOKEN })).data.sessions.find(
+    (entry) => !knownRefs.has(entry.ref)
+  ).ref;
+  const droppedSession = await api(base, `/api/admin/users/${user.id}/sessions/${secondRef}`, {
+    token: ADMIN_TOKEN,
+    method: 'DELETE',
+  });
+  assert.equal(droppedSession.response.status, 200);
+  assert.ok(!droppedSession.data.sessions.some((entry) => entry.ref === secondRef));
+  // Das zuerst geöffnete Gerät des Kunden ist noch da – „ein Gerät abmelden“ heißt genau eines.
+  assert.equal((await api(base, '/api/me', { token: USER_TOKEN })).response.status, 200);
+
   // Ein Admin kann einen kurzlebigen Einmal-Link erzeugen. Der Link allein reicht nicht: Ohne
   // Sitzung geht es zur Anmeldung, als gewöhnlicher Nutzer gibt es eine Absage, und erst ein
   // angemeldeter Admin verbraucht ihn und erhält die geliehene Kundensitzung.
@@ -4432,6 +4487,98 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
   });
   assert.equal(foreignExport.status, 404);
+
+  // Ein Startfehler bleibt in `bots`, auch wenn der Prozess längst weg und nach einem Neustart
+  // kein Live-Objekt mehr vorhanden ist. Die Adminansicht braucht genau diesen Grund – bereinigt
+  // und erklärt statt nur des Zustandswortes „error“.
+  db.prepare(
+    `INSERT INTO bots (profile_id, account_id, state, last_error)
+     VALUES (?, ?, 'error', '[0mmultiplayer.requiredTexturePrompt.disconnect [0m')`
+  ).run(profile.id, account.id);
+  const failedServer = await api(base, `/api/admin/servers/${profile.id}`, { token: ADMIN_TOKEN });
+  assert.equal(failedServer.response.status, 200);
+  assert.equal(
+    failedServer.data.accounts.find((entry) => entry.account_id === account.id).last_error,
+    'Der Server verlangt ein Resource-Pack. Der Client hat das verpflichtende Pack nicht bestätigt.'
+  );
+
+  // Ein einzelner Bot lässt sich einzeln stoppen – von acht Bots auf einem Platz hängt eben oft
+  // genau einer, und „alle neu starten“ wirft die anderen sieben mit aus dem Spiel.
+  const stoppedOne = await api(base, `/api/admin/servers/${profile.id}/accounts/${account.id}/stop`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+  });
+  assert.equal(stoppedOne.response.status, 200);
+  // Ein Konto, das nicht auf diesem Platz sitzt, ist auch über diesen Weg keins.
+  assert.equal(
+    (
+      await api(base, `/api/admin/servers/${profile.id}/accounts/999999/restart`, {
+        token: ADMIN_TOKEN,
+        method: 'POST',
+      })
+    ).response.status,
+    404
+  );
+  // Und ein Kunde kommt an diese Knöpfe gar nicht heran.
+  assert.equal(
+    (
+      await api(base, `/api/admin/servers/${profile.id}/accounts/${account.id}/stop`, {
+        token: USER_TOKEN,
+        method: 'POST',
+      })
+    ).response.status,
+    403
+  );
+
+  // Die Bots eines einzelnen Platzes auf die Datei heben, die jetzt auf der Platte liegt. Läuft
+  // hier keiner, ist es null – der Aufruf ist trotzdem gültig und meldet ehrlich die Zahl.
+  const rollout = await api(base, `/api/admin/servers/${profile.id}/client-rollout`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+  });
+  assert.equal(rollout.response.status, 200);
+  assert.equal(rollout.data.restarted, 0);
+
+  // Adresse und Protokollversion darf die Verwaltung auch dann ändern, wenn der Platz gesperrt ist –
+  // der Kunde kann es dann nämlich nicht mehr, und genau deshalb ruft er an.
+  await api(base, `/api/admin/servers/${profile.id}/lock`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { locked: true, reason: 'Test' },
+  });
+  const nameBeforeMove = failedServer.data.profile.name;
+  const readdressed = await api(base, `/api/admin/profiles/${profile.id}`, {
+    token: ADMIN_TOKEN,
+    method: 'PATCH',
+    body: { address: 'umzug.example.net:25566', name: 'Nach dem Umzug' },
+  });
+  assert.equal(readdressed.response.status, 200);
+  const afterMove = await api(base, `/api/admin/servers/${profile.id}`, { token: ADMIN_TOKEN });
+  assert.equal(afterMove.data.profile.address, 'umzug.example.net:25566');
+  assert.equal(afterMove.data.profile.name, 'Nach dem Umzug');
+  // Zurück auf den alten Namen: Weiter unten prüft dieser Test die Kontenliste des Kunden, und
+  // dort steht derselbe Serverplatz noch einmal.
+  await api(base, `/api/admin/profiles/${profile.id}`, {
+    token: ADMIN_TOKEN,
+    method: 'PATCH',
+    body: { name: nameBeforeMove },
+  });
+  // Eine Protokollversion, die der Client nicht spricht, wird abgelehnt statt gespeichert.
+  assert.equal(
+    (
+      await api(base, `/api/admin/profiles/${profile.id}`, {
+        token: ADMIN_TOKEN,
+        method: 'PATCH',
+        body: { mc_version: '1.7.10' },
+      })
+    ).response.status,
+    binaries.state.versions.length ? 400 : 200
+  );
+  await api(base, `/api/admin/servers/${profile.id}/lock`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+    body: { locked: false },
+  });
 
   // Die texturierte Live-Ansicht ist ein Zusatz. Ohne ihn gibt es sie auch nicht über den Umweg
   // der Bild-Endpunkte – sonst wäre der bezahlte Teil des Zusatzes nur eine Schaltfläche.

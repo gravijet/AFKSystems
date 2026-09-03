@@ -349,10 +349,23 @@ function classify(line) {
  * Roh im Panel sähe das aus wie ein Fehler im Panel – dabei ist es die Antwort des Servers und
  * meist die ganze Erklärung ("Du bist gebannt", "falsche Version", "Server voll").
  */
+const DISCONNECT_MESSAGES = {
+  'multiplayer.requiredTexturePrompt.disconnect':
+    'Der Server verlangt ein Resource-Pack. Der Client hat das verpflichtende Pack nicht bestätigt.',
+};
+
 function disconnectText(raw) {
-  const text = String(raw || '').trim();
+  // `@event` muss einzeilig sein. Der Client ersetzt deshalb Steuerzeichen durch Leerzeichen;
+  // von einer ANSI-Farbe blieb auf diesem Weg bisher beispielsweise `[0m` stehen. Das ist weder
+  // Teil der Servermeldung noch für einen Menschen hilfreich. Echte Escape-Sequenzen und solche
+  // verwaisten Enden werden hier gleichermaßen entfernt.
+  const text = stripAnsi(String(raw || ''))
+    .replace(/\[[0-9;?]*m/g, '')
+    .trim();
   if (!text) return '';
-  if (!text.startsWith('{') && !text.startsWith('[')) return text.slice(0, 300);
+  if (!text.startsWith('{') && !text.startsWith('[')) {
+    return (DISCONNECT_MESSAGES[text] || text).slice(0, 300);
+  }
   let data;
   try {
     data = JSON.parse(text);
@@ -374,7 +387,8 @@ function disconnectText(raw) {
       ...(Array.isArray(node.extra) ? node.extra.map((entry) => walk(entry, depth + 1)) : []),
     ].join('');
   };
-  return walk(data).replace(/\s+/g, ' ').trim().slice(0, 300);
+  const rendered = walk(data).replace(/\s+/g, ' ').trim();
+  return (DISCONNECT_MESSAGES[rendered] || rendered).slice(0, 300);
 }
 
 /**
@@ -2622,4 +2636,4 @@ function clientCanTake(macro) {
 }
 
 export const supervisor = new Supervisor();
-export { Bot, simpleChatMacro, clientCanTake, parseEvent, parseView };
+export { Bot, simpleChatMacro, clientCanTake, disconnectText, parseEvent, parseView };

@@ -206,6 +206,22 @@ gilt für **alle** Kunden dieser Maschine, während die Selbsthilfe des Clients 
 `XDG_CONFIG_HOME` landet – und das ist hier das Verzeichnis *eines* Kunden. Bei dreißig Kunden mit
 Live-Ansicht wären das dreißigmal dieselben dreißig Megabyte.
 
+### Pflicht-Resource-Packs (Client 2.6.1)
+
+Bis 2.6.0 lehnte der Rust-Client ein Resource-Pack des Servers ab. Wo eines **Pflicht** ist, warf
+der Server ihn dafür hinaus – mit einer Meldung, die kein Mensch lesen soll:
+`multiplayer.requiredTexturePrompt.disconnect`. Im Panel stand sie roh in der Kontenliste und sah
+aus wie ein Fehler des Panels.
+
+Zwei Dinge stehen dagegen, und beide bleiben nebeneinander stehen:
+
+* **Der Client bestätigt Pflicht-Packs jetzt** wie die Java-Variante (`ACCEPTED`,
+  `SUCCESSFULLY_LOADED`), auch wenn ein kopfloser AFK-Client ihre Bilder nie zeichnet. Damit
+  entsteht dieser Kick gar nicht mehr.
+* **Das Panel übersetzt die Meldung trotzdem** in einen Satz, der sagt, was los ist (siehe
+  `DISCONNECT_MESSAGES` in `server/supervisor.js`). Ein Bot, der seit zwei Wochen läuft, läuft mit
+  der Datei von vor zwei Wochen – und ein Standort, der seine Dateien noch nicht geholt hat, ebenso.
+
 ### Eine neue Fassung erreicht laufende Bots nicht von selbst
 
 Der Stundentakt holt jedes neue Release aus `gravijet/HugoAFKClient` und legt die Dateien nach
@@ -222,9 +238,11 @@ Platte liegt, steht das an drei Stellen:
 * am Bot selbst in der Kontenliste (`Client 2.5.0`),
 * als Hinweis über dem Reiter *Verbinden* mit einem Knopf, der genau die betroffenen Bots dieses
   Platzes neu startet,
+* in der Verwaltung an jeder Kontozeile eines Serverplatzes, mit demselben Knopf für genau diesen
+  einen Kunden,
 * unter *Administration → Client* für alle Konten auf einmal, nach Fassung aufgeschlüsselt.
 
-Beide Knöpfe starten gestaffelt (drei bzw. fünf Sekunden Abstand): Zwanzig Bots, die im selben
+Alle diese Knöpfe starten gestaffelt (zwei bis fünf Sekunden Abstand): Zwanzig Bots, die im selben
 Augenblick beim selben Minecraft-Server anklopfen, sehen von dort aus wie ein Angriff, und die
 üblichen Schutzmaßnahmen träfen genau die, die gerade wiederkommen wollten.
 
@@ -627,6 +645,8 @@ ist, steht ausführlich in **[docs/verwaltung.md](docs/verwaltung.md)**; die Kur
 | Werkzeug | Wofür |
 | --- | --- |
 | **Strg+K** | Suche über alles: Nutzer, Serverplätze, Accounts, Tickets, Gutscheine, Standorte, Aufladungen – ein Anhaltspunkt genügt |
+| **Die Seite eines Kunden** | zweiter Faktor, angemeldete Geräte (einzeln abzumelden), die letzten Anmeldeversuche mit Grund, verschickte Post, Protokoll, Proxys, Aufladungen – die Antwort auf „ich komme nicht mehr hinein“ ohne einen Griff in die Datenbank |
+| **Die Seite eines Serverplatzes** | jeden Bot einzeln starten, stoppen, neu starten; die Konsole an ein einzelnes Konto; Fassung und Bauform je Bot samt Knopf auf die neue Datei; Adresse und Protokollversion ändern, auch im gesperrten Zustand |
 | **Betrieb** | alle laufenden Bots über alle Standorte hinweg, dazu die wiederkehrenden Aufgaben mit letztem Lauf, Dauer, Fehler und einem Knopf „jetzt laufen“ |
 | **Sicherheit** | Anmeldeversuche, die Bremse gegen Passwort-Raten, Adresssperren (auch als Netz, auch IPv6), offene Sitzungen |
 | **Sicherungen** | eine am Tag von selbst, dazu auf Knopfdruck; als Datei zum Mitnehmen |

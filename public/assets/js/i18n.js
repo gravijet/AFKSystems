@@ -1230,7 +1230,7 @@ export const S = {
   'tk.status.open': { en: 'Open', de: 'Offen' },
   'tk.status.answered': { en: 'Answered', de: 'Beantwortet' },
   'tk.status.closed': { en: 'Closed', de: 'Geschlossen' },
-  'tk.staff': { en: 'Support', de: 'Support' },
+  'tk.staff': { en: 'Team', de: 'Team' },
   'tk.you': { en: 'You', de: 'Du' },
   'tk.internal': { en: 'Internal note', de: 'Interne Notiz' },
   'tk.hours': { en: 'We usually answer {hours}.', de: 'Wir antworten meist {hours}.' },
@@ -2685,6 +2685,77 @@ export const S = {
   'adm.notes': { en: 'Internal notes', de: 'Interne Notizen' },
   'adm.reason': { en: 'Reason', de: 'Grund' },
   'adm.allowance': { en: 'Proxies allowed', de: 'Erlaubte Proxys' },
+
+  // ------------------------------------------------ Die Kundenseite der Verwaltung
+  //
+  // Alles hier beantwortet eine Frage, die im Support tatsächlich gestellt wird – und die vorher
+  // nur mit einem Griff in die Datenbank zu beantworten war.
+  'adm.access': { en: 'Access to this account', de: 'Zugang zu diesem Konto' },
+  'adm.accessSub': {
+    en: 'Second factor, open devices and the last attempts – side by side, because only the comparison answers the question.',
+    de: 'Zweiter Faktor, offene Geräte und die letzten Versuche – nebeneinander, weil erst der Vergleich die Frage beantwortet.',
+  },
+  'adm.sessions': { en: 'Signed-in devices', de: 'Angemeldete Geräte' },
+  'adm.sessionsSub': {
+    en: 'Where this account is open right now.',
+    de: 'Wo dieses Konto gerade offen ist.',
+  },
+  'adm.sessionEnd': { en: 'Sign out', de: 'Abmelden' },
+  'adm.sessionEndAsk': {
+    en: 'Sign this device out? The other devices of this account stay signed in.',
+    de: 'Dieses Gerät abmelden? Die übrigen Geräte dieses Kontos bleiben angemeldet.',
+  },
+  'adm.signIns': { en: 'Sign-in attempts', de: 'Anmeldeversuche' },
+  'adm.signInsSub': {
+    en: 'The answer to “I cannot get in”: whether the attempts arrive at all, and what they fail on.',
+    de: 'Die Antwort auf „ich komme nicht hinein“: ob die Versuche überhaupt ankommen und woran sie scheitern.',
+  },
+  'adm.totp': { en: 'Two-factor sign-in', de: 'Zwei-Faktor-Anmeldung' },
+  'adm.totpSince': { en: 'Set up {when}', de: 'Eingerichtet {when}' },
+  'adm.totpRecovery': {
+    en: '{left} of {total} recovery codes left',
+    de: 'Noch {left} von {total} Wiederherstellungscodes',
+  },
+  'adm.totpOff': { en: 'This account has no second factor.', de: 'Dieses Konto hat keinen zweiten Faktor.' },
+  'adm.totpReset': { en: 'Remove second factor', de: 'Zweiten Faktor abnehmen' },
+  'adm.totpResetAsk': {
+    en: 'Remove the second factor from this account? The password alone gets in afterwards, the customer is told by email, and the step is logged.',
+    de: 'Den zweiten Faktor dieses Kontos abnehmen? Danach genügt das Passwort allein, der Kunde bekommt eine E-Mail, und der Vorgang steht im Protokoll.',
+  },
+  'adm.userMails': { en: 'Mail to this account', de: 'Post an dieses Konto' },
+  'adm.userAudit': { en: 'Recent entries in the log', de: 'Letzte Einträge im Protokoll' },
+  'adm.auditAll': { en: 'Show the whole log', de: 'Ganzes Protokoll' },
+  'adm.cancelDeletion': { en: 'Take back the deletion', de: 'Löschung zurücknehmen' },
+  'adm.cancelDeletionAsk': {
+    en: 'Take the scheduled deletion back? Everything stays as it is and the bots come back on their own.',
+    de: 'Die angemeldete Löschung zurücknehmen? Es bleibt alles stehen, und die Bots kommen von selbst wieder.',
+  },
+
+  // ------------------------------------------------ Die Serverplatzseite der Verwaltung
+  'adm.botStart': { en: 'Start this bot', de: 'Diesen Bot starten' },
+  'adm.botStop': { en: 'Stop this bot', de: 'Diesen Bot stoppen' },
+  'adm.botRestart': { en: 'Restart this bot', de: 'Diesen Bot neu starten' },
+  'adm.clientRunning': { en: 'Client {version}', de: 'Client {version}' },
+  'adm.clientOutdated': {
+    en: 'Older file – {version} is on disk',
+    de: 'Ältere Datei – auf der Platte liegt {version}',
+  },
+  'adm.rolloutHere': { en: 'Move these bots to the new client', de: 'Diese Bots auf den neuen Client heben' },
+  'adm.rolloutHereAsk': {
+    en: '{n} bot(s) on this slot still run an older client file. Restart them one after another? Each one leaves the game for a moment.',
+    de: '{n} Bot(s) dieses Platzes laufen noch mit einer älteren Client-Datei. Nacheinander neu starten? Jeder ist dabei kurz aus dem Spiel.',
+  },
+  'adm.rolloutDone': { en: '{n} bot(s) are restarting.', de: '{n} Bot(s) starten neu.' },
+  'adm.sendTo': { en: 'To', de: 'An' },
+  'adm.sendAll': { en: 'every account', de: 'alle Konten' },
+  'adm.connection': { en: 'Connection', de: 'Verbindung' },
+  'adm.connectionSub': { en: 'also while suspended', de: 'auch im gesperrten Zustand' },
+  'adm.connectionRestart': {
+    en: 'Running bots keep the old address until they restart.',
+    de: 'Laufende Bots behalten die alte Adresse, bis sie neu starten.',
+  },
+  'adm.proxyDirect': { en: 'no own proxy – over the location', de: 'kein eigener Proxy – über den Standort' },
+  'adm.retryIn': { en: 'retry {n} in {sec}s', de: 'Versuch {n} in {sec}s' },
 
   // ------------------------------------------------ Der Tarif-Editor
   //
