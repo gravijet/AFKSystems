@@ -6815,6 +6815,49 @@ dialog.shortcuts {
 .schedule-preflight {
   margin: 0;
 }
+.macro-templates {
+  width: min(100% - 2rem, 42rem);
+}
+.macro-templates header {
+  align-items: flex-start;
+}
+.macro-templates header p {
+  margin: .25rem 0 0;
+}
+.macro-template {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: .25rem 1rem;
+  width: 100%;
+  padding: 1rem;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.macro-template:hover,
+.macro-template:focus-visible {
+  border-color: var(--accent);
+  background: var(--surface-2);
+}
+.macro-template > span:not(.macro-template-open) {
+  grid-column: 1 / -1;
+  color: var(--text-2);
+  font-size: .85rem;
+  line-height: 1.45;
+}
+.macro-template-open {
+  grid-column: 2;
+  grid-row: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: .3rem;
+  color: var(--accent);
+  font-size: .78rem;
+  font-weight: 700;
+}
 
 /* ---------------------------------------------------------------- Zeitpläne
  *
