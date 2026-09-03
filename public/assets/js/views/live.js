@@ -78,6 +78,11 @@ export async function tabPov(root, profile) {
   let rate = RATES.includes(saved.rate) ? saved.rate : 5;
   let steering = saved.steer !== false;
   let step = Number(saved.step) >= 1 ? Math.min(16, Math.round(Number(saved.step))) : 2;
+  let compact = Boolean(saved.compact);
+  // Mehrfachauswahl ist eine Sache dieses Aufrufs, keine Voreinstellung – wer sie einmal
+  // eingeschaltet und den Reiter verlassen hat, will beim nächsten Mal wieder einzeln steuern.
+  let grouping = false;
+  const selected = new Set();
 
   root.innerHTML = `
     <div class="row spread wrap" style="margin-bottom:1rem;gap:1rem">
@@ -118,6 +123,18 @@ export async function tabPov(root, profile) {
         <input type="checkbox" id="pov-control" ${steering ? 'checked' : ''}>
         ${escapeHtml(tr('pov.control'))}
       </label>
+      ${
+        members.length > 1
+          ? `<label class="check small" title="${escapeHtml(tr('pov.compactHint'))}">
+              <input type="checkbox" id="pov-compact" ${compact ? 'checked' : ''}>
+              ${escapeHtml(tr('pov.compact'))}
+            </label>
+            <label class="check small" title="${escapeHtml(tr('pov.groupHint'))}">
+              <input type="checkbox" id="pov-group">
+              ${escapeHtml(tr('pov.group'))}
+            </label>`
+          : ''
+      }
       <div class="grow"></div>
       <div class="row" id="pov-voxel-tools" hidden>
         <button class="btn btn-sm btn-primary" id="pov-live">${icon('play')} ${escapeHtml(tr('pov.start'))}</button>
@@ -126,7 +143,7 @@ export async function tabPov(root, profile) {
       </div>
     </div>
 
-    <div class="pov-grid" id="pov-views"></div>
+    <div class="pov-grid ${compact ? 'compact' : ''}" id="pov-views"></div>
 
     <details class="fold pov-keys">
       <summary>${escapeHtml(tr('pov.keysTitle'))}</summary>
@@ -161,7 +178,12 @@ export async function tabPov(root, profile) {
     return `<article class="pov" data-account="${member.account_id}" tabindex="0"
         aria-label="${escapeHtml(tr('pov.stageLabel', { name: member.name }))}">
       <header>
-        <span class="truncate strong">${escapeHtml(member.name)}</span>
+        <span class="row" style="gap:.4rem;min-width:0">
+          <label class="pov-select" hidden>
+            <input type="checkbox" data-select="${member.account_id}">
+          </label>
+          <span class="truncate strong">${escapeHtml(member.name)}</span>
+        </span>
         <span class="small muted pov-status mono"></span>
       </header>
       <div class="pov-stage">
@@ -175,6 +197,8 @@ export async function tabPov(root, profile) {
         <div class="pov-tools">
           <button class="pov-tool" data-tool="shot" title="${escapeHtml(tr('pov.shot'))}"
             aria-label="${escapeHtml(tr('pov.shot'))}">${icon('image')}</button>
+          <button class="pov-tool" data-tool="pip" hidden title="${escapeHtml(tr('pov.pip'))}"
+            aria-label="${escapeHtml(tr('pov.pip'))}">${icon('external')}</button>
           <button class="pov-tool" data-tool="full" title="${escapeHtml(tr('pov.full'))}"
             aria-label="${escapeHtml(tr('pov.full'))}">${icon('expand')}</button>
         </div>
@@ -500,15 +524,24 @@ export async function tabPov(root, profile) {
 
   // ------------------------------------------------------------ Steuern
 
-  /** Einen örtlichen Befehl an genau diesen Bot schicken – gedrosselt, aber ohne Warteschlange. */
+  /**
+   * Einen örtlichen Befehl schicken – gedrosselt, aber ohne Warteschlange.
+   *
+   * Läuft die Mehrfachauswahl und gehört diese Bühne dazu, geht derselbe Befehl an alle
+   * ausgewählten Konten in einer einzigen Anfrage (der Endpunkt kann das schon, siehe
+   * `voxelCommand`). Eine Bühne außerhalb der Auswahl steuert weiter für sich allein – wer in ein
+   * fremdes Bild klickt, will genau diesen Bot steuern, nicht die ganze Gruppe.
+   */
   async function act(stage, verb, arg = '') {
     const now = Date.now();
     if (now - stage.lastCommand < COMMAND_GAP_MS) return false;
     stage.lastCommand = now;
+    const accounts =
+      grouping && selected.size > 1 && selected.has(stage.accountId) ? [...selected] : [stage.accountId];
     try {
       const result = await api(`/profiles/${profile.id}/command`, {
         method: 'POST',
-        body: { verb, arg, accounts: [stage.accountId] },
+        body: { verb, arg, accounts },
       });
       const failed = (result.results || []).find((entry) => !entry.ok);
       if (failed) {
@@ -611,6 +644,11 @@ export async function tabPov(root, profile) {
 
   function bindStage(stage) {
     const node = stage.node;
+
+    $(`[data-select="${stage.accountId}"]`, node).addEventListener('change', (event) => {
+      if (event.target.checked) selected.add(stage.accountId);
+      else selected.delete(stage.accountId);
+    });
 
     // Ein Klick neben das Fenster schließt es, wie im Spiel. Der Zuhörer sitzt an der Fläche und
     // nicht an ihrem Inhalt: Der Inhalt wird bei jeder Änderung neu gebaut, und ein Zuhörer je
@@ -717,6 +755,7 @@ export async function tabPov(root, profile) {
     for (const button of $$('[data-tool]', node)) {
       button.addEventListener('click', () => {
         if (button.dataset.tool === 'shot') return snapshot(stage);
+        if (button.dataset.tool === 'pip') return void openPip(stage);
         if (document.fullscreenElement === node) document.exitFullscreen?.();
         else node.requestFullscreen?.();
       });
@@ -745,6 +784,47 @@ export async function tabPov(root, profile) {
     stage.canvas.toBlob((blob) => {
       if (blob) download(URL.createObjectURL(blob), true);
     }, 'image/png');
+  }
+
+  /**
+   * Bild-im-Bild: dieselbe Bühne in einem eigenen, immer obenauf schwebenden Fenster.
+   *
+   * Verschoben wird der echte Knoten – `pullFrame`/`paintVoxel` schreiben weiter genau dorthin,
+   * ganz gleich, in welchem Dokument er gerade steht. An seiner Stelle bleibt ein Platzhalter, und
+   * beim Schließen des Fensters (`pagehide`) kommt die Bühne an genau die Stelle zurück.
+   */
+  async function openPip(stage) {
+    if (!window.documentPictureInPicture) return;
+    const stageBox = $('.pov-stage', stage.node);
+    const placeholder = document.createElement('p');
+    placeholder.className = 'pov-hint';
+    placeholder.style.position = 'static';
+    placeholder.style.transform = 'none';
+    placeholder.textContent = tr('pov.pipRunning');
+
+    let pipWindow;
+    try {
+      pipWindow = await window.documentPictureInPicture.requestWindow({
+        width: Math.round(stageBox.clientWidth) || 426,
+        height: Math.round(stageBox.clientHeight) || 240,
+      });
+    } catch {
+      // Vom Nutzer abgebrochen oder der Browser mag gerade nicht – kein Grund für eine Meldung.
+      return;
+    }
+    // Dieselben Stile wie die Hauptseite, sonst steht das Bild nackt in einem weißen Fenster.
+    for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+      pipWindow.document.head.append(link.cloneNode());
+    }
+    pipWindow.document.body.style.margin = '0';
+    pipWindow.document.body.style.background = '#05070a';
+    pipWindow.document.body.append(stageBox);
+
+    pipWindow.addEventListener('pagehide', () => {
+      stage.node.insertBefore(stageBox, stage.hotbar);
+      placeholder.remove();
+    });
+    stage.node.insertBefore(placeholder, stage.hotbar);
   }
 
   // ------------------------------------------------------------ Voxelweg
@@ -801,6 +881,9 @@ export async function tabPov(root, profile) {
       for (const url of stage.urls) URL.revokeObjectURL(url);
       stage.urls = [];
     }
+    // Ein offenes Bild-im-Bild-Fenster hängt sonst an einer Bühne, die niemand mehr aktualisiert –
+    // ein eingefrorenes Bild ist schlimmer als gar keins.
+    window.documentPictureInPicture?.window?.close();
     // Nur der Voxelweg muss abbestellt werden: Dort zeichnet der Client von sich aus weiter, bis
     // ihm jemand sagt, dass niemand mehr zusieht. Der texturierte rechnet ohnehin nur auf Zuruf.
     const voxel = [...stages.values()].filter((stage) => stage.voxelAsked).map((stage) => stage.accountId);
@@ -850,11 +933,34 @@ export async function tabPov(root, profile) {
   });
   for (const stage of stages.values()) stage.node.classList.toggle('no-control', !steering);
 
+  $('#pov-compact')?.addEventListener('change', (event) => {
+    compact = event.target.checked;
+    savePref({ compact });
+    $('#pov-views').classList.toggle('compact', compact);
+  });
+
+  // Die Mehrfachauswahl ist bewusst keine Voreinstellung (siehe oben) – eingeschaltet zeigt jede
+  // Bühne ihr Kästchen, ausgeschaltet ist die Auswahl weg und jede Bühne steuert wieder für sich.
+  $('#pov-group')?.addEventListener('change', (event) => {
+    grouping = event.target.checked;
+    if (!grouping) selected.clear();
+    for (const stage of stages.values()) {
+      $('.pov-select', stage.node).hidden = !grouping;
+      $(`[data-select="${stage.accountId}"]`, stage.node).checked = grouping && selected.has(stage.accountId);
+    }
+  });
+
   $('#pov-live').addEventListener('click', () => voxelCommand('live'));
   $('#pov-frame').addEventListener('click', () => voxelCommand('frame'));
   $('#pov-stop').addEventListener('click', () => voxelCommand('stop'));
 
   // ------------------------------------------------------------ Loslegen
+
+  // Der Knopf bleibt verborgen, wo der Browser die Programmierschnittstelle nicht kennt – ein
+  // Knopf, der nichts tut, ist schlimmer als kein Knopf.
+  if (window.documentPictureInPicture) {
+    for (const button of $$('[data-tool="pip"]')) button.hidden = false;
+  }
 
   for (const stage of stages.values()) {
     const bot = botOf(stage);
