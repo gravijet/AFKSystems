@@ -2388,6 +2388,37 @@ async function tabProxies(root, profile) {
 
 // ---------------------------------------------------------------- Macros
 
+// Vorlagen füllen nie still etwas aus. Sie sind nur ein nachvollziehbarer Startpunkt für den
+// Editor: Erst dort sieht und verändert jemand Auslöser, Zielkonten und jeden einzelnen Schritt.
+const MACRO_TEMPLATES = Object.freeze([
+  {
+    id: 'join-afk',
+    title: 'srv.template.joinAfk',
+    text: 'srv.template.joinAfkText',
+    nameKey: 'srv.template.joinAfkName',
+    event: 'join',
+    actions: [{ type: 'chat', text: '/afk' }],
+  },
+  {
+    id: 'reconnect-wait',
+    title: 'srv.template.reconnectWait',
+    text: 'srv.template.reconnectWaitText',
+    nameKey: 'srv.template.reconnectWaitName',
+    event: 'join',
+    actions: [{ type: 'wait', seconds: 5 }],
+  },
+  {
+    id: 'chat-reply',
+    title: 'srv.template.chatReply',
+    text: 'srv.template.chatReplyText',
+    nameKey: 'srv.template.chatReplyName',
+    event: 'chat',
+    config: { contains: 'afk?' },
+    cooldown_sec: 300,
+    actions: [{ type: 'chat', text: 'Ich bin gerade AFK.' }],
+  },
+]);
+
 async function tabMacros(root, profile) {
   const { macros } = await api(`/profiles/${profile.id}/macros`);
   const events = Object.fromEntries(state.meta.events.map((event) => [event.type, event.label]));
