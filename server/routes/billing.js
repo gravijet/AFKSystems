@@ -73,19 +73,36 @@ router.get(
     // der Zukunft sind bewusst nicht geraten – die Prognose zeigt genau den Stand von jetzt.
     let projectedBalance = user.credits;
     const forecastBySlot = new Map();
+    const renewalQueue = [];
     for (const slot of [...slots]
       .filter((slot) => !slot.free_slot && slot.renew && !slot.suspended && slot.paid_until)
       .sort((a, b) => a.paid_until - b.paid_until || a.id - b.id)) {
       const before = projectedBalance;
       const covered = before >= slot.price_credits;
-      forecastBySlot.set(slot.id, {
+      const forecast = {
         before_credits: before,
         cost_credits: slot.price_credits,
         covered,
         shortfall_credits: covered ? 0 : slot.price_credits - before,
+      };
+      forecastBySlot.set(slot.id, forecast);
+      renewalQueue.push({
+        id: slot.id,
+        name: slot.name,
+        due_at: slot.paid_until,
+        due_in_days: Math.max(0, Math.ceil((slot.paid_until - Date.now()) / 86_400_000)),
+        ...forecast,
       });
       projectedBalance = Math.max(0, before - slot.price_credits);
     }
+    // `months_left` is a useful coarse number, but it hides the actual order of renewals. Keep a
+    // compact, explicitly non-speculative runway alongside it: no guessed future deposits, price
+    // changes, or renewals beyond the next due event per slot. This lets the UI say which exact
+    // renewal needs money and when, rather than turning a low balance into a generic warning.
+    const firstUncovered = renewalQueue.find((entry) => !entry.covered) || null;
+    const coveredRenewals = renewalQueue.filter((entry) => entry.covered);
+    const lastCovered = coveredRenewals.at(-1) || null;
+    const nextRenewal = renewalQueue[0] || null;
     res.json({
       balance: user.credits,
       balance_text: formatCredits(user.credits, lang),
@@ -94,6 +111,14 @@ router.get(
       months_left: monthly > 0 ? Math.floor(user.credits / monthly) : null,
       low_balance: Number(getSetting('low_balance')),
       month_days: billing.MONTH_DAYS,
+      runway: {
+        renewal_count: renewalQueue.length,
+        covered_count: coveredRenewals.length,
+        next: nextRenewal,
+        first_uncovered: firstUncovered,
+        covered_until: lastCovered?.due_at || null,
+        balance_after_covered: projectedBalance,
+      },
       free_slots: billing.freeSlots(),
       free_slots_left: Math.max(0, billing.freeSlots() - billing.usedFreeSlots(user.id)),
       slots: slots.map((slot) => ({ ...slot, forecast: forecastBySlot.get(slot.id) || null })),

@@ -4772,6 +4772,70 @@ hr.rule {
   box-shadow: inset 0 1px 0 var(--line-soft);
 }
 
+/* Die Reichweite steht unmittelbar vor der Aufladung: Der Hinweis nennt keinen vagen Monat,
+ * sondern die nächste tatsächlich ungedeckte Verlängerung aus dem serverseitigen Ablauf. */
+.renewal-runway {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.85rem 1rem;
+  align-items: center;
+  margin: 0 0 1.5rem;
+  padding: 1.1rem 1.2rem;
+  border: 1px solid var(--line);
+  border-radius: var(--r-2xl);
+  background: var(--surface-2);
+  box-shadow: var(--shadow);
+}
+.renewal-runway.is-gap {
+  border-color: color-mix(in srgb, var(--bad) 38%, var(--line));
+  background: color-mix(in srgb, var(--bad) 7%, var(--surface-2));
+}
+.renewal-runway.is-covered {
+  border-color: color-mix(in srgb, var(--ok) 34%, var(--line));
+  background: color-mix(in srgb, var(--ok) 6%, var(--surface-2));
+}
+.renewal-runway-icon {
+  display: grid;
+  width: 2.35rem;
+  height: 2.35rem;
+  place-items: center;
+  border-radius: 50%;
+}
+.is-gap .renewal-runway-icon {
+  color: var(--bad-text);
+  background: color-mix(in srgb, var(--bad) 16%, transparent);
+}
+.is-covered .renewal-runway-icon {
+  color: var(--ok-text);
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+}
+.renewal-runway-copy h2 {
+  margin: 0.06rem 0 0;
+  font-size: 1rem;
+}
+.renewal-runway-copy p:not(.eyebrow) {
+  margin: 0.28rem 0 0;
+  color: var(--text-2);
+  font-size: 0.875rem;
+}
+.renewal-runway-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  margin-top: 0.5rem;
+  color: var(--text-2);
+  font-size: 0.75rem;
+}
+@media (max-width: 38rem) {
+  .renewal-runway {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .renewal-runway .btn {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
+
 /* Der Kontoauszug als Liste – vier Spalten in einer Tabelle brauchten unten am Rand mehr Platz,
  * als da war, und landeten deshalb ganz nach unten. */
 .renewal-state {
