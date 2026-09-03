@@ -6812,6 +6812,9 @@ dialog.shortcuts {
 .dashboard-order-reset {
   margin-top: .5rem;
 }
+.schedule-preflight {
+  margin: 0;
+}
 
 /* ---------------------------------------------------------------- Zeitpläne
  *

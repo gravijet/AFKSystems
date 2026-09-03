@@ -560,6 +560,10 @@ export const S = {
     de: 'Mindestens einer. Der Tag zählt für den Zeitpunkt des Plans, nicht für jetzt.',
   },
   'sch.daysBad': { en: 'Pick at least one weekday.', de: 'Bitte mindestens einen Wochentag wählen.' },
+  'sch.conflict': {
+    en: '{n} active schedule(s) will also affect this target then with “{action}”. Check whether that is intentional.',
+    de: '{n} aktive(r) Zeitplan/Zeitpläne wirkt/wirken dann ebenfalls mit „{action}“ auf dieses Ziel. Prüfe, ob das beabsichtigt ist.',
+  },
   'sch.everyDay': { en: 'every day', de: 'täglich' },
   'sch.note': { en: 'Note', de: 'Notiz' },
   'sch.notePlaceholder': { en: 'What this is for', de: 'Wofür das gut ist' },
