@@ -84,8 +84,10 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Laufzeitprognose pro kostenpflichtigem Platz statt nur einer globalen Monatszahl: Die
       Abrechnung zeigt für jede kommende automatische Verlängerung in echter Fälligkeitsreihenfolge,
       ob das aktuelle Guthaben reicht oder welcher Betrag fehlt.
-- [ ] Änderungen an Tarif/Zusatz als nachvollziehbare Vorher-Nachher-Rechnung mit
-      anteiligem Betrag darstellen.
+- [x] Änderungen an Tarif/Zusatz als nachvollziehbare Vorher-Nachher-Rechnung mit
+      anteiligem Betrag darstellen; Guthaben, Restgutschrift, neue Laufzeit, Folgekosten,
+      weggefallene Merkmale und mögliche Bot-Auswirkungen werden vor der Buchung vom Server
+      berechnet und gezeigt.
 - [x] Belegarchiv um Filter, sichere Downloads und verständliche Zahlungsstatus erweitern:
       Belegnummer und Status lassen sich lokal filtern, Erstattungen sind markiert und ein
       eigens angeforderter Download kommt als privater Anhang statt als zwischenspeicherbare Seite.

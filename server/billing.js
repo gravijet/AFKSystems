@@ -135,7 +135,7 @@ export const addonByKey = (key) => addonTable().find((addon) => addon.key === St
 export function addonsOf(profileId) {
   return db
     .prepare(
-      `SELECT a.*, pa.qty FROM profile_addons pa JOIN addons a ON a.id = pa.addon_id
+      `SELECT a.*, pa.qty, pa.paid_credits FROM profile_addons pa JOIN addons a ON a.id = pa.addon_id
         WHERE pa.profile_id = ? ORDER BY a.sort, a.id`
     )
     .all(profileId);
@@ -202,6 +202,104 @@ export function monthlyPrice(profile, booked = null) {
     plan.price_credits +
     (booked ?? addonsOf(profile.id)).reduce((sum, entry) => sum + entry.price_credits * entry.qty, 0)
   );
+}
+
+/** Dieselbe Merkmalsrechnung wie `featuresOf`, nur für einen noch nicht gebuchten Tarifwechsel. */
+function projectedFeatures(plan, booked) {
+  const merged = { ...plan };
+  for (const entry of booked) {
+    if (entry.kind === 'slot') merged.max_accounts += entry.amount * entry.qty;
+    else if (entry.flag) merged[entry.flag] = 1;
+  }
+  return merged;
+}
+
+/**
+ * Den Tarifwechsel ausrechnen, ohne auch nur eine Buchung anzufassen.
+ *
+ * Der Wechsel selbst erstattet die alte Restlaufzeit und zieht anschließend den vollständigen
+ * neuen Monat ein. Das sieht auf den ersten Blick wie ein Saldo aus, verliert aber genau die
+ * Information, die vor einer Buchung zählt: Wie viel wird gutgeschrieben, was kostet der neue
+ * Zeitraum, welche Zusätze fallen weg und was bleibt danach auf dem Guthabenkonto übrig?
+ */
+export function planChangePreview(profile, plan, userCredits = balance(profile.user_id)) {
+  const current = planOf(profile);
+  const booked = addonsOf(profile.id);
+  const removed = booked.filter((entry) => {
+    const included = entry.kind === 'flag' && entry.flag && Boolean(plan[entry.flag]);
+    return included || !plan.addons || plan.free_slot;
+  });
+  const kept = booked.filter((entry) => !removed.includes(entry));
+  const refund = current.free_slot ? 0 : refundValue(profile);
+  const charge = plan.free_slot
+    ? 0
+    : plan.price_credits + kept.reduce((sum, entry) => sum + entry.price_credits * entry.qty, 0);
+  const balanceAfter = userCredits + refund - charge;
+  return {
+    refund,
+    charge,
+    balance_before: userCredits,
+    balance_after: balanceAfter,
+    shortfall: Math.max(0, -balanceAfter),
+    monthly_before: monthlyPrice(profile, booked),
+    monthly_after: plan.free_slot
+      ? 0
+      : plan.price_credits + kept.reduce((sum, entry) => sum + entry.price_credits * entry.qty, 0),
+    removed_addons: removed.map((entry) => ({
+      id: entry.id,
+      key: entry.key,
+      qty: entry.qty,
+      reason: plan.free_slot ? 'free-plan' : plan.addons ? 'included' : 'not-available',
+    })),
+    features_before: projectedFeatures(current, booked),
+    features_after: projectedFeatures(plan, kept),
+  };
+}
+
+/**
+ * Die Folgen einer Zusatzbuchung oder -kündigung in derselben Form vorwegnehmen.
+ *
+ * `addAddon`/`removeAddon` bleiben die alleinigen Stellen, die schreiben. Diese Funktion zeigt
+ * nur die exakt gleiche Preisformel für den Moment der Vorschau, damit der Dialog nie aus einer
+ * im Browser geratenen Monatsrechnung lebt.
+ */
+export function addonChangePreview(profile, addon, qty, action, userCredits = balance(profile.user_id)) {
+  const booked = addonsOf(profile.id);
+  const have = booked.find((entry) => entry.id === addon.id);
+  const wanted = Math.max(1, Math.trunc(Number(qty) || 1));
+  const monthlyBefore = monthlyPrice(profile, booked);
+  if (action === 'add') {
+    const charge = proratedPrice(profile, addon.price_credits * wanted);
+    return {
+      action,
+      qty_before: have?.qty || 0,
+      qty_after: (have?.qty || 0) + wanted,
+      charged: charge,
+      refund: 0,
+      balance_before: userCredits,
+      balance_after: userCredits - charge,
+      shortfall: Math.max(0, charge - userCredits),
+      monthly_before: monthlyBefore,
+      monthly_after: monthlyBefore + addon.price_credits * wanted,
+    };
+  }
+  const drop = Math.min(have?.qty || 0, wanted);
+  const paidShare = have?.qty
+    ? Math.floor((Math.max(0, have.paid_credits || 0) * drop) / have.qty)
+    : 0;
+  const refund = Math.min(proratedPrice(profile, addon.price_credits * drop), paidShare);
+  return {
+    action: 'remove',
+    qty_before: have?.qty || 0,
+    qty_after: Math.max(0, (have?.qty || 0) - drop),
+    charged: 0,
+    refund,
+    balance_before: userCredits,
+    balance_after: userCredits + refund,
+    shortfall: 0,
+    monthly_before: monthlyBefore,
+    monthly_after: Math.max(0, monthlyBefore - addon.price_credits * drop),
+  };
 }
 
 /** Anteiliger Preis für den Rest der laufenden Periode – für Zusätze, die mittendrin dazukommen. */
