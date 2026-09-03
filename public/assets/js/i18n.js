@@ -1704,6 +1704,13 @@ export const S = {
     de: '{n} Bot(s) über alle Konten hinweg neu starten? Jeder verlässt seinen Minecraft-Server und kommt wieder. Sie starten mit ein paar Sekunden Abstand.',
   },
   'adm.clientRolloutDone': { en: '{n} bot(s) are restarting.', de: '{n} Bot(s) starten neu.' },
+  'adm.clientRolloutPlan': { en: 'Staged rollout plan', de: 'Gestaffelter Rollout-Plan' },
+  'adm.clientRolloutPlanHint': {
+    en: 'This preview is a current snapshot. Restarts are spaced five seconds apart; the last scheduled start is after about {seconds} seconds.',
+    de: 'Diese Vorschau ist eine Momentaufnahme. Neustarts liegen fünf Sekunden auseinander; der letzte geplante Start ist nach etwa {seconds} Sekunden.',
+  },
+  'adm.clientRolloutAfter': { en: 'Scheduled after', de: 'Geplant nach' },
+  'adm.clientRolloutAfterValue': { en: '+{seconds} s', de: '+{seconds} s' },
   'adm.mc.title': { en: 'Minecraft resources', de: 'Minecraft-Ressourcen' },
   // Seit Client 2.6.0 ist die Datei keine Pflicht mehr – der Client findet selbst eine. Der Text
   // sagt deshalb nicht mehr „muss“, sondern warum es trotzdem besser ist: Eine Datei hier gilt für

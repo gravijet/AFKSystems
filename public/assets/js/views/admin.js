@@ -4291,7 +4291,8 @@ async function settings(root) {
 // ---------------------------------------------------------------- Client, Post, Protokolle
 
 async function client(root) {
-  const data = (await api('/admin/client')).client;
+  const [clientResponse, rolloutPreview] = await Promise.all([api('/admin/client'), api('/admin/client/rollout-preview')]);
+  const data = clientResponse.client;
   root.innerHTML = `
     <div class="row wrap" style="margin-bottom:1rem">
       <button class="btn btn-primary btn-sm" id="sync">${icon('refresh')} ${escapeHtml(tr('common.retry'))}</button>
@@ -4324,6 +4325,25 @@ async function client(root) {
               tr('adm.clientRollout')
             )}</button>
           </div>`
+        : ''
+    }
+
+    ${
+      rolloutPreview.bots.length
+        ? panel(
+            tr('adm.clientRolloutPlan'),
+            `<p class="small muted" style="margin:0 0 .8rem">${escapeHtml(
+              tr('adm.clientRolloutPlanHint', { seconds: Math.ceil(rolloutPreview.estimated_ms / 1000) })
+            )}</p>
+             ${table(
+               [tr('adm.servers'), tr('ov.col.account'), tr('ops.node'), tr('adm.clientRolloutAfter')],
+               rolloutPreview.bots.map(
+                 (bot) => `<tr><td>${escapeHtml(bot.profile)}</td><td>${escapeHtml(bot.account)}</td>
+                   <td class="small muted">${escapeHtml(bot.node || tr('ops.here'))}</td>
+                   <td class="mono small muted">${escapeHtml(tr('adm.clientRolloutAfterValue', { seconds: Math.ceil(bot.starts_after_ms / 1000) }))}</td></tr>`
+               )
+             )}`
+          )
         : ''
     }
 

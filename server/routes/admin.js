@@ -2243,6 +2243,30 @@ admin.post(
 
 admin.get('/client', wrap((req, res) => res.json({ client: clientState() })));
 
+/**
+ * Vor einem Rollout wird die unveränderliche Momentaufnahme gezeigt. Der POST nimmt weiterhin
+ * nur die *dann* noch veralteten, laufenden Bots – zwischen Vorschau und Klick darf ein
+ * manueller Stopp daher nie wieder einen Bot starten.
+ */
+admin.get(
+  '/client/rollout-preview',
+  wrap((req, res) => {
+    const spacing_ms = 5000;
+    const bots = supervisor.outdated().map((bot, index) => {
+      const node = bot.profile.node_id ? nodes.byId(bot.profile.node_id) : null;
+      return {
+        profile_id: bot.profile.id,
+        profile: bot.profile.name,
+        account: bot.account.name,
+        node: node?.name || null,
+        from_version: bot.clientVersion || null,
+        starts_after_ms: index * spacing_ms,
+      };
+    });
+    res.json({ spacing_ms, bots, estimated_ms: bots.length ? (bots.length - 1) * spacing_ms : 0 });
+  })
+);
+
 admin.post(
   '/client/sync',
   wrap(async (req, res) => {
