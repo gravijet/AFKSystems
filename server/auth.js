@@ -868,6 +868,10 @@ export function publicUser(user) {
     display_name: profile.displayNameOf(user),
     role: user.role,
     credits: user.credits,
+    // -1 heißt „die empfohlene Schwelle“. Der Browser bekommt den Rohwert bewusst mit, damit
+    // er klar zwischen der persönlichen Entscheidung und der Betreiberempfehlung unterscheiden
+    // kann, statt beides als denselben Betrag erscheinen zu lassen.
+    low_balance_warning: Number.isInteger(user.low_balance_warning) ? user.low_balance_warning : -1,
     blocked: Boolean(user.blocked),
     email_verified: Boolean(user.email_verified),
     // Ob dieses Konto bei einer Anmeldung von einem unbekannten Browser einen Code per E-Mail

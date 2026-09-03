@@ -4731,6 +4731,55 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   });
   assert.equal(selectedExport.status, 200);
   assert.match(selectedExport.headers.get('content-type'), /^text\/plain/);
+  // Der kontrollierte Export bleibt auf derselben eigenen Kontenauswahl, kann aber in ein
+  // Tabellen- oder Strukturformat wechseln. Die JSON-Hülle enthält nur lesbare Chatdaten und
+  // den eigenen Serverplatz, keine Microsoft-Anmeldung oder andere Konten.
+  const csvExport = await fetch(
+    `${base}/api/profiles/${profile.id}/chat/export?format=csv&accounts=${otherAccount.id}`,
+    { headers: { cookie: `afk_session=${USER_TOKEN}` } }
+  );
+  assert.equal(csvExport.status, 200);
+  assert.match(csvExport.headers.get('content-type'), /^text\/csv/);
+  assert.match(await csvExport.text(), /^timestamp,type,accounts,text/m);
+  const jsonExport = await fetch(
+    `${base}/api/profiles/${profile.id}/chat/export?format=json&accounts=${otherAccount.id}&all=1`,
+    { headers: { cookie: `afk_session=${USER_TOKEN}` } }
+  );
+  assert.equal(jsonExport.status, 200);
+  assert.match(jsonExport.headers.get('content-type'), /^application\/json/);
+  const jsonBody = await jsonExport.json();
+  assert.equal(jsonBody.server_slot.id, profile.id);
+  assert.equal(jsonBody.server_slot.name, profile.name);
+  assert.ok(Array.isArray(jsonBody.lines));
+  const invalidExportFormat = await api(base, `/api/profiles/${profile.id}/chat/export?format=html`, {
+    token: USER_TOKEN,
+  });
+  assert.equal(invalidExportFormat.response.status, 400);
+  const invalidExportRange = await api(
+    base,
+    `/api/profiles/${profile.id}/chat/export?format=json&from=2&until=1`,
+    { token: USER_TOKEN }
+  );
+  assert.equal(invalidExportRange.response.status, 400);
+  // Die Guthabenwarnung gehört dem Kunden: -1 nimmt wieder die Betreiberempfehlung, jede
+  // nichtnegative ganze Zahl ist eine nachvollziehbare persönliche Schwelle.
+  const personalWarning = await api(base, '/api/me', {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { low_balance_warning: 321 },
+  });
+  assert.equal(personalWarning.response.status, 200);
+  assert.equal(personalWarning.data.user.low_balance_warning, 321);
+  const billingWithPersonalWarning = await api(base, '/api/billing', { token: USER_TOKEN });
+  assert.equal(billingWithPersonalWarning.response.status, 200);
+  assert.equal(billingWithPersonalWarning.data.low_balance, 321);
+  assert.equal(billingWithPersonalWarning.data.personal_low_balance, 321);
+  const invalidPersonalWarning = await api(base, '/api/me', {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { low_balance_warning: -2 },
+  });
+  assert.equal(invalidPersonalWarning.response.status, 400);
   const invalidSelection = await api(base, `/api/profiles/${profile.id}/chat.txt?accounts=999999`, {
     token: USER_TOKEN,
   });

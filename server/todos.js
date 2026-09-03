@@ -202,7 +202,11 @@ export function todosFor(user, lang = 'en') {
   const monthly = billing.monthlyCost(user.id);
   const warnedAboutMoney = out.some((entry) => entry.href === '#/credits');
   if (monthly > 0 && !warnedAboutMoney) {
-    const low = Number(getSetting('low_balance')) || 0;
+    const recommendedLow = Number(getSetting('low_balance')) || 0;
+    const low =
+      Number.isInteger(user.low_balance_warning) && user.low_balance_warning >= 0
+        ? user.low_balance_warning
+        : recommendedLow;
     if (user.credits <= 0) {
       add({
         key: 'credits-empty',

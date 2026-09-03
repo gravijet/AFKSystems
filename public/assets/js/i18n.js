@@ -1391,6 +1391,26 @@ export const S = {
   'bill.renewalCovered': { en: 'Covered from current balance', de: 'Aus aktuellem Guthaben gedeckt' },
   'bill.renewalGap': { en: 'Short by {credits}', de: 'Es fehlen {credits}' },
   'bill.renewalOff': { en: 'Automatic renewal is off', de: 'Automatische Verlängerung ist aus' },
+  'bill.warningTitle': { en: 'Low-balance warning', de: 'Guthabenwarnung' },
+  'bill.warningSub': {
+    en: 'A personal reminder only; this never starts a payment or changes a plan.',
+    de: 'Eine persönliche Erinnerung; sie löst niemals eine Zahlung oder Tarifänderung aus.',
+  },
+  'bill.warningCustom': { en: 'Use my own warning amount', de: 'Eigene Warnschwelle verwenden' },
+  'bill.warningAt': { en: 'Warn me at or below (credits)', de: 'Warnen bei oder unter (Credits)' },
+  'bill.warningPersonal': {
+    en: 'Your personal warning is {credits}.',
+    de: 'Deine persönliche Warnschwelle ist {credits}.',
+  },
+  'bill.warningRecommended': {
+    en: 'Using the current recommended amount: {credits}.',
+    de: 'Es gilt der aktuelle empfohlene Betrag: {credits}.',
+  },
+  'bill.warningBad': {
+    en: 'Enter a whole number between 0 and 1,000,000 credits.',
+    de: 'Bitte eine ganze Zahl zwischen 0 und 1.000.000 Credits eingeben.',
+  },
+  'bill.warningSaved': { en: 'Low-balance warning saved.', de: 'Guthabenwarnung gespeichert.' },
   'bill.runwayEyebrow': { en: 'Renewal coverage', de: 'Deckung der Verlängerungen' },
   'bill.runwayGapTitle': { en: '“{name}” is not yet covered', de: '„{name}“ ist noch nicht gedeckt' },
   'bill.runwayGapText': {
@@ -2137,6 +2157,47 @@ export const S = {
   'ch.exportScope': {
     en: 'Download the history from {n} selected account(s)',
     de: 'Verlauf von {n} ausgewählten Konto/Konten herunterladen',
+  },
+  'ch.markedOnly': { en: 'Marked only', de: 'Nur markierte' },
+  'ch.markedHint': {
+    en: 'Show only your personal bookmarks on this device.',
+    de: 'Zeigt nur deine persönlichen Lesezeichen auf diesem Gerät.',
+  },
+  'ch.markedCount': { en: '{n} marked', de: '{n} markiert' },
+  'ch.mark': { en: 'Mark this line', de: 'Diese Zeile markieren' },
+  'ch.unmark': { en: 'Remove mark', de: 'Markierung entfernen' },
+  'ch.clearMarks': { en: 'Clear all marks', de: 'Alle Markierungen löschen' },
+  'ch.clearMarksAsk': {
+    en: 'Clear every personal chat mark on this device?',
+    de: 'Alle persönlichen Chatmarkierungen auf diesem Gerät löschen?',
+  },
+  'ch.exportTitle': { en: 'Export chat history', de: 'Chatverlauf exportieren' },
+  'ch.exportLead': {
+    en: 'Only the {n} currently selected account(s) are included. Exports contain readable text, never sign-in data.',
+    de: 'Nur die aktuell ausgewählten {n} Konto/Konten kommen mit. Exporte enthalten lesbaren Text, niemals Anmeldedaten.',
+  },
+  'ch.exportFormat': { en: 'Format', de: 'Format' },
+  'ch.exportFormat.txt': { en: 'Text file (.txt)', de: 'Textdatei (.txt)' },
+  'ch.exportFormat.csv': { en: 'Spreadsheet (.csv)', de: 'Tabellenformat (.csv)' },
+  'ch.exportFormat.json': { en: 'Structured data (.json)', de: 'Strukturierte Daten (.json)' },
+  'ch.exportFrom': { en: 'From date', de: 'Ab Datum' },
+  'ch.exportUntil': { en: 'Until date', de: 'Bis Datum' },
+  'ch.exportDateHint': {
+    en: 'Leave empty to include the available history.',
+    de: 'Leer lassen, um den verfügbaren Verlauf einzuschließen.',
+  },
+  'ch.exportEvents': {
+    en: 'Include connection and client events',
+    de: 'Verbindungs- und Clientereignisse einschließen',
+  },
+  'ch.exportMatches': {
+    en: 'Only lines matching the current search: {query}',
+    de: 'Nur Zeilen der aktuellen Suche: {query}',
+  },
+  'ch.exportDownload': { en: 'Download export', de: 'Export herunterladen' },
+  'ch.exportDateBad': {
+    en: 'Please enter a valid date range.',
+    de: 'Bitte einen gültigen Zeitraum eingeben.',
   },
   'ch.historyHint': {
     en: 'Enter sends. Use ↑ and ↓ for recently sent messages.',

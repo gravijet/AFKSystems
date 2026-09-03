@@ -1338,47 +1338,129 @@ router.get(
   })
 );
 
-/**
- * Der Chatverlauf zum Mitnehmen – eine Textdatei, wie man sie einem Serverteam schickt.
- *
- * Im Panel steht der Verlauf mit Farben, zusammengelegt und gefiltert; das ist zum Lesen richtig
- * und zum Weitergeben unbrauchbar. Hier kommt er, wie er war: eine Zeile je Nachricht, Zeitstempel
- * vorn, Farbcodes heraus. Wer belegen will, dass ein Bot um 03:14 nichts geschrieben hat, hat
- * damit etwas in der Hand, das sich anhängen lässt.
- *
- * Zustandsmeldungen kommen mit, wenn man sie will (`?all=1`) – beim Suchen nach "warum war der Bot
- * plötzlich weg" ist genau das die Antwort, und dann ist die Datei ohne sie wertlos.
- */
-router.get(
-  '/:id/chat.txt',
-  wrap((req, res) => {
-    const profile = ownedProfile(req);
-    const all = req.query.all === '1';
-    const only = requestedMemberIds(profile, req.query.accounts);
-    const lines = [];
-    for (const member of membersOf(profile)) {
-      if (only && !only.includes(member.account_id)) continue;
-      for (const entry of supervisor.historyOf(profile.id, member.account_id)) {
-        if (!all && entry.type !== 'chat' && entry.type !== 'sent') continue;
-        lines.push({ ...entry, account: member.name });
-      }
+// ---------------------------------------------------------------- Chat-Export
+//
+// `chat.txt` bleibt als alte, einfache Adresse erhalten. Die Oberfläche nutzt zusätzlich den
+// kontrollierten Exportpfad: Format, Zeitraum, Kontenauswahl und Ereignisumfang werden bewusst
+// gewählt. Eine Auswahl ist dabei eine Datenbegrenzung, nie nur eine optische Einstellung.
+const CHAT_EXPORT_FORMATS = new Set(['txt', 'csv', 'json']);
+
+function exportTimestamp(value, label) {
+  if (value === undefined || value === '') return null;
+  const text = String(value);
+  if (!/^\d{1,16}$/.test(text)) {
+    throw bad(`${label} ist ungültig.`, { en: `${label} is invalid.` });
+  }
+  const timestamp = Number(text);
+  if (!Number.isSafeInteger(timestamp) || timestamp < 0) {
+    throw bad(`${label} ist ungültig.`, { en: `${label} is invalid.` });
+  }
+  return timestamp;
+}
+
+function csvCell(value) {
+  // Chat ist fremder Text. Tabellenprogramme deuten ein führendes =, +, - oder @ gern als
+  // Formel; der Export darf deshalb beim Öffnen in Excel oder LibreOffice nichts ausführen.
+  const plain = String(value ?? '');
+  const text = /^[=+@-]/.test(plain) ? `'${plain}` : plain;
+  return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function exportLines(profile, query) {
+  const all = query.all === '1';
+  const only = requestedMemberIds(profile, query.accounts);
+  const from = exportTimestamp(query.from, 'Startzeit');
+  const until = exportTimestamp(query.until, 'Endzeit');
+  if (from !== null && until !== null && from > until) {
+    throw bad('Die Startzeit liegt nach der Endzeit.', { en: 'The start time is after the end time.' });
+  }
+  const needle = String(query.q || '').trim();
+  if (needle.length > 160) {
+    throw bad('Der Suchbegriff ist zu lang.', { en: 'The search term is too long.' });
+  }
+  const search = needle.toLocaleLowerCase();
+  const names = new Map();
+  const lines = [];
+  for (const member of membersOf(profile)) {
+    if (only && !only.includes(member.account_id)) continue;
+    names.set(member.account_id, member.name);
+    for (const entry of supervisor.historyOf(profile.id, member.account_id)) {
+      if (!all && entry.type !== 'chat' && entry.type !== 'sent') continue;
+      if (from !== null && entry.t < from) continue;
+      if (until !== null && entry.t > until) continue;
+      if (search && !stripFormatting(entry.text || '').toLocaleLowerCase().includes(search)) continue;
+      lines.push({ ...entry, account_id: member.account_id });
     }
-    lines.sort((a, b) => a.t - b.t);
-    const body = lines
+  }
+  // Gleichzeitige, identische Serverzeilen mehrerer Bots stehen wie im Panel nur einmal da.
+  return mergeLines(lines).map((entry) => {
+    const accountIds = entry.accounts?.length ? entry.accounts : entry.account_id ? [entry.account_id] : [];
+    return {
+      timestamp: entry.t,
+      time: new Date(entry.t).toISOString(),
+      type: entry.type,
+      accounts: accountIds.map((id) => names.get(id) || String(id)),
+      text: stripFormatting(entry.text || ''),
+    };
+  });
+}
+
+function sendChatExport(req, res, forcedFormat = '') {
+  const profile = ownedProfile(req);
+  const format = forcedFormat || String(req.query.format || 'txt').toLowerCase();
+  if (!CHAT_EXPORT_FORMATS.has(format)) {
+    throw bad('Dieses Exportformat gibt es nicht.', { en: 'That export format is not available.' });
+  }
+  const lines = exportLines(profile, req.query);
+  const generatedAt = new Date().toISOString();
+  let contentType;
+  let body;
+  if (format === 'json') {
+    contentType = 'application/json; charset=utf-8';
+    body = JSON.stringify(
+      {
+        exported_at: generatedAt,
+        server_slot: {
+          id: profile.id,
+          name: profile.name,
+          address: profile.port ? `${profile.host}:${profile.port}` : profile.host,
+        },
+        line_count: lines.length,
+        // Nur lesbarer Text: Minecraft-Farbcodes helfen weder Tabellenprogrammen noch Tickets.
+        lines,
+      },
+      null,
+      2
+    );
+  } else if (format === 'csv') {
+    contentType = 'text/csv; charset=utf-8';
+    body = [
+      ['timestamp', 'type', 'accounts', 'text'].map(csvCell).join(','),
+      ...lines.map((entry) => [entry.time, entry.type, entry.accounts.join(', '), entry.text].map(csvCell).join(',')),
+    ].join('\n');
+  } else {
+    contentType = 'text/plain; charset=utf-8';
+    body = lines
       .map((entry) => {
-        const when = new Date(entry.t).toISOString().replace('T', ' ').slice(0, 19);
-        const who = entry.type === 'sent' ? `> ${entry.account}` : entry.type === 'chat' ? '' : `[${entry.type}]`;
-        return `${when}  ${who ? `${who}  ` : ''}${stripFormatting(entry.text)}`;
+        const who =
+          entry.type === 'sent'
+            ? `> ${entry.accounts.join(', ')}`
+            : entry.type === 'chat'
+              ? ''
+              : `[${entry.type}] ${entry.accounts.join(', ')}`.trim();
+        return `${entry.time.replace('T', ' ').slice(0, 19)}  ${who ? `${who}  ` : ''}${entry.text}`;
       })
       .join('\n');
+  }
+  const name = `${profile.slug || 'chat'}-${new Date().toISOString().slice(0, 10)}.${format}`;
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.send(`${body}\n`);
+}
 
-    const name = `${profile.slug || 'chat'}-${new Date().toISOString().slice(0, 10)}.txt`;
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(`${body}\n`);
-  })
-);
+router.get('/:id/chat.txt', wrap((req, res) => sendChatExport(req, res, 'txt')));
+router.get('/:id/chat/export', wrap((req, res) => sendChatExport(req, res)));
 
 /**
  * Anzeigetafel und Menü der Bots dieses Platzes.

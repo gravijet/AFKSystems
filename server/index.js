@@ -1224,7 +1224,12 @@ function billingTick() {
   const low = Number(getSetting('low_balance'));
   const lowBalance = Number.isFinite(low) ? low : 0;
   for (const row of db
-    .prepare('SELECT id, credits FROM users WHERE credits > 0 AND credits <= ?')
+    .prepare(
+      `SELECT id, credits, low_balance_warning
+         FROM users
+        WHERE credits > 0
+          AND credits <= CASE WHEN low_balance_warning >= 0 THEN low_balance_warning ELSE ? END`
+    )
     .all(lowBalance)) {
     const monthly = billing.monthlyCost(row.id);
     if (monthly <= 0) continue;

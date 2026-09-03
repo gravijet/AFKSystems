@@ -225,6 +225,7 @@ const FIELD_EN = {
   Festplattengrenze: 'Disk limit',
   Gegenstand: 'Item',
   Guthaben: 'Credits',
+  Guthabenwarnung: 'Low-balance warning',
   Gültigkeit: 'Validity',
   Höchstwartezeit: 'Maximum wait',
   Intervall: 'Interval',
