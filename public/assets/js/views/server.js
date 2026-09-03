@@ -2572,6 +2572,10 @@ function showMacroTemplates(profile) {
 async function editMacro(profile, macro, template = null) {
   const draft = macro || template;
   const actions = structuredClone(draft?.actions || [{ type: 'chat', text: '/afk' }]);
+  // Beim Wechsel des Auslösers zeichnet der Editor seine Felder neu. Werte, die schon getippt
+  // wurden, gehören dabei nicht verloren – sie liegen hier, bis der passende Auslöser wieder
+  // sichtbar ist oder gespeichert wird.
+  const configValues = { ...(draft?.config || {}) };
   // Nur Schritte anbieten, die dieser Serverplatz auch ausführen kann.
   const available = state.meta.actions.filter((action) => !action.needs || profile.caps[action.needs]);
 
@@ -2615,7 +2619,7 @@ async function editMacro(profile, macro, template = null) {
            verdrahtet – jeder neue Auslöser hätte seine Felder nur im Server gehabt und im Editor
            gar nicht, und das wäre nicht aufgefallen, bis jemand ihn benutzt. -->
       ${(state.meta.events.find((entry) => entry.type === event)?.config || [])
-        .map((field) => configField(field, draft?.config?.[field.key]))
+        .map((field) => configField(field, configValues[field.key]))
         .join('')}
 
       <div class="field">
@@ -2661,7 +2665,12 @@ async function editMacro(profile, macro, template = null) {
         }</div>
       </div>`;
 
-    $('#event', dialog).addEventListener('change', paint);
+    $('#event', dialog).addEventListener('change', () => {
+      for (const input of $$('[data-config]', dialog)) {
+        configValues[input.dataset.config] = input.type === 'number' ? Number(input.value) : input.value;
+      }
+      paint();
+    });
     $('#add-step', dialog).addEventListener('click', () => {
       actions.push({ type: 'chat', text: '' });
       paint();
