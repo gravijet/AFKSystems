@@ -882,6 +882,8 @@ export const S = {
   'srv.copyName': { en: '{name} (copy)', de: '{name} (Kopie)' },
   'srv.trigger': { en: 'Trigger', de: 'Auslöser' },
   'srv.steps': { en: 'Steps', de: 'Schritte' },
+  'srv.stepCount': { en: '{n} of {max} steps', de: '{n} von {max} Schritten' },
+  'srv.stepLimit': { en: 'A macro can contain up to {max} steps.', de: 'Ein Macro kann bis zu {max} Schritte enthalten.' },
   'srv.premiumOnly': {
     en: 'This needs a paid server slot – it runs the premium client.',
     de: 'Dafür braucht es einen bezahlten Serverplatz – der nutzt den Premium-Client.',
