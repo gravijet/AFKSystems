@@ -1975,16 +1975,11 @@ async function tabAddons(root, profile) {
         1,
         Math.min(addon.max_qty - addon.qty, Math.trunc(Number(input?.value) || 1))
       );
-      const price =
-        data.days_left === null
-          ? addon.price_credits * qty
-          : addon.prorated_by_qty?.[qty] ?? addon.prorated * qty;
-      if (!(await confirmDialog(tr('ad.confirmBuy', { name: addon.name, credits: price, qty }), {
-        confirm: tr('ad.book'),
-        danger: false,
-      })))
-        return;
       try {
+        const change = await api(
+          `/profiles/${profile.id}/addons/${addon.id}/preview?action=add&qty=${qty}`
+        );
+        if (!(await reviewAddonChange(change, tr('ad.book')))) return;
         await api(`/profiles/${profile.id}/addons`, { method: 'POST', body: { addon_id: addon.id, qty } });
         await refresh({ accounts: false });
         ok(tr('srv.saved'));
@@ -1998,10 +1993,32 @@ async function tabAddons(root, profile) {
   $$('[data-drop]').forEach((button) =>
     button.addEventListener('click', async () => {
       const addon = data.addons.find((entry) => entry.id === Number(button.dataset.drop));
-      if (!(await confirmDialog(tr('ad.confirmDrop', { name: addon.name }), { confirm: tr('ad.cancel') })))
-        return;
       try {
-        await api(`/profiles/${profile.id}/addons/${addon.id}`, { method: 'DELETE' });
+        let qty = 1;
+        if (addon.qty > 1) {
+          const answer = await formDialog(
+            tr('ad.cancel'),
+            [
+              {
+                key: 'qty',
+                label: tr('ad.qty'),
+                type: 'number',
+                min: 1,
+                max: addon.qty,
+                value: 1,
+                required: true,
+              },
+            ],
+            { submit: tr('common.next') }
+          );
+          if (!answer) return;
+          qty = Math.max(1, Math.min(addon.qty, Math.trunc(Number(answer.qty) || 1)));
+        }
+        const change = await api(
+          `/profiles/${profile.id}/addons/${addon.id}/preview?action=remove&qty=${qty}`
+        );
+        if (!(await reviewAddonChange(change, tr('ad.cancel')))) return;
+        await api(`/profiles/${profile.id}/addons/${addon.id}`, { method: 'DELETE', body: { qty } });
         await refresh({ accounts: false });
         ok(tr('srv.saved'));
         draw();
@@ -2942,6 +2959,76 @@ function planLines(plan) {
   return lines;
 }
 
+/**
+ * Ein Preisdialog bekommt nur serverberechnete Zahlen. Der Browser darf Beträge formatieren, aber
+ * nicht aus Tarifpreisen, Resttagen und Zusätzen selbst zusammenraten – sonst wäre der letzte
+ * Klick vor einer Buchung ausgerechnet die Stelle, an der die Wahrheit fehlt.
+ */
+function planPreviewLines(data) {
+  const lines = [
+    `${data.current.name} → ${data.target.name}`,
+    tr('srv.previewRefund', { credits: credits(data.refund) }),
+    tr('srv.previewCharge', { credits: credits(data.charge) }),
+    tr('srv.previewBalance', { before: credits(data.balance_before), after: credits(data.balance_after) }),
+    tr('srv.previewMonthly', { before: credits(data.monthly_before), after: credits(data.monthly_after) }),
+    tr('srv.previewCapacity', { before: data.impact.max_accounts.before, after: data.impact.max_accounts.after }),
+  ];
+  if (data.removed_addons.length) {
+    lines.push(
+      tr('srv.previewRemoved', {
+        items: data.removed_addons.map((entry) => `${entry.name}${entry.qty > 1 ? ` ×${entry.qty}` : ''}`).join(', '),
+      })
+    );
+  }
+  if (data.impact.lost.length) lines.push(tr('srv.previewLost', { items: data.impact.lost.map((entry) => entry.label).join(', ') }));
+  const settingLabels = {
+    antiafk: tr('srv.antiafk'),
+    sneak: tr('srv.sneak'),
+    movement: tr('tab.movement'),
+    fake_host: tr('plan.flag.fakehost'),
+  };
+  if (data.impact.cleared.length) {
+    lines.push(tr('srv.previewCleared', { items: data.impact.cleared.map((key) => settingLabels[key]).join(', ') }));
+  }
+  if (data.impact.stops_running) lines.push(tr('srv.previewStops', { n: data.impact.running }));
+  if (!data.available) lines.push(data.reason || tr('srv.previewUnavailable'));
+  if (data.shortfall) lines.push(tr('srv.previewShortfall', { credits: credits(data.shortfall) }));
+  return lines.join('\n\n');
+}
+
+async function reviewPlanChange(data) {
+  const blocked = !data.available || data.shortfall;
+  const accepted = await confirmDialog(planPreviewLines(data), {
+    title: tr('srv.changePreview'),
+    confirm: blocked ? tr('common.close') : tr('srv.changePlan'),
+    danger: false,
+  });
+  return !blocked && accepted;
+}
+
+function addonPreviewLines(preview) {
+  const lines = [
+    tr('ad.previewQty', { before: preview.qty_before, after: preview.qty_after }),
+    tr('ad.previewCharge', { credits: credits(preview.charged) }),
+    tr('ad.previewRefund', { credits: credits(preview.refund) }),
+    tr('srv.previewBalance', { before: credits(preview.balance_before), after: credits(preview.balance_after) }),
+    tr('ad.previewMonthly', { before: credits(preview.monthly_before), after: credits(preview.monthly_after) }),
+  ];
+  if (preview.shortfall) lines.push(tr('srv.previewShortfall', { credits: credits(preview.shortfall) }));
+  return lines.join('\n\n');
+}
+
+async function reviewAddonChange(data, confirm) {
+  const blocked = !data.allowed || data.preview.shortfall;
+  const extra = data.reason ? tr(`ad.previewBlocked.${data.reason}`) : '';
+  const accepted = await confirmDialog([addonPreviewLines(data.preview), extra].filter(Boolean).join('\n\n'), {
+    title: tr('ad.changePreview'),
+    confirm: blocked ? tr('common.close') : confirm,
+    danger: false,
+  });
+  return !blocked && accepted;
+}
+
 async function tabPlan(root, profile) {
   const plans = state.meta.plans || [];
   const freeLeft = state.stats?.free_slots_left ?? 0;
@@ -3102,11 +3189,9 @@ async function tabPlan(root, profile) {
   $$('[data-plan]').forEach((button) =>
     button.addEventListener('click', async () => {
       const plan = plans.find((entry) => entry.id === Number(button.dataset.plan));
-      const question = plan.free_slot
-        ? tr('srv.changePlan')
-        : `${tr('srv.changePlan')}: ${plan.name} — ${plan.price_credits} ${tr('common.credits')}`;
-      if (!(await confirmDialog(question, { confirm: tr('srv.changePlan'), danger: false }))) return;
       try {
+        const preview = await api(`/profiles/${profile.id}/plan-preview?plan_id=${plan.id}`);
+        if (!(await reviewPlanChange(preview))) return;
         await api(`/profiles/${profile.id}/plan`, { method: 'POST', body: { plan_id: plan.id } });
         await refresh({ accounts: false });
         ok(tr('srv.planChanged'));

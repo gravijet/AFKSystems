@@ -5292,6 +5292,44 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const plannedForecast = billingForecast.data.slots.find((slot) => slot.id === planned.id).forecast;
   assert.equal(plannedForecast.cost_credits, copyPlan.price_credits);
   assert.equal(plannedForecast.covered, true);
+  // Ein Tarifwechsel ist nie nur ein neuer Preis: Die Vorschau zeigt die Restgutschrift, die
+  // neue Periode und den künftigen Monat getrennt – und bucht beim bloßen Ansehen nichts.
+  const richerPlan = billing.planBySlug('ultra');
+  const planPreview = await api(base, `/api/profiles/${planned.id}/plan-preview?plan_id=${richerPlan.id}`, {
+    token: USER_TOKEN,
+  });
+  assert.equal(planPreview.response.status, 200);
+  assert.equal(planPreview.data.current.id, copyPlan.id);
+  assert.equal(planPreview.data.target.id, richerPlan.id);
+  assert.equal(planPreview.data.charge, richerPlan.price_credits);
+  assert.equal(planPreview.data.monthly_after, richerPlan.price_credits);
+  assert.ok(planPreview.data.refund >= 0);
+  assert.equal(
+    planPreview.data.balance_after,
+    planPreview.data.balance_before + planPreview.data.refund - planPreview.data.charge
+  );
+  const unavailableFree = await api(base, `/api/profiles/${planned.id}/plan-preview?plan_id=${billing.freePlan().id}`, {
+    token: USER_TOKEN,
+  });
+  assert.equal(unavailableFree.response.status, 200);
+  assert.equal(unavailableFree.data.available, false, 'der schon belegte Gratisplatz wird nicht schön gerechnet');
+
+  // Auch ein Zusatzdialog rechnet vom Server: die anteilige Zahlung jetzt und der Monatsbetrag
+  // danach sind zwei verschiedene Zahlen. Eine Vorschau darf dabei keine Zusatzzeile anlegen.
+  const addonForPreview = billing.addons().find((entry) => entry.available && entry.active && entry.max_qty > 0);
+  const addonPreview = await api(
+    base,
+    `/api/profiles/${planned.id}/addons/${addonForPreview.id}/preview?action=add&qty=1`,
+    { token: USER_TOKEN }
+  );
+  assert.equal(addonPreview.response.status, 200);
+  assert.equal(addonPreview.data.preview.qty_before, 0);
+  assert.equal(addonPreview.data.preview.qty_after, 1);
+  assert.equal(
+    addonPreview.data.preview.monthly_after,
+    addonPreview.data.preview.monthly_before + addonForPreview.price_credits
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM profile_addons WHERE profile_id = ?').get(planned.id).n, 0);
   const beforeCopy = db.prepare('SELECT credits FROM users WHERE id = ?').get(user.id).credits;
   const copied = await api(base, `/api/profiles/${planned.id}/copy`, {
     token: USER_TOKEN,

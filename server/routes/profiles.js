@@ -728,6 +728,66 @@ router.patch(
 );
 
 /** Tarif wechseln. Rechnet den Rest des alten Tarifs gut und bucht den neuen voll ab. */
+router.get(
+  '/:id/plan-preview',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const plan = billing.planById(requireInt(req.query.plan_id, 'Tarif'));
+    if (!plan) throw notFound('Diesen Tarif gibt es nicht.', { en: 'No such plan.' });
+    const lang = langOf(req);
+    const preview = billing.planChangePreview(profile, plan, billing.balance(req.user.id));
+    const canUseFree = !plan.free_slot || billing.freeSlotAvailable(req.user.id, profile.id);
+    const available = Boolean(plan.active) && canUseFree;
+    const labels = {
+      premium: lang === 'de' ? 'Premium-Client' : 'Premium client',
+      movement: lang === 'de' ? 'Bewegung' : 'Movement',
+      proxy: lang === 'de' ? 'Proxy' : 'Proxy',
+      offline_accounts: lang === 'de' ? 'Offline-Konten' : 'Offline accounts',
+      fakehost: lang === 'de' ? 'Fake-Host' : 'Fake host',
+      board: lang === 'de' ? 'Anzeigetafel' : 'Scoreboard',
+      menus: lang === 'de' ? 'Menüs' : 'Menus',
+      pov: lang === 'de' ? 'Live-Ansicht' : 'Live view',
+      priority_support: lang === 'de' ? 'Prioritäts-Support' : 'Priority support',
+    };
+    const lost = Object.keys(labels)
+      .filter((key) => preview.features_before[key] && !preview.features_after[key])
+      .map((key) => ({ key, label: labels[key] }));
+    const cleared = [
+      profile.antiafk_sec > 0 && !preview.features_after.premium ? 'antiafk' : '',
+      profile.sneak && !preview.features_after.premium ? 'sneak' : '',
+      profile.movement && !preview.features_after.movement ? 'movement' : '',
+      profile.fake_host && !preview.features_after.fakehost ? 'fake_host' : '',
+    ].filter(Boolean);
+    const running = supervisor.runningOnProfile(profile.id);
+    res.json({
+      available,
+      reason: !plan.active
+        ? lang === 'de'
+          ? 'Dieser Tarif wird nicht mehr angeboten.'
+          : 'This plan is no longer offered.'
+        : !canUseFree
+          ? lang === 'de'
+            ? 'Der kostenlose Serverplatz ist bereits vergeben.'
+            : 'The free server slot is already taken.'
+          : '',
+      current: { id: profile.plan_id, name: billing.planOf(profile)[lang === 'de' ? 'name_de' : 'name_en'] },
+      target: { id: plan.id, name: plan[lang === 'de' ? 'name_de' : 'name_en'], free_slot: Boolean(plan.free_slot) },
+      ...preview,
+      removed_addons: preview.removed_addons.map((entry) => {
+        const addon = billing.addonById(entry.id);
+        return { ...entry, name: addon?.[lang === 'de' ? 'name_de' : 'name_en'] || entry.key };
+      }),
+      impact: {
+        max_accounts: { before: preview.features_before.max_accounts, after: preview.features_after.max_accounts },
+        lost,
+        cleared,
+        running,
+        stops_running: running > preview.features_after.max_accounts,
+      },
+    });
+  })
+);
+
 router.post(
   '/:id/plan',
   wrap((req, res) => {
@@ -803,6 +863,44 @@ router.get(
         ? Math.max(0, Math.ceil((profile.paid_until - Date.now()) / 86_400_000))
         : null,
       monthly_credits: billing.monthlyPrice(profile),
+    });
+  })
+);
+
+/** Preis, Guthabenwirkung und künftigen Monat vor einer Zusatzänderung anzeigen. */
+router.get(
+  '/:id/addons/:addonId/preview',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const addon = billing.addonById(requireInt(req.params.addonId, 'Zusatz'));
+    if (!addon) throw notFound('Diesen Zusatz gibt es nicht.', { en: 'No such extra.' });
+    const action = String(req.query.action || '');
+    if (action !== 'add' && action !== 'remove') {
+      throw bad('Aktion muss add oder remove sein.', { en: 'Action must be add or remove.' });
+    }
+    const qty = requireInt(req.query.qty ?? 1, 'Menge', { min: 1, max: addon.max_qty });
+    const booked = billing.addonsOf(profile.id).find((entry) => entry.id === addon.id);
+    if (action === 'remove' && !booked) {
+      throw notFound('Dieser Zusatz ist nicht gebucht.', { en: 'This extra is not booked.' });
+    }
+    const plan = billing.planOf(profile);
+    const preview = billing.addonChangePreview(profile, addon, qty, action, billing.balance(req.user.id));
+    let reason = '';
+    if (action === 'add' && (plan.free_slot || !plan.addons)) reason = 'plan';
+    else if (action === 'add' && (!addon.active || !addon.available)) reason = 'unavailable';
+    else if (action === 'add' && addon.kind === 'flag' && addon.flag && plan[addon.flag]) reason = 'included';
+    else if (action === 'add' && (profile.suspended || !profile.paid_until || profile.paid_until <= Date.now())) reason = 'inactive';
+    else if (action === 'add' && preview.qty_after > addon.max_qty) reason = 'limit';
+    else if (action === 'add' && preview.shortfall) reason = 'credits';
+    res.json({
+      allowed: !reason,
+      reason,
+      preview,
+      addon: {
+        id: addon.id,
+        name: addon[langOf(req) === 'de' ? 'name_de' : 'name_en'],
+        max_qty: addon.max_qty,
+      },
     });
   })
 );
