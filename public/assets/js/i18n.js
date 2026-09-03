@@ -603,6 +603,17 @@ export const S = {
     en: '{n} of {total} selected bot(s) could not be stopped. Check the affected rows.',
     de: '{n} von {total} ausgewählten Bot(s) konnten nicht gestoppt werden. Prüfe die betroffenen Zeilen.',
   },
+  'ov.batchConfirmTitle': { en: 'Confirm bulk action', de: 'Mehrfachaktion bestätigen' },
+  'ov.batchStart': { en: 'Start bots', de: 'Bots starten' },
+  'ov.batchStop': { en: 'Stop bots', de: 'Bots stoppen' },
+  'ov.batchStartAsk': {
+    en: 'Start {n} bots now? They will connect to their Minecraft servers at roughly the same time.',
+    de: '{n} Bots jetzt starten? Sie verbinden sich ungefähr gleichzeitig mit ihren Minecraft-Servern.',
+  },
+  'ov.batchStopAsk': {
+    en: 'Stop {n} bots now? They will leave their Minecraft servers and automatic restart will be cancelled.',
+    de: '{n} Bots jetzt stoppen? Sie verlassen ihre Minecraft-Server, und der automatische Wiederanlauf wird beendet.',
+  },
   'ov.col.account': { en: 'Account', de: 'Konto' },
   'ov.col.server': { en: 'Server', de: 'Server' },
   'ov.col.uptime': { en: 'Running for', de: 'Läuft seit' },

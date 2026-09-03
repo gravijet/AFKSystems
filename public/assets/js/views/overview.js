@@ -16,6 +16,7 @@ import {
   api,
   debounce,
   locale,
+  confirmDialog,
 } from '../ui.js';
 import { state, appbar, refresh, drawSide, draw } from '../app.js';
 import * as chart from '../charts.js';
@@ -645,9 +646,23 @@ export async function render(root) {
     }
   }
 
-  $('#bulk-start')?.addEventListener('click', () => actSelection('start', selected));
-  $('#bulk-stop')?.addEventListener('click', () => actSelection('stop', selected));
-  $('#start-all')?.addEventListener('click', () => {
+  async function confirmBatch(what, keys) {
+    const count = [...keys].length;
+    if (count < 2) return true;
+    return confirmDialog(tr(what === 'start' ? 'ov.batchStartAsk' : 'ov.batchStopAsk', { n: count }), {
+      title: tr('ov.batchConfirmTitle'),
+      confirm: tr(what === 'start' ? 'ov.batchStart' : 'ov.batchStop'),
+      danger: what === 'stop',
+    });
+  }
+
+  $('#bulk-start')?.addEventListener('click', async () => {
+    if (await confirmBatch('start', selected)) actSelection('start', selected);
+  });
+  $('#bulk-stop')?.addEventListener('click', async () => {
+    if (await confirmBatch('stop', selected)) actSelection('stop', selected);
+  });
+  $('#start-all')?.addEventListener('click', async () => {
     const keys = [];
     for (const profile of state.profiles.filter((entry) => entry.active)) {
       for (const member of profile.accounts) {
@@ -655,7 +670,7 @@ export async function render(root) {
         if (!bot.state || bot.state === 'offline') keys.push(`${profile.id}:${member.account_id}`);
       }
     }
-    if (keys.length) actSelection('start', keys);
+    if (keys.length && (await confirmBatch('start', keys))) actSelection('start', keys);
   });
 
   $$('[data-start]').forEach((button) =>
@@ -703,7 +718,7 @@ export async function render(root) {
         }
       }
     }
-    if (keys.length) actSelection('stop', keys);
+    if (keys.length && (await confirmBatch('stop', keys))) actSelection('stop', keys);
   });
 
   // Zustandswechsel: neu zeichnen, aber gebündelt – beim Start mehrerer Bots kommen viele
