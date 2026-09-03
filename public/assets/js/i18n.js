@@ -775,6 +775,7 @@ export const S = {
   'acc.filter.attention': { en: 'Need attention', de: 'Handlungsbedarf' },
   'acc.filter.unused': { en: 'Not assigned', de: 'Nicht zugeordnet' },
   'acc.filter.offline': { en: 'Offline accounts', de: 'Offline-Konten' },
+  'acc.filter.running': { en: 'Currently active', de: 'Gerade aktiv' },
   'acc.sort.name': { en: 'Name A–Z', de: 'Name A–Z' },
   'acc.sort.usage': { en: 'Most used first', de: 'Häufig genutzt zuerst' },
   'acc.sort.newest': { en: 'Newest first', de: 'Neueste zuerst' },
@@ -786,6 +787,17 @@ export const S = {
     en: 'Currently in game on {n} server slot(s)',
     de: 'Gerade auf {n} Serverplatz/-plätzen im Spiel',
   },
+  'acc.activeOn': {
+    en: 'Starting or running on {n} server slot(s)',
+    de: 'Startet oder läuft auf {n} Serverplatz/-plätzen',
+  },
+  'acc.activeNow': { en: 'Currently active', de: 'Gerade aktiv' },
+  'acc.activeTitle': { en: 'Live account assignments', de: 'Aktive Konto-Zuordnungen' },
+  'acc.activeText': {
+    en: 'Each Minecraft account can run on one server slot at a time. Open the live slot to stop or inspect it.',
+    de: 'Jedes Minecraft-Konto kann gleichzeitig auf einem Serverplatz laufen. Öffne den aktiven Platz zum Stoppen oder Prüfen.',
+  },
+  'acc.openServer': { en: 'Open server slot', de: 'Serverplatz öffnen' },
   'acc.assignNow': { en: 'Assign to a server slot', de: 'Jetzt einem Serverplatz zuordnen' },
   'acc.connections': { en: 'Connections so far', de: 'Verbindungen bisher' },
   'acc.connectedSince': { en: 'Added', de: 'Hinzugefügt' },
@@ -992,6 +1004,14 @@ export const S = {
   // Fassung von letzter Woche tut, was er letzte Woche getan hat. Neu ist nur, dass es etwas
   // Neueres gibt, und dass der Weg dorthin durch einen Neustart führt.
   'srv.clientNew': { en: 'A newer client is ready', de: 'Es liegt ein neuerer Client bereit' },
+  'srv.accountElsewhere': {
+    en: 'This account is already starting or running on another server slot ({n}).',
+    de: 'Dieses Konto startet oder läuft bereits auf einem anderen Serverplatz ({n}).',
+  },
+  'srv.accountElsewhereHint': {
+    en: 'Stop the active session on the listed server slot first.',
+    de: 'Stoppe zuerst die aktive Sitzung auf dem aufgeführten Serverplatz.',
+  },
   'srv.clientNewCount': {
     en: '{n} running bot(s) still use the file they started with. A restart picks up the new one.',
     de: '{n} laufende(r) Bot(s) benutzen noch die Datei, mit der sie gestartet sind. Ein Neustart holt die neue.',

@@ -19,11 +19,19 @@ export async function render(root) {
     usedOn(account).filter((profile) =>
       profile.accounts.some((member) => member.account_id === account.id && member.online)
     );
+  // `online` heißt wirklich im Spiel. Für die Bedienung ist aber auch ein gerade gestarteter
+  // Client belegt: Er darf nicht parallel auf einem zweiten Platz loslaufen. Deshalb hält die
+  // Kontenübersicht beide Zustände getrennt und verschweigt den Startvorgang nicht.
+  const activeOn = (account) =>
+    usedOn(account).filter((profile) =>
+      profile.accounts.some((member) => member.account_id === account.id && member.state !== 'offline')
+    );
   const needsAttention = (account) => account.suspended || account.status === 'error';
   const ready = state.accounts.filter((account) => !needsAttention(account)).length;
   const attention = state.accounts.length - ready;
   const unused = state.accounts.filter((account) => !usedOn(account).length).length;
   const attentionAccounts = state.accounts.filter(needsAttention);
+  const activeAccounts = state.accounts.filter((account) => activeOn(account).length);
 
   root.innerHTML = `
     ${appbar(
@@ -61,12 +69,30 @@ export async function render(root) {
     }
 
     ${
+      activeAccounts.length
+        ? `<section class="panel account-live" id="account-live">
+            <header>
+              <h3>${icon('play')} ${escapeHtml(tr('acc.activeTitle'))}</h3>
+              <span class="pill primary">${activeAccounts.length}</span>
+            </header>
+            <div class="body">
+              <p class="small muted" style="margin:0">${escapeHtml(tr('acc.activeText'))}</p>
+              <div class="account-live-list">
+                ${activeAccounts.flatMap(liveAssignmentRows).join('')}
+              </div>
+            </div>
+          </section>`
+        : ''
+    }
+
+    ${
       state.accounts.length
         ? `<div class="grid four account-summary" role="group" aria-label="${escapeHtml(tr('acc.summary'))}">
             ${summaryTile('all', state.accounts.length, 'acc.total', 'users')}
             ${summaryTile('ready', ready, 'acc.ready', 'check')}
             ${summaryTile('attention', attention, 'acc.needsAttention', 'alert')}
             ${summaryTile('unused', unused, 'acc.unused', 'server')}
+            ${summaryTile('running', activeAccounts.length, 'acc.activeNow', 'play')}
           </div>
           <div class="account-tools">
             <label class="account-search">${icon('search')}
@@ -79,6 +105,7 @@ export async function render(root) {
               <option value="attention">${escapeHtml(tr('acc.filter.attention'))}</option>
               <option value="unused">${escapeHtml(tr('acc.filter.unused'))}</option>
               <option value="offline">${escapeHtml(tr('acc.filter.offline'))}</option>
+              <option value="running">${escapeHtml(tr('acc.filter.running'))}</option>
             </select>
             <select id="account-sort" class="mini" aria-label="${escapeHtml(tr('common.order'))}">
               <option value="name">${escapeHtml(tr('acc.sort.name'))}</option>
@@ -129,6 +156,25 @@ export async function render(root) {
     </div>`;
   }
 
+  function liveAssignmentRows(account) {
+    return activeOn(account).map((profile) => {
+      const member = profile.accounts.find((entry) => entry.account_id === account.id);
+      const stateKey = member?.state || 'starting';
+      return `<div class="account-live-row">
+        <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
+        <div class="grow" style="min-width:0">
+          <strong class="truncate">${escapeHtml(account.name)}</strong>
+          <span class="small muted truncate">${escapeHtml(profile.name)} · ${escapeHtml(
+            stateKey === 'online' ? tr('acc.onlineOn', { n: 1 }) : tr('acc.activeOn', { n: 1 })
+          )}</span>
+        </div>
+        <a class="btn btn-sm" href="#/servers/${profile.id}/connect">${icon('arrow')} ${escapeHtml(
+          tr('acc.openServer')
+        )}</a>
+      </div>`;
+    });
+  }
+
   function visibleAccounts() {
     return state.accounts
       .filter((account) => {
@@ -137,6 +183,7 @@ export async function render(root) {
         if (filter === 'attention' && !needsAttention(account)) return false;
         if (filter === 'unused' && use.length) return false;
         if (filter === 'offline' && account.kind !== 'offline') return false;
+        if (filter === 'running' && !activeOn(account).length) return false;
         return !query || `${account.name} ${use.map((profile) => profile.name).join(' ')}`.toLowerCase().includes(query);
       })
       .sort((a, b) => {
@@ -148,9 +195,12 @@ export async function render(root) {
 
   function accountCard(account) {
     const used = usedOn(account);
+    const active = activeOn(account);
     const broken = account.status === 'error';
     const suspended = account.suspended;
-    return `<article class="card account-card ${needsAttention(account) ? 'needs-attention' : ''}">
+    return `<article class="card account-card ${needsAttention(account) ? 'needs-attention' : ''} ${
+      active.length ? 'is-active' : ''
+    }">
       <div class="account-card-head">
         <img class="head lg" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
         <div class="grow" style="min-width:0">
@@ -192,9 +242,11 @@ export async function render(root) {
         </div>
         ${
           used.length
-            ? `<span class="small account-running ${onlineOn(account).length ? 'live' : ''}">${icon('play')} ${escapeHtml(
-                tr('acc.onlineOn', { n: onlineOn(account).length })
-              )}</span>`
+            ? active.length
+              ? `<span class="small account-running ${onlineOn(account).length ? 'live' : ''}">${icon('play')} ${escapeHtml(
+                  onlineOn(account).length ? tr('acc.onlineOn', { n: onlineOn(account).length }) : tr('acc.activeOn', { n: active.length })
+                )}</span>`
+              : ''
             : ''
         }
       </div>

@@ -590,6 +590,10 @@ async function tabConnect(root, profile) {
   function botRow(member) {
     const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
     const running = bot.state && bot.state !== 'offline';
+    const elsewhere = member.running_elsewhere || [];
+    // Eine Mehrfachzuordnung ist erlaubt, eine parallele Minecraft-Sitzung nicht. Dieser Hinweis
+    // steht direkt am Knopf: Erst hier entscheidet jemand, ob er dieses Konto wirklich startet.
+    const blockedByElsewhere = !running && elsewhere.length;
     return `<li class="botrow ${running ? 'is-on' : ''}">
       <img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy" decoding="async">
       <div class="grow" style="min-width:0">
@@ -642,10 +646,23 @@ async function tabConnect(root, profile) {
               : ''
           }
         </div>
+        ${
+          blockedByElsewhere
+            ? `<div class="bot-conflict" role="status">${icon('alert')}<span>${escapeHtml(
+                tr('srv.accountElsewhere', { n: elsewhere.length })
+              )}</span><span class="bot-conflict-links">${elsewhere
+                .map(
+                  (entry) =>
+                    `<a href="#/servers/${entry.profile_id}/connect">${escapeHtml(entry.profile_name)}</a>`
+                )
+                .join(', ')}</span></div>`
+            : ''
+        }
       </div>
       <div class="row" style="gap:.25rem">
         <button class="btn btn-sm ${running ? '' : 'btn-primary'}" data-toggle="${member.account_id}"
-          ${running || (profile.active && !member.suspended) ? '' : 'disabled'}>${escapeHtml(
+          title="${escapeHtml(blockedByElsewhere ? tr('srv.accountElsewhereHint') : '')}"
+          ${running || (profile.active && !member.suspended && !blockedByElsewhere) ? '' : 'disabled'}>${escapeHtml(
             running ? tr('ov.stop') : tr('ov.start')
           )}</button>
         <button class="btn btn-ghost btn-sm" data-events="${member.account_id}"
