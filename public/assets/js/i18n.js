@@ -1086,6 +1086,57 @@ export const S = {
   'srv.statusPlayers': { en: '{n} of {max} players', de: '{n} von {max} Spielern' },
   'srv.statusSrv': { en: 'points to {host}', de: 'zeigt auf {host}' },
 
+  'srv.diagnosisTitle': { en: 'Connection diagnosis', de: 'Verbindungsdiagnose' },
+  'srv.diagnosisLead': {
+    en: 'Bot state, target server, retry and client — in the order to check them.',
+    de: 'Bot-Zustand, Zielserver, Wiederanlauf und Client — in der Reihenfolge zum Prüfen.',
+  },
+  'srv.diagnosisBots': { en: 'Bots', de: 'Bots' },
+  'srv.diagnosisBotsOnline': { en: '{online} of {total} online', de: '{online} von {total} online' },
+  'srv.diagnosisBotsEmpty': { en: 'No accounts assigned', de: 'Keine Konten zugeordnet' },
+  'srv.diagnosisLastState': {
+    en: 'Last recorded: {state} · {at}',
+    de: 'Zuletzt dokumentiert: {state} · {at}',
+  },
+  'srv.diagnosisNoState': {
+    en: 'No persistent state recorded yet.',
+    de: 'Noch kein dauerhafter Zustand dokumentiert.',
+  },
+  'srv.diagnosisServer': { en: 'Target server', de: 'Zielserver' },
+  'srv.diagnosisServerIdle': { en: 'Not checked yet', de: 'Noch nicht geprüft' },
+  'srv.diagnosisServerChecked': { en: 'checked {at} ago', de: 'vor {at} geprüft' },
+  'srv.diagnosisServerCached': {
+    en: 'cached result from {at} ago',
+    de: 'zwischengespeichertes Ergebnis von vor {at}',
+  },
+  'srv.diagnosisRetry': { en: 'Reconnect', de: 'Wiederanlauf' },
+  'srv.diagnosisRetryWaiting': {
+    en: '{n} bot(s) waiting to retry',
+    de: '{n} Bot(s) wartet/warten auf den nächsten Versuch',
+  },
+  'srv.diagnosisRetryAt': { en: 'next attempt {at}', de: 'nächster Versuch {at}' },
+  'srv.diagnosisRetryOn': {
+    en: 'Automatic reconnect is ready if a bot drops.',
+    de: 'Der automatische Wiederanlauf steht für einen Verbindungsabbruch bereit.',
+  },
+  'srv.diagnosisRetryOff': {
+    en: 'Automatic reconnect is disabled for this slot.',
+    de: 'Der automatische Wiederanlauf ist für diesen Platz ausgeschaltet.',
+  },
+  'srv.diagnosisReady': { en: 'Ready', de: 'Bereit' },
+  'srv.diagnosisPaused': { en: 'Paused', de: 'Ausgeschaltet' },
+  'srv.diagnosisClient': { en: 'Client', de: 'Client' },
+  'srv.diagnosisClientReady': { en: 'New starts use {version}', de: 'Neue Starts nutzen {version}' },
+  'srv.diagnosisClientMissing': { en: 'No client build is ready', de: 'Keine Client-Bauform bereit' },
+  'srv.diagnosisClientCurrent': {
+    en: 'All running bots use the current client.',
+    de: 'Alle laufenden Bots nutzen den aktuellen Client.',
+  },
+  'srv.diagnosisClientOutdated': {
+    en: '{n} bot(s) still use an older client.',
+    de: '{n} Bot(s) nutzt/nutzen noch einen älteren Client.',
+  },
+
   // Warum der Zielserver nicht geantwortet hat. Die Schlüssel kommen aus `server/mcping.js`; dort
   // steht seit dieser Fassung nur noch, *was* los war, und der Wortlaut hier. Jeder Satz nennt
   // die wahrscheinliche Ursache – „Verbindung abgelehnt“ allein hat noch niemandem geholfen.

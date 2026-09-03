@@ -398,47 +398,20 @@ async function renderProfile(root, route) {
 // Ein Reiter, nicht zwei. Wer einen Bot startet, will sehen, was er sagt – vorher hieß das:
 // starten, Reiter wechseln, mitlesen, zurückwechseln, stoppen.
 
-/**
- * „Es gibt eine neue Client-Fassung – deine Bots laufen noch mit der alten.“
- *
- * Der Hinweis steht ganz oben im Reiter „Verbinden“, weil dort die Knöpfe zum Starten und Stoppen
- * stehen: Wer ohnehin gerade an seinen Bots arbeitet, hat den besten Moment für einen Neustart.
- *
- * Er ist bewusst kein roter Alarmstreifen. Nichts ist kaputt – ein Bot mit der Fassung von letzter
- * Woche tut genau das, was er letzte Woche getan hat. Neu ist nur, dass es etwas Neueres gibt.
- */
-function clientUpdateBox(profile) {
-  if (!profile.outdated) return '';
-  const running = profile.accounts.filter((member) => member.outdated);
-  // Die Fassung, mit der die Bots losgelaufen sind. Steht bei allen dieselbe, wird sie genannt –
-  // stehen verschiedene da (ein Bot von gestern, einer von letztem Monat), wäre eine davon eine
-  // halbe Wahrheit, und dann bleibt es bei der Anzahl.
-  const versions = [...new Set(running.map((member) => member.client_version).filter(Boolean))];
-  const from = versions.length === 1 ? versions[0] : '';
-  return `<div class="note" style="margin-bottom:1rem">${icon('download')}
-    <div class="grow">
-      <strong>${escapeHtml(tr('srv.clientNew'))}</strong>
-      <div class="small muted">${escapeHtml(
-        from && profile.client_version
-          ? tr('srv.clientNewFromTo', { n: profile.outdated, from, to: profile.client_version })
-          : tr('srv.clientNewCount', { n: profile.outdated })
-      )}</div>
-    </div>
-    <button class="btn btn-sm btn-primary" id="client-update">${icon('refresh')} ${escapeHtml(
-      tr('srv.clientUpdate')
-    )}</button>
-  </div>`;
-}
-
 async function tabConnect(root, profile) {
   const members = profile.accounts;
   const free = state.accounts.filter(
     (account) => !members.some((member) => member.account_id === account.id)
   );
+  // Der Zielserver wird einmal beim Öffnen gefragt. Der Wert lebt nur für diesen Reiter: Er ist
+  // eine Momentaufnahme eines fremden Servers, keine Profileinstellung und kein Wert, den wir
+  // versehentlich für einen späteren Besuch als aktuell ausgeben dürfen.
+  let targetStatus = null;
+  let targetLoading = false;
+  let statusRequest = 0;
 
   root.innerHTML = `
     <div id="auth-hint"></div>
-    ${clientUpdateBox(profile)}
 
     <div class="row wrap" style="margin-bottom:1rem">
       <button class="btn btn-primary btn-sm" id="start" ${profile.active ? '' : 'disabled'}>${icon('play')} ${escapeHtml(
@@ -452,6 +425,20 @@ async function tabConnect(root, profile) {
       )}</button>
     </div>
 
+    <!-- Die vier Antworten stehen in der Reihenfolge einer echten Fehlersuche: zuerst die Bots,
+         dann der Zielserver, danach ein möglicher Wiederanlauf und zuletzt die Client-Datei.
+         Vorher lagen sie über Kontenliste, Ping-Zeile und Update-Hinweis verstreut; bei einem
+         Ausfall musste man die Seite lesen, statt den nächsten sinnvollen Schritt zu erkennen. -->
+    <section class="connection-diagnosis" aria-labelledby="connection-diagnosis-title">
+      <div class="connection-diagnosis-head">
+        <div>
+          <h2 id="connection-diagnosis-title">${escapeHtml(tr('srv.diagnosisTitle'))}</h2>
+          <p>${escapeHtml(tr('srv.diagnosisLead'))}</p>
+        </div>
+      </div>
+      <div class="connection-diagnosis-grid" id="connection-diagnosis" aria-live="polite"></div>
+    </section>
+
     <div class="split">
       <section class="panel" id="bots-panel">
         <header>
@@ -459,10 +446,6 @@ async function tabConnect(root, profile) {
           <span class="small muted">${profile.online}/${profile.features?.max_accounts ?? members.length}</span>
         </header>
         <div class="body" style="padding:0" id="bots"></div>
-        <!-- Der Zielserver. Er steht unter der Kontenliste und nicht in einem eigenen Reiter:
-             Die Frage „warum kommt mein Bot nicht rein“ stellt sich genau hier, mit den
-             Startknöpfen im Blick – und die halbe Antwort steht oft schon in dieser Zeile. -->
-        <div class="body mcstatus" id="mcstatus" aria-live="polite"></div>
       </section>
 
       <section class="panel console-panel">
@@ -740,85 +723,170 @@ async function tabConnect(root, profile) {
     });
   }
 
-  // ------------------------------------------------------------ Der Zielserver
+  // ------------------------------------------------------------ Verbindungsdiagnose
   //
-  // Einmal beim Öffnen des Reiters, danach auf Knopfdruck. Kein Takt: Der Server gehört jemand
-  // anderem, und ein Panel, das ihn im Sekundentakt anpingt, weil ein Fenster offen steht, ist aus
-  // seiner Sicht kein Besucher mehr. Der Server antwortet in einer Zehntelsekunde; wer es genauer
-  // wissen will, drückt noch einmal.
+  // Einmal beim Öffnen, danach nur auf bewussten Knopfdruck. Der Minecraft-Server gehört jemand
+  // anderem; ein offener Browser darf ihn nicht als Taktgeber missbrauchen. Die Abfrage selbst ist
+  // zusätzlich im Server kurz zwischengespeichert, damit mehrere eigene Serverplätze mit derselben
+  // Adresse keine Mehrfachlast erzeugen.
 
-  const paintStatus = (data) => {
-    const box = $('#mcstatus');
+  const diagnosisCard = ({ label, main, detail = '', tone = '', action = '' }) => `
+    <article class="connection-diagnosis-card ${tone ? `is-${tone}` : ''}">
+      <div class="connection-diagnosis-label">${escapeHtml(label)}</div>
+      <div class="connection-diagnosis-main">${main}</div>
+      ${detail ? `<div class="connection-diagnosis-detail">${detail}</div>` : ''}
+      ${action ? `<div class="connection-diagnosis-action">${action}</div>` : ''}
+    </article>`;
+
+  const botStateOf = (member) => state.bots.get(`${profile.id}:${member.account_id}`) || member;
+
+  const paintDiagnosis = () => {
+    const box = $('#connection-diagnosis');
     if (!box) return;
-    if (data === 'loading') {
-      box.innerHTML = `<span class="small muted">${escapeHtml(tr('srv.statusChecking'))}</span>`;
-      return;
+    const bots = members.map(botStateOf);
+    const online = bots.filter((bot) => bot.online).length;
+    // Fehler und Anmeldung brauchen zuerst Aufmerksamkeit; ein wartender Wiederanlauf ist danach
+    // wichtiger als ein bloß noch startender Prozess. „Online“ gewinnt nur, wenn alle anderen
+    // Bots ebenfalls online sind – 2/3 online ist keine grüne Gesamtlage.
+    const stateOrder = ['error', 'auth', 'reconnecting', 'disconnected', 'connecting', 'starting', 'online', 'offline'];
+    const overall = stateOrder.find((wanted) => bots.some((bot) => bot.state === wanted)) || 'offline';
+    const lastState = bots
+      .map((bot) => bot.last_state)
+      .filter(Boolean)
+      .sort((a, b) => b.t - a.t)[0];
+    const botDetail = lastState
+      ? tr('srv.diagnosisLastState', {
+          state: tr(EVENT_LABELS[lastState.type] || `state.${lastState.type}`),
+          at: datetime(lastState.t),
+        })
+      : tr('srv.diagnosisNoState');
+
+    const waiting = bots.filter((bot) => bot.retry?.at);
+    const nextRetry = waiting.length ? Math.min(...waiting.map((bot) => bot.retry.at)) : null;
+    const restartDetail = waiting.length
+      ? `${tr('srv.diagnosisRetryWaiting', { n: waiting.length })}${
+          nextRetry ? ` · ${tr('srv.diagnosisRetryAt', { at: datetime(nextRetry) })}` : ''
+        }`
+      : profile.auto_reconnect
+        ? tr('srv.diagnosisRetryOn')
+        : tr('srv.diagnosisRetryOff');
+
+    const outdated = bots.filter((bot) => bot.outdated).length;
+    const clientMain = profile.client_version
+      ? escapeHtml(tr('srv.diagnosisClientReady', { version: profile.client_version }))
+      : escapeHtml(tr('srv.diagnosisClientMissing'));
+    const clientDetail = outdated
+      ? escapeHtml(tr('srv.diagnosisClientOutdated', { n: outdated }))
+      : bots.some((bot) => bot.state && bot.state !== 'offline')
+        ? escapeHtml(tr('srv.diagnosisClientCurrent'))
+        : '';
+    const clientAction = outdated
+      ? `<button class="btn btn-sm btn-primary" type="button" data-diagnosis-client-update>${icon('refresh')} ${escapeHtml(
+          tr('srv.clientUpdate')
+        )}</button>`
+      : '';
+
+    let serverMain = escapeHtml(tr('srv.statusChecking'));
+    let serverDetail = '';
+    let serverTone = 'pending';
+    if (!targetLoading && targetStatus) {
+      if (targetStatus.online) {
+        const players =
+          targetStatus.online_players === null
+            ? ''
+            : tr('srv.statusPlayers', { n: targetStatus.online_players, max: targetStatus.max_players ?? '?' });
+        serverMain = escapeHtml(tr('srv.statusOnline'));
+        serverDetail = [
+          players,
+          targetStatus.version ? stripFormatting(targetStatus.version) : '',
+          Number.isFinite(targetStatus.latency_ms) ? `${targetStatus.latency_ms} ms` : '',
+          targetStatus.srv ? tr('srv.statusSrv', { host: `${targetStatus.host}:${targetStatus.port}` }) : '',
+        ]
+          .filter(Boolean)
+          .map(escapeHtml)
+          .join(' · ');
+        serverTone = 'good';
+      } else {
+        serverMain = escapeHtml(tr('srv.statusOffline'));
+        serverDetail = escapeHtml(tr(`mcstatus.${targetStatus.error || 'unknown'}`));
+        serverTone = 'bad';
+      }
+    } else if (!targetLoading) {
+      serverMain = escapeHtml(tr('srv.diagnosisServerIdle'));
+      serverTone = 'pending';
     }
-    if (!data) {
-      box.innerHTML = `<button class="btn btn-ghost btn-sm" id="status-retry">${icon('refresh')} ${escapeHtml(
-        tr('srv.statusCheck')
-      )}</button>`;
-    } else if (data.online) {
-      const players =
-        data.online_players === null
-          ? ''
-          : tr('srv.statusPlayers', { n: data.online_players, max: data.max_players ?? '?' });
-      box.innerHTML = `
-        <div class="row" style="gap:.6rem;align-items:flex-start">
-          ${
-            data.favicon
-              ? `<img class="mcstatus-icon" src="${escapeHtml(data.favicon)}" alt="" width="32" height="32">`
-              : `<span class="dot live" style="color:var(--ok);margin-top:.4rem"></span>`
-          }
-          <div class="grow" style="min-width:0">
-            <div class="row" style="gap:.4rem;flex-wrap:wrap">
-              <span class="strong">${escapeHtml(tr('srv.statusOnline'))}</span>
-              ${players ? `<span class="pill">${escapeHtml(players)}</span>` : ''}
-              ${data.version ? `<span class="pill">${mcText(data.version)}</span>` : ''}
-              <span class="small muted mono">${data.latency_ms} ms</span>
-            </div>
-            ${data.motd ? `<div class="mcstatus-motd">${mcText(data.motd)}</div>` : ''}
-            ${
-              // Nur nennen, wenn er woanders liegt als eingetragen – sonst ist es eine Zeile,
-              // die dasselbe zweimal sagt.
-              data.srv
-                ? `<div class="small muted mono">${escapeHtml(
-                    tr('srv.statusSrv', { host: `${data.host}:${data.port}` })
-                  )}</div>`
-                : ''
-            }
-          </div>
-          <button class="btn btn-ghost btn-sm" id="status-retry"
-            title="${escapeHtml(tr('srv.statusCheck'))}"
-            aria-label="${escapeHtml(tr('srv.statusCheck'))}">${icon('refresh')}</button>
-        </div>`;
-    } else {
-      box.innerHTML = `
-        <div class="row" style="gap:.6rem">
-          <span class="dot" style="color:var(--bad-text);margin-top:.4rem"></span>
-          <div class="grow" style="min-width:0">
-            <div class="strong">${escapeHtml(tr('srv.statusOffline'))}</div>
-            <div class="small muted">${escapeHtml(tr(`mcstatus.${data.error || 'unknown'}`))}</div>
-          </div>
-          <button class="btn btn-ghost btn-sm" id="status-retry"
-            title="${escapeHtml(tr('srv.statusCheck'))}"
-            aria-label="${escapeHtml(tr('srv.statusCheck'))}">${icon('refresh')}</button>
-        </div>`;
+    if (targetStatus?.checked_at) {
+      const timing = escapeHtml(
+        tr(targetStatus.cached ? 'srv.diagnosisServerCached' : 'srv.diagnosisServerChecked', {
+          at: since(targetStatus.checked_at),
+        })
+      );
+      serverDetail = serverDetail ? `${serverDetail}<br>${timing}` : timing;
     }
-    $('#status-retry')?.addEventListener('click', checkStatus);
+    const serverAction = `<button class="btn btn-ghost btn-sm" type="button" data-diagnosis-status
+      ${targetLoading ? 'disabled' : ''} title="${escapeHtml(tr('srv.statusCheck'))}">
+      ${icon('refresh')} ${escapeHtml(tr('srv.statusCheck'))}</button>`;
+
+    box.innerHTML = [
+      diagnosisCard({
+        label: tr('srv.diagnosisBots'),
+        main: bots.length
+          ? `${stateBadge(overall)} <span>${escapeHtml(tr('srv.diagnosisBotsOnline', { online, total: bots.length }))}</span>`
+          : escapeHtml(tr('srv.diagnosisBotsEmpty')),
+        detail: escapeHtml(botDetail),
+        tone:
+          overall === 'online' && online === bots.length
+            ? 'good'
+            : ['error', 'auth', 'disconnected'].includes(overall)
+              ? 'bad'
+              : 'warn',
+      }),
+      diagnosisCard({
+        label: tr('srv.diagnosisServer'),
+        main: serverMain,
+        detail: serverDetail,
+        tone: serverTone,
+        action: serverAction,
+      }),
+      diagnosisCard({
+        label: tr('srv.diagnosisRetry'),
+        main: escapeHtml(
+          waiting.length ? tr('state.reconnecting') : profile.auto_reconnect ? tr('srv.diagnosisReady') : tr('srv.diagnosisPaused')
+        ),
+        detail: escapeHtml(restartDetail),
+        tone: waiting.length ? 'warn' : profile.auto_reconnect ? 'good' : 'pending',
+      }),
+      diagnosisCard({
+        label: tr('srv.diagnosisClient'),
+        main: clientMain,
+        detail: clientDetail,
+        tone: outdated ? 'warn' : profile.client_version ? 'good' : 'bad',
+        action: clientAction,
+      }),
+    ].join('');
   };
 
   async function checkStatus() {
-    paintStatus('loading');
+    const request = ++statusRequest;
+    targetLoading = true;
+    paintDiagnosis();
     try {
       const result = await api(`/profiles/${profile.id}/status`);
       // Der Reiter kann in der Zwischenzeit gewechselt haben – dann gehört das Ergebnis nirgendwo
-      // mehr hin, und `paintStatus` schriebe in ein Element, das eine andere Ansicht gebaut hat.
-      if (state.route.name === 'server' && state.route.id === profile.id) paintStatus(result.status);
+      // mehr hin. Zwei schnelle Klicks dürfen außerdem nicht dazu führen, dass die ältere Antwort
+      // die jüngere überschreibt.
+      if (request !== statusRequest) return;
+      targetStatus = result.status;
     } catch {
-      // Der Zielserver ist Beiwerk. Steht das Panel selbst nicht zur Verfügung, sagt das schon
-      // alles andere auf dieser Seite – ein zweiter roter Kasten dafür hilft niemandem.
-      paintStatus(null);
+      if (request !== statusRequest) return;
+      // Keine Antwort vom Panel ist nicht "der Minecraft-Server ist aus". Wir lassen die Karte
+      // deshalb neutral und bieten die erneute Prüfung an, statt eine fremde Ursache zu erfinden.
+      targetStatus = null;
+    } finally {
+      if (request === statusRequest) {
+        targetLoading = false;
+        if (state.route.name === 'server' && state.route.id === profile.id) paintDiagnosis();
+      }
     }
   }
 
@@ -1064,6 +1132,7 @@ async function tabConnect(root, profile) {
 
   paintAuth();
   paintBots();
+  paintDiagnosis();
   paintChat();
   updateExportLink();
   // Ohne `await`: Der Reiter soll dastehen, bevor ein fremder Server geantwortet hat. Fünf
@@ -1158,17 +1227,18 @@ async function tabConnect(root, profile) {
   $('#restart').addEventListener('click', () => act('restart'));
   $('#attach').addEventListener('click', attach);
 
-  $('#client-update')?.addEventListener('click', async (event) => {
+  async function updateClient(button) {
     // Der Knopf sagt vorher, was er kostet: Jeder betroffene Bot verlässt das Spiel und kommt
     // wieder. Auf einem Server mit Warteschlange ist das nicht umsonst, und wer das weiß, drückt
     // vielleicht lieber heute Abend.
-    if (!(await confirmDialog(tr('srv.clientUpdateAsk', { n: profile.outdated }), {
+    const outdated = members.filter((member) => botStateOf(member).outdated).length;
+    if (!outdated || !(await confirmDialog(tr('srv.clientUpdateAsk', { n: outdated }), {
       confirm: tr('srv.clientUpdate'),
       danger: false,
     }))) {
       return;
     }
-    event.currentTarget.disabled = true;
+    button.disabled = true;
     try {
       const result = await api(`/profiles/${profile.id}/client-update`, { method: 'POST' });
       ok(tr('srv.clientUpdateDone', { n: result.restarted }));
@@ -1176,8 +1246,18 @@ async function tabConnect(root, profile) {
       draw();
     } catch (error) {
       fail(error);
-      event.currentTarget.disabled = false;
+      button.disabled = false;
     }
+  }
+
+  // Die Diagnosekarten werden bei jedem Zustand neu gezeichnet. Eine einzige Delegation auf dem
+  // stabilen Container hält ihre Knöpfe dabei funktionsfähig, ohne nach jedem Render neue Listener
+  // an vergessene Elemente zu hängen.
+  $('#connection-diagnosis').addEventListener('click', (event) => {
+    const statusButton = event.target.closest('[data-diagnosis-status]');
+    if (statusButton) return checkStatus();
+    const updateButton = event.target.closest('[data-diagnosis-client-update]');
+    if (updateButton) updateClient(updateButton);
   });
 
   async function act(what) {
@@ -1239,12 +1319,14 @@ async function tabConnect(root, profile) {
     members.push(...fresh.accounts);
     paintBots();
     paintAuth();
+    paintDiagnosis();
   }, 400);
 
   state.onLive = (event) => {
     if (event.type === 'line' && event.key.startsWith(`${profile.id}:`)) scheduleChat();
     if (event.type === 'state' && event.key.startsWith(`${profile.id}:`)) {
       paintAuth();
+      paintDiagnosis();
       refreshBots();
     }
   };

@@ -52,10 +52,27 @@ function membersOf(profile) {
     .prepare(
       `SELECT pa.account_id, pa.note, pa.proxy_id, pa.wanted, pa.ordinal,
               a.name, a.uuid, a.status, a.last_error, a.kind, a.suspended, a.suspend_reason,
-              b.state, b.connections, b.uptime_sec, b.last_error AS bot_error
+              b.state, b.connections, b.uptime_sec, b.last_error AS bot_error,
+              last_state.type AS last_state_type, last_state.detail AS last_state_detail,
+              last_state.created_at AS last_state_at
          FROM profile_accounts pa
          JOIN mc_accounts a ON a.id = pa.account_id
     LEFT JOIN bots b ON b.profile_id = pa.profile_id AND b.account_id = pa.account_id
+    -- Der Zustand in bots ist nur der letzte Wert. Für die Diagnose brauchen wir zusätzlich
+    -- den letzten dokumentierten Zustandswechsel samt Zeitpunkt: Nach einem Neustart des
+    -- Panels gibt es kein Live-Objekt mehr, der Kunde soll trotzdem nicht vor einem bloßen
+    -- "offline" ohne zeitliche Einordnung stehen. Der vorhandene Index auf
+    -- (profile_id, account_id, created_at DESC) macht die kleine korrelierte Suche je Konto
+    -- gezielt; alle Ereignisse des Systems zu laden wäre bei einem langen Verlauf unnötig.
+    LEFT JOIN bot_events last_state ON last_state.id = (
+      SELECT id
+        FROM bot_events
+       WHERE profile_id = pa.profile_id
+         AND account_id = pa.account_id
+         AND type IN ('online', 'reconnecting', 'disconnected', 'error', 'auth', 'offline')
+       ORDER BY created_at DESC, id DESC
+       LIMIT 1
+    )
         WHERE pa.profile_id = ?
      ORDER BY pa.ordinal, a.name COLLATE NOCASE`
     )
@@ -87,6 +104,12 @@ function membersOf(profile) {
       connections: row.connections || 0,
       uptime_sec: row.uptime_sec || 0,
       last_error: live ? live.lastError : row.bot_error,
+      // Dieser Zeitpunkt kommt bewusst aus dem dauerhaften Ereignisverlauf und nicht aus dem
+      // flüchtigen Bot-Objekt. Damit bleibt die Diagnose auch nach einem Dienstneustart ehrlich.
+      last_state: row.last_state_at
+        ? { type: row.last_state_type, detail: row.last_state_detail || '', t: row.last_state_at }
+        : null,
+      retry: live ? live.retry : null,
       menu: live ? live.menu : null,
       // Mit welcher Client-Fassung dieser Bot losgelaufen ist – und ob sie inzwischen abgelöst
       // wurde. Ein Bot hält seine Datei; der Stundentakt tauscht sie unter ihm aus.

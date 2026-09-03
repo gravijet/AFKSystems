@@ -49,7 +49,7 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 ### 3. Serverplatz als verlässlicher Arbeitsplatz
 
-- [ ] Verbindungsansicht um eine klare Diagnoseleiste erweitern: letzter bekannter Zustand,
+- [x] Verbindungsansicht um eine klare Diagnoseleiste erweitern: letzter bekannter Zustand,
       Server-Ping, Wiederanlauf und Clientstand in einer Reihenfolge.
 - [ ] Chat-Suche, markierte Zeilen und ein kontrolliertes Exportformat ergänzen, sofern der
       jeweilige Tarifverlauf dies zulässt.
