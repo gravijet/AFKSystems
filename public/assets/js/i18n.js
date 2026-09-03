@@ -854,6 +854,30 @@ export const S = {
   'srv.joinCommands': { en: 'Commands on join', de: 'Befehle beim Beitritt' },
   'srv.macros': { en: 'Macros', de: 'Macros' },
   'srv.newMacro': { en: 'New macro', de: 'Neues Macro' },
+  'srv.templates': { en: 'Templates', de: 'Vorlagen' },
+  'srv.templatesHint': {
+    en: 'A template only opens the editor. Review every trigger and step before saving it.',
+    de: 'Eine Vorlage öffnet nur den Editor. Prüfe jeden Auslöser und Schritt, bevor du sie speicherst.',
+  },
+  'srv.templateOpen': { en: 'Review in editor', de: 'Im Editor prüfen' },
+  'srv.template.joinAfk': { en: 'Go AFK on join', de: 'Beim Beitreten AFK gehen' },
+  'srv.template.joinAfkText': {
+    en: 'Starts with one editable /afk chat command after joining.',
+    de: 'Startet mit einem bearbeitbaren /afk-Chatbefehl nach dem Beitreten.',
+  },
+  'srv.template.joinAfkName': { en: 'Go AFK on join', de: 'AFK beim Beitreten' },
+  'srv.template.reconnectWait': { en: 'Pause after joining', de: 'Pause nach Beitritt' },
+  'srv.template.reconnectWaitText': {
+    en: 'Adds a five-second wait; useful as a visible starting point for your own join sequence.',
+    de: 'Fügt eine Pause von fünf Sekunden ein – ein sichtbarer Startpunkt für deine eigene Beitrittskette.',
+  },
+  'srv.template.reconnectWaitName': { en: 'Pause after joining', de: 'Kurze Pause nach Beitritt' },
+  'srv.template.chatReply': { en: 'AFK chat reply', de: 'AFK-Chatantwort' },
+  'srv.template.chatReplyText': {
+    en: 'A rate-limited reply to a matching chat line. Adjust the text and target before use.',
+    de: 'Eine begrenzte Antwort auf eine passende Chatzeile. Text und Ziel vor der Nutzung anpassen.',
+  },
+  'srv.template.chatReplyName': { en: 'AFK reply', de: 'AFK-Antwort' },
   'srv.trigger': { en: 'Trigger', de: 'Auslöser' },
   'srv.steps': { en: 'Steps', de: 'Schritte' },
   'srv.premiumOnly': {
