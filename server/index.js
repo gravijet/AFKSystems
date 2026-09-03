@@ -497,6 +497,94 @@ app.get('/sitemap.xml', (req, res) => {
     );
 });
 
+// ---------------------------------------------------------------- Installierbares Panel (PWA)
+
+/**
+ * Der Service Worker cached bewusst nichts von `/assets/…/css` oder `/assets/…/js`: Diese Adressen
+ * liefert der Server nur mit passendem `Sec-Fetch-Dest` aus (`style`/`script`, siehe
+ * server/protect.js) – ein `cache.addAll()` hier holt sich genau das 403, das Website-Kopierer
+ * abhalten soll. Das Einzige, was er tut: bei fehlendem Netz die eigene Meldung statt der
+ * Browser-Fehlerseite zeigen. Bilder, Schriften und die API bleiben unangetastet; für die reicht
+ * der normale HTTP-Cache des Browsers.
+ */
+const SW_JS = `const OFFLINE_URL = '/offline.html';
+self.addEventListener('install', (event) => {
+  self.skipWaiting();
+  event.waitUntil(caches.open('shell').then((cache) => cache.add(OFFLINE_URL)));
+});
+self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode !== 'navigate') return;
+  event.respondWith(fetch(event.request).catch(() => caches.match(OFFLINE_URL)));
+});
+`;
+
+/** Eigenständig, ohne app.css: Sie muss auch laden, wenn gar keine Verbindung mehr steht. */
+const OFFLINE_HTML = (lang) => `<!doctype html>
+<html lang="${lang}">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>${pages.t('offline.title', lang)} – ${config.brand}</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; text-align: center;
+    padding: 2rem; box-sizing: border-box; background: #fefeff; color: #16171a;
+    font: 1rem/1.5 system-ui, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) { body { background: #121213; color: #f2f2f3; } }
+  h1 { font-size: 1.25rem; margin: 0.75rem 0 0.35rem; }
+  p { margin: 0; opacity: 0.75; }
+  button {
+    margin-top: 1.5rem; padding: 0.6rem 1.2rem; border: 0; border-radius: 0.6rem;
+    background: #206cfe; color: #fff; font: inherit; font-weight: 600; cursor: pointer;
+  }
+</style>
+</head>
+<body>
+  <div>
+    <h1>${pages.t('offline.title', lang)}</h1>
+    <p>${pages.t('offline.body', lang)}</p>
+    <button onclick="location.reload()">${pages.t('offline.retry', lang)}</button>
+  </div>
+</body>
+</html>`;
+
+app.get('/manifest.webmanifest', (req, res) => {
+  const lang = pages.langFor(req);
+  const icon = (size) => ({
+    src: `/assets/v/${assetVersion}/img/icon-${size}.png`,
+    sizes: `${size}x${size}`,
+    type: 'image/png',
+  });
+  res.type('application/manifest+json').send(
+    JSON.stringify({
+      name: config.brand,
+      short_name: config.brand,
+      description: pages.t('meta.description', lang),
+      start_url: '/app',
+      scope: '/',
+      display: 'standalone',
+      background_color: '#fefeff',
+      theme_color: '#206cfe',
+      icons: [icon(192), icon(512)],
+    })
+  );
+});
+
+// Bewusst ein eigener, unversionierter Pfad: Service Worker lesen Browser immer unter der exakten
+// Adresse neu ein, mit der sie registriert wurden – eine Adresse mit Fingerabdruck würde bei jedem
+// Deployment eine neue Registrierung anlegen, statt die vorhandene zu aktualisieren.
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache').type('application/javascript').send(SW_JS);
+});
+
+app.get('/offline.html', (req, res) => {
+  const lang = pages.langFor(req);
+  res.type('html').send(OFFLINE_HTML(lang));
+});
+
 // ---------------------------------------------------------------- Seiten
 
 /** Wartungsmodus: alles außer der API und dem Admin-Bereich zeigt eine Notiz. */

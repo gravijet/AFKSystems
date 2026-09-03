@@ -2901,6 +2901,13 @@ export const S = {
   },
   'error.404.home': { en: 'Back to the start', de: 'Zurück zum Anfang' },
   'error.maintenance.title': { en: 'Back shortly', de: 'Gleich wieder da' },
+
+  'offline.title': { en: 'No connection', de: 'Keine Verbindung' },
+  'offline.body': {
+    en: 'The panel needs a connection to show live data. Try again once you are back online.',
+    de: 'Das Panel braucht eine Verbindung, um Live-Daten zu zeigen. Versuch es erneut, sobald du wieder online bist.',
+  },
+  'offline.retry': { en: 'Try again', de: 'Erneut versuchen' },
 };
 
 /** Ein Text in einer Sprache, mit {platzhaltern}. */
