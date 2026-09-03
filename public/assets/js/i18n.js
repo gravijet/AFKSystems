@@ -880,6 +880,13 @@ export const S = {
   'srv.template.chatReplyName': { en: 'AFK reply', de: 'AFK-Antwort' },
   'srv.copyMacro': { en: 'Copy to editor', de: 'In Editor kopieren' },
   'srv.copyName': { en: '{name} (copy)', de: '{name} (Kopie)' },
+  'srv.testMacro': { en: 'Test macro', de: 'Macro testen' },
+  'srv.testMacroHint': {
+    en: 'The selected online bot will run this macro once. Cooldown and chance are ignored for this test.',
+    de: 'Der gewählte Bot im Spiel führt dieses Macro einmal aus. Sperrzeit und Wahrscheinlichkeit gelten für diesen Test nicht.',
+  },
+  'srv.testStarted': { en: 'Macro started on {name}.', de: 'Macro auf {name} gestartet.' },
+  'srv.noOnlineAccount': { en: 'No account on this server is currently in the game.', de: 'Auf diesem Server ist gerade kein Konto im Spiel.' },
   'srv.trigger': { en: 'Trigger', de: 'Auslöser' },
   'srv.steps': { en: 'Steps', de: 'Schritte' },
   'srv.stepCount': { en: '{n} of {max} steps', de: '{n} von {max} Schritten' },
