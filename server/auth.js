@@ -68,6 +68,60 @@ export function readCookie(req, name) {
  * länger braucht, drückt noch einmal auf den Knopf – das steht dann auch noch einmal im Protokoll.
  */
 export const IMPERSONATION_MS = 60 * 60 * 1000;
+/** Ein erzeugter Admin-Link soll nur für die unmittelbar folgende Übergabe reichen. */
+export const ADMIN_LOGIN_LINK_MS = 10 * 60 * 1000;
+
+/**
+ * Einen kurzlebigen Link für ein Kundenkonto erzeugen.
+ *
+ * Der rohe Zufallswert verlässt diese Funktion genau einmal. In SQLite liegt nur sein HMAC, und
+ * der Link bleibt ohne eine gültige Administratorsitzung wirkungslos (Einlösung in index.js).
+ */
+export function createAdminLoginLink(userId, createdBy) {
+  const raw = token(32);
+  const now = Date.now();
+  const expiresAt = now + ADMIN_LOGIN_LINK_MS;
+  const insert = db.transaction(() => {
+    db.prepare('DELETE FROM admin_login_links WHERE expires_at <= ?').run(now);
+    db.prepare(
+      `INSERT INTO admin_login_links (token, user_id, created_by, expires_at, created_at)
+       VALUES (?, ?, ?, ?, ?)`
+    ).run(capabilityDigest('admin-login-link', raw), userId, createdBy, expiresAt, now);
+  });
+  insert();
+  return { token: raw, expires_at: expiresAt };
+}
+
+/**
+ * Einen Einmal-Link verbrauchen und das Zielkonto zurückgeben.
+ *
+ * Lesen und Löschen gehören in dieselbe Transaktion: Zwei fast gleichzeitige Aufrufe dürfen
+ * nicht beide gewinnen. Ob der Aufrufer wirklich Admin ist, prüft die HTTP-Route unmittelbar
+ * davor; hier wird zusätzlich festgehalten, welcher Admin den Link tatsächlich benutzt hat.
+ */
+export function consumeAdminLoginLink(raw, adminId, ip = null) {
+  const candidates = capabilityCandidates('admin-login-link', raw);
+  if (!candidates.length) return null;
+  const consume = db.transaction(() => {
+    const row = db
+      .prepare(
+        `SELECT l.token, l.user_id, l.created_by, l.expires_at, u.*
+           FROM admin_login_links l JOIN users u ON u.id = l.user_id
+          WHERE l.token IN (?, ?)`
+      )
+      .get(...candidates);
+    if (!row) return null;
+    db.prepare('DELETE FROM admin_login_links WHERE token = ?').run(row.token);
+    if (row.expires_at <= Date.now() || row.blocked) return null;
+    const { token: _stored, user_id: _userId, created_by, expires_at: _expiresAt, ...user } = row;
+    return { user, created_by };
+  });
+  const result = consume();
+  if (result) {
+    audit(adminId, 'admin-login-link-used', { user: result.user.id, created_by: result.created_by }, ip);
+  }
+  return result;
+}
 
 export function createSession(
   res,

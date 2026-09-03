@@ -1539,6 +1539,26 @@ const migrations = [
       ).run();
     },
   },
+  {
+    // **Einmal-Link für den Blick in ein Kundenkonto.**
+    //
+    // Der Link selbst ist noch keine Anmeldung: Beim Einlösen muss im selben Browser eine
+    // Administratorsitzung bestehen. So kann eine Adresse aus Verlauf, Zwischenablage oder
+    // Serverprotokoll keinem Außenstehenden ein Kundenkonto öffnen. Der zufällige Wert steht wie
+    // bei Sitzungen nur als HMAC in der Datenbank, gilt zehn Minuten und wird beim ersten Aufruf
+    // atomar verbraucht.
+    name: '035-admin-einmal-links',
+    sql: `
+      CREATE TABLE admin_login_links (
+        token      TEXT PRIMARY KEY,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_by INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at INTEGER NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX admin_login_links_expiry ON admin_login_links(expires_at);
+    `,
+  },
 ];
 
 /**

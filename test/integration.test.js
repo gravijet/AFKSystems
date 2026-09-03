@@ -4118,6 +4118,48 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(userInfo.response.status, 200);
   assert.deepEqual(userInfo.data.tickets.map((entry) => entry.id), [openTicket.id]);
 
+  // Ein Admin kann einen kurzlebigen Einmal-Link erzeugen. Der Link allein reicht nicht: Ohne
+  // Sitzung geht es zur Anmeldung, als gewöhnlicher Nutzer gibt es eine Absage, und erst ein
+  // angemeldeter Admin verbraucht ihn und erhält die geliehene Kundensitzung.
+  const oneTime = await api(base, `/api/admin/users/${user.id}/login-link`, {
+    token: ADMIN_TOKEN,
+    method: 'POST',
+  });
+  assert.equal(oneTime.response.status, 200);
+  const oneTimePath = new URL(oneTime.data.link).pathname;
+  const anonymousLink = await fetch(`${base}${oneTimePath}`, { redirect: 'manual' });
+  assert.equal(anonymousLink.status, 302);
+  assert.match(anonymousLink.headers.get('location'), /\/login\?next=/);
+  assert.equal(
+    (
+      await fetch(`${base}${oneTimePath}`, {
+        headers: { cookie: `afk_session=${USER_TOKEN}` },
+        redirect: 'manual',
+      })
+    ).status,
+    403
+  );
+  const openedLink = await fetch(`${base}${oneTimePath}`, {
+    headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
+    redirect: 'manual',
+  });
+  assert.equal(openedLink.status, 302);
+  assert.equal(openedLink.headers.get('location'), '/en/app');
+  const borrowedCookie = openedLink.headers.get('set-cookie')?.match(/afk_session=([^;]+)/)?.[1];
+  assert.ok(borrowedCookie);
+  const borrowedMe = await api(base, '/api/me', { token: borrowedCookie });
+  assert.equal(borrowedMe.data.user.id, user.id);
+  assert.equal(borrowedMe.data.impersonator.id, admin.id);
+  assert.equal(
+    (
+      await fetch(`${base}${oneTimePath}`, {
+        headers: { cookie: `afk_session=${ADMIN_TOKEN}` },
+        redirect: 'manual',
+      })
+    ).status,
+    410
+  );
+
   // Die Suche über alles: ein Anhaltspunkt, Treffer aus mehreren Tabellen, und jeder bringt den
   // Weg zu sich selbst mit. Ein Kunde darf sie nicht einmal ansehen – sie zeigt fremde Mailadressen.
   const searchByMail = await api(base, `/api/admin/search?q=${encodeURIComponent(user.email)}`, {

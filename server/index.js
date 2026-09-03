@@ -268,6 +268,48 @@ app.use('/api/bot', botRouter);
 app.use('/api/node', nodeRouter);
 
 /**
+ * Ein Admin-Einmal-Link ist absichtlich eine normale Browseradresse und kein JSON-Endpunkt.
+ *
+ * Ohne Administratorsitzung führt er erst zur Anmeldung und bleibt dabei unverbraucht. Nach der
+ * Anmeldung landet der Browser wieder hier. Erst dann wird die Marke atomar gelöscht, die kurze
+ * geliehene Sitzung angelegt und ins Kundenpanel weitergeleitet.
+ */
+app.get('/admin-login/:token', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const lang = pages.langFor(req);
+  if (!req.user) {
+    return res.redirect(302, `/${lang}/login?next=${encodeURIComponent(req.originalUrl)}`);
+  }
+  if (req.user.role !== 'admin') {
+    return res
+      .status(403)
+      .type('text/plain')
+      .send(
+        lang === 'en'
+          ? 'Only administrators can use this link.'
+          : 'Nur Administratoren können diesen Link benutzen.'
+      );
+  }
+  const result = auth.consumeAdminLoginLink(req.params.token, req.user.id, req.ip);
+  if (!result) {
+    return res
+      .status(410)
+      .type('text/plain')
+      .send(
+        lang === 'en'
+          ? 'This link has expired or was already used.'
+          : 'Dieser Link ist abgelaufen oder wurde bereits benutzt.'
+      );
+  }
+  auth.createSession(res, result.user, req, {
+    impersonatorId: req.user.id,
+    parentToken: req.sessionStorageToken,
+    maxAgeMs: auth.IMPERSONATION_MS,
+  });
+  return res.redirect(302, `/${result.user.language || lang}/app`);
+});
+
+/**
  * Läuft der Dienst?
  *
  * Diese Adresse ist absichtlich offen: `install.sh`, `cutover.sh`, der Discord-Bot und jeder

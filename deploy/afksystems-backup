@@ -52,7 +52,7 @@ install -d -m 0700 "$STAGE/data" "$STAGE/bot"
 
 # Der Datenbestand darf weiterlaufen. Nur die SQLite-Dateien werden ausgelassen und anschliessend
 # ueber die eingebaute Online-Sicherung konsistent erzeugt. Lokale Datenbank-Sicherungen werden
-# nicht noch einmal vervielfacht; Xeon2 bekommt bei jedem Lauf einen eigenen aktuellen Stand.
+# nicht noch einmal vervielfacht; Xeon-2 bekommt bei jedem Lauf einen eigenen aktuellen Stand.
 rsync -a --no-owner --no-group --no-perms \
   --exclude '/afksystems.db' \
   --exclude '/afksystems.db-shm' \
