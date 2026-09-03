@@ -10,6 +10,7 @@ import * as binaries from '../binaries.js';
 import * as billing from '../billing.js';
 import * as nodes from '../nodes.js';
 import * as heads from '../heads.js';
+import * as snapshots from '../snapshots.js';
 import * as roles from '../roles.js';
 import * as schedules from '../schedules.js';
 import * as mcping from '../mcping.js';
@@ -1100,6 +1101,28 @@ router.get(
     }
     events.sort((a, b) => a.t - b.t);
     res.json({ events, now: Date.now() });
+  })
+);
+
+/**
+ * Ein automatischer Schnappschuss – gezogen von `Bot#captureSnapshot`, sobald ein Bot stirbt oder
+ * die Verbindung verliert. Der Dateiname allein öffnet nichts: Er muss zu einer `snapshot`-Zeile
+ * dieses Serverplatzes gehören, sonst wäre der Endpunkt eine offene Rateaufgabe auf fremde Bilder.
+ */
+router.get(
+  '/:id/snapshot/:file',
+  wrap((req, res) => {
+    const profile = ownedProfile(req);
+    const file = String(req.params.file);
+    const row = db
+      .prepare("SELECT 1 FROM bot_events WHERE profile_id = ? AND type = 'snapshot' AND detail = ?")
+      .get(profile.id, file);
+    const body = row ? snapshots.read(file) : null;
+    if (!body) throw notFound('Schnappschuss nicht gefunden.', { en: 'Snapshot not found.' });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+    res.setHeader('Content-Length', body.length);
+    res.end(body);
   })
 );
 

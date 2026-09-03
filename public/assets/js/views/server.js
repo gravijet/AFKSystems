@@ -34,6 +34,7 @@ const EVENT_LABELS = {
   world: 'srv.eventWorld',
   death: 'srv.eventDeath',
   dropped: 'srv.eventDropped',
+  snapshot: 'srv.eventSnapshot',
 };
 
 /** Ein CSV-Feld – in Anführungszeichen, sobald es welche selbst enthält oder mehrzeilig ist. */
@@ -693,7 +694,15 @@ async function tabConnect(root, profile) {
             (row) => `<li>
               <span class="mono small muted" title="${escapeHtml(datetime(row.t))}">${escapeHtml(since(row.t))}</span>
               <span class="strong">${escapeHtml(tr(EVENT_LABELS[row.type] || row.type))}</span>
-              ${row.detail ? `<span class="small muted">${escapeHtml(row.detail)}</span>` : ''}
+              ${
+                row.type === 'snapshot' && row.detail
+                  ? `<a class="small" href="${escapeHtml(
+                      `/api/profiles/${profile.id}/snapshot/${row.detail}`
+                    )}" target="_blank" rel="noopener">${escapeHtml(tr('srv.eventSnapshotView'))}</a>`
+                  : row.detail
+                    ? `<span class="small muted">${escapeHtml(row.detail)}</span>`
+                    : ''
+              }
             </li>`
           )
           .join('')}</ul>`

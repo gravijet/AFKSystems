@@ -18,6 +18,7 @@ import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
 import * as agents from './agents.js';
 import * as resources from './resources.js';
+import * as snapshots from './snapshots.js';
 import * as notify from './notify.js';
 import { featuresOf, isActive, gateCaps, freeAccess } from './billing.js';
 import { HttpError, codeUrl, MS_LINK } from './util.js';
@@ -1257,6 +1258,9 @@ class Bot extends EventEmitter {
         break;
       case 'death':
         this.logEvent('death');
+        // Ohne await: Ein Bild ziehen dauert, und die Zeilenverarbeitung soll darauf nicht warten.
+        // `captureSnapshot` fängt seine Fehler selbst ab und wirft nie.
+        this.captureSnapshot();
         this.supervisor.macros.onDeath(this);
         break;
       // Der Client meldet das, wenn seine eigene Ausgabe schneller war, als das Panel sie abholen
@@ -1278,6 +1282,7 @@ class Bot extends EventEmitter {
         this.lastReason = reason || null;
         this.lastError = reason || null;
         this.setState('disconnected', reason || '');
+        this.captureSnapshot();
         this.supervisor.macros.onDisconnect(this);
         break;
       }
@@ -1439,6 +1444,7 @@ class Bot extends EventEmitter {
         this.lastReason = reason || null;
         this.lastError = reason || null;
         this.setState('disconnected', reason || '');
+        this.captureSnapshot();
         this.supervisor.macros.onDisconnect(this);
         break;
       }
@@ -1879,6 +1885,27 @@ class Bot extends EventEmitter {
       type: response.headers.get('content-type') || 'application/octet-stream',
       body: Buffer.from(await response.arrayBuffer()),
     };
+  }
+
+  /**
+   * Ein Bild ziehen, ohne dass jemand zusieht – für den Augenblick, in dem es niemand mehr könnte.
+   *
+   * Wer stirbt oder die Verbindung verliert, hat selten jemanden zufällig vor dem Bildschirm
+   * sitzen. Ohne das hier wäre die Antwort auf "was ist da eigentlich passiert" immer ein
+   * Achselzucken, obwohl der Client die Welt bis zu diesem Moment längst geladen hatte. Läuft
+   * gerade kein texturierter Viewer, kostet der Aufruf nichts als eine geprüfte Bedingung.
+   */
+  async captureSnapshot() {
+    if (!this.web) return;
+    try {
+      const answer = await this.webFetch('/api/frame.png?w=426&h=240');
+      if (answer.status !== 200 || !answer.body?.length) return;
+      const name = snapshots.save(answer.body);
+      this.logEvent('snapshot', name);
+    } catch {
+      // Kein Bild ist keinen eigenen Fehler wert – das Ereignis, das den Versuch ausgelöst hat
+      // (Tod, Trennung), steht ohnehin schon im Verlauf.
+    }
   }
 
   /**
@@ -2692,9 +2719,18 @@ class Supervisor extends EventEmitter {
       .all(profileId, accountId, since);
   }
 
-  /** Ereignisse jenseits der Aufbewahrungsfrist weg – Teil des stündlichen Aufräumens in index.js. */
+  /**
+   * Ereignisse jenseits der Aufbewahrungsfrist weg – Teil des stündlichen Aufräumens in index.js.
+   *
+   * Ein Schnappschuss lebt genau so lange wie seine Zeile: Ohne sie wäre er ein Bild, das nichts
+   * mehr referenziert, und die Zeile ohne ihn ein toter Verweis. Erst die Dateien, dann die Zeilen
+   * – sonst überlebte ein Bild seine eigene Zeile um einen Prozessabsturz mitten im Aufräumen.
+   */
   cleanupEvents() {
     const cutoff = Date.now() - EVENT_RETENTION_MS;
+    for (const row of db.prepare("SELECT detail FROM bot_events WHERE created_at < ? AND type = 'snapshot'").all(cutoff)) {
+      if (row.detail) snapshots.remove(row.detail);
+    }
     return db.prepare('DELETE FROM bot_events WHERE created_at < ?').run(cutoff).changes;
   }
 }

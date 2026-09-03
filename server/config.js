@@ -99,6 +99,9 @@ export const paths = {
   // unter data/ und nicht unter public/: Es ist ein Zwischenspeicher und kein Bestandteil des
   // Projekts, und beim Ausrollen wird er nicht mitkopiert (siehe server/heads.js).
   heads: path.join(config.dataDir, 'heads'),
+  // Automatische Schnappschüsse der Live-Ansicht bei Tod/Trennung (siehe server/snapshots.js).
+  // Wie `heads`: kein eigener Bestand, entsteht erst mit dem ersten Bild.
+  snapshots: path.join(config.dataDir, 'snapshots'),
   public: path.join(ROOT, 'public'),
 };
 
