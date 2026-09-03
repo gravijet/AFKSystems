@@ -51,8 +51,9 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
       Server-Ping, Wiederanlauf und Clientstand in einer Reihenfolge.
 - [ ] Chat-Suche, markierte Zeilen und ein kontrolliertes Exportformat ergänzen, sofern der
       jeweilige Tarifverlauf dies zulässt.
-- [ ] Makros und Zeitpläne mit Vorabprüfung auf widersprüchliche Zeiten, fehlende Konten und
-      nicht verfügbare Client-Fähigkeiten versehen.
+- [x] Makros und Zeitpläne mit Vorabprüfung auf widersprüchliche Zeiten, fehlende Konten und
+      nicht verfügbare Client-Fähigkeiten versehen; kollidierende aktive Zeitpläne werden im
+      Dialog transparent gemacht, ohne absichtliche Abläufe zu verbieten.
 - [ ] Sichere Vorlagen für wiederkehrende Makros anbieten, aber nie ungeprüfte Befehle automatisch
       ausführen.
 - [ ] Konfigurationsvergleich und Kopierablauf ausbauen: nachvollziehbar auswählen, was kopiert

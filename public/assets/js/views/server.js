@@ -2182,6 +2182,10 @@ async function tabSchedule(root, profile) {
             <span class="hint">${escapeHtml(tr('sch.daysHint'))}</span>
           </div>
 
+          <div class="note warn schedule-preflight" id="sch-preflight" role="status" hidden>
+            ${icon('alert')}<div></div>
+          </div>
+
           <div class="field">
             <label for="sch-note">${escapeHtml(tr('sch.note'))}</label>
             <input id="sch-note" type="text" maxlength="120" value="${escapeHtml(current.note || '')}"
@@ -2196,14 +2200,41 @@ async function tabSchedule(root, profile) {
     document.body.append(dialog);
 
     const chosen = new Set(current.days);
+    const preflight = dialog.querySelector('#sch-preflight');
+    // Ein Konflikt ist keine ungültige Eingabe: Zwei Abläufe können absichtlich zum selben
+    // Zeitpunkt eingerichtet sein. Unterschiedliche Aktionen auf wenigstens dasselbe Konto sind
+    // aber genau die Information, die vor dem Speichern nicht still im Hintergrund bleiben darf.
+    const updatePreflight = () => {
+      const action = dialog.querySelector('#sch-action').value;
+      const minutes = Number(dialog.querySelector('#sch-hour').value) * 60 + Number(dialog.querySelector('#sch-minute').value);
+      const accountId = Number(dialog.querySelector('#sch-account').value) || null;
+      const conflicts = data.schedules.filter((other) => {
+        if (!other.active || other.id === entry?.id || other.action === action || other.minutes !== minutes) return false;
+        const sameDay = other.days.some((day) => chosen.has(day));
+        const sameTarget = !other.account_id || !accountId || other.account_id === accountId;
+        return sameDay && sameTarget;
+      });
+      preflight.hidden = !conflicts.length;
+      if (conflicts.length) {
+        preflight.querySelector('div').textContent = tr('sch.conflict', {
+          n: conflicts.length,
+          action: tr(`sch.action.${conflicts[0].action}`),
+        });
+      }
+    };
     for (const button of dialog.querySelectorAll('[data-day]')) {
       button.addEventListener('click', () => {
         const day = Number(button.dataset.day);
         if (chosen.has(day)) chosen.delete(day);
         else chosen.add(day);
         button.setAttribute('aria-pressed', String(chosen.has(day)));
+        updatePreflight();
       });
     }
+    for (const selector of ['#sch-action', '#sch-hour', '#sch-minute', '#sch-account']) {
+      dialog.querySelector(selector).addEventListener('change', updatePreflight);
+    }
+    updatePreflight();
 
     let result = null;
     dialog.querySelector('form').addEventListener('submit', (event) => {
