@@ -22,6 +22,7 @@ import { renderDiscord } from '../discord.js';
 // früher daneben und bedeutete dasselbe wie „beantwortet“ – siehe server/tickets.js.
 const STATUS_PILL = { open: 'primary', answered: '', closed: '' };
 const PRIORITY_PILL = { urgent: 'missing', high: 'primary', normal: '', low: '' };
+const TEAM_LOGO = new URL('../../img/logo-128.webp', import.meta.url).pathname;
 
 /**
  * Wie groß ein Anhang sein darf.
@@ -800,13 +801,16 @@ async function one(root, id, { staff, backHash }) {
       : message.role === 'staff'
         ? tr('tk.staff')
         : message.author_name || message.display_name || tr('tk.you');
+    // In der Kundenansicht antwortet AFKSystems als Team: kein persönliches Profilbild. Die
+    // Rollenmarke entfällt ganz, weil „Team“ neben „Team“ keine zusätzliche Auskunft wäre.
+    const customerTeam = !staff && message.role === 'staff' && !message.internal;
+    const picture = customerTeam ? TEAM_LOGO : message.avatar;
     return `<article class="chat-msg ${message.role} ${mine ? 'mine' : ''} ${
       message.internal ? 'internal' : ''
     }">
       <header>
-        ${avatar({ display_name: who, avatar: message.avatar }, { size: 22 })}
+        ${avatar({ display_name: who, avatar: picture }, { size: 22 })}
         <span class="strong">${escapeHtml(who)}</span>
-        ${message.role === 'staff' && !message.internal ? `<span class="pill primary">${escapeHtml(tr('tk.staff'))}</span>` : ''}
         ${message.discord_id ? `<span class="pill">${icon('discord')}</span>` : ''}
         <time>${datetime(message.created_at)}</time>
       </header>

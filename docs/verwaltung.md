@@ -14,15 +14,17 @@ registrierte Benutzer bekommt sie (oder wer in `ADMIN_EMAIL` steht).
 1. [Suche über alles](#suche)
 2. [Nutzer: viele auf einmal](#massen)
 3. [Listen als Datei](#csv)
-4. [Sicherheit: wer klopft, wer drin ist, wer draußen bleibt](#sicherheit)
-5. [Sicherungen der Datenbank](#sicherungen)
-6. [Betrieb: was gerade läuft, was regelmäßig läuft](#betrieb)
-7. [Textbausteine für Tickets](#bausteine)
-8. [Rundmail](#rundmail)
-9. [Geld zurückgeben](#erstatten)
-10. [Systemmeldungen: der Webhook, der die Anlage meldet](#system)
-11. [Verkäufer und Belege](#belege)
-12. [Konten, die gelöscht werden sollen](#loeschungen)
+4. [Die Seite eines Kunden](#kunde)
+5. [Die Seite eines Serverplatzes](#platz)
+6. [Sicherheit: wer klopft, wer drin ist, wer draußen bleibt](#sicherheit)
+7. [Sicherungen der Datenbank](#sicherungen)
+8. [Betrieb: was gerade läuft, was regelmäßig läuft](#betrieb)
+9. [Textbausteine für Tickets](#bausteine)
+10. [Rundmail](#rundmail)
+11. [Geld zurückgeben](#erstatten)
+12. [Systemmeldungen: der Webhook, der die Anlage meldet](#system)
+13. [Verkäufer und Belege](#belege)
+14. [Konten, die gelöscht werden sollen](#loeschungen)
 
 ---
 
@@ -108,9 +110,104 @@ einzige Weg dorthin: Belegnummer, Betrag, Datum und der Name, auf den die Rechnu
 
 ---
 
+<a id="kunde"></a>
+
+## 4. Die Seite eines Kunden
+
+*Administration → Tagesgeschäft → Nutzer → eine Zeile anklicken.* Alles, was zu einem Konto gehört,
+auf einem Bildschirm: Guthaben, Serverplätze, Minecraft-Konten, Buchungen, Tickets, Proxys und die
+interne Notiz. Drei Blöcke darin sind nicht selbsterklärend.
+
+### „Ich komme nicht mehr hinein“
+
+Der Kasten **Zugang zu diesem Konto** stellt drei Auskünfte nebeneinander, weil erst ihr Vergleich
+die Frage beantwortet:
+
+| Was dort steht | Wofür man es liest |
+| --- | --- |
+| **Zwei-Faktor-Anmeldung** – an/aus, seit wann, wie viele Wiederherstellungscodes übrig sind | „Passwort stimmt, es geht trotzdem nicht“ hat hier seine Erklärung |
+| **Angemeldete Geräte** – Gerät, Adresse, Alter, je Zeile ein **Abmelden** | ein verlorenes Handy, ein fremder Eintrag in der Geräteliste des Kunden |
+| **Anmeldeversuche** – die letzten 20, mit Grund | ob überhaupt etwas ankommt, von welcher Adresse, und woran es scheitert |
+
+„Abmelden“ trifft **genau ein Gerät**. Der Knopf *Überall abmelden* weiter oben ist etwas anderes
+und bleibt daneben stehen: Wer wegen eines verlorenen Telefons anruft, hat nicht darum gebeten, auch
+aus dem Browser geworfen zu werden, in dem er gerade sitzt.
+
+> **Zweiten Faktor abnehmen** ist der letzte Ausweg und sieht auch so aus. Er erscheint nur, wenn
+> einer eingerichtet ist, fragt nach, **schickt dem Kunden eine E-Mail** (auch wenn er
+> Sicherheitspost abbestellt hat) und steht im Protokoll. Ein still abgeschalteter zweiter Faktor
+> wäre genau das, was ein übernommenes Support-Konto täte.
+
+### Post an dieses Konto
+
+Die letzten 15 Nachrichten mit Betreff und Zustand. „Die Mail kam nie an“ hat drei verschiedene
+Antworten – **verschickt**, **gescheitert**, **gar nicht erst versucht** (abbestellt oder kein
+Postausgang) –, und welche gilt, steht hier statt im Mail-Protokoll über alle Konten hinweg.
+
+### Letzte Einträge im Protokoll
+
+Die 25 jüngsten Protokollzeilen dieses Kontos, in derselben Sprache wie das große Protokoll. Der
+Knopf **Ganzes Protokoll** führt dorthin, gefiltert auf diesen Benutzernamen.
+
+### Eine angemeldete Löschung zurücknehmen
+
+Steht über der Seite der rote Streifen mit dem Löschtermin, steht daneben **Löschung
+zurücknehmen**. Das ist derselbe Vorgang, den der Kunde selbst auslösen kann (siehe
+[Abschnitt 14](#loeschungen)) – für den Fall, dass er stattdessen anruft. Es bleibt alles stehen,
+und die Bots holt der Wiederanlauf von selbst zurück.
+
+---
+
+<a id="platz"></a>
+
+## 5. Die Seite eines Serverplatzes
+
+*Administration → Tagesgeschäft → Server → eine Zeile anklicken.* Dieselbe Sicht, die der Kunde auf
+seinen Platz hat, und dazu, was ihn nichts angeht: wem er gehört, was er verbraucht, wo er liegt.
+
+### Ein Bot einzeln
+
+Jede Kontozeile hat **Starten / Neu starten / Stoppen** für genau diesen einen Bot. Der Anlass ist
+der Alltag: Von acht Bots auf einem Platz hängt einer. „Alle neu starten“ wirft die anderen sieben
+mit aus dem Spiel – und die standen dort womöglich seit Tagen an einer Stelle, die sie nicht
+wiederbekommen.
+
+Die Liste hält sich selbst auf dem Laufenden (alle fünf Sekunden): Zustand, PID, Laufzeit, ein
+wartender Wiederanlauf mit Countdown und der letzte Fehler. Der gedrückte Knopf geht bis zur
+nächsten Auffrischung aus, damit zweimal Drücken nicht ein zweiter Neustart mitten im ersten wird.
+
+Neben dem Namen steht außerdem, **womit dieser Bot gerade läuft**: Fassung und Bauform, und ein
+rotes Merkzeichen, wenn auf der Platte inzwischen eine neuere Datei liegt. In der Kopfzeile
+erscheint dann **Diese Bots auf den neuen Client heben** mit der Zahl der betroffenen – derselbe
+Vorgang wie unter *Administration → Client*, aber nur für diesen einen Kunden (siehe
+[Abschnitt 8](#betrieb)).
+
+Darunter steht der Proxy des Kontos, oder – wenn es keinen eigenen hat – dass es über den des
+Standorts geht. „Kein Proxy“ und „direkt“ sind zwei verschiedene Aussagen, und die falsche davon
+hat schon Fehlersuchen in die falsche Richtung geschickt.
+
+### Die Konsole an ein einzelnes Konto
+
+Über dem Eingabefeld steht ein Auswahlkasten, sobald mehr als ein Konto auf dem Platz sitzt. Für
+`/list` ist es egal, an wen die Zeile geht; für `/warp` oder ein `:pov size` ist es der Unterschied
+zwischen „einem Bot helfen“ und „acht Bots gleichzeitig etwas antun“. Auf **alle Konten** gestellt
+bleibt es wie bisher. Jede gesendete Zeile steht im Protokoll, mit Serverplatz und Text.
+
+### Verbindung ändern
+
+Name, Serveradresse und Protokollversion – **auch dann, wenn der Platz gesperrt ist**. Genau das
+kann der Kunde nämlich nicht mehr: Ein Platz wird gesperrt, weil seine Adresse Ärger macht, und
+danach konnte ihn niemand mehr auf eine andere umstellen. Übrig blieb der Griff in die Datenbank.
+
+Die zur Auswahl stehenden Protokollversionen kommen aus der Client-Datei selbst und nicht aus einer
+Liste im Quelltext. Laufende Bots behalten die alte Adresse, bis sie neu starten – der Knopf dafür
+steht eine Spalte weiter.
+
+---
+
 <a id="sicherheit"></a>
 
-## 4. Sicherheit
+## 6. Sicherheit
 
 *Administration → Protokolle und Zustand → Sicherheit.* Drei Listen auf einem Bildschirm, weil erst
 der Vergleich die Arbeit macht: Die Adresse, die achtzigmal danebengetippt hat, ist die, die
@@ -178,7 +275,7 @@ Nachricht gerade nicht zugestellt werden kann; im Protokoll steht dann `login-co
 
 <a id="sicherungen"></a>
 
-## 5. Sicherungen der Datenbank
+## 7. Sicherungen der Datenbank
 
 *Administration → System*, unten. Eine Sicherung am Tag läuft von selbst (abschaltbar unter
 *Einstellungen → Betrieb*), die letzten vierzehn bleiben liegen, ein Knopf macht dazwischen eine.
@@ -212,7 +309,7 @@ Wiederherstellung sind in [aufbau.md](aufbau.md#sicherung-auf-einen-zweiten-serv
 
 <a id="betrieb"></a>
 
-## 6. Betrieb
+## 8. Betrieb
 
 *Administration → Tagesgeschäft → Betrieb.* Zwei Dinge, die vorher nirgends an einer Stelle standen.
 
@@ -253,13 +350,13 @@ Das ist bewusst ein Knopf und kein Takt. Ein Neustart wirft einen Bot aus dem Sp
 Warteschlange kostet das den Platz darin, und der Kunde hat nicht darum gebeten. Er kann es auch
 selbst tun – im Reiter *Verbinden* seines Serverplatzes steht derselbe Hinweis mit einem Knopf, der
 nur seine eigenen Bots betrifft. Kommt eine neue Fassung an, meldet der Systembericht sie von sich
-aus in den Webhook (siehe Abschnitt 10).
+aus in den Webhook (siehe Abschnitt 12).
 
 ---
 
 <a id="bausteine"></a>
 
-## 7. Textbausteine für Tickets
+## 9. Textbausteine für Tickets
 
 *Administration → Tagesgeschäft → Textbausteine*, benutzt im Ticket über den Knopf **Textbaustein**
 neben dem Antwortfeld.
@@ -284,7 +381,7 @@ Platz verdient: Einer, den in einem halben Jahr niemand benutzt hat, steht beim 
 
 <a id="rundmail"></a>
 
-## 8. Rundmail
+## 10. Rundmail
 
 *Administration → Plattform → Ankündigung*, unterer Bereich.
 
@@ -313,7 +410,7 @@ und ignoriert dessen Abbestellung: Wer prüfen will, wie es aussieht, will es se
 
 <a id="erstatten"></a>
 
-## 9. Geld zurückgeben
+## 11. Geld zurückgeben
 
 *Administration → Tarife und Geld → Aufladungen.* Neben jeder bezahlten Stripe-Aufladung steht
 **Erstatten**; ohne Betrag geht alles zurück, mit Betrag ist es eine Teilerstattung.
@@ -331,7 +428,7 @@ Rechenaufgabe, sondern eine Entscheidung. Alles Weitere zu Erstattungen und Stre
 
 <a id="system"></a>
 
-## 10. Systemmeldungen: der Webhook, der die Anlage meldet
+## 12. Systemmeldungen: der Webhook, der die Anlage meldet
 
 *Administration → System*, unter den Messwerten. Und – wenn ein Webhook hinterlegt ist – in dem
 Discord-Kanal, der darin steht.
@@ -366,7 +463,7 @@ beantwortet die häufigste Frage an einen Webhook: Kommt da überhaupt etwas an?
 
 <a id="belege"></a>
 
-## 11. Verkäufer und Belege
+## 13. Verkäufer und Belege
 
 *Administration → Einstellungen → Verkäufer und Belege.*
 
@@ -397,7 +494,7 @@ Zahlung vergeben wurde, ist keine fortlaufende Nummer mehr.
 
 <a id="loeschungen"></a>
 
-## 12. Konten, die gelöscht werden sollen
+## 14. Konten, die gelöscht werden sollen
 
 Ein Kunde kann sein Konto selbst löschen (*Einstellungen → Deine Daten*). Sofort passiert dabei
 nichts außer zweierlei: Die Bots gehen aus und lassen sich nicht wieder starten, und der Termin
@@ -407,6 +504,10 @@ In der Nutzerliste steht an so einem Konto ein Papierkorb-Zeichen, auf seiner Se
 Streifen mit dem Datum. Bis dahin genügt ein Klick des Kunden, um alles zurückzuholen; danach geht
 das Konto mit allem, was daran hängt: Serverplätze, Minecraft-Konten samt ihren Anmeldedateien,
 Tickets samt Anhängen, Protokolle, Guthaben.
+
+Neben dem Datum steht **Löschung zurücknehmen** – für den Kunden, der nicht klickt, sondern anruft.
+Es ist derselbe Vorgang und hebt nichts auf, was der Kunde selbst noch tun könnte: Die Bots holt der
+Wiederanlauf von allein zurück.
 
 Ausgeführt wird das von der Aufgabe **Fällige Kontolöschungen ausführen** (*Betrieb → wiederkehrende
 Aufgaben*), stündlich. Wer nicht warten will, drückt dort auf „jetzt laufen“.

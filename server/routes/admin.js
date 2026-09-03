@@ -23,10 +23,12 @@ import * as exportCsv from '../export.js';
 import * as security from '../security.js';
 import * as backup from '../backup.js';
 import * as profile from '../profile.js';
+import * as account from '../account.js';
+import * as totp from '../totp.js';
 import * as notify from '../notify.js';
 import * as systemreport from '../systemreport.js';
 import * as jobs from '../jobs.js';
-import { supervisor } from '../supervisor.js';
+import { supervisor, disconnectText } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
 import { planView, ticketView } from './core.js';
 import { botState, MIN_SECRET } from './bot.js';
@@ -735,9 +737,114 @@ admin.get(
         .all(id),
       proxies: db.prepare('SELECT * FROM proxies WHERE assigned_to = ?').all(id),
       sessions: auth.sessionsOf(id),
+      // **Die drei Auskünfte, die "ich komme nicht mehr hinein" beantworten.** Vorher musste der
+      // Support dafür raten: Hat das Konto einen zweiten Faktor? Kommen überhaupt Versuche an, und
+      // woran scheitern sie? Was hat die Verwaltung zuletzt daran geändert? Alles drei stand in
+      // der Datenbank und nirgends auf dem Bildschirm, an dem die Frage bearbeitet wird.
+      totp: totp.statusOf(user),
+      signins: security.attemptsFor(user, 20),
+      audit: db
+        .prepare('SELECT * FROM audit WHERE user_id = ? ORDER BY id DESC LIMIT 25')
+        .all(id)
+        .map((row) => {
+          const parsed = explainDetail(row.detail, lang);
+          const out = { ...row, detail_parsed: parsed };
+          return { ...out, summary: summarize(out, lang) };
+        }),
+      deletion: account.deletionOf(user),
+      // Was dieses Konto an Post bekommen hat. "Die Mail kam nie an" ist eine der häufigsten
+      // Meldungen überhaupt, und sie hat drei verschiedene Antworten – abgeschickt, gescheitert,
+      // gar nicht erst versucht. Welche davon gilt, steht hier.
+      mails: mail.historyFor(id, 15),
       monthly_cost: billing.monthlyCost(id),
       paying: billing.isPayingUser(id),
     });
+  })
+);
+
+/**
+ * Ein einzelnes Gerät abmelden.
+ *
+ * Der Unterschied zu "überall abmelden" ist der Anlass: Ein Kunde meldet ein verlorenes Handy oder
+ * einen fremden Eintrag in seiner Geräteliste. Ihn dafür aus jeder Sitzung zu werfen – auch aus der
+ * am eigenen Rechner, in der er gerade schreibt – ist mehr, als er gebeten hat.
+ *
+ * Gesucht wird über denselben Kurzabdruck wie in den Einstellungen des Kunden, und `auth.endSession`
+ * sucht ihn **nur innerhalb dieses Kontos**: Ein geratener Abdruck trifft damit kein fremdes Gerät.
+ */
+admin.delete(
+  '/users/:id/sessions/:ref',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Benutzer');
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) {
+      throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
+    }
+    if (!auth.endSession(id, String(req.params.ref || ''))) {
+      throw notFound('Diese Sitzung gibt es nicht mehr.', { en: 'That session is gone.' });
+    }
+    audit(req.user.id, 'admin-session-end', { user: id }, req.ip);
+    res.json({ ok: true, sessions: auth.sessionsOf(id) });
+  })
+);
+
+/**
+ * Den zweiten Faktor abnehmen.
+ *
+ * Das ist der Knopf für den einen Fall, den sonst niemand lösen kann: Das Telefon ist weg, der
+ * Zettel mit den Wiederherstellungscodes auch. Ohne ihn bliebe nur, das Konto neu anzulegen und
+ * Guthaben, Serverplätze und Belege von Hand hinterherzutragen.
+ *
+ * Er ist deshalb absichtlich sichtbar protokolliert – und der Kunde erfährt davon: Eine still
+ * abgeschaltete Zwei-Faktor-Anmeldung wäre genau das, was ein übernommenes Support-Konto täte.
+ */
+admin.post(
+  '/users/:id/totp-reset',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Benutzer');
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
+    if (!totp.statusOf(user).enabled) {
+      throw bad('Dieses Konto hat keinen zweiten Faktor.', { en: 'That account has no second factor.' });
+    }
+    totp.disable(id, req.ip);
+    audit(req.user.id, 'admin-totp-reset', { user: id }, req.ip);
+    mail
+      .sendTo(
+        user,
+        'security',
+        {
+          title:
+            user.language === 'en'
+              ? 'Two-factor sign-in was switched off'
+              : 'Die Zwei-Faktor-Anmeldung wurde abgeschaltet',
+          text:
+            user.language === 'en'
+              ? 'Support switched off two-factor sign-in on your account. You can set it up again in your settings.'
+              : 'Der Support hat die Zwei-Faktor-Anmeldung deines Kontos abgeschaltet. In den Einstellungen lässt sie sich neu einrichten.',
+          detail: '',
+        },
+        // Eine Sicherheitsnachricht ist keine Werbung: Wer sie abbestellt hat, muss trotzdem
+        // erfahren, dass jemand anders den zweiten Faktor seines Kontos entfernt hat.
+        { force: true }
+      )
+      .catch(() => {});
+    res.json({ ok: true, totp: totp.statusOf(db.prepare('SELECT * FROM users WHERE id = ?').get(id)) });
+  })
+);
+
+/** Eine angemeldete Löschung zurücknehmen – der Kunde hat es sich anders überlegt und ruft an. */
+admin.post(
+  '/users/:id/cancel-deletion',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Benutzer');
+    if (!db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) {
+      throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
+    }
+    if (!account.cancelDeletion(id)) {
+      throw bad('Für dieses Konto steht keine Löschung an.', { en: 'No deletion is pending for that account.' });
+    }
+    audit(req.user.id, 'admin-delete-cancelled', { user: id }, req.ip);
+    res.json({ ok: true });
   })
 );
 
@@ -2350,6 +2457,31 @@ admin.patch(
     const profile = db.prepare('SELECT * FROM profiles WHERE id = ?').get(id);
     if (!profile) throw notFound('Diesen Server gibt es nicht.', { en: 'No such server.' });
     const body = req.body || {};
+
+    // **Name, Adresse und Protokollversion darf hier auch die Verwaltung ändern.**
+    //
+    // Der Kunde kann das selbst – aber nur, solange sein Platz nicht gesperrt ist (`notLocked` in
+    // routes/profiles.js), und genau dann ruft er an: Ein Platz wird gesperrt, weil seine Adresse
+    // Ärger macht, und danach kann ihn niemand mehr auf eine andere umstellen. Übrig blieb der
+    // Griff in die Datenbank.
+    if (body.name !== undefined) {
+      db.prepare('UPDATE profiles SET name = ? WHERE id = ?').run(requireString(body.name, 'Name', { max: 40 }), id);
+    }
+    if (body.address !== undefined) {
+      const { host, port } = parseAddress(body.address);
+      db.prepare('UPDATE profiles SET host = ?, port = ? WHERE id = ?').run(host, port, id);
+      audit(req.user.id, 'admin-profile-address', { profile: id, address: port ? `${host}:${port}` : host }, req.ip);
+    }
+    if (body.mc_version !== undefined) {
+      const version = String(body.mc_version);
+      if (binaries.state.versions.length && !binaries.state.versions.includes(version)) {
+        throw bad(`Version "${version}" kann der Client nicht. Möglich: ${binaries.state.versions.join(', ')}`, {
+          en: `The client cannot speak "${version}". Available: ${binaries.state.versions.join(', ')}`,
+        });
+      }
+      db.prepare('UPDATE profiles SET mc_version = ? WHERE id = ?').run(version, id);
+    }
+
     if (body.extend_days !== undefined) {
       const days = requireInt(body.extend_days, 'Tage', { min: 1, max: 3650 });
       const base = Math.max(Date.now(), profile.paid_until || 0);
@@ -3137,9 +3269,12 @@ admin.get(
     const accounts = db
       .prepare(
         `SELECT pa.account_id, pa.note, pa.proxy_id, pa.wanted, a.name, a.uuid, a.kind, a.status,
-                a.last_error, a.suspended, a.suspend_reason, b.state, b.connections, b.uptime_sec
+                a.last_error, a.suspended, a.suspend_reason, b.state, b.connections, b.uptime_sec,
+                b.last_error AS bot_error,
+                px.host AS proxy_host, px.port AS proxy_port, px.kind AS proxy_kind, px.label AS proxy_label
            FROM profile_accounts pa JOIN mc_accounts a ON a.id = pa.account_id
       LEFT JOIN bots b ON b.profile_id = pa.profile_id AND b.account_id = pa.account_id
+      LEFT JOIN proxies px ON px.id = pa.proxy_id
           WHERE pa.profile_id = ? ORDER BY a.name COLLATE NOCASE`
       )
       .all(profile.id)
@@ -3154,8 +3289,30 @@ admin.get(
           detail: live ? live.detail : '',
           online: live ? live.online : false,
           since: live ? live.since : null,
+          // Ein fehlgeschlagener Start setzt `wanted` wieder auf null. Nach einem Panel-Neustart
+          // gibt es dann kein Bot-Objekt mehr, wohl aber den gespeicherten Grund. Gerade die
+          // Adminansicht muss ihn weiter zeigen, sonst steht dort nur „error“ ohne Diagnose.
+          last_error: disconnectText(live ? live.lastError : row.bot_error),
           pid: live?.proc?.pid || null,
           views: live ? live.views : null,
+          // **Mit welcher Datei dieser eine Bot läuft.** Ein Prozess hält seine Client-Datei offen;
+          // ein Abgleich auf der Platte wechselt sie nicht mit. Ohne diese beiden Felder sah die
+          // Verwaltung „läuft“ und schloss daraus auf die Fassung, die im Client-Bildschirm steht –
+          // während der Bot seit zwei Wochen die davor benutzt, samt der Fehler darin.
+          client_version: live ? live.clientVersion : null,
+          build: live ? live.build : null,
+          outdated: live ? live.outdated : false,
+          retry: live ? live.retry : null,
+          uptime: live?.startedAt ? Date.now() - live.startedAt : 0,
+          // Der eigene Proxy des Kontos. Steht hier keiner, geht der Bot über den des Standorts –
+          // das sagt die Zeile darunter im Panel, damit „keiner“ nicht wie „direkt“ aussieht.
+          proxy: row.proxy_host
+            ? {
+                id: row.proxy_id,
+                label: row.proxy_label || '',
+                address: `${row.proxy_kind === 'http' ? 'http' : 'socks5'}://${row.proxy_host}:${row.proxy_port}`,
+              }
+            : null,
           head: heads.urlFor(row.uuid || row.name),
         };
       });
@@ -3186,6 +3343,15 @@ admin.get(
       node: profile.node_id ? nodes.adminView(nodes.byId(profile.node_id)) : null,
       nodes: nodes.list({ includeInactive: true }).map((node) => ({ id: node.id, name: node.name })),
       accounts,
+      // Die Fassung, die **jetzt auf der Platte liegt** – die Bezugsgröße für „veraltet“ an jeder
+      // Kontozeile. Und wie viele Bots dieses Platzes gerade noch mit einer älteren laufen.
+      client_version: binaries.state.clientVersion,
+      client_tag: binaries.state.tag,
+      // Welche Protokollversionen die Datei auf der Platte spricht – dieselbe Liste, die auch der
+      // Kunde in seinem Serverplatz zur Auswahl bekommt. Sie steht nirgends fest im Quelltext:
+      // Was der Client kann, sagt der Client (siehe binaries.js).
+      client_versions: binaries.state.versions,
+      outdated_bots: supervisor.outdated({ profileId: profile.id }).length,
       macros: db.prepare('SELECT COUNT(*) AS n FROM macros WHERE profile_id = ?').get(profile.id).n,
       spam: db.prepare('SELECT COUNT(*) AS n FROM spam WHERE profile_id = ?').get(profile.id).n,
       usage: { ...usage, disk: metrics.diskOfProfile(profile.id) },
@@ -3273,6 +3439,70 @@ admin.post(
     }
     audit(req.user.id, `admin-server-${action}`, { profile: id }, req.ip);
     res.json({ ok: true });
+  })
+);
+
+/**
+ * Dasselbe für **ein** Konto.
+ *
+ * Der Anlass ist der Alltag im Support: Von acht Bots auf einem Platz hängt einer. Ihn einzeln
+ * neu zu starten kostet den Kunden diesen einen Bot; „alle neu starten“ wirft die anderen sieben
+ * mit aus dem Spiel – und die standen dort womöglich seit Tagen an einer Stelle, die sie nicht
+ * wiederbekommen. Bisher gab es nur den großen Knopf, und deshalb wurde er auch für den kleinen
+ * Fall benutzt.
+ */
+admin.post(
+  '/servers/:id/accounts/:accountId/:action(start|stop|restart)',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Server');
+    const accountId = requireInt(req.params.accountId, 'Konto');
+    const action = req.params.action;
+    if (!db.prepare('SELECT 1 FROM profile_accounts WHERE profile_id = ? AND account_id = ?').get(id, accountId)) {
+      throw notFound('Dieses Konto liegt nicht auf diesem Serverplatz.', {
+        en: 'That account does not sit on this server slot.',
+      });
+    }
+    if (action === 'stop') {
+      // `keepWanted: false`: von Hand gestoppt heißt gestoppt. Bliebe der Wunsch stehen, holte
+      // ihn der nächste Wiederanlauf zurück, und der Bot stünde wieder da, obwohl ihn gerade
+      // jemand ausdrücklich abgeschaltet hat.
+      supervisor.stop(id, accountId, { keepWanted: false });
+    } else {
+      if (action === 'restart') supervisor.stop(id, accountId, { keepWanted: true });
+      const context = supervisor.context(id, accountId);
+      if (!context) throw bad('Für dieses Konto lässt sich gerade nichts starten.', { en: 'Nothing to start for that account.' });
+      const go = () => {
+        try {
+          supervisor.start(context);
+        } catch {
+          /* warum es nicht ging, steht danach im Zustand des Bots */
+        }
+      };
+      if (action === 'restart') setTimeout(go, 1500).unref();
+      else go();
+    }
+    audit(req.user.id, `admin-bot-${action}`, { profile: id, account: accountId }, req.ip);
+    res.json({ ok: true });
+  })
+);
+
+/**
+ * Die Bots dieses einen Serverplatzes auf die Client-Datei heben, die jetzt auf der Platte liegt.
+ *
+ * Denselben Knopf gibt es für alle Bots unter Admin · Client. Der hier ist der behutsame: Wer einem
+ * Kunden am Telefon einen Fehler erklärt, der in der neuen Fassung behoben ist, will genau dessen
+ * Bots neu starten – und nicht die von zweihundert anderen, die gerade nichts davon wissen.
+ */
+admin.post(
+  '/servers/:id/client-rollout',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Server');
+    if (!db.prepare('SELECT 1 FROM profiles WHERE id = ?').get(id)) {
+      throw notFound('Diesen Server gibt es nicht.', { en: 'No such server.' });
+    }
+    const restarted = supervisor.rolloutClient({ profileId: id, spacingMs: 2000 });
+    audit(req.user.id, 'admin-server-rollout', { profile: id, bots: restarted, tag: binaries.state.tag }, req.ip);
+    res.json({ ok: true, restarted });
   })
 );
 

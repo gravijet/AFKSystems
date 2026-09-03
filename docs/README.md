@@ -72,26 +72,26 @@ Spiel gleichzeitig sein)
 → [schutz.md](schutz.md) – abschalten unter *Administration → Einstellungen → Betrieb*
 
 **Jemand probiert Passwörter durch.**
-→ [verwaltung.md, Abschnitt 4](verwaltung.md#sicherheit) – die Bremse greift von selbst, die
+→ [verwaltung.md, Abschnitt 6](verwaltung.md#sicherheit) – die Bremse greift von selbst, die
 Adresse steht unter *Administration → Sicherheit* und lässt sich von dort sperren
 
 **Der Datenbestand soll gesichert werden.**
-→ [verwaltung.md, Abschnitt 5](verwaltung.md#sicherungen) – eine am Tag läuft von selbst
+→ [verwaltung.md, Abschnitt 7](verwaltung.md#sicherungen) – eine am Tag läuft von selbst
 
 **Ein Kunde will sein Geld zurück.**
-→ [verwaltung.md, Abschnitt 9](verwaltung.md#erstatten)
+→ [verwaltung.md, Abschnitt 11](verwaltung.md#erstatten)
 
 **Ein Kunde braucht eine Rechnung für seine Buchhaltung.**
 → *Guthaben → Belege* im Konto des Kunden; was als Absender darauf steht, kommt aus
-[verwaltung.md, Abschnitt 11](verwaltung.md#belege) und gehört **vor** der ersten Zahlung ausgefüllt
+[verwaltung.md, Abschnitt 13](verwaltung.md#belege) und gehört **vor** der ersten Zahlung ausgefüllt
 
 **Ich will wissen, wie es dem Server geht, ohne hinzusehen.**
-→ [verwaltung.md, Abschnitt 10](verwaltung.md#system) – ein Discord-Webhook, ein Lagebericht im
+→ [verwaltung.md, Abschnitt 12](verwaltung.md#system) – ein Discord-Webhook, ein Lagebericht im
 Takt und Warnungen, sobald etwas kippt
 
 **Ein Kunde will sein Konto loswerden.**
 → Das kann er selbst (*Einstellungen → Deine Daten*), mit 14 Tagen Frist:
-[verwaltung.md, Abschnitt 12](verwaltung.md#loeschungen)
+[verwaltung.md, Abschnitt 14](verwaltung.md#loeschungen)
 
 **Ein Kunde fragt, welche Daten ihr über ihn habt.**
 → *Einstellungen → Deine Daten → Meine Daten herunterladen*. Eine Datei, vollständig, sofort –
