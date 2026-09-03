@@ -619,6 +619,35 @@ export const S = {
     de: '{n} Bot(s) senden gerade ein Bild',
   },
   'ov.quick': { en: 'Quick links', de: 'Schnellzugriff' },
+  'ov.focus.title': { en: 'Operating status', de: 'Betriebsstatus' },
+  'ov.focus.current': { en: 'Nothing needs your attention right now', de: 'Im Moment braucht nichts deine Aufmerksamkeit' },
+  'ov.focus.open': { en: '{n} item(s) need attention', de: '{n} Punkt(e) brauchen Aufmerksamkeit' },
+  'ov.focus.viewAll': { en: 'View all', de: 'Alle ansehen' },
+  'ov.focus.slotPaused': { en: '“{name}” is paused', de: '„{name}“ ist pausiert' },
+  'ov.focus.slotPausedText': {
+    en: 'Its paid period has ended. Review the plan or add credits to resume it.',
+    de: 'Die bezahlte Laufzeit ist vorbei. Prüfe den Tarif oder lade Guthaben auf, um fortzusetzen.',
+  },
+  'ov.focus.freePaused': { en: '“{name}” needs Discord access', de: '„{name}“ braucht Discord-Zugang' },
+  'ov.focus.freePausedText': {
+    en: 'This free slot stays paused until its Discord membership can be confirmed.',
+    de: 'Dieser Gratis-Platz bleibt pausiert, bis die Discord-Mitgliedschaft bestätigt werden kann.',
+  },
+  'ov.focus.accountNeedsLogin': { en: '“{name}” needs to sign in again', de: '„{name}“ muss sich erneut anmelden' },
+  'ov.focus.accountNeedsLoginText': {
+    en: 'Reconnect this Minecraft account before starting it again.',
+    de: 'Verbinde dieses Minecraft-Konto erneut, bevor du es wieder startest.',
+  },
+  'ov.focus.botFailed': { en: '“{name}” could not stay connected', de: '„{name}“ konnte nicht verbunden bleiben' },
+  'ov.focus.botFailedText': {
+    en: 'Open the server slot to inspect the connection and start it again when ready.',
+    de: 'Öffne den Serverplatz, prüfe die Verbindung und starte ihn dann erneut.',
+  },
+  'ov.focus.balanceLow': { en: 'Your credits will not cover the next month', de: 'Dein Guthaben reicht nicht für den nächsten Monat' },
+  'ov.focus.clearTitle': { en: 'Everything is in order', de: 'Alles ist in Ordnung' },
+  'ov.focus.clearText': { en: '{online} of {total} bots are in game; no known issue is waiting.', de: '{online} von {total} Bots sind im Spiel; kein bekannter Punkt wartet.' },
+  'ov.focus.activity': { en: 'Latest activity', de: 'Neueste Aktivität' },
+  'ov.focus.activityEmpty': { en: 'No recent account activity.', de: 'Keine aktuelle Kontoaktivität.' },
 
   // ---------------------------------------------------------------- Zu erledigen
   // Die Einträge selbst kommen vom Server (server/todos.js) – er weiß, was offen ist, und schreibt
@@ -1419,6 +1448,10 @@ export const S = {
   },
   'pal.pages': { en: 'Pages', de: 'Seiten' },
   'pal.quick': { en: 'Quick actions', de: 'Schnellaktionen' },
+  'pal.botActions': { en: 'Bot actions', de: 'Bot-Aktionen' },
+  'pal.startBot': { en: 'Start “{name}”', de: '„{name}“ starten' },
+  'pal.stopBot': { en: 'Stop “{name}”', de: '„{name}“ stoppen' },
+  'pal.botStopped': { en: '“{name}” is stopping.', de: '„{name}“ wird gestoppt.' },
   'pal.servers': { en: 'Your servers', de: 'Deine Server' },
   'pal.accounts': { en: 'Your Minecraft accounts', de: 'Deine Minecraft-Konten' },
   'pal.start': { en: 'Type to search.', de: 'Tippen, um zu suchen.' },

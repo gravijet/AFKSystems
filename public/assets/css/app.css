@@ -7241,6 +7241,138 @@ dialog.shortcuts {
   text-align: center;
 }
 
+/* Betriebsstatus: keine weitere Zahlenwand, sondern die wenigen Dinge, die gerade eine Aktion
+   verlangen. Die zweite Spalte bleibt eine Vorschau auf echte Kontoereignisse und kein separates
+   Aktivitätsprotokoll. */
+.operating-focus-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(15rem, 0.8fr);
+  gap: 0;
+}
+.focus-list {
+  display: grid;
+}
+.focus-item,
+.focus-empty {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.85rem 1.15rem;
+  color: inherit;
+}
+.focus-item + .focus-item {
+  box-shadow: inset 0 1px 0 var(--line-soft);
+}
+.focus-item:hover {
+  background: color-mix(in oklab, var(--primary) 6%, transparent);
+}
+.focus-item > .icon {
+  flex: none;
+  width: 1rem;
+  color: var(--text-2);
+}
+.focus-icon {
+  display: grid;
+  flex: none;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border-radius: var(--r-lg);
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+  color: var(--primary-text);
+}
+.focus-icon .icon {
+  width: 1rem;
+  height: 1rem;
+}
+.focus-item.bad .focus-icon {
+  background: color-mix(in oklab, var(--bad) 12%, transparent);
+  color: var(--bad-text);
+}
+.focus-item.warn .focus-icon {
+  background: color-mix(in oklab, var(--warn) 13%, transparent);
+  color: var(--warn-text);
+}
+.focus-icon.ok {
+  background: color-mix(in oklab, var(--ok) 13%, transparent);
+  color: var(--ok-text);
+}
+.focus-copy {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+.focus-copy strong,
+.focus-copy small,
+.focus-empty strong,
+.focus-empty small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.focus-copy small,
+.focus-empty small {
+  color: var(--text-2);
+  line-height: 1.35;
+}
+.focus-empty > div {
+  display: grid;
+  gap: 0.12rem;
+}
+.focus-activity-panel {
+  min-width: 0;
+  padding: 0.85rem 1rem;
+  box-shadow: inset 1px 0 0 var(--line-soft);
+}
+.focus-activity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.8rem;
+}
+.focus-activity-head a {
+  color: var(--primary-text);
+  font-size: 0.74rem;
+  font-weight: 650;
+}
+.focus-activity-list {
+  display: grid;
+}
+.focus-activity-list + .focus-activity-empty {
+  margin: 0;
+}
+a.focus-activity {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.38rem 0.15rem;
+  font-size: 0.78rem;
+}
+a.focus-activity:hover .truncate {
+  color: var(--primary-text);
+}
+.focus-activity-dot {
+  flex: none;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: var(--text-2);
+}
+.focus-activity-dot.bad { background: var(--bad); }
+.focus-activity-dot.warn { background: var(--warn); }
+.focus-activity-dot.ok { background: var(--ok); }
+.focus-activity.is-unread .truncate { font-weight: 700; }
+
+@media (max-width: 700px) {
+  .operating-focus-body { grid-template-columns: 1fr; }
+  .focus-activity-panel {
+    box-shadow: inset 0 1px 0 var(--line-soft);
+  }
+}
+
 /* Aktivität: eine chronologische Liste mit einer einzigen farbigen Zustandsmarke je Ereignis. */
 .activity-shell {
   max-width: 62rem;

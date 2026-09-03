@@ -20,8 +20,8 @@
 // Für Nicht-Administratoren bleibt die Palette nützlich, aber ruhig: Sie zeigt dann nur die
 // eigenen Seiten. Die Suche ist eine Admin-Schnittstelle und wird gar nicht erst gefragt.
 
-import { api, icon, escapeHtml, tr, $, $$, debounce } from './ui.js';
-import { state, go, draw, showShortcuts, ADMIN_GROUPS, NAV_PRIMARY, NAV_ACCOUNT } from './app.js';
+import { api, icon, escapeHtml, tr, $, $$, debounce, ok, fail } from './ui.js';
+import { state, go, draw, refresh, showShortcuts, ADMIN_GROUPS, NAV_PRIMARY, NAV_ACCOUNT } from './app.js';
 import { isFavoriteServer } from './preferences.js';
 
 /** Alle Seiten, die dieser Benutzer aufrufen darf – in der Reihenfolge der Seitenleiste. */
@@ -151,7 +151,7 @@ export async function openPalette(initial = '') {
 
   const close = () => dialog.close();
 
-  const choose = (index = cursor) => {
+  const choose = async (index = cursor) => {
     const hit = items[index];
     if (!hit) return;
     close();
@@ -161,6 +161,22 @@ export async function openPalette(initial = '') {
     }
     if (hit.action === 'shortcuts') {
       showShortcuts();
+      return;
+    }
+    if (hit.action === 'bot-state') {
+      try {
+        const result = await api(`/profiles/${hit.profileId}/${hit.stateAction}`, {
+          method: 'POST',
+          body: { accounts: [hit.accountId] },
+        });
+        const failed = (result.results || []).find((entry) => !entry.ok);
+        if (failed) throw new Error(failed.error);
+        await refresh({ accounts: false });
+        ok(tr(hit.stateAction === 'start' ? 'ov.started' : 'pal.botStopped', { name: hit.accountName }));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
       return;
     }
     go(hit.route);
@@ -191,6 +207,46 @@ export async function openPalette(initial = '') {
       { title: tr('ov.openTicket'), sub: tr('dash.tickets'), icon: 'ticket', route: '/tickets' },
       { title: tr('keys.title'), sub: tr('keys.help'), icon: 'keyboard', action: 'shortcuts', route: '' },
     ].filter((item) => !needle || matches(item, needle));
+    // Die Palette darf nur Aktionen zeigen, die jetzt tatsächlich zulässig sind. Ein gesperrter
+    // oder pausierter Platz bekommt keinen irreführenden Startknopf; der Weg dorthin bleibt als
+    // Server-Treffer sichtbar, damit die Ursache überprüft werden kann.
+    const botActions = [];
+    for (const profile of state.profiles) {
+      const canStart = profile.active && !profile.locked && !profile.suspended &&
+        !(profile.plan?.free_slot && profile.free_access?.ok === false);
+      for (const member of profile.accounts) {
+        const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
+        const running = Boolean(bot.state) && bot.state !== 'offline';
+        if (running) {
+          botActions.push({
+            title: tr('pal.stopBot', { name: member.name }),
+            sub: profile.name,
+            icon: 'stop',
+            action: 'bot-state',
+            stateAction: 'stop',
+            profileId: profile.id,
+            accountId: member.account_id,
+            accountName: member.name,
+            route: '',
+          });
+        } else if (canStart) {
+          botActions.push({
+            title: tr('pal.startBot', { name: member.name }),
+            sub: profile.name,
+            icon: 'play',
+            action: 'bot-state',
+            stateAction: 'start',
+            profileId: profile.id,
+            accountId: member.account_id,
+            accountName: member.name,
+            route: '',
+          });
+        }
+      }
+    }
+    const matchingBotActions = botActions
+      .filter((item) => !needle || matches(item, needle))
+      .slice(0, needle ? 8 : 4);
     const serverHits = [...state.profiles]
       .sort(
         (a, b) =>
@@ -220,6 +276,7 @@ export async function openPalette(initial = '') {
       }));
     return [
       quick.length && { label: tr('pal.quick'), hits: quick.slice(0, needle ? 5 : 3) },
+      matchingBotActions.length && { label: tr('pal.botActions'), hits: matchingBotActions },
       serverHits.length && { label: tr('pal.servers'), hits: serverHits },
       accountHits.length && { label: tr('pal.accounts'), hits: accountHits },
       pageHits.length && { label: tr('pal.pages'), hits: pageHits },
