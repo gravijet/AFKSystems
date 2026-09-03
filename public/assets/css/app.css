@@ -3479,6 +3479,68 @@ hr.rule {
 /* ---------------------------------------------------------------- Verbinden und Chat */
 
 /* Konten links, Chat rechts. Unter 62rem untereinander – auf dem Handy ist nebeneinander nichts. */
+.connection-diagnosis {
+  margin: 0 0 1.25rem;
+  padding: 1rem 1.1rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.connection-diagnosis-head h2 {
+  margin: 0;
+  font-size: 1rem;
+}
+.connection-diagnosis-head p {
+  margin: 0.25rem 0 0;
+  color: var(--text-2);
+  font-size: 0.8125rem;
+}
+.connection-diagnosis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.85rem;
+}
+.connection-diagnosis-card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line-soft);
+  border-radius: calc(var(--radius) - 0.2rem);
+  background: var(--surface-2);
+}
+.connection-diagnosis-card.is-good { border-color: color-mix(in srgb, var(--ok) 45%, var(--line-soft)); }
+.connection-diagnosis-card.is-warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-soft)); }
+.connection-diagnosis-card.is-bad { border-color: color-mix(in srgb, var(--bad) 55%, var(--line-soft)); }
+.connection-diagnosis-label {
+  color: var(--text-2);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+.connection-diagnosis-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.35rem;
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+.connection-diagnosis-detail {
+  min-height: 2.5em;
+  margin-top: 0.35rem;
+  color: var(--text-2);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
+.connection-diagnosis-action {
+  margin-top: auto;
+  padding-top: 0.65rem;
+}
+
 .split {
   display: grid;
   gap: 1.25rem;

@@ -4043,6 +4043,29 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   serverProcess.stderr.on('data', (chunk) => (childOutput += chunk));
   await waitForHealth(base, serverProcess);
 
+  // Die Verbindungsdiagnose braucht den letzten dokumentierten Zustand auch dann, wenn nach einem
+  // Dienstneustart kein Live-Bot mehr im Speicher steht. Der Profil-Endpunkt liefert genau den
+  // letzten Zustandswechsel dieses eigenen Kontos – weder einen älteren noch fremde Ereignisse.
+  const olderState = Date.now() - 2_000;
+  const lastState = Date.now() - 1_000;
+  db.prepare(
+    'INSERT INTO bot_events (user_id, profile_id, account_id, type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(user.id, profile.id, account.id, 'online', 'SuspendMe', olderState);
+  db.prepare(
+    'INSERT INTO bot_events (user_id, profile_id, account_id, type, detail, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).run(user.id, profile.id, account.id, 'error', 'Connection reset', lastState);
+  const profilesWithHistory = await api(base, '/api/profiles', { token: USER_TOKEN });
+  assert.equal(profilesWithHistory.response.status, 200);
+  const diagnosticAccount = profilesWithHistory.data.profiles
+    .find((entry) => entry.id === profile.id)
+    ?.accounts.find((entry) => entry.account_id === account.id);
+  assert.deepEqual(diagnosticAccount?.last_state, {
+    type: 'error',
+    detail: 'Connection reset',
+    t: lastState,
+  });
+  assert.equal(diagnosticAccount?.retry, null);
+
   const englishHome = await (await fetch(`${base}/en`)).text();
   const germanHome = await (await fetch(`${base}/de`)).text();
   assert.match(englishHome, /class="language-picker" role="group" aria-label="Language"/);
