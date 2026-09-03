@@ -2475,14 +2475,21 @@ async function tabMacros(root, profile) {
       macro.cooldown_sec ? tr('srv.cooldownOf', { n: macro.cooldown_sec }) : null,
       macro.chance < 100 ? `${macro.chance} %` : null,
     ].filter(Boolean);
+    const targetNames = macro.accounts.length
+      ? macro.accounts
+          .map((accountId) => profile.accounts.find((member) => member.account_id === accountId)?.name || `#${accountId}`)
+          .join(', ')
+      : tr('common.all');
     return `<article class="card">
       <div class="row spread">
         <div>
           <div class="strong">${escapeHtml(macro.name)}</div>
-          <div class="small muted">${escapeHtml(when)} · ${macro.actions.length} ·
-            ${escapeHtml(macro.accounts.length ? `${macro.accounts.length}` : tr('common.all'))}${
+          <div class="small muted">${escapeHtml(when)} · ${macro.actions.length}${
               limits.length ? ` · ${escapeHtml(limits.join(' · '))}` : ''
             }</div>
+          <div class="small muted truncate" title="${escapeHtml(tr('srv.macroTarget', { names: targetNames }))}">${escapeHtml(
+            tr('srv.macroTarget', { names: targetNames })
+          )}</div>
         </div>
         <span class="switch" role="switch" tabindex="0" aria-checked="${macro.enabled}"
           aria-label="${escapeHtml(tr('srv.macroActive'))}"
