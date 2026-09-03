@@ -1,13 +1,13 @@
 [Unit]
-Description=AFKSystems Xeon-1 SOCKS5 proxy
+Description=AFKSystems Xeon-2 SOCKS5 proxy
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
 DynamicUser=true
-LoadCredential=proxy.password:/etc/afksystems-xeon1-proxy.password
-ExecStart=/usr/local/libexec/afksystems-xeon1-proxy
+LoadCredential=proxy.password:/etc/afksystems-xeon2-proxy.password
+ExecStart=/usr/local/libexec/afksystems-xeon2-proxy
 Restart=always
 RestartSec=5
 
@@ -35,7 +35,7 @@ SystemCallArchitectures=native
 
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=afksystems-xeon1-proxy
+SyslogIdentifier=afksystems-xeon2-proxy
 
 [Install]
 WantedBy=multi-user.target

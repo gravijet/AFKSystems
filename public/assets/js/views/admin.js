@@ -1499,6 +1499,7 @@ async function userDetail(root, id) {
         <button class="btn btn-sm" id="mail">${icon('mail')} ${escapeHtml(tr('adm.sendMail'))}</button>
         <button class="btn btn-sm" id="ticket">${icon('ticket')} ${escapeHtml(tr('adm.openTicket'))}</button>
         <button class="btn btn-sm" id="impersonate">${escapeHtml(tr('adm.impersonate'))}</button>
+        <button class="btn btn-sm" id="login-link">${icon('copy')} ${escapeHtml(tr('adm.loginLink'))}</button>
         <button class="btn btn-primary btn-sm" id="credits">${escapeHtml(tr('adm.addCredits'))}</button>
       </div>
     </div>
@@ -1825,6 +1826,15 @@ async function userDetail(root, id) {
       await api(`/admin/users/${id}/impersonate`, { method: 'POST' });
       location.hash = '#/';
       location.reload();
+    } catch (error) {
+      fail(error);
+    }
+  });
+
+  $('#login-link').addEventListener('click', async () => {
+    try {
+      const result = await api(`/admin/users/${id}/login-link`, { method: 'POST' });
+      await copy(result.link);
     } catch (error) {
       fail(error);
     }

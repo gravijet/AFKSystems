@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Das Kennwort kommt als geschütztes systemd-Credential und steht weder hier noch in der Unit.
+PROXY_PASSWORD="$(<"${CREDENTIALS_DIRECTORY}/proxy.password")"
+exec /usr/bin/microsocks \
+  -i 192.0.2.1 \
+  -p 1080 \
+  -u afksystems-xeon2 \
+  -P "$PROXY_PASSWORD" \
+  -b 192.0.2.1

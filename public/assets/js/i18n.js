@@ -1447,6 +1447,7 @@ export const S = {
   'adm.paying': { en: 'Paying', de: 'Zahlend' },
   'adm.premium': { en: 'Premium', de: 'Premium' },
   'adm.impersonate': { en: 'View as this user', de: 'Als Nutzer ansehen' },
+  'adm.loginLink': { en: 'Copy one-time login link', de: 'Einmal-Link kopieren' },
   'adm.addCredits': { en: 'Book credits', de: 'Guthaben buchen' },
   'adm.block': { en: 'Block', de: 'Sperren' },
   'adm.unblock': { en: 'Unblock', de: 'Entsperren' },

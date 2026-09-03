@@ -1028,6 +1028,36 @@ admin.post(
   })
 );
 
+/**
+ * Einen Link erzeugen, der genau einmal und nur mit einer bestehenden Administratorsitzung in
+ * dieses Konto führt. Der Link kann damit an einen anderen angemeldeten Admin gegeben werden;
+ * ohne Admin-Cookie ist er kein Zugang.
+ */
+admin.post(
+  '/users/:id/login-link',
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Benutzer');
+    if (id === req.user.id) {
+      throw bad('Für das eigene Konto ist kein Einmal-Link nötig.', {
+        en: 'A one-time link is not needed for your own account.',
+      });
+    }
+    const user = db.prepare('SELECT id, blocked FROM users WHERE id = ?').get(id);
+    if (!user) throw notFound('Benutzer gibt es nicht.', { en: 'No such user.' });
+    if (user.blocked) {
+      throw bad('Ein gesperrtes Konto lässt sich nicht öffnen.', {
+        en: 'A blocked account cannot be opened.',
+      });
+    }
+    const link = auth.createAdminLoginLink(id, req.user.id);
+    audit(req.user.id, 'admin-login-link-created', { user: id, expires_at: link.expires_at }, req.ip);
+    res.json({
+      link: `${config.publicUrl}/admin-login/${link.token}`,
+      expires_at: link.expires_at,
+    });
+  })
+);
+
 // ---------------------------------------------------------------- Tarife
 
 admin.get(
