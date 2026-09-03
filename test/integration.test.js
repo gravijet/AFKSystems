@@ -31,6 +31,7 @@ const backup = await import('../server/backup.js');
 const oauth = await import('../server/oauth.js');
 const binaries = await import('../server/binaries.js');
 const resources = await import('../server/resources.js');
+const snapshots = await import('../server/snapshots.js');
 const tickets = await import('../server/tickets.js');
 const { Tickets, resolveMentions } = await import('../bot/handlers/tickets.js');
 const { Bot, supervisor, simpleChatMacro, disconnectText, parseEvent, parseView, ansiToMinecraft, POV_SIZE, POV_FPS } =
@@ -1878,6 +1879,48 @@ test('meaningful bot transitions land in a durable timeline, transient ones do n
   const survivors = supervisor.eventsOf(profile.id, account.id).map((entry) => entry.type);
   assert.ok(!survivors.includes('world'));
   assert.ok(survivors.includes('online') && survivors.includes('reconnecting'));
+});
+
+/**
+ * Stirbt ein Bot oder verliert die Verbindung, sitzt selten jemand zufällig davor. Der Bot zieht
+ * sich deshalb selbst ein Bild aus seinem eigenen (noch laufenden) texturierten Viewer.
+ */
+test('a bot pulls its own snapshot when it dies or disconnects, and cleanup takes the file with the row', async () => {
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const bot = new Bot(
+    { emit: () => {}, macros: { onDeath: () => {}, onDisconnect: () => {} } },
+    { profile, account, user, plan: billing.featuresOf(profile) }
+  );
+
+  // Kein Viewer, kein Bild – und kein Fehler dabei.
+  bot.onEvent('@event death');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(supervisor.eventsOf(profile.id, account.id).some((entry) => entry.type === 'snapshot'), false);
+
+  // Ein laufender Viewer: `captureSnapshot` holt sich sein Bild über `webFetch` – hier gestellt,
+  // damit der Test nicht wirklich auf 127.0.0.1 klopft.
+  bot.web = { port: 1, token: 'x', since: Date.now() };
+  const png = Buffer.from('ich bin ein bild');
+  bot.webFetch = async () => ({ status: 200, type: 'image/png', body: png });
+
+  bot.onEvent('@event death');
+  // `captureSnapshot` läuft ohne `await` mit – auf die Mikrotask-Warteschlange warten, bis sie fertig ist.
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const snap = supervisor.eventsOf(profile.id, account.id).find((entry) => entry.type === 'snapshot');
+  assert.ok(snap, 'eine snapshot-Zeile steht im Verlauf');
+  assert.ok(snapshots.valid(snap.detail));
+  assert.deepEqual(snapshots.read(snap.detail), png);
+
+  // Uralt machen und aufräumen: Datei und Zeile verschwinden zusammen, nicht nur eines von beiden.
+  db.prepare("UPDATE bot_events SET created_at = ? WHERE type = 'snapshot'").run(
+    Date.now() - 40 * 24 * 60 * 60 * 1000
+  );
+  supervisor.cleanupEvents();
+  assert.equal(snapshots.read(snap.detail), null);
+  assert.equal(supervisor.eventsOf(profile.id, account.id).some((entry) => entry.type === 'snapshot'), false);
 });
 
 /**

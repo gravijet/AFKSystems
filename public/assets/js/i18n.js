@@ -872,6 +872,8 @@ export const S = {
   'srv.eventWorld': { en: 'Changed world', de: 'Welt gewechselt' },
   'srv.eventDeath': { en: 'Died', de: 'Gestorben' },
   'srv.eventDropped': { en: 'Lines dropped', de: 'Zeilen ausgelassen' },
+  'srv.eventSnapshot': { en: 'Snapshot saved', de: 'Bild gesichert' },
+  'srv.eventSnapshotView': { en: 'View image', de: 'Bild ansehen' },
 
   // Die neue Client-Fassung. Der Ton ist absichtlich ruhig: Nichts ist kaputt – ein Bot mit der
   // Fassung von letzter Woche tut, was er letzte Woche getan hat. Neu ist nur, dass es etwas
