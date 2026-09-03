@@ -853,6 +853,12 @@ export const S = {
     de: 'Die Wartezeit verdoppelt sich mit jedem Fehlversuch bis zu dieser Grenze. Nach acht Versuchen hintereinander bleibt der Bot aus, und du bekommst Bescheid. Ausgeschaltet beendet ein Kick oder Verbindungsabbruch die Sitzung, und du startest sie selbst wieder.',
   },
   'srv.retryOf': { en: 'Attempt {n}/{max}', de: 'Versuch {n}/{max}' },
+  'srv.onlineSince': { en: 'In this state since {at}', de: 'In diesem Zustand seit {at}' },
+  'srv.reconnectCount': { en: '{n} reconnect(s)', de: '{n} Neuverbindung(en)' },
+  'srv.reconnectCountHint': {
+    en: 'Reconnects since you last started or stopped this bot yourself.',
+    de: 'Neuverbindungen seit du diesen Bot zuletzt selbst gestartet oder gestoppt hast.',
+  },
 
   // Ereignisverlauf je Bot: nicht nur der aktuelle Zustand, sondern was wirklich passiert ist.
   'srv.eventsTitle': { en: 'History', de: 'Verlauf' },
