@@ -817,9 +817,11 @@ class Bot extends EventEmitter {
     if (!proxyId) return null;
     const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(proxyId);
     if (!row) return null;
-    const auth = row.username
-      ? `${encodeURIComponent(row.username)}:${encodeURIComponent(row.password || '')}@`
-      : '';
+    // Roh, nicht URL-kodiert: `Proxy::parse` im Client zerlegt von Hand (letztes '@' trennt die
+    // Adresse, erster ':' trennt Nutzer und Passwort) und dekodiert dabei nichts. Ein `%2F` käme
+    // als literales `%2F` beim Proxy an, nicht als '/' – ein Passwort mit Schrägstrich würde die
+    // Anmeldung dann abgelehnt bekommen, obwohl es stimmt.
+    const auth = row.username ? `${row.username}:${row.password || ''}@` : '';
     return `${row.kind === 'http' ? 'http' : 'socks5'}://${auth}${row.host}:${row.port}`;
   }
 
