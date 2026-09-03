@@ -38,11 +38,13 @@ const EVENT_ICONS = {
 };
 
 export async function render(root) {
-  const data = await api('/me/notifications');
+  const data = await api('/me/notifications?limit=40');
   let list = data.notifications || [];
+  let hasMore = Boolean(data.has_more);
   let query = '';
   let event = 'all';
   let unreadOnly = false;
+  let loading = false;
 
   state.stats.notifications_unread = data.unread || 0;
   drawSide();
@@ -81,6 +83,7 @@ export async function render(root) {
         <span class="small muted activity-count" id="activity-count"></span>
       </div>
       <div class="activity-list" id="activity-list" aria-live="polite"></div>
+      <div class="activity-more" id="activity-more"></div>
     </section>`;
 
   function filtered() {
@@ -101,6 +104,7 @@ export async function render(root) {
         <h3>${escapeHtml(tr(query || unreadOnly || event !== 'all' ? 'act.emptyFilter' : 'act.empty'))}</h3>
         <p>${escapeHtml(tr(query || unreadOnly || event !== 'all' ? 'act.emptyFilterText' : 'act.emptyText'))}</p>
       </div>`;
+      paintMore();
       return;
     }
 
@@ -120,6 +124,20 @@ export async function render(root) {
         </section>`
       )
       .join('');
+    paintMore();
+  }
+
+  function paintMore() {
+    const box = $('#activity-more');
+    if (!box) return;
+    box.innerHTML = hasMore
+      ? `<button class="btn" id="activity-load" ${loading ? 'disabled' : ''}>${
+          loading ? icon('refresh') : icon('arrow')
+        } ${escapeHtml(tr(loading ? 'act.loadingOlder' : 'act.loadOlder'))}</button>`
+      : list.length
+        ? `<span class="small muted">${escapeHtml(tr('act.allLoaded'))}</span>`
+        : '';
+    $('#activity-load')?.addEventListener('click', () => loadMore());
   }
 
   function activityItem(item) {
@@ -136,9 +154,46 @@ export async function render(root) {
       </span>
       ${item.read_at ? '' : `<span class="activity-new">${escapeHtml(tr('act.new'))}</span>`}
       ${href ? `<span class="activity-arrow">${icon('arrow')}</span>` : ''}`;
-    return href
-      ? `<a class="activity-item ${item.read_at ? '' : 'is-unread'}" href="${escapeHtml(href)}" data-read="${item.id}">${content}</a>`
-      : `<article class="activity-item ${item.read_at ? '' : 'is-unread'}" data-read="${item.id}" tabindex="0">${content}</article>`;
+    return `<article class="activity-item ${item.read_at ? '' : 'is-unread'}">
+      ${
+        href
+          ? `<a class="activity-main" href="${escapeHtml(href)}" data-read="${item.id}">${content}</a>`
+          : `<button class="activity-main" type="button" data-read="${item.id}">${content}</button>`
+      }
+      <button class="activity-again" type="button" data-unread="${item.id}"
+        ${item.read_at ? '' : 'hidden'} title="${escapeHtml(tr('act.markUnread'))}"
+        aria-label="${escapeHtml(tr('act.markUnread'))}">${icon('mail')}</button>
+    </article>`;
+  }
+
+  /** Ältere Meldungen nachladen. Der Cursor ist die letzte sichtbare ID, kein wackeliger Offset. */
+  async function loadMore({ reset = false } = {}) {
+    if (loading) return;
+    loading = true;
+    if (reset) {
+      list = [];
+      hasMore = false;
+      $('#activity-list').innerHTML = `<div class="activity-loading">${icon('refresh')} ${escapeHtml(
+        tr('common.loading')
+      )}</div>`;
+    }
+    paintMore();
+    try {
+      const before = reset || !list.length ? '' : `&before=${list.at(-1).id}`;
+      const kind = event === 'all' ? '' : `&event=${encodeURIComponent(event)}`;
+      const page = await api(`/me/notifications?limit=40${kind}${before}`);
+      const known = new Set(list.map((item) => item.id));
+      list.push(...(page.notifications || []).filter((item) => !known.has(item.id)));
+      hasMore = Boolean(page.has_more);
+      state.stats.notifications_unread = page.unread || 0;
+      drawSide();
+    } catch (error) {
+      fail(error);
+      hasMore = true;
+    } finally {
+      loading = false;
+      paint();
+    }
   }
 
   async function read(ids) {
@@ -162,13 +217,38 @@ export async function render(root) {
     }
   }
 
+  async function markUnread(id) {
+    const item = list.find((entry) => entry.id === id);
+    if (!item?.read_at) return;
+    const previous = item.read_at;
+    item.read_at = null;
+    state.stats.notifications_unread = (state.stats.notifications_unread || 0) + 1;
+    drawSide();
+    paint();
+    try {
+      const answer = await api('/me/notifications', {
+        method: 'PATCH',
+        body: { ids: [id], unread: true },
+      });
+      state.stats.notifications_unread = answer.unread || 0;
+      drawSide();
+      ok(tr('act.markedUnread'));
+    } catch (error) {
+      item.read_at = previous;
+      state.stats.notifications_unread = Math.max(0, (state.stats.notifications_unread || 0) - 1);
+      drawSide();
+      paint();
+      fail(error);
+    }
+  }
+
   $('#activity-search').addEventListener('input', (e) => {
     query = String(e.target.value || '').trim().toLowerCase();
     paint();
   });
-  $('#activity-event').addEventListener('change', (e) => {
+  $('#activity-event').addEventListener('change', async (e) => {
     event = e.target.value;
-    paint();
+    await loadMore({ reset: true });
   });
   $('#activity-unread').addEventListener('change', (e) => {
     unreadOnly = e.target.checked;
@@ -176,15 +256,35 @@ export async function render(root) {
   });
 
   $('#activity-list').addEventListener('click', (e) => {
+    const unread = e.target.closest('[data-unread]');
+    if (unread) {
+      e.preventDefault();
+      markUnread(Number(unread.dataset.unread));
+      return;
+    }
     const item = e.target.closest('[data-read]');
     if (item) read([Number(item.dataset.read)]);
   });
 
   $('#read-all').addEventListener('click', async () => {
-    const unread = list.filter((item) => !item.read_at).map((item) => item.id);
-    await read(unread);
-    $('#read-all').disabled = true;
-    ok(tr('act.marked'));
+    const unread = list.filter((item) => !item.read_at);
+    const previous = state.stats.notifications_unread || 0;
+    const now = Date.now();
+    for (const item of unread) item.read_at = now;
+    state.stats.notifications_unread = 0;
+    drawSide();
+    paint();
+    try {
+      await api('/me/notifications', { method: 'PATCH' });
+      $('#read-all').disabled = true;
+      ok(tr('act.marked'));
+    } catch (error) {
+      for (const item of unread) item.read_at = null;
+      state.stats.notifications_unread = previous;
+      drawSide();
+      paint();
+      fail(error);
+    }
   });
 
   $('#clear-read').addEventListener('click', async () => {

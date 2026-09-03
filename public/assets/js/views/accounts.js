@@ -7,70 +7,18 @@ export async function render(root) {
   const data = await api('/accounts');
   state.accounts = data.accounts;
   await refresh({ accounts: false, me: false });
+  let query = '';
+  let filter = 'all';
+  let order = 'name';
 
-  const cards = state.accounts
-    .map((account) => {
-      const used = state.profiles.filter((profile) =>
-        profile.accounts.some((member) => member.account_id === account.id)
-      );
-      const broken = account.status === 'error';
-      const suspended = account.suspended;
-      return `<article class="card">
-        <div class="row spread" style="align-items:flex-start">
-          <div class="row">
-            <img class="head lg" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
-            <div>
-              <div class="strong">${escapeHtml(account.name)}</div>
-              <div class="small muted">${escapeHtml(
-                tr(account.kind === 'offline' ? 'acc.kind.offline' : 'acc.kind.microsoft')
-              )} · ${account.connections}×</div>
-            </div>
-          </div>
-          ${
-            suspended
-              ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>`
-              : broken
-              ? `<span class="pill missing">${escapeHtml(tr('acc.error'))}</span>`
-              : `<span class="pill primary">${escapeHtml(tr('acc.ok'))}</span>`
-          }
-        </div>
-
-        ${
-          suspended
-            ? `<p class="small" style="margin-top:.75rem;color:var(--warn-text)">${escapeHtml(
-                account.suspend_reason || tr('acc.suspendedHint')
-              )}</p>`
-            : broken
-            ? `<p class="small" style="margin-top:.75rem;color:var(--bad-text)">${escapeHtml(account.last_error || '')}</p>`
-            : ''
-        }
-
-        <div class="small muted" style="margin-top:.9rem">
-          ${
-            used.length
-              ? `${escapeHtml(tr('acc.usedOn', { n: used.length }))}: ${used
-                  .map((profile) => escapeHtml(profile.name))
-                  .join(', ')}`
-              : escapeHtml(tr('common.none'))
-          }
-        </div>
-        <div class="small muted mono">${datetime(account.created_at)}</div>
-
-        <div class="row" style="margin-top:1rem">
-          ${
-            account.kind === 'offline'
-              ? ''
-              : `<button class="btn btn-sm" data-relogin="${account.id}" ${suspended ? 'disabled' : ''}>${icon('refresh')} ${escapeHtml(
-                  tr('acc.renew')
-                )}</button>`
-          }
-          <button class="btn btn-sm btn-danger" data-remove="${account.id}">${icon('trash')} ${escapeHtml(
-            tr('common.delete')
-          )}</button>
-        </div>
-      </article>`;
-    })
-    .join('');
+  const usedOn = (account) =>
+    state.profiles.filter((profile) =>
+      profile.accounts.some((member) => member.account_id === account.id)
+    );
+  const needsAttention = (account) => account.suspended || account.status === 'error';
+  const ready = state.accounts.filter((account) => !needsAttention(account)).length;
+  const attention = state.accounts.length - ready;
+  const unused = state.accounts.filter((account) => !usedOn(account).length).length;
 
   root.innerHTML = `
     ${appbar(
@@ -92,7 +40,32 @@ export async function render(root) {
 
     ${
       state.accounts.length
-        ? `<div class="grid two">${cards}</div>`
+        ? `<div class="grid four account-summary" role="group" aria-label="${escapeHtml(tr('acc.summary'))}">
+            ${summaryTile('all', state.accounts.length, 'acc.total', 'users')}
+            ${summaryTile('ready', ready, 'acc.ready', 'check')}
+            ${summaryTile('attention', attention, 'acc.needsAttention', 'alert')}
+            ${summaryTile('unused', unused, 'acc.unused', 'server')}
+          </div>
+          <div class="account-tools">
+            <label class="account-search">${icon('search')}
+              <input id="account-search" type="search" autocomplete="off"
+                placeholder="${escapeHtml(tr('acc.search'))}" aria-label="${escapeHtml(tr('acc.search'))}">
+            </label>
+            <select id="account-filter" class="mini" aria-label="${escapeHtml(tr('common.status'))}">
+              <option value="all">${escapeHtml(tr('acc.filter.all'))}</option>
+              <option value="ready">${escapeHtml(tr('acc.filter.ready'))}</option>
+              <option value="attention">${escapeHtml(tr('acc.filter.attention'))}</option>
+              <option value="unused">${escapeHtml(tr('acc.filter.unused'))}</option>
+              <option value="offline">${escapeHtml(tr('acc.filter.offline'))}</option>
+            </select>
+            <select id="account-sort" class="mini" aria-label="${escapeHtml(tr('common.order'))}">
+              <option value="name">${escapeHtml(tr('acc.sort.name'))}</option>
+              <option value="usage">${escapeHtml(tr('acc.sort.usage'))}</option>
+              <option value="newest">${escapeHtml(tr('acc.sort.newest'))}</option>
+            </select>
+            <span class="small muted account-count" id="account-count"></span>
+          </div>
+          <div class="grid two account-grid" id="account-grid"></div>`
         : `<div class="empty">
             <h3>${escapeHtml(tr('acc.none.title'))}</h3>
             <p>${escapeHtml(tr('acc.none.text'))}</p>
@@ -100,8 +73,143 @@ export async function render(root) {
           </div>`
     }`;
 
+  function summaryTile(value, number, key, symbol) {
+    return `<button type="button" class="stat account-stat" data-account-filter="${value}"
+      aria-pressed="${filter === value}">
+      <span class="account-stat-icon">${icon(symbol)}</span>
+      <span class="v">${number}</span>
+      <span class="k">${escapeHtml(tr(key))}</span>
+    </button>`;
+  }
+
+  function visibleAccounts() {
+    return state.accounts
+      .filter((account) => {
+        const use = usedOn(account);
+        if (filter === 'ready' && needsAttention(account)) return false;
+        if (filter === 'attention' && !needsAttention(account)) return false;
+        if (filter === 'unused' && use.length) return false;
+        if (filter === 'offline' && account.kind !== 'offline') return false;
+        return !query || `${account.name} ${use.map((profile) => profile.name).join(' ')}`.toLowerCase().includes(query);
+      })
+      .sort((a, b) => {
+        if (order === 'usage') return usedOn(b).length - usedOn(a).length || a.name.localeCompare(b.name);
+        if (order === 'newest') return b.created_at - a.created_at;
+        return a.name.localeCompare(b.name);
+      });
+  }
+
+  function accountCard(account) {
+    const used = usedOn(account);
+    const broken = account.status === 'error';
+    const suspended = account.suspended;
+    return `<article class="card account-card ${needsAttention(account) ? 'needs-attention' : ''}">
+      <div class="account-card-head">
+        <img class="head lg" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
+        <div class="grow" style="min-width:0">
+          <h2 class="account-name truncate">${escapeHtml(account.name)}</h2>
+          <span class="small muted">${escapeHtml(
+            tr(account.kind === 'offline' ? 'acc.kind.offline' : 'acc.kind.microsoft')
+          )}</span>
+        </div>
+        ${
+          suspended
+            ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>`
+            : broken
+              ? `<span class="pill missing">${escapeHtml(tr('acc.error'))}</span>`
+              : `<span class="pill primary">${escapeHtml(tr('acc.ok'))}</span>`
+        }
+      </div>
+
+      ${
+        suspended || broken
+          ? `<div class="account-problem ${broken ? 'bad' : 'warn'}">${icon('alert')}<span>${escapeHtml(
+              suspended ? account.suspend_reason || tr('acc.suspendedHint') : account.last_error || tr('acc.errorHint')
+            )}</span></div>`
+          : ''
+      }
+
+      <div class="account-assignments">
+        <span class="small muted">${escapeHtml(tr('acc.assignedServers', { n: used.length }))}</span>
+        <div class="account-server-list">
+          ${
+            used.length
+              ? used
+                  .map(
+                    (profile) => `<a class="pill" href="#/servers/${profile.id}/connect">
+                      <span class="dot ${profile.online ? 'live' : ''}"></span>${escapeHtml(profile.name)}</a>`
+                  )
+                  .join('')
+              : `<a class="account-unused" href="#/servers">${escapeHtml(tr('acc.assignNow'))} ${icon('arrow')}</a>`
+          }
+        </div>
+      </div>
+
+      <dl class="account-facts">
+        <div><dt>${escapeHtml(tr('acc.connections'))}</dt><dd>${account.connections}</dd></div>
+        <div><dt>${escapeHtml(tr('acc.connectedSince'))}</dt><dd>${datetime(account.created_at)}</dd></div>
+      </dl>
+
+      <div class="row wrap account-actions">
+        ${
+          account.kind === 'offline'
+            ? ''
+            : `<button class="btn btn-sm ${broken ? 'btn-primary' : ''}" data-relogin="${account.id}" ${
+                suspended ? 'disabled' : ''
+              }>${icon('refresh')} ${escapeHtml(tr('acc.renew'))}</button>`
+        }
+        <button class="btn btn-sm btn-danger" data-remove="${account.id}">${icon('trash')} ${escapeHtml(
+          tr('acc.remove')
+        )}</button>
+      </div>
+    </article>`;
+  }
+
+  function paint() {
+    const grid = $('#account-grid');
+    if (!grid) return;
+    const accounts = visibleAccounts();
+    grid.innerHTML = accounts.length
+      ? accounts.map(accountCard).join('')
+      : `<div class="empty account-no-results">
+          <span class="empty-icon">${icon('search')}</span>
+          <h3>${escapeHtml(tr('acc.noMatches'))}</h3>
+          <p>${escapeHtml(tr('acc.noMatchesText'))}</p>
+          <button class="btn" id="account-reset">${escapeHtml(tr('acc.resetFilters'))}</button>
+        </div>`;
+    $('#account-count').textContent = tr('act.count', { n: accounts.length, total: state.accounts.length });
+    $$('[data-account-filter]').forEach((button) =>
+      button.setAttribute('aria-pressed', String(button.dataset.accountFilter === filter))
+    );
+    $('#account-reset')?.addEventListener('click', () => {
+      query = '';
+      filter = 'all';
+      $('#account-search').value = '';
+      $('#account-filter').value = 'all';
+      paint();
+    });
+  }
+
   for (const id of ['#add', '#add-2']) $(id)?.addEventListener('click', startLogin);
-  $$('[data-relogin]').forEach((button) => button.addEventListener('click', startLogin));
+  $('#account-search')?.addEventListener('input', (event) => {
+    query = String(event.target.value || '').trim().toLowerCase();
+    paint();
+  });
+  $('#account-filter')?.addEventListener('change', (event) => {
+    filter = event.target.value;
+    paint();
+  });
+  $('#account-sort')?.addEventListener('change', (event) => {
+    order = event.target.value;
+    paint();
+  });
+  $$('[data-account-filter]').forEach((button) =>
+    button.addEventListener('click', () => {
+      filter = button.dataset.accountFilter;
+      $('#account-filter').value = filter;
+      paint();
+    })
+  );
 
   $('#add-offline')?.addEventListener('click', async () => {
     const answer = await formDialog(
@@ -120,11 +228,14 @@ export async function render(root) {
     }
   });
 
-  $$('[data-remove]').forEach((button) =>
-    button.addEventListener('click', async () => {
+  $('#account-grid')?.addEventListener('click', async (event) => {
+    const relogin = event.target.closest('[data-relogin]');
+    if (relogin) return startLogin();
+    const button = event.target.closest('[data-remove]');
+    if (button) {
       const account = state.accounts.find((entry) => entry.id === Number(button.dataset.remove));
       const sure = await confirmDialog(tr('acc.removeAsk', { name: account.name }), {
-        confirm: tr('common.delete'),
+        confirm: tr('acc.remove'),
       });
       if (!sure) return;
       try {
@@ -135,8 +246,9 @@ export async function render(root) {
       } catch (error) {
         fail(error);
       }
-    })
-  );
+    }
+  });
+  paint();
 }
 
 /**

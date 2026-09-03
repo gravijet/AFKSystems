@@ -13,7 +13,7 @@
 
 import {
   api, icon, escapeHtml, datetime, since, safeLink, tr, $, $$, ok, fail, toast, formDialog, debounce,
-  fileSize, avatar, locale,
+  fileSize, avatar, locale, credits, date,
 } from '../ui.js';
 import { state, appbar, refresh, draw, go } from '../app.js';
 import { renderDiscord } from '../discord.js';
@@ -21,6 +21,7 @@ import { renderDiscord } from '../discord.js';
 // Drei Zustände, drei Aussagen: bei uns, beim Kunden, erledigt. Ein vierter („wartet“) stand
 // früher daneben und bedeutete dasselbe wie „beantwortet“ – siehe server/tickets.js.
 const STATUS_PILL = { open: 'primary', answered: '', closed: '' };
+const PRIORITY_PILL = { urgent: 'missing', high: 'primary', normal: '', low: '' };
 
 /**
  * Wie groß ein Anhang sein darf.
@@ -84,6 +85,77 @@ function attachment(file) {
 
 const attachments = (files) =>
   files?.length ? `<div class="chat-files">${files.map(attachment).join('')}</div>` : '';
+
+/**
+ * Eine Systemzeile in der Sprache des Lesers.
+ *
+ * Der Satz steht als fertiger englischer Text in der Datenbank – daran hängt der Discord-Kanal,
+ * der ihn genauso spiegelt, und ein Verlauf, dessen Wortlaut sich nachträglich ändert, wäre
+ * keiner. Daneben steht seit Migration 034, **was** die Zeile aussagt; daraus baut das Panel den
+ * Satz neu. Alte Zeilen haben das nicht und stehen weiter so da, wie sie geschrieben wurden – und
+ * ein Schlüssel, den diese Fassung des Panels noch nicht kennt, fällt auf denselben Weg zurück.
+ */
+function systemLine(message) {
+  const key = message.meta?.key;
+  if (!key) return message.body;
+  const vars = { ...(message.meta.vars || {}) };
+  // Die Dringlichkeit steht in den Werten als `normal`/`urgent` – als Wort gehört sie in dieselbe
+  // Sprache wie der Satz, in dem sie steht.
+  if (key === 'priority') {
+    vars.from = tr(`tk.priority.${vars.from}`);
+    vars.to = tr(`tk.priority.${vars.to}`);
+  }
+  const text = tr(`tk.sys.${key}`, vars);
+  return text === `tk.sys.${key}` ? message.body : text;
+}
+
+/**
+ * Wie lange etwas gedauert hat, in Worten.
+ *
+ * `since()` daneben rechnet immer gegen *jetzt*; hier geht es um eine Spanne zwischen zwei
+ * Zeitpunkten, die beide in der Vergangenheit liegen – „nach 12 min beantwortet“.
+ */
+export function duration(ms) {
+  const seconds = Math.max(0, Math.round((Number(ms) || 0) / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} h ${minutes % 60} min`;
+  return `${Math.round(hours / 24)} d`;
+}
+
+/**
+ * Der Haken hinter einer Nachricht.
+ *
+ * Ein Haken heißt zugestellt, zwei heißen gelesen – dieselbe Zeichensprache wie in jedem
+ * Nachrichtendienst, und deshalb ohne Erklärung verständlich. Der Text daneben sagt trotzdem in
+ * Worten, was gemeint ist: Ein Symbol allein ist für jeden unlesbar, der es nicht sieht.
+ */
+const receiptMark = (seen) =>
+  `<span class="receipt-mark ${seen ? 'is-seen' : ''}" aria-hidden="true">${icon('check')}${
+    seen ? icon('check') : ''
+  }</span>`;
+
+/**
+ * Wann gelesen wurde.
+ *
+ * Heute genügt die Uhrzeit – bei einer Antwort von vor zehn Minuten ist das Datum daneben
+ * Beiwerk. An einem älteren Ticket ist genau umgekehrt „14:32“ ohne Tag wertlos. `clock()` zählt
+ * dabei Sekunden mit, weil es für die Live-Ansicht gebaut ist; an einer Lesebestätigung ist die
+ * Sekunde Rauschen.
+ */
+function readTime(at) {
+  const then = new Date(at);
+  const today = new Date();
+  const sameDay =
+    then.getFullYear() === today.getFullYear() &&
+    then.getMonth() === today.getMonth() &&
+    then.getDate() === today.getDate();
+  return sameDay
+    ? new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(then)
+    : datetime(at);
+}
 
 export async function render(root, route) {
   if (route.id) return one(root, route.id, { staff: false, backHash: '#/tickets' });
@@ -196,11 +268,38 @@ async function list(root) {
  * (Und das `<li>` hatte kein schließendes `>`. Der Punkt für den Zustand wurde deshalb vom Browser
  * als Attribut des Listeneintrags gelesen und nie gezeichnet – seit es ihn gibt.)
  */
+/**
+ * Die zweite Zeile eines Ticketeintrags: der Anfang der letzten Nachricht.
+ *
+ * Vorher stand dort „3 Nachrichten“. Das ist eine Zahl über das Ticket und nichts über die Sache –
+ * wer drei Tickets offen hat, musste sie trotzdem alle öffnen, um zu wissen, welches gerade
+ * wichtig ist. Der erste Satz der letzten Antwort sagt das in derselben Zeile.
+ */
+function preview(ticket, { mineIsStaff = false } = {}) {
+  if (!ticket.last_body) {
+    return escapeHtml(
+      ticket.messages === 1 ? tr('tk.messagesOne') : tr('tk.messages', { n: ticket.messages ?? 0 })
+    );
+  }
+  const from =
+    ticket.last_role === 'staff'
+      ? tr('tk.staff')
+      : mineIsStaff
+        ? ticket.display_name || tr('tk.customer')
+        : tr('tk.you');
+  return `<span class="muted">${escapeHtml(from)}:</span> ${escapeHtml(
+    ticket.last_body.replace(/\s+/g, ' ').trim()
+  )}`;
+}
+
 function row(ticket) {
   // Anklickbar heißt auch: mit der Tastatur erreichbar. Ohne `role`/`tabindex` war die ganze
   // Ticketliste für jeden unbedienbar, der keine Maus benutzt.
   const unread = Boolean(ticket.unread_user);
   const label = `#${ticket.id} ${ticket.subject}${unread ? ` – ${tr('tk.unread')}` : ''}`;
+  // Der Haken steht nur an der eigenen letzten Nachricht: Ob das Team *seine* Antwort gelesen
+  // hat, ist keine Frage – sie steht ja da.
+  const mine = ticket.last_role === 'user';
   return `<li class="ticket-row ${unread ? 'is-unread' : ''}" data-open="${ticket.id}"
     role="button" tabindex="0" aria-label="${escapeHtml(label)}">
     <span class="ticket-dot ${escapeHtml(ticket.status)}"></span>
@@ -212,10 +311,8 @@ function row(ticket) {
         ${ticket.discord ? `<span class="pill" title="${escapeHtml(tr('tk.inDiscord'))}">${icon('discord')}</span>` : ''}
         ${ticket.shared ? `<span class="pill">${icon('users')}</span>` : ''}
       </div>
-      <div class="small muted truncate">
-        ${escapeHtml(
-          ticket.messages === 1 ? tr('tk.messagesOne') : tr('tk.messages', { n: ticket.messages ?? 0 })
-        )}
+      <div class="small muted truncate ticket-preview">
+        ${mine ? receiptMark(Boolean(ticket.seen_at)) : ''}${preview(ticket)}
       </div>
     </div>
     <div class="row" style="gap:.4rem">
@@ -270,6 +367,78 @@ async function create() {
   }
 }
 
+/**
+ * Die Uhrzeit beim Kunden.
+ *
+ * Ein Ticket um drei Uhr nachts beantwortet man anders als eines am Mittag – und ob jemand gerade
+ * schläft, entscheidet seine Zeitzone und nicht unsere. Steht keine im Konto, steht hier nichts:
+ * eine geratene Uhrzeit wäre schlechter als gar keine.
+ */
+function localTime(timezone) {
+  if (!timezone) return '';
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date());
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Der Kunde neben dem Gespräch.
+ *
+ * Bisher stand hier ein Name und eine E-Mail-Adresse. Das ist genau die Auskunft, die man beim
+ * Antworten *nicht* braucht – gebraucht wird, wen man vor sich hat: seit wann er dabei ist, ob er
+ * zahlt, wie viele Tickets er schon hatte und wie viele davon gerade offen sind. Wer das nicht
+ * sieht, behandelt einen Stammkunden mit drei Serverplätzen wie eine Neuanmeldung von gestern.
+ */
+function customerPanel(data) {
+  const user = data.user;
+  const context = data.context || {};
+  const time = localTime(context.timezone);
+  const line = (label, value) =>
+    `<div class="row spread small"><span class="muted">${escapeHtml(label)}</span>
+       <span>${value}</span></div>`;
+  return `<section class="panel">
+    <header><h3>${escapeHtml(tr('tk.customer'))}</h3></header>
+    <div class="body stack">
+      <a class="row spread" href="#/admin/users/${user.id}">
+        <span class="row" style="gap:.5rem;min-width:0">${avatar(user, { size: 26 })}
+          <span class="truncate">${escapeHtml(user.display_name || `#${user.id}`)}</span></span>${icon('arrow')}</a>
+      <div class="row wrap" style="gap:.35rem">
+        ${data.paying ? `<span class="pill primary">${escapeHtml(tr('adm.paying'))}</span>` : ''}
+        ${user.blocked ? `<span class="pill missing">${escapeHtml(tr('sec.blockedAccount'))}</span>` : ''}
+        ${
+          user.email_verified
+            ? ''
+            : `<span class="pill missing">${escapeHtml(tr('tk.mailUnverified'))}</span>`
+        }
+        ${user.discord ? `<span class="pill">${icon('discord')} ${escapeHtml(user.discord.name || '')}</span>` : ''}
+      </div>
+      <div class="small muted truncate">${escapeHtml(user.email || '')}</div>
+      <hr class="rule">
+      ${line(tr('tk.ctxSince'), `<span class="mono">${date(context.member_since)}</span>`)}
+      ${line(tr('tk.ctxCredits'), `<span class="mono">${escapeHtml(credits(context.credits ?? 0))}</span>`)}
+      ${line(
+        tr('tk.ctxTickets'),
+        `<span class="mono">${Number(context.total ?? 0)}</span> <span class="muted small">${escapeHtml(
+          tr('tk.ctxOpenOf', { n: Number(context.open ?? 0) })
+        )}</span>`
+      )}
+      ${line(tr('tk.ctxSlots'), `<span class="mono">${Number(context.profiles ?? 0)}</span>`)}
+      ${
+        context.last_topup
+          ? line(tr('tk.ctxLastTopup'), `<span class="mono">${date(context.last_topup)}</span>`)
+          : ''
+      }
+      ${time ? line(tr('tk.ctxLocalTime'), `<span class="mono">${escapeHtml(time)}</span>`) : ''}
+    </div>
+  </section>`;
+}
+
 // ---------------------------------------------------------------- Ein Ticket
 
 async function one(root, id, { staff, backHash }) {
@@ -285,6 +454,12 @@ async function one(root, id, { staff, backHash }) {
   const customerLanguage = data.user?.language === 'en' ? 'en' : 'de';
   let messages = data.messages;
   let participants = data.participants || [];
+  /** Wer wie weit gelesen hat – siehe server/tickets.js. */
+  let reads = data.reads || [];
+  const me = data.me ?? state.me.id;
+  // Wo man beim letzten Mal aufgehört hat. Das Öffnen hat den Stand gerade überschrieben; diese
+  // Zahl ist die einzige Erinnerung daran und wird deshalb nur einmal beim Laden gesetzt.
+  const seenUntil = Number(data.seen_until) || 0;
   // Große Verläufe starten mit der jüngsten, lesbaren Seite. Ältere Nachrichten bleiben mit
   // einem Klick erreichbar, statt beim Öffnen eines Tickets tausend DOM-Knoten, Avatare und
   // Anhänge zu bauen. Das ist vor allem auf Mobilgeräten spürbar.
@@ -304,12 +479,75 @@ async function one(root, id, { staff, backHash }) {
         ? `<span class="pill missing">${escapeHtml(tr('tk.status.closed'))}</span>`
         : `<button class="btn btn-danger btn-block" data-status="closed">${escapeHtml(tr('tk.close'))}</button>`;
 
+  /**
+   * Die Kopfzeile eines Ticketvorgangs: alles, was man wissen muss, bevor man liest.
+   *
+   * Das stand vorher verteilt in der Seitenleiste, im Auswahlfeld und gar nicht. Wer ein Ticket
+   * öffnet, entscheidet in den ersten zwei Sekunden, ob er es jetzt bearbeitet – dafür braucht er
+   * Zustand, Dringlichkeit, Zuständigkeit und Wartezeit nebeneinander und nicht untereinander.
+   */
+  const fact = (label, value, klass = '') =>
+    `<div class="fact ${klass}"><span class="fact-label">${escapeHtml(label)}</span>
+       <span class="fact-value">${value}</span></div>`;
+
+  const waitedFor = () =>
+    ticket.first_reply_at
+      ? duration(ticket.first_reply_at - ticket.created_at)
+      : `<span class="warn-text">${escapeHtml(tr('tk.noReplyYet'))}</span>`;
+
+  const factsStrip = () => `
+    <div class="ticket-facts" id="facts">
+      ${fact(
+        tr('tk.setStatus'),
+        `<span class="pill ${STATUS_PILL[ticket.status] || ''}">${escapeHtml(
+          tr(`tk.status.${ticket.status}`)
+        )}</span>`
+      )}
+      ${
+        staff
+          ? fact(
+              tr('tk.priorityShort'),
+              `<span class="pill ${PRIORITY_PILL[ticket.priority] || ''}">${escapeHtml(
+                tr(`tk.priority.${ticket.priority}`)
+              )}</span>`
+            )
+          : ''
+      }
+      ${
+        staff
+          ? fact(
+              tr('tk.assign'),
+              ticket.assigned_to
+                ? `<span class="row" style="gap:.35rem">${avatar(
+                    { display_name: ticket.assigned_name, avatar: ticket.assigned_avatar },
+                    { size: 18 }
+                  )}${escapeHtml(ticket.assigned_name || '')}</span>`
+                : `<span class="muted">${escapeHtml(tr('tk.unassigned'))}</span>`
+            )
+          : ''
+      }
+      ${fact(tr('tk.firstReply'), waitedFor())}
+      ${fact(
+        ticket.status === 'closed' ? tr('tk.closedAt') : tr('tk.lastActivity'),
+        `<span class="mono">${since(ticket.status === 'closed' ? ticket.closed_at : ticket.updated_at)}</span>`
+      )}
+      ${
+        Number(ticket.reopened) > 0
+          ? fact(tr('tk.reopenedTimes'), `<span class="mono">${Number(ticket.reopened)}×</span>`)
+          : ''
+      }
+    </div>`;
+
   root.innerHTML = `
     ${appbar(
       ticket.subject,
       `<a class="btn btn-sm" href="${backHash}">${escapeHtml(tr('common.back'))}</a>`,
-      `#${ticket.id} · ${datetime(ticket.created_at)}`
+      `#${ticket.id} · ${datetime(ticket.created_at)}${
+        staff && data.user ? ` · ${data.user.display_name || ''}` : ''
+      }`
     )}
+
+    ${factsStrip()}
 
     <div class="ticket">
       <div class="ticket-main">
@@ -383,6 +621,13 @@ async function one(root, id, { staff, backHash }) {
             ? `<section class="panel">
                 <header><h3>${escapeHtml(tr('adm.detail'))}</h3></header>
                 <div class="body stack">
+                  <!-- Der häufigste Griff im Support ist "das nehme ich": ein Knopf statt eines
+                       Auswahlfelds, in dem man sich erst selbst suchen muss. -->
+                  <button class="btn btn-sm btn-block" id="take" ${
+                    ticket.assigned_to === me ? 'disabled' : ''
+                  }>${icon('user')} ${escapeHtml(
+                    ticket.assigned_to === me ? tr('tk.assignedToYou') : tr('tk.takeIt')
+                  )}</button>
                   <div class="field">
                     <label for="priority">${escapeHtml(tr('tk.priorityShort'))}</label>
                     <select id="priority">
@@ -410,19 +655,19 @@ async function one(root, id, { staff, backHash }) {
                         .join('')}
                     </select>
                   </div>
-                  ${
-                    data.user
-                      ? `<hr class="rule">
-                         <a class="row spread" href="#/admin/users/${data.user.id}">
-                           <span class="row">${icon('user')} ${escapeHtml(data.user.display_name || `#${data.user.id}`)}</span>${icon('arrow')}</a>
-                         <div class="small muted">${escapeHtml(data.user.email)}
-                           ${data.paying ? `<span class="pill primary">${escapeHtml(tr('adm.paying'))}</span>` : ''}</div>`
-                      : ''
-                  }
                 </div>
+              </section>
+
+              <!-- Wer wie weit gelesen hat. Die Frage, die im Support am häufigsten gestellt
+                   wird, hat damit zum ersten Mal eine Antwort im Panel. -->
+              <section class="panel">
+                <header><h3>${escapeHtml(tr('tk.readTitle'))}</h3></header>
+                <div class="body stack" id="read-list"></div>
               </section>`
             : ''
         }
+
+        ${staff && data.user ? customerPanel(data) : ''}
 
         <section class="panel">
           <header><h3>${escapeHtml(tr('tk.people'))}</h3>
@@ -449,6 +694,23 @@ async function one(root, id, { staff, backHash }) {
 
   const thread = $('#thread');
 
+  /**
+   * Der Strich „Neue Nachrichten“.
+   *
+   * Ein Ticket mit vierzig Beiträgen öffnet sich unten – aber „unten“ sagt nicht, wo man beim
+   * letzten Mal aufgehört hat. Der Strich steht vor der ersten Nachricht, die man noch nicht
+   * gesehen hatte, und zwar an derselben Stelle, solange die Seite offen ist: Er ist die
+   * Erinnerung an einen Stand, den das Öffnen gerade überschrieben hat, und darf deshalb nicht
+   * beim ersten Neuzeichnen verschwinden.
+   */
+  const firstUnseen = seenUntil
+    ? messages.find(
+        // Systemzeilen zählen nicht: „Dringlichkeit geändert“ ist keine Nachricht, die man
+        // verpasst hat, und ein Strich davor verspräche mehr, als dahinter steht.
+        (entry) => entry.id > seenUntil && entry.role !== 'system' && entry.user_id !== me
+      )?.id || 0
+    : 0;
+
   const paint = () => {
     const atBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 80;
     // Ein Ticket darf ohne Text abgeschickt werden – dann steht hier zunächst nur der Betreff,
@@ -457,10 +719,59 @@ async function one(root, id, { staff, backHash }) {
       `${hasOlder ? `<button class="btn btn-sm ticket-load-history" id="load-older" ${
         loadingOlder ? 'disabled' : ''
       }>${escapeHtml(loadingOlder ? tr('common.loading') : tr('tk.loadOlder'))}</button>` : ''}` +
-      (messages.map(bubble).join('') ||
-      `<div class="chat-system"><span>${escapeHtml(tr('tk.onlySubject'))}</span></div>`);
+      (messages
+        .map(
+          (message) =>
+            (message.id === firstUnseen
+              ? `<div class="chat-divider"><span>${escapeHtml(tr('tk.newSince'))}</span></div>`
+              : '') + bubble(message)
+        )
+        .join('') ||
+      `<div class="chat-system"><span>${escapeHtml(tr('tk.onlySubject'))}</span></div>`) +
+      receipt();
     if (atBottom) thread.scrollTop = thread.scrollHeight;
   };
+
+  /**
+   * „Gelesen“ unter der letzten eigenen Nachricht.
+   *
+   * Sie steht dort und nicht an jeder einzelnen: Wer eine Antwort gelesen hat, hat alles davor
+   * gelesen – ein Haken an jeder Blase wäre dieselbe Auskunft vierzigmal.
+   *
+   * Für den Kunden bleibt das Team eine Seite und keine Namensliste; das Panel nennt eine
+   * Teamantwort überall „Support“, und eine Lesebestätigung darf daraus nicht plötzlich einen
+   * Dienstplan machen. Umgekehrt braucht das Team die Namen: Bei einem Ticket mit zwei Beteiligten
+   * ist „einer hat gelesen“ etwas anderes als „beide haben gelesen“.
+   */
+  function receipt() {
+    // Nur, solange **wir** zuletzt geschrieben haben. Hat die andere Seite seither geantwortet,
+    // ist die Frage „hat sie es gesehen?“ beantwortet – die Antwort steht darüber. Ein Haken
+    // darunter bezöge sich auf eine Nachricht weiter oben und läse sich, als gehöre er zur
+    // letzten: Genau das stand im Kundenverlauf unter einer Support-Antwort.
+    const last = [...messages].reverse().find((entry) => entry.role !== 'system' && !entry.internal);
+    if (!last || last.role !== (staff ? 'staff' : 'user')) return '';
+    const otherSide = reads.filter((entry) => entry.staff === !staff && entry.user_id !== me);
+    const seen = otherSide.filter((entry) => entry.last_message_id >= last.id);
+
+    if (!staff) {
+      const at = seen.length ? Math.max(...seen.map((entry) => entry.read_at)) : 0;
+      return `<div class="chat-receipt">${receiptMark(Boolean(at))}${escapeHtml(
+        at ? tr('tk.seenBySupport', { time: readTime(at) }) : tr('tk.delivered')
+      )}</div>`;
+    }
+
+    const seenNames = seen.map((entry) => `${entry.display_name} · ${readTime(entry.read_at)}`);
+    const openNames = participants
+      .filter((person) => person.id !== me && !seen.some((entry) => entry.user_id === person.id))
+      .map((person) => person.display_name || `#${person.id}`);
+    return `<div class="chat-receipt">${receiptMark(seenNames.length > 0)}<span>${escapeHtml(
+      seenNames.length ? tr('tk.seenBy', { who: seenNames.join(', ') }) : tr('tk.notSeenYet')
+    )}${
+      seenNames.length && openNames.length
+        ? ` · ${escapeHtml(tr('tk.stillOpenFor', { who: openNames.join(', ') }))}`
+        : ''
+    }</span></div>`;
+  }
 
   /**
    * Eine Nachricht im Verlauf.
@@ -477,7 +788,9 @@ async function one(root, id, { staff, backHash }) {
    */
   function bubble(message) {
     if (message.role === 'system') {
-      return `<div class="chat-system"><span>${escapeHtml(message.body)}</span></div>`;
+      return `<div class="chat-system ${
+        message.internal ? 'is-internal' : ''
+      }"><span>${escapeHtml(systemLine(message))}</span></div>`;
     }
     const mine = message.user_id === (data.me ?? state.me.id);
     // Eine Team-Antwort ist eine Antwort des Teams, nicht die Visitenkarte der Person, die gerade
@@ -541,8 +854,38 @@ async function one(root, id, { staff, backHash }) {
     );
   };
 
+  /**
+   * Die Leseliste in der Seitenleiste des Teams.
+   *
+   * Sie zeigt **alle** Beteiligten, auch die ohne Marke – gerade die sind die Antwort auf die
+   * Frage. Eine Liste, in der nur steht, wer gelesen hat, sieht bei niemandem genauso aus wie bei
+   * einem Ticket, an dem gar niemand hängt.
+   */
+  const paintReads = () => {
+    const box = $('#read-list');
+    if (!box) return;
+    const newest = messages.filter((entry) => !entry.internal).at(-1)?.id || 0;
+    box.innerHTML =
+      participants
+        .map((person) => {
+          const mark = reads.find((entry) => !entry.staff && entry.user_id === person.id);
+          const current = mark && mark.last_message_id >= newest;
+          return `<div class="row spread" style="gap:.5rem">
+            <span class="row" style="gap:.5rem;min-width:0">${avatar(person, { size: 22 })}
+              <span class="truncate">${escapeHtml(person.display_name || `#${person.id}`)}</span></span>
+            <span class="small nowrap ${current ? 'ok-text' : 'muted'}">${
+              mark
+                ? `${receiptMark(current)}<span class="mono">${escapeHtml(readTime(mark.read_at))}</span>`
+                : escapeHtml(tr('tk.neverOpened'))
+            }</span>
+          </div>`;
+        })
+        .join('') || `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`;
+  };
+
   paint();
   paintPeople();
+  paintReads();
   thread.scrollTop = thread.scrollHeight;
 
   thread.addEventListener('click', async (event) => {
@@ -699,9 +1042,11 @@ async function one(root, id, { staff, backHash }) {
       );
       mergeMessages(result.messages);
       Object.assign(ticket, result.ticket);
+      if (result.reads) reads = result.reads;
       setStoredDraft('');
       paintDraft();
       paint();
+      paintReads();
       paintStatus(result.ticket.status);
       await refresh({ profiles: false, accounts: false });
     } catch (error) {
@@ -738,7 +1083,9 @@ async function one(root, id, { staff, backHash }) {
         });
         mergeMessages(result.messages);
         Object.assign(ticket, result.ticket);
+        if (result.reads) reads = result.reads;
         paint();
+        paintReads();
         paintStatus(result.ticket.status);
         await Promise.allSettled([
           api(`/admin/ticket-templates/${chosen.id}/used`, { method: 'POST' }),
@@ -776,9 +1123,19 @@ async function one(root, id, { staff, backHash }) {
   function paintStatus(status) {
     ticket.status = status;
     $('#status').innerHTML = statusControls();
+    // Die Kopfzeile hängt an denselben Werten wie die Seitenleiste. Zeichnet man nur eines von
+    // beidem neu, stehen zwei Wahrheiten übereinander – und die falsche ist die größere.
+    $('#facts').outerHTML = factsStrip();
     const closed = status === 'closed';
     $('#closed-note').hidden = !closed;
     $('#status-hint').hidden = !closed;
+    const take = $('#take');
+    if (take) {
+      take.disabled = ticket.assigned_to === me;
+      take.innerHTML = `${icon('user')} ${escapeHtml(
+        ticket.assigned_to === me ? tr('tk.assignedToYou') : tr('tk.takeIt')
+      )}`;
+    }
   }
 
   $('#status').addEventListener('click', async (event) => {
@@ -799,20 +1156,33 @@ async function one(root, id, { staff, backHash }) {
     }
   });
 
+  /** Dringlichkeit oder Zuständigkeit ändern – und die Kopfzeile mitziehen. */
+  const patch = async (body) => {
+    try {
+      const result = await api(`/admin/tickets/${id}`, { method: 'PATCH', body });
+      Object.assign(ticket, result.ticket);
+      paintStatus(result.ticket.status);
+      ok(tr('adm.saved'));
+    } catch (error) {
+      fail(error);
+    }
+  };
+
   for (const [id_, field] of [
     ['#priority', 'priority'],
     ['#assigned', 'assigned_to'],
   ]) {
     $(id_)?.addEventListener('change', async (event) => {
       const value = field === 'assigned_to' ? Number(event.target.value) || null : event.target.value;
-      try {
-        await api(`/admin/tickets/${id}`, { method: 'PATCH', body: { [field]: value } });
-        ok(tr('adm.saved'));
-      } catch (error) {
-        fail(error);
-      }
+      await patch({ [field]: value });
     });
   }
+
+  $('#take')?.addEventListener('click', async () => {
+    await patch({ assigned_to: me });
+    const select = $('#assigned');
+    if (select) select.value = String(me);
+  });
 
   $('#add-person')?.addEventListener('click', async () => {
     const { users } = await api('/admin/users?filter=all');
@@ -886,6 +1256,31 @@ async function one(root, id, { staff, backHash }) {
       paintStatus(message.status);
       return;
     }
+    // Die andere Seite hat gelesen. Das ist die kleinste aller Meldungen – eine Zahl je Person –
+    // und kommt deshalb ohne Nachladen aus: Sie wird an Ort und Stelle eingesetzt.
+    if (event.event === 'read') {
+      if (message.user_id === me && message.staff === staff) return;
+      const known = reads.find(
+        (entry) => entry.user_id === message.user_id && entry.staff === Boolean(message.staff)
+      );
+      if (known) {
+        if (message.last_message_id <= known.last_message_id) return;
+        known.last_message_id = message.last_message_id;
+        known.read_at = message.read_at;
+      } else {
+        reads = reads.concat({
+          user_id: message.user_id,
+          staff: Boolean(message.staff),
+          last_message_id: message.last_message_id,
+          read_at: message.read_at,
+          display_name: message.name || `#${message.user_id}`,
+          avatar: null,
+        });
+      }
+      paint();
+      paintReads();
+      return;
+    }
     if (event.event === 'message') {
       // Nachschlag holen statt der Nachricht aus der Meldung zu vertrauen: so stimmen Reihenfolge
       // und Rechte auch dann, wenn zwei Antworten gleichzeitig eintreffen.
@@ -896,6 +1291,10 @@ async function one(root, id, { staff, backHash }) {
         typers.clear();
         paintTyping();
         paint();
+      }
+      if (fresh.reads) {
+        reads = fresh.reads;
+        paintReads();
       }
       Object.assign(ticket, fresh.ticket);
       paintStatus(fresh.ticket.status);

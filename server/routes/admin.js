@@ -73,7 +73,7 @@ admin.get(
         .prepare("SELECT COALESCE(SUM(amount_cent), 0) AS n FROM topups WHERE status = 'paid' AND paid_at > ?")
         .get(month).n,
       open_topups: db.prepare("SELECT COUNT(*) AS n FROM topups WHERE status = 'open'").get().n,
-      tickets: tickets.counts(),
+      tickets: tickets.counts(req.user.id),
       open_tickets: db.prepare("SELECT COUNT(*) AS n FROM tickets WHERE status != 'closed'").get().n,
       unread_tickets: tickets.openForStaff(),
       attention: {
@@ -1435,6 +1435,25 @@ admin.delete(
 
 // ---------------------------------------------------------------- Tickets
 
+/**
+ * Wer im Team ein Ticket übernehmen kann.
+ *
+ * Mit Bild: Eine Warteschlange, in der an jeder Zeile ein Gesicht steht, liest sich in einem
+ * Blick – „das sind meine drei“ statt dreißigmal denselben Namen zu entziffern.
+ */
+const staffList = () =>
+  db
+    .prepare(
+      `SELECT * FROM users WHERE role = 'admin'
+        ORDER BY COALESCE(NULLIF(full_name, ''), discord_name, google_name, username)`
+    )
+    .all()
+    .map((row) => ({
+      id: row.id,
+      display_name: profile.displayNameOf(row),
+      avatar: profile.avatarOf(row),
+    }));
+
 admin.get(
   '/tickets',
   wrap((req, res) => {
@@ -1447,10 +1466,16 @@ admin.get(
         search: String(req.query.q || '').trim(),
         assignment: String(req.query.assignment || ''),
         stale: req.query.stale === '1',
+        unanswered: req.query.unanswered === '1',
+        sort: String(req.query.sort || 'queue'),
         staffId: req.user.id,
-      }),
+      }).map(ticketView),
       statuses: tickets.STATUSES,
       priorities: tickets.PRIORITIES,
+      // Die Kacheln über der Liste. Sie stehen hier und nicht in einem zweiten Aufruf: Wer eine
+      // Warteschlange öffnet, will wissen, wie groß sie ist – nicht zweimal warten.
+      counts: tickets.counts(req.user.id),
+      staff: staffList(),
     });
   })
 );
@@ -1459,27 +1484,52 @@ admin.get(
   '/tickets/:id',
   wrap((req, res) => {
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
-    tickets.markRead(ticket, req.user);
+    // Vor dem Markieren merken, wo dieser Mitarbeiter stehen geblieben war (siehe tickets.js).
+    const seenUntil = tickets.markRead(ticket, req.user);
     const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
     const messages = tickets.messages(ticket.id, { staff: true, limit: 100, newest: true });
     res.json({
-      ticket: ticketView(ticket),
+      ticket: ticketView(tickets.withAssignee(ticket)),
       messages,
+      seen_until: seenUntil,
       has_more: messages.length === 100,
       participants: tickets.participants(ticket.id),
+      reads: tickets.reads(ticket.id),
       user: owner ? userRow(owner) : null,
       paying: owner ? billing.isPayingUser(owner.id) : false,
-      staff: db
-        .prepare(
-          `SELECT id, username,
-                  COALESCE(NULLIF(full_name, ''), discord_name, google_name, 'Konto #' || id) AS display_name
-             FROM users WHERE role = 'admin' ORDER BY display_name`
-        )
-        .all(),
+      // Was man über einen Kunden wissen muss, bevor man ihm antwortet – und zwar hier, statt in
+      // einem zweiten Tab: Wie lange er dabei ist, wie viele Tickets er schon hatte, wie viele
+      // davon gerade offen sind, und was auf seinen Serverplätzen läuft. Wer das nachschlagen
+      // muss, schlägt es nicht nach und antwortet ohne.
+      context: owner ? customerContext(owner) : null,
+      staff: staffList(),
       me: req.user.id,
     });
   })
 );
+
+/** Der Kunde in fünf Zahlen – siehe oben. */
+function customerContext(owner) {
+  const ticketStats = db
+    .prepare(
+      `SELECT COUNT(*) AS total,
+              COUNT(*) FILTER (WHERE status != 'closed') AS open
+         FROM tickets WHERE user_id = ?`
+    )
+    .get(owner.id);
+  return {
+    ...ticketStats,
+    credits: owner.credits,
+    member_since: owner.created_at,
+    timezone: owner.timezone || '',
+    language: owner.language,
+    profiles: db.prepare('SELECT COUNT(*) AS n FROM profiles WHERE user_id = ?').get(owner.id).n,
+    // Der letzte Beleg sagt in einer Zeile, ob jemand zahlender Kunde ist und seit wann nicht mehr.
+    last_topup: db
+      .prepare("SELECT paid_at FROM topups WHERE user_id = ? AND status = 'paid' ORDER BY id DESC LIMIT 1")
+      .get(owner.id)?.paid_at || null,
+  };
+}
 
 /** Nachschlag für den Live-Verlauf – dieselbe Form wie beim Kunden. */
 admin.get(
@@ -1494,9 +1544,10 @@ admin.get(
       ...(since ? { after: since, limit: 100 } : before ? { before, limit: 100, newest: true } : { limit: 100, newest: true }),
     });
     res.json({
-      ticket: ticketView(ticket),
+      ticket: ticketView(tickets.withAssignee(ticket)),
       messages,
       has_more: messages.length === 100,
+      reads: tickets.reads(ticket.id),
     });
   })
 );
@@ -1517,10 +1568,11 @@ admin.post(
     if (!internal) tickets.notifyUser(updated, req.body?.body || '', profile.displayNameOf(req.user));
     const after = Number(req.body?.after);
     res.json({
-      ticket: ticketView(updated),
+      ticket: ticketView(tickets.withAssignee(updated)),
       messages: Number.isInteger(after) && after >= 0
         ? tickets.messages(ticket.id, { staff: true, after, limit: 100 })
         : tickets.messages(ticket.id, { staff: true }),
+      reads: tickets.reads(ticket.id),
     });
   })
 );
@@ -1558,10 +1610,60 @@ admin.patch(
       );
     }
     if (body.assigned_to !== undefined) {
-      const target = body.assigned_to ? requireInt(body.assigned_to, 'Bearbeiter') : null;
-      db.prepare('UPDATE tickets SET assigned_to = ? WHERE id = ?').run(target, ticket.id);
+      // Über tickets.js und nicht als nacktes UPDATE: Ein Wechsel der Zuständigkeit steht damit
+      // im Verlauf und im Protokoll, statt lautlos zu geschehen.
+      tickets.setAssignee(
+        db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticket.id),
+        body.assigned_to ? requireInt(body.assigned_to, 'Bearbeiter') : null,
+        req.user.id
+      );
     }
-    res.json({ ticket: ticketView(db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticket.id)) });
+    res.json({
+      ticket: ticketView(tickets.withAssignee(db.prepare('SELECT * FROM tickets WHERE id = ?').get(ticket.id))),
+    });
+  })
+);
+
+/**
+ * Mehrere Tickets auf einmal.
+ *
+ * Eine Warteschlange räumt man nicht einzeln auf. Wer nach einer Störung zwanzig Tickets zum
+ * selben Thema vor sich hat, soll sie zuweisen oder schließen können, ohne zwanzigmal dieselben
+ * drei Klicks zu machen. Erlaubt ist genau das, was auch am einzelnen Ticket erlaubt ist – die
+ * Schleife läuft durch dieselben Funktionen und nicht an ihnen vorbei; sonst hätte die
+ * Massenaktion eigene Regeln, und die wären irgendwann andere.
+ *
+ * Eine Antwort schreibt sich hier bewusst **nicht** in Menge: Was an zwanzig Kunden gleichzeitig
+ * hinausgeht, ist ein Rundschreiben und gehört unter Ankündigungen.
+ */
+admin.post(
+  '/tickets/bulk',
+  wrap((req, res) => {
+    const ids = [...new Set((Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number))]
+      .filter((id) => Number.isInteger(id) && id > 0)
+      .slice(0, 100);
+    const action = String(req.body?.action || '');
+    let done = 0;
+    for (const id of ids) {
+      const ticket = db.prepare('SELECT * FROM tickets WHERE id = ?').get(id);
+      if (!ticket) continue;
+      if (action === 'status') {
+        const updated = tickets.setStatus(ticket, String(req.body?.status || ''), req.user.id, { staff: true });
+        if (updated.status === 'closed') tickets.notifyParticipants(updated, 'ticket_closed', {}, req.user.id);
+      } else if (action === 'priority') {
+        tickets.setPriority(ticket, String(req.body?.priority || ''), req.user.id);
+      } else if (action === 'assign') {
+        tickets.setAssignee(
+          ticket,
+          req.body?.assigned_to ? requireInt(req.body.assigned_to, 'Bearbeiter') : null,
+          req.user.id
+        );
+      } else {
+        throw bad('Unbekannte Aktion.', { en: 'Unknown action.' });
+      }
+      done += 1;
+    }
+    res.json({ ok: true, done });
   })
 );
 

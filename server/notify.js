@@ -255,20 +255,28 @@ export function unreadFor(userId) {
     .get(userId).n;
 }
 
-export function notificationsFor(userId, lang = 'en', { limit = 100, event = '' } = {}) {
+export function notificationsFor(userId, lang = 'en', { limit = 100, event = '', before = null } = {}) {
   const wanted = EVENTS.includes(event) ? event : '';
-  const rows = wanted
-    ? db
-        .prepare(
-          `SELECT * FROM user_notifications
-            WHERE user_id = ? AND event = ? ORDER BY created_at DESC LIMIT ?`
-        )
-        .all(userId, wanted, limit)
-    : db
-        .prepare(
-          'SELECT * FROM user_notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
-        )
-        .all(userId, limit);
+  const cursor = Number.isInteger(before) && before > 0 ? before : null;
+  const filters = ['user_id = ?'];
+  const values = [userId];
+  if (wanted) {
+    filters.push('event = ?');
+    values.push(wanted);
+  }
+  // IDs steigen mit der Zeit und sind eindeutig. Ein Cursor darauf liefert auch dann keine
+  // Doppelungen, wenn während des Nachladens oben eine neue Meldung dazukommt. Ein Offset würde
+  // in genau diesem Fall eine bereits sichtbare Zeile ein zweites Mal liefern.
+  if (cursor) {
+    filters.push('id < ?');
+    values.push(cursor);
+  }
+  const rows = db
+    .prepare(
+      `SELECT * FROM user_notifications
+        WHERE ${filters.join(' AND ')} ORDER BY id DESC LIMIT ?`
+    )
+    .all(...values, limit);
   return rows.map((row) => ({
     id: row.id,
     event: row.event,
@@ -297,6 +305,19 @@ export function markRead(userId, ids = null) {
         WHERE user_id = ? AND id IN (${placeholders})`
     )
     .run(now, userId, ...clean).changes;
+}
+
+/** Eine Meldung wieder auf ungelesen setzen – etwa als persönliche Erinnerung für später. */
+export function markUnread(userId, ids) {
+  const clean = [...new Set(ids || [])].filter(Number.isInteger).slice(0, 100);
+  if (!clean.length) return 0;
+  const placeholders = clean.map(() => '?').join(',');
+  return db
+    .prepare(
+      `UPDATE user_notifications SET read_at = NULL
+        WHERE user_id = ? AND read_at IS NOT NULL AND id IN (${placeholders})`
+    )
+    .run(userId, ...clean).changes;
 }
 
 export function removeRead(userId) {
