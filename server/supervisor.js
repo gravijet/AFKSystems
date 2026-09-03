@@ -2227,6 +2227,34 @@ class Supervisor extends EventEmitter {
     return count;
   }
 
+  /**
+   * Andere tatsächlich laufende Sitzungen desselben Minecraft-Kontos.
+   *
+   * Ein Konto darf mehreren Serverplätzen zugeordnet sein – genau dafür gibt es die zentrale
+   * Kontenliste. Zwei gleichzeitige Minecraft-Anmeldungen mit derselben Identität sind dagegen
+   * keine zweite Nutzung, sondern eine Rennsituation: Der zweite Zielserver wirft meist eine der
+   * beiden Sitzungen mit "already logged in" hinaus. Die Antwort muss aus dem Supervisor kommen,
+   * nicht nur aus einem einzelnen HTTP-Knopf, weil auch Zeitpläne, Wiederanläufe und
+   * Standortwechsel Bots starten können.
+   *
+   * `running` meint hier einen noch vorhandenen Prozess, also auch `starting` und `auth`.
+   * Gerade in diesen Sekunden wäre ein zweiter Start sonst möglich, obwohl die erste Anmeldung
+   * bereits unterwegs ist.
+   */
+  runningElsewhere(profileId, accountId) {
+    const matches = [];
+    for (const bot of this.bots.values()) {
+      if (!bot.running || bot.profile.id === profileId || bot.account.id !== accountId) continue;
+      matches.push({
+        profile_id: bot.profile.id,
+        profile_name: bot.profile.name,
+        state: bot.state,
+        online: bot.online,
+      });
+    }
+    return matches.sort((a, b) => a.profile_name.localeCompare(b.profile_name) || a.profile_id - b.profile_id);
+  }
+
   /** Befehle, die der Client selbst takten soll: Beitrittsbefehle und Dauer-Wiederholungen. */
   joinCommands(profileId, accountId) {
     const out = [];
@@ -2282,6 +2310,23 @@ class Supervisor extends EventEmitter {
   start({ profile, account, user, plan }) {
     const tariff = plan || featuresOf(profile);
     const maxPerUser = Number(getSetting('max_bots_per_user')) || config.maxBotsPerUser;
+    const already = this.get(profile.id, account.id);
+    // Ein zweiter Klick auf "Start" ist kein neuer Start. Diese Rückgabe steht vor den globalen
+    // Kapazitätsprüfungen: Bei voller Auslastung muss ein bereits laufender eigener Bot nicht
+    // plötzlich als abgelehnt erscheinen.
+    if (already?.running) return already.snapshot();
+    const elsewhere = this.runningElsewhere(profile.id, account.id);
+    if (elsewhere.length) {
+      const names = elsewhere.map((entry) => `"${entry.profile_name}"`).join(', ');
+      throw new HttpError(
+        409,
+        `Konto "${account.name}" läuft bereits auf ${names}. Stoppe es dort, bevor du es hier startest.`,
+        {
+          en: `Account "${account.name}" is already running on ${names}. Stop it there before starting it here.`,
+          code: 'account-running-elsewhere',
+        }
+      );
+    }
     if (this.runningCount() >= config.maxBotsTotal) {
       throw new HttpError(429, 'Der Server ist ausgelastet. Bitte später erneut versuchen.', {
         en: 'The server is at capacity. Please try again later.',
@@ -2346,7 +2391,6 @@ class Supervisor extends EventEmitter {
         en: `The paid month for "${profile.name}" has run out.`,
       });
     }
-    const already = this.get(profile.id, account.id);
     if (!already?.running && this.runningOnProfile(profile.id) >= tariff.max_accounts) {
       throw new HttpError(
         402,

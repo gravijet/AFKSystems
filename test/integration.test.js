@@ -1825,6 +1825,40 @@ test('a bot that was in game comes back on its own – one that never got in doe
 });
 
 /**
+ * Eine Zuordnung ist absichtlich wiederverwendbar, eine Minecraft-Sitzung aber nicht. Die Regel
+ * sitzt im Supervisor, damit nicht nur der Startknopf, sondern auch Zeitpläne und Wiederanläufe
+ * denselben Schutz haben.
+ */
+test('one Minecraft account cannot start on two server slots at the same time', () => {
+  const user = createUser();
+  const account = createAccount(user, { name: 'OnlyOneSession' });
+  const first = createProfile(user, billing.planBySlug('premium'), { name: 'Erster Platz' });
+  const second = createProfile(user, billing.planBySlug('premium'), { name: 'Zweiter Platz' });
+  const plan = billing.featuresOf(first);
+  const live = new Bot(supervisor, { profile: first, account, user, plan });
+  // Ein Prozessobjekt genügt: Der Schutz muss greifen, bevor der zweite Start irgendeinen
+  // Client, eine Datenbankzeile oder einen Startwunsch erzeugt.
+  live.proc = {};
+  supervisor.bots.set(live.key, live);
+  try {
+    assert.deepEqual(supervisor.runningElsewhere(second.id, account.id), [
+      { profile_id: first.id, profile_name: first.name, state: 'offline', online: false },
+    ]);
+    assert.throws(
+      () => supervisor.start({ profile: second, account, user, plan: billing.featuresOf(second) }),
+      (error) => error.status === 409 && error.code === 'account-running-elsewhere' && /Erster Platz/.test(error.message)
+    );
+    assert.equal(
+      db.prepare('SELECT wanted FROM profile_accounts WHERE profile_id = ? AND account_id = ?').get(second.id, account.id),
+      undefined,
+      'eine abgewiesene zweite Sitzung hinterlässt keinen Startwunsch'
+    );
+  } finally {
+    supervisor.bots.delete(live.key);
+  }
+});
+
+/**
  * Bisher überschrieb jeder Zustandswechsel den vorherigen in `bots.state` – im Nachhinein ließ
  * sich nur sagen, wo ein Bot gerade steht, nie, was in der letzten Stunde wirklich passiert ist.
  * `bot_events` hält jeden nennenswerten Übergang für sich fest.

@@ -73,9 +73,10 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
   - [x] Fehlerhafte Anmeldungen stehen zusätzlich als handlungsorientierte Warteliste mit ihren
         tatsächlichen Platz- und Online-Auswirkungen bereit; jede Wiederanmeldung bleibt einzeln
         und ordnet weder Bots noch Konten automatisch um.
-- [ ] Eindeutige Zuordnungsübersicht: welches Minecraft-Konto läuft auf welchen Plätzen und wo
-      steht ein Konflikt an.
-- [ ] Vorgänge, die ein Konto entfernen oder neu verbinden, mit klarer Auswirkungsanzeige auf
+- [x] Eindeutige Zuordnungsübersicht: welches Minecraft-Konto läuft auf welchen Plätzen und wo
+      steht ein Konflikt an; parallele Starts werden zentral auch für Zeitpläne und Wiederanläufe
+      verhindert und führen direkt zum bereits aktiven Platz.
+- [x] Vorgänge, die ein Konto entfernen oder neu verbinden, mit klarer Auswirkungsanzeige auf
       laufende Bots versehen.
 
 ### 5. Abrechnung transparent machen
@@ -93,7 +94,7 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 ### 6. Support ohne Informationsverlust
 
-- [ ] Ticketformular kann auf Wunsch sicheren Diagnosekontext anhängen, der vor dem Absenden
+- [x] Ticketformular kann auf Wunsch sicheren Diagnosekontext anhängen, der vor dem Absenden
       vollständig sichtbar ist.
 - [ ] Status, Verantwortlichkeit und nächste erwartete Antwort im Ticketverlauf klar machen.
 - [ ] Wiederkehrende Lösungen als gepflegte Hilfsartikel verlinken, nicht als generierte Antworten.

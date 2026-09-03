@@ -63,6 +63,10 @@ function membersOf(profile) {
 
   return rows.map((row) => {
     const live = supervisor.get(profile.id, row.account_id);
+    // Die Zuordnung darf mehrfach existieren; nur eine laufende Sitzung darf es nicht. Das Panel
+    // bekommt den seltenen Altbestand trotzdem zu sehen, statt ihn still als "offline" zu
+    // zeichnen. Neue Starts werden zentral im Supervisor verweigert.
+    const runningElsewhere = supervisor.runningElsewhere(profile.id, row.account_id);
     return {
       account_id: row.account_id,
       name: row.name,
@@ -78,6 +82,7 @@ function membersOf(profile) {
       state: live ? live.state : 'offline',
       detail: live ? live.detail : '',
       online: live ? live.online : false,
+      running_elsewhere: runningElsewhere,
       since: live ? live.since : null,
       connections: row.connections || 0,
       uptime_sec: row.uptime_sec || 0,
