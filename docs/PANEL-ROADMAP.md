@@ -40,7 +40,7 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Sprungmarke um kontextbezogene Bot-Aktionen ergänzen: nur mögliche Start-/Stopp-Aktionen,
       mit sichtbarem Zielkonto und Zielserver.
 - [x] Mehrfachaktionen mit Ergebniszusammenfassung statt stiller Teilfehler.
-- [ ] Vor risikoreichen Massenaktionen Umfang, Auswirkung und eine Abbruchmöglichkeit zeigen.
+- [x] Vor risikoreichen Massenaktionen Umfang, Auswirkung und eine Abbruchmöglichkeit zeigen.
 - [ ] Tastaturbedienung der wichtigsten Arbeitswege komplett prüfen: Fokus, Escape,
       Fehlermeldungen und mobile Alternative.
 
