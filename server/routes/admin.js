@@ -594,6 +594,45 @@ function safeSettings() {
   return { ...out, secrets };
 }
 
+/**
+ * Die Operationsseite braucht keine zweite Quelle für denselben Zustand. Diese kurze Liste
+ * verdichtet ausschließlich Dinge, die jetzt eine Betreiberaktion verlangen; Details bleiben an
+ * ihren Fachseiten. So bekommt man bei einem Blick die Reihenfolge, ohne Proxy-Adressen,
+ * Zugangsdaten oder Kundendaten in eine neue Sammelantwort zu kopieren.
+ */
+function operationAlerts() {
+  const alerts = [];
+  for (const node of nodes.list({ includeInactive: true })) {
+    if (!node.active) continue;
+    if (!nodes.reachable(node)) {
+      alerts.push({ kind: 'node-offline', name: node.name, route: '/admin/nodes', severity: 'bad' });
+    } else if (nodes.isFull(node)) {
+      alerts.push({ kind: 'node-full', name: node.name, route: '/admin/nodes', severity: 'warn' });
+    }
+  }
+  const client = clientState();
+  if (client.error) alerts.push({ kind: 'client-error', route: '/admin/client', severity: 'bad' });
+  else if (client.outdated) {
+    alerts.push({ kind: 'client-outdated', count: client.outdated, route: '/admin/client', severity: 'warn' });
+  }
+  for (const job of jobs.list().filter((entry) => entry.last_error)) {
+    alerts.push({ kind: 'job-failed', name: job.key, route: '/admin/ops', severity: 'bad' });
+  }
+  const proxies = db
+    .prepare(
+      `SELECT p.id, p.label, p.assigned_to, COUNT(pa.account_id) AS in_use
+         FROM proxies p LEFT JOIN profile_accounts pa ON pa.proxy_id = p.id
+        GROUP BY p.id ORDER BY p.id`
+    )
+    .all();
+  // Ein zugeteilter, aber unbenutzter Proxy ist ein konkreter Vorgang (falsch zugeordnet oder
+  // vergessen), kein Kapazitätsdiagramm mit geratenen Grenzwerten.
+  for (const proxy of proxies.filter((entry) => entry.assigned_to && entry.in_use === 0)) {
+    alerts.push({ kind: 'proxy-unused', name: proxy.label, route: '/admin/proxies', severity: 'warn' });
+  }
+  return { alerts, client, proxy: { total: proxies.length, assigned: proxies.filter((entry) => entry.assigned_to).length, in_use: proxies.filter((entry) => entry.in_use).length } };
+}
+
 // ---------------------------------------------------------------- Nutzer
 
 const userRow = (row) => ({
@@ -2333,6 +2372,9 @@ admin.get(
     });
   })
 );
+
+/** Ein schmaler Betriebs-Schnappschuss für die Arbeitsliste, getrennt von der vollständigen Bot-Tabelle. */
+admin.get('/operations', wrap((req, res) => res.json(operationAlerts())));
 
 /** Alle Minecraft-Konten, nicht nur Prozesse, die seit dem letzten Dienststart einmal liefen. */
 admin.get(
