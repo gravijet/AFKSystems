@@ -887,6 +887,7 @@ export const S = {
   },
   'srv.testStarted': { en: 'Macro started on {name}.', de: 'Macro auf {name} gestartet.' },
   'srv.noOnlineAccount': { en: 'No account on this server is currently in the game.', de: 'Auf diesem Server ist gerade kein Konto im Spiel.' },
+  'srv.macroActive': { en: 'Macro active', de: 'Macro aktiv' },
   'srv.trigger': { en: 'Trigger', de: 'Auslöser' },
   'srv.steps': { en: 'Steps', de: 'Schritte' },
   'srv.stepCount': { en: '{n} of {max} steps', de: '{n} von {max} Schritten' },
