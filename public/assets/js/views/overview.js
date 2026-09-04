@@ -738,21 +738,48 @@ export async function render(root) {
   });
 
   // Zustandswechsel: neu zeichnen, aber gebündelt – beim Start mehrerer Bots kommen viele
-  // Meldungen kurz hintereinander.
-  const redraw = debounce(() => {
+  // Meldungen kurz hintereinander. Der WebSocket hat den Botzustand zu diesem Zeitpunkt schon
+  // in `state` geschrieben (app.js). Eine erneute Profilliste wäre deshalb nur dieselbe große
+  // Momentaufnahme noch einmal. Nur für Guthaben und Stilllegungen brauchen wir den eigenen
+  // Konto-Schnappschuss neu, damit Aufgabenliste und Monatsdaten sicher mitziehen.
+  let refreshMeBeforeRedraw = false;
+  const redraw = debounce(async () => {
     if (state.route.name !== 'overview') return;
-    refresh({ accounts: false }).then(() => {
-      if (state.route.name === 'overview') draw();
-    });
+    const refreshMe = refreshMeBeforeRedraw;
+    refreshMeBeforeRedraw = false;
+    if (refreshMe) {
+      try {
+        // Keine Profile und keine Minecraft-Konten: Beide liegen für diese Ereignisse bereits
+        // aktuell im Speicher. Das spart bei einer größeren Installation die mit Abstand größte
+        // Antwort und ihre Datenbankarbeit.
+        await refresh({ profiles: false, accounts: false });
+      } catch {
+        // Der vorhandene Zustand bleibt sichtbar; die nächste Live-Meldung oder ein Seitenwechsel
+        // versucht es erneut. Ein abgebrochener Nachzug darf die Arbeitsfläche nicht leeren.
+      }
+    }
+    if (state.route.name === 'overview') draw();
   }, 600);
   state.onLive = (event) => {
-    // Ändert sich das Guthaben, stimmt auch die Kurve nicht mehr – dann eben doch neu holen.
-    // Dieselben Ereignisse können eine neue Kontomeldung ausgelöst haben. Die Vorschau ist sonst
-    // zwar beim nächsten Öffnen richtig, aber ausgerechnet während man die Übersicht betrachtet
-    // um einen Eintrag hinterher. Ein gebündeltes Neuladen bleibt bei vielen Bot-Events leicht.
-    if (event.type === 'credits' || event.type === 'suspended') insights = null;
-    if (event.type === 'state' || event.type === 'credits' || event.type === 'suspended' || event.type === 'ticket') {
+    if (event.type === 'credits' || event.type === 'suspended') {
+      // Die Kurven und die Aufgabenliste hängen nicht allein am Push-Wert. Ein schmaler `/me`-
+      // Nachzug reicht; vorher holte dieser Weg zusätzlich die komplette Profilliste.
+      insights = null;
       notificationPreview = null;
+      refreshMeBeforeRedraw = true;
+      redraw();
+      return;
+    }
+    if (event.type === 'ticket') {
+      notificationPreview = null;
+      redraw();
+      return;
+    }
+    if (event.type === 'state') {
+      // Normale Online-/Offline-Wechsel erzeugen keine neue Meldung. Bei Anmeldung oder Fehler
+      // wird dagegen eine Benachrichtigung angelegt; nur dann wird deren kleine Vorschau neu
+      // angefragt. Der Status selbst ist bereits in `state.bots` aktuell.
+      if (event.state?.state === 'auth' || event.state?.state === 'error') notificationPreview = null;
       redraw();
     }
   };
@@ -761,54 +788,115 @@ export async function render(root) {
 }
 
 /**
- * Die kleinen Vorschaubilder auf der Übersicht. Bewusst ein eigener, langsamerer Weg statt der
- * Schleife aus live.js: Dort steht höchstens eine Ansicht gleichzeitig, hier potenziell ein
- * Dutzend Kacheln nebeneinander – ein Bild alle paar Sekunden je Kachel reicht für eine Vorschau
- * und bleibt auch bei vielen laufenden Bots leicht.
+ * Die kleinen Vorschaubilder auf der Übersicht.
+ *
+ * Bewusst ein eigener, langsamerer Weg statt der Schleife aus live.js: Dort steht höchstens eine
+ * Ansicht gleichzeitig, hier potenziell ein Dutzend Kacheln nebeneinander. Wichtig ist dabei
+ * nicht nur der längere Takt: Eine Karte weit unter dem sichtbaren Bereich braucht überhaupt
+ * kein Bild. Der Intersection Observer startet und hält deshalb nur die Kacheln nahe am
+ * Bildschirm aktiv. Das spart Netz, PNG-Decodierung und vor allem die Renderarbeit des Clients.
  */
 function startPovThumbnails(root, targets) {
   const stages = targets
-    .map((target) => ({
+    .map((target, index) => ({
       ...target,
       node: root.querySelector(`[data-pov-key="${target.profileId}:${target.accountId}"] .pov-mini-frame`),
       urls: [],
       timer: null,
       dead: false,
+      visible: false,
+      loading: false,
+      index,
     }))
     .filter((stage) => stage.node);
   if (!stages.length) return () => {};
 
   const alive = () => state.route.name === 'overview';
+  let observer = null;
 
-  async function pull(stage) {
-    if (stage.dead || !alive()) return;
-    let wait = 2500;
-    if (document.hidden) {
-      wait = 4000;
-    } else {
-      try {
-        const response = await api(`/profiles/${stage.profileId}/pov/${stage.accountId}/frame.png?w=160&h=90`, {
-          raw: true,
-        });
-        if (response.ok) {
-          const url = URL.createObjectURL(await response.blob());
-          stage.urls.push(url);
-          while (stage.urls.length > 2) URL.revokeObjectURL(stage.urls.shift());
-          stage.node.src = url;
-          stage.node.closest('.pov-mini')?.classList.add('has-frame');
-        } else {
-          wait = 4000;
-        }
-      } catch {
-        wait = 4000;
-      }
-    }
-    stage.timer = setTimeout(() => pull(stage), wait);
+  /** Einen Abruf nur dann vormerken, wenn es für diese Karte auch etwas zu zeichnen gibt. */
+  function schedule(stage, wait = 0) {
+    clearTimeout(stage.timer);
+    stage.timer = null;
+    if (stage.dead || !alive() || document.hidden || !stage.visible || stage.loading) return;
+    stage.timer = setTimeout(() => pull(stage), Math.max(0, wait));
   }
 
-  for (const stage of stages) pull(stage);
+  async function pull(stage) {
+    stage.timer = null;
+    if (stage.dead || !alive() || document.hidden || !stage.visible || stage.loading) return;
+    stage.loading = true;
+    let wait = 2500;
+    try {
+      const response = await api(`/profiles/${stage.profileId}/pov/${stage.accountId}/frame.png?w=160&h=90`, {
+        raw: true,
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        // Ein Seitenwechsel kann während des Abrufs passieren. Dann entsteht keine Blob-URL,
+        // die niemand mehr freigibt, und es wird nicht in einen entfernten Knoten geschrieben.
+        if (stage.dead || !alive() || document.hidden || !stage.visible) return;
+        const url = URL.createObjectURL(blob);
+        stage.urls.push(url);
+        while (stage.urls.length > 2) URL.revokeObjectURL(stage.urls.shift());
+        stage.node.src = url;
+        stage.node.closest('.pov-mini')?.classList.add('has-frame');
+      } else {
+        wait = 4000;
+      }
+    } catch {
+      wait = 4000;
+    } finally {
+      stage.loading = false;
+      schedule(stage, wait);
+    }
+  }
+
+  const onVisibility = () => {
+    if (document.hidden) {
+      for (const stage of stages) {
+        clearTimeout(stage.timer);
+        stage.timer = null;
+      }
+      return;
+    }
+    // Beim Zurückkehren nicht alle Bilder in derselben Millisekunde verlangen.
+    for (const stage of stages) schedule(stage, stage.index * 120);
+  };
+
+  const stageByNode = new Map(stages.map((stage) => [stage.node, stage]));
+  if ('IntersectionObserver' in window) {
+    observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const stage = stageByNode.get(entry.target);
+          if (!stage) continue;
+          stage.visible = entry.isIntersecting;
+          if (!stage.visible) {
+            clearTimeout(stage.timer);
+            stage.timer = null;
+            continue;
+          }
+          schedule(stage, stage.index * 120);
+        }
+      },
+      // Ein kleines Vorladen beim Scrollen verhindert eine schwarze Kachel am Rand, ohne Bilder
+      // für die ganze lange Übersicht zu rechnen.
+      { rootMargin: '180px 0px' }
+    );
+    for (const stage of stages) observer.observe(stage.node);
+  } else {
+    // Alte Browser ohne Observer behalten den bisherigen, funktional vollständigen Weg.
+    for (const stage of stages) {
+      stage.visible = true;
+      schedule(stage, stage.index * 120);
+    }
+  }
+  document.addEventListener('visibilitychange', onVisibility);
 
   return () => {
+    observer?.disconnect();
+    document.removeEventListener('visibilitychange', onVisibility);
     for (const stage of stages) {
       stage.dead = true;
       clearTimeout(stage.timer);

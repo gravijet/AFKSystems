@@ -46,11 +46,21 @@ function ownedAccount(req, accountId) {
   return account;
 }
 
-/** Die Konten eines Serverplatzes samt aktuellem Bot-Zustand. */
-function membersOf(profile) {
+/**
+ * Die Datenbankzeilen aller Konten der angeforderten Serverplätze.
+ *
+ * `/api/profiles` ist die Momentaufnahme für die gesamte Seitenleiste und Übersicht. Vorher
+ * startete sie je Serverplatz eine eigene, fast gleiche Abfrage. Viele kleine Abfragen sind bei
+ * SQLite zwar korrekt, aber nicht kostenlos: SQL vorbereiten, Resultatobjekte bauen und zwischen
+ * JavaScript und SQLite wechseln wiederholte sich pro Platz. Die eine Sammelabfrage hält die
+ * Reihenfolge jedes Platzes bei und lässt die Antwort danach wieder sauber gruppieren.
+ */
+function memberRowsFor(profileIds) {
+  if (!profileIds.length) return new Map();
+  const placeholders = profileIds.map(() => '?').join(', ');
   const rows = db
     .prepare(
-      `SELECT pa.account_id, pa.note, pa.proxy_id, pa.wanted, pa.ordinal,
+      `SELECT pa.profile_id, pa.account_id, pa.note, pa.proxy_id, pa.wanted, pa.ordinal,
               a.name, a.uuid, a.status, a.last_error, a.kind, a.suspended, a.suspend_reason, a.tags, a.favorite,
               b.state, b.connections, b.uptime_sec, b.last_error AS bot_error,
               last_state.type AS last_state_type, last_state.detail AS last_state_detail,
@@ -73,17 +83,25 @@ function membersOf(profile) {
        ORDER BY created_at DESC, id DESC
        LIMIT 1
     )
-        WHERE pa.profile_id = ?
-     ORDER BY pa.ordinal, a.name COLLATE NOCASE`
+        WHERE pa.profile_id IN (${placeholders})
+     ORDER BY pa.profile_id, pa.ordinal, a.name COLLATE NOCASE`
     )
-    .all(profile.id);
+    .all(...profileIds);
+  const grouped = new Map(profileIds.map((id) => [id, []]));
+  for (const row of rows) grouped.get(row.profile_id)?.push(row);
+  return grouped;
+}
 
+/** Formt Datenbankzeilen zu dem stabilen Mitgliedsformat der API. */
+function membersFromRows(profile, rows, runningByAccount = null) {
   return rows.map((row) => {
     const live = supervisor.get(profile.id, row.account_id);
     // Die Zuordnung darf mehrfach existieren; nur eine laufende Sitzung darf es nicht. Das Panel
     // bekommt den seltenen Altbestand trotzdem zu sehen, statt ihn still als "offline" zu
     // zeichnen. Neue Starts werden zentral im Supervisor verweigert.
-    const runningElsewhere = supervisor.runningElsewhere(profile.id, row.account_id);
+    const runningElsewhere = runningByAccount
+      ? (runningByAccount.get(row.account_id) || []).filter((entry) => entry.profile_id !== profile.id)
+      : supervisor.runningElsewhere(profile.id, row.account_id);
     return {
       account_id: row.account_id,
       name: row.name,
@@ -125,6 +143,30 @@ function membersOf(profile) {
   });
 }
 
+/** Die Konten eines einzelnen Serverplatzes samt aktuellem Bot-Zustand. */
+function membersOf(profile) {
+  return membersFromRows(profile, memberRowsFor([profile.id]).get(profile.id) || []);
+}
+
+/**
+ * Alle Mitgliedslisten für eine Profilliste.
+ *
+ * Neben der Sammelabfrage wird der flüchtige Botzustand einmal nach Konto indiziert. Damit bleibt
+ * auch die Diagnose "läuft bereits auf einem anderen Platz" vollständig, ohne jede Zuordnung
+ * nochmals gegen sämtliche laufenden Prozesse zu prüfen.
+ */
+function membersOfProfiles(profiles) {
+  if (!profiles.length) return new Map();
+  const rowsByProfile = memberRowsFor(profiles.map((profile) => profile.id));
+  const runningByAccount = supervisor.runningByAccount();
+  return new Map(
+    profiles.map((profile) => [
+      profile.id,
+      membersFromRows(profile, rowsByProfile.get(profile.id) || [], runningByAccount),
+    ])
+  );
+}
+
 /**
  * Kontenfilter aus der URL, ausschließlich innerhalb dieses Serverplatzes.
  *
@@ -148,13 +190,13 @@ function requestedMemberIds(profile, value) {
   return ids;
 }
 
-function profileView(profile, lang = 'en') {
+function profileView(profile, lang = 'en', suppliedMembers = null) {
   const plan = billing.planOf(profile);
   // Einmal holen, dreimal benutzen: Fähigkeiten, Anzeige und Preis fragen dieselbe Liste.
   const booked = billing.addonsOf(profile.id);
   // Was der Platz wirklich kann, steht nicht im Tarif allein: dazugekaufte Zusätze zählen mit.
   const features = billing.featuresOf(profile, booked);
-  const members = membersOf(profile);
+  const members = suppliedMembers || membersOf(profile);
   const build = binaries.buildFor(profile, features);
   const caps = build ? billing.gateCaps(binaries.caps(build), features) : {};
   const node = profile.node_id ? nodes.byId(profile.node_id) : null;
@@ -307,8 +349,9 @@ router.get(
     const rows = db
       .prepare('SELECT * FROM profiles WHERE user_id = ? ORDER BY ordinal, id')
       .all(req.user.id);
+    const membersByProfile = membersOfProfiles(rows);
     res.json({
-      profiles: rows.map((profile) => profileView(profile, lang)),
+      profiles: rows.map((profile) => profileView(profile, lang, membersByProfile.get(profile.id) || [])),
       free_slots_left: Math.max(0, billing.freeSlots() - billing.usedFreeSlots(req.user.id)),
       plans: billing.plans().map((plan) => planView(plan, lang)),
       nodes: nodes.visibleFor(req.user),
