@@ -29,6 +29,24 @@ export const GRACE_DAYS = 14;
 // ---------------------------------------------------------------- Auskunft
 
 /**
+ * Die Bereiche, die ein Kunde getrennt mitnehmen kann.
+ *
+ * Die Namen sind Teil der Download-Adresse und absichtlich keine Tabellenamen. So bleibt die
+ * Auswahl verständlich, auch wenn sich die Ablage darunter einmal ändert, und der Router kann
+ * jeden fremden oder doppelt gesendeten Wert zuverlässig ablehnen.
+ */
+export const EXPORT_PARTS = Object.freeze([
+  'profile',
+  'minecraft',
+  'servers',
+  'automation',
+  'billing',
+  'support',
+  'activity',
+  'security',
+]);
+
+/**
  * Alles über ein Konto, als einfaches Objekt.
  *
  * Bewusst nah an den Tabellen: Wer diese Datei liest, soll nachvollziehen können, was gespeichert
@@ -42,13 +60,23 @@ export const GRACE_DAYS = 14;
  *     data/users, sind Zugangsdaten zu einem fremden Dienst, und ihr Inhalt gehört Microsoft.
  *     Dass es sie gibt und zu welchem Konto, steht drin.
  */
-export function exportFor(user) {
+export function exportFor(user, parts = null) {
   const one = (sql, ...args) => db.prepare(sql).all(...args);
   const id = user.id;
-
-  return {
+  // Ohne Auswahl bleibt der bisherige vollständige Export erhalten. Der Router lässt bei einer
+  // Auswahl ausschließlich EXPORT_PARTS durch; der Filter hier macht die Funktion zusätzlich
+  // für direkte Aufrufe unempfindlich gegen unbekannte Werte.
+  const wanted = new Set(Array.isArray(parts) ? parts : EXPORT_PARTS);
+  const has = (part) => wanted.has(part);
+  const included = EXPORT_PARTS.filter(has);
+  const data = {
+    schema_version: 2,
     exported_at: new Date().toISOString(),
-    account: {
+    included,
+  };
+
+  if (has('profile')) {
+    data.account = {
       id,
       username: user.username,
       email: user.email,
@@ -73,50 +101,74 @@ export function exportFor(user) {
       google: user.google_id
         ? { id: user.google_id, name: user.google_name, email: user.google_email }
         : null,
-      discord_webhook: user.discord_webhook || '',
       mail_prefs: mail.prefsOf(user),
-    },
-    minecraft_accounts: one(
+    };
+  }
+  if (has('minecraft')) {
+    data.minecraft_accounts = one(
       `SELECT id, name, kind, uuid, status, last_error, connections, created_at
          FROM mc_accounts WHERE user_id = ? ORDER BY id`,
       id
-    ),
-    server_slots: one(
+    );
+  }
+  if (has('servers')) {
+    data.server_slots = one(
       `SELECT p.id, p.name, p.host, p.port, p.mc_version, p.created_at, p.paid_until, p.suspended,
               pl.slug AS plan, pl.name_en AS plan_name
          FROM profiles p LEFT JOIN plans pl ON pl.id = p.plan_id
         WHERE p.user_id = ? ORDER BY p.id`,
       id
-    ),
-    bots: one(
+    );
+    data.bots = one(
       `SELECT b.profile_id, b.account_id, b.state, b.uptime_sec, b.connections, b.started_at, b.stopped_at
          FROM bots b JOIN profiles p ON p.id = b.profile_id
         WHERE p.user_id = ? ORDER BY b.profile_id, b.account_id`,
       id
-    ),
-    macros: one(
+    );
+  }
+  if (has('automation')) {
+    data.macros = one(
       `SELECT m.id, m.profile_id, m.name, m.event, m.config, m.actions, m.enabled, m.created_at
          FROM macros m JOIN profiles p ON p.id = m.profile_id
         WHERE p.user_id = ? ORDER BY m.id`,
       id
-    ),
-    ledger: one(
+    );
+    data.schedules = one(
+      `SELECT s.id, s.profile_id, s.account_id, s.action, s.minutes, s.days, s.active, s.note,
+              s.last_run_at, s.last_result, s.created_at
+         FROM profile_schedules s JOIN profiles p ON p.id = s.profile_id
+        WHERE p.user_id = ? ORDER BY s.id`,
+      id
+    );
+  }
+  if (has('billing')) {
+    data.ledger = one(
       'SELECT id, delta, balance, kind, note, ref, created_at FROM ledger WHERE user_id = ? ORDER BY id',
       id
-    ),
-    topups: one(
+    );
+    data.topups = one(
       `SELECT id, provider, amount_cent, credits, status, receipt_no, created_at, paid_at
          FROM topups WHERE user_id = ? ORDER BY id`,
       id
-    ),
-    tickets: one(
-      'SELECT id, subject, status, priority, source, created_at, updated_at, closed_at FROM tickets WHERE user_id = ? ORDER BY id',
+    );
+  }
+  if (has('support')) {
+    // Ein geteilter Fall ist ebenfalls eigener Support-Verlauf. Die vorherige Auskunft enthielt
+    // bereits dessen Nachrichten, ließ aber ausgerechnet die Überschrift weg.
+    data.tickets = one(
+      `SELECT t.id, t.subject, t.status, t.priority, t.source, t.created_at, t.updated_at, t.closed_at
+         FROM tickets t
+        WHERE t.user_id = ? OR EXISTS (
+          SELECT 1 FROM ticket_users tu WHERE tu.ticket_id = t.id AND tu.user_id = ?
+        )
+        ORDER BY t.id`,
+      id,
       id
-    ),
+    );
     // Auch die Beiträge – ein Ticket ohne seinen Verlauf ist eine Überschrift. Interne Notizen
     // des Teams bleiben draußen: Sie sind nicht Teil des Gesprächs mit dem Kunden und haben ihn
     // in Panel und Discord nie erreicht.
-    ticket_messages: one(
+    data.ticket_messages = one(
       `SELECT m.id, m.ticket_id, m.role, m.author_name, m.body, m.created_at
          FROM ticket_messages m JOIN tickets t ON t.id = m.ticket_id
         WHERE (t.user_id = ? OR EXISTS (SELECT 1 FROM ticket_users tu WHERE tu.ticket_id = t.id AND tu.user_id = ?))
@@ -124,24 +176,29 @@ export function exportFor(user) {
         ORDER BY m.id`,
       id,
       id
-    ),
-    mails: one('SELECT id, kind, subject, status, created_at FROM mails WHERE user_id = ? ORDER BY id', id),
-    notifications: one(
+    );
+  }
+  if (has('activity')) {
+    data.mails = one('SELECT id, kind, subject, status, created_at FROM mails WHERE user_id = ? ORDER BY id', id);
+    data.notifications = one(
       'SELECT id, event, tone, title_en, body_en, created_at, read_at FROM user_notifications WHERE user_id = ? ORDER BY id',
       id
-    ),
-    sessions: one(
+    );
+  }
+  if (has('security')) {
+    data.sessions = one(
       'SELECT created_at, expires_at, ip, agent FROM sessions WHERE user_id = ? ORDER BY created_at',
       id
-    ),
+    );
     // Die Browser, die ohne Anmeldecode hereinkommen. Ohne den Zufallswert selbst – der ist ein
     // Schlüssel und keine Auskunft, genau wie die Sitzungs-Token eine Zeile darüber.
-    known_devices: one(
+    data.known_devices = one(
       'SELECT agent, ip, created_at, last_at FROM known_devices WHERE user_id = ? ORDER BY last_at DESC',
       id
-    ),
-    audit: one('SELECT id, action, detail, ip, created_at FROM audit WHERE user_id = ? ORDER BY id', id),
-  };
+    );
+    data.audit = one('SELECT id, action, detail, ip, created_at FROM audit WHERE user_id = ? ORDER BY id', id);
+  }
+  return data;
 }
 
 // ---------------------------------------------------------------- Löschen

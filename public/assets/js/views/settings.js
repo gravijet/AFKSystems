@@ -1532,12 +1532,23 @@ async function tabData(root, me) {
   bindData(days);
 }
 
+const EXPORT_PARTS = [
+  { key: 'profile', label: 'set.exportPart.profile' },
+  { key: 'minecraft', label: 'set.exportPart.minecraft' },
+  { key: 'servers', label: 'set.exportPart.servers' },
+  { key: 'automation', label: 'set.exportPart.automation' },
+  { key: 'billing', label: 'set.exportPart.billing' },
+  { key: 'support', label: 'set.exportPart.support' },
+  { key: 'activity', label: 'set.exportPart.activity' },
+  { key: 'security', label: 'set.exportPart.security' },
+];
+
 function exportBody() {
   return `
     <p class="small muted" style="margin:0 0 1rem">${escapeHtml(tr('set.exportWhat'))}</p>
-    <a class="btn btn-primary" href="/api/me/export" download>${icon('download')} ${escapeHtml(
+    <button class="btn btn-primary" id="export-data">${icon('download')} ${escapeHtml(
       tr('set.export')
-    )}</a>`;
+    )}</button>`;
 }
 
 function deleteBody(me, days) {
@@ -1562,6 +1573,28 @@ function deleteBody(me, days) {
 }
 
 function bindData(days) {
+  $('#export-data')?.addEventListener('click', async () => {
+    const answer = await formDialog(
+      tr('set.exportChoose'),
+      [
+        { type: 'note', label: tr('set.exportChooseWhat') },
+        ...EXPORT_PARTS.map((part) => ({ key: part.key, label: tr(part.label), type: 'checkbox', value: true })),
+      ],
+      { submit: tr('set.export') }
+    );
+    if (!answer) return;
+    const parts = EXPORT_PARTS.filter((part) => answer[part.key]).map((part) => part.key);
+    if (!parts.length) return toast(tr('set.exportNone'), 'bad');
+    // Ein echter Download statt `api()`: Das Panel soll die Datei nicht erst in den Speicher
+    // holen. Gerade ein langer Ticket-Verlauf oder viele Audit-Zeilen bleiben so ein Stream des
+    // Browsers und kein zweites großes JSON im Arbeitsspeicher der Seite.
+    const link = document.createElement('a');
+    link.href = `/api/me/export?parts=${encodeURIComponent(parts.join(','))}`;
+    link.download = '';
+    document.body.append(link);
+    link.click();
+    link.remove();
+  });
   $('#delete-account')?.addEventListener('click', async () => {
     const word = tr('set.deleteConfirmWord');
     const answer = await formDialog(
