@@ -1388,11 +1388,56 @@ const accountView = (row) => ({
   suspend_reason: row.suspend_reason || '',
   connections: row.connections,
   created_at: row.created_at,
+  tags: accountTags(row.tags),
+  favorite: Boolean(row.favorite),
   // Kopfbild – über diesen Server, nicht direkt vom Skin-Dienst. Warum, steht in heads.js:
   // Sonst schickte der Browser jedes Kunden bei jedem Seitenaufruf den Namen seines
   // Minecraft-Kontos und seine IP-Adresse zu einem fremden Anbieter.
   head: heads.urlFor(row.uuid || row.name),
 });
+
+/**
+ * Tags bleiben einfache, persönliche Texte – keine freie Objektstruktur, keine HTML-Fragmente.
+ * So kann die Liste sowohl sicher im Panel stehen als auch später im Datenexport dieselbe Form
+ * haben. Der Parser ist absichtlich tolerant: Ein alter oder beschädigter Wert darf keine
+ * Kontenübersicht unbrauchbar machen.
+ */
+function accountTags(raw) {
+  try {
+    const value = JSON.parse(raw || '[]');
+    return Array.isArray(value) ? value.filter((tag) => typeof tag === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+function cleanAccountTags(raw) {
+  if (typeof raw !== 'string' || raw.length > 160) {
+    throw bad('Tags müssen als kurzer, kommagetrennter Text angegeben werden.', {
+      en: 'Tags must be supplied as short comma-separated text.',
+    });
+  }
+  const seen = new Set();
+  const tags = [];
+  for (const original of raw.split(',')) {
+    const tag = original.normalize('NFKC').trim();
+    if (!tag) continue;
+    if (tag.length > 24 || /[\u0000-\u001f\u007f]/.test(tag)) {
+      throw bad('Jeder Tag darf höchstens 24 normale Zeichen haben.', {
+        en: 'Each tag may contain at most 24 normal characters.',
+      });
+    }
+    const key = tag.toLocaleLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      tags.push(tag);
+    }
+  }
+  if (tags.length > 5) {
+    throw bad('Ein Konto darf höchstens fünf Tags haben.', { en: 'An account may have at most five tags.' });
+  }
+  return tags;
+}
 
 /**
  * Ein Minecraft-Kopf, über diesen Server statt aus dem Browser des Kunden.
@@ -1524,6 +1569,52 @@ router.post(
       });
     }
     res.json({ account: accountView(mslogin.addOffline(req.user, req.body?.name)) });
+  })
+);
+
+/**
+ * Die Organisation eines eigenen Minecraft-Kontos. Der Minecraft-Name selbst bleibt unangetastet:
+ * Bei Microsoft und in der gespeicherten Anmeldung ist er die Identität, ein frei umbenennbarer
+ * Anzeigename wäre dort eine falsche Zusage. Tags und Favorit sind dagegen reine Panel-Daten.
+ */
+router.patch(
+  '/accounts/:id',
+  auth.requireUser,
+  wrap((req, res) => {
+    const id = requireInt(req.params.id, 'Konto');
+    const current = db
+      .prepare('SELECT * FROM mc_accounts WHERE id = ? AND user_id = ?')
+      .get(id, req.user.id);
+    if (!current) throw notFound('Dieses Konto gibt es nicht.', { en: 'No such account.' });
+    const body = req.body || {};
+    const updates = [];
+    const values = [];
+    let tags = accountTags(current.tags);
+    let favorite = Boolean(current.favorite);
+    if (body.tags !== undefined) {
+      tags = cleanAccountTags(body.tags);
+      updates.push('tags = ?');
+      values.push(JSON.stringify(tags));
+    }
+    if (body.favorite !== undefined) {
+      if (typeof body.favorite !== 'boolean') {
+        throw bad('Favorit muss an oder aus sein.', { en: 'Favourite must be on or off.' });
+      }
+      favorite = body.favorite;
+      updates.push('favorite = ?');
+      values.push(favorite ? 1 : 0);
+    }
+    if (!updates.length) {
+      throw bad('Es gibt keine Kontoorganisation zum Speichern.', {
+        en: 'There is no account organization to save.',
+      });
+    }
+    values.push(id, req.user.id);
+    db.prepare(`UPDATE mc_accounts SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`).run(...values);
+    audit(req.user.id, 'account-organize', { id, tags, favorite }, req.ip);
+    res.json({
+      account: accountView(db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(id)),
+    });
   })
 );
 

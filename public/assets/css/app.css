@@ -7471,6 +7471,19 @@ dialog.shortcuts {
   margin: 0;
   font-size: 1rem;
 }
+.account-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.45rem;
+}
+.account-tags .pill {
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+}
 .account-problem {
   display: flex;
   align-items: flex-start;

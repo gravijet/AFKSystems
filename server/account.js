@@ -46,6 +46,16 @@ export const EXPORT_PARTS = Object.freeze([
   'security',
 ]);
 
+/** Ein defekter oder alter Tag-Satz darf einen Export nie unlesbar machen. */
+function exportedTags(raw) {
+  try {
+    const values = JSON.parse(raw || '[]');
+    return Array.isArray(values) ? values.filter((value) => typeof value === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Alles über ein Konto, als einfaches Objekt.
  *
@@ -106,10 +116,10 @@ export function exportFor(user, parts = null) {
   }
   if (has('minecraft')) {
     data.minecraft_accounts = one(
-      `SELECT id, name, kind, uuid, status, last_error, connections, created_at
+      `SELECT id, name, kind, uuid, status, last_error, connections, tags, favorite, created_at
          FROM mc_accounts WHERE user_id = ? ORDER BY id`,
       id
-    );
+    ).map((row) => ({ ...row, tags: exportedTags(row.tags), favorite: Boolean(row.favorite) }));
   }
   if (has('servers')) {
     data.server_slots = one(

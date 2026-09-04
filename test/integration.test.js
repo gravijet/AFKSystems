@@ -3272,11 +3272,17 @@ test('the data export carries the account but no keys, and deletion waits out it
   const slot = createProfile(user, billing.planBySlug('premium'));
   createAccount(user, { name: 'ExportBot' });
   tickets.create(user, { subject: 'Frage zum Export', body: 'Hallo' });
+  db.prepare('UPDATE mc_accounts SET tags = ?, favorite = 1 WHERE user_id = ?').run(
+    JSON.stringify(['Farm', 'Hauptkonto']),
+    user.id
+  );
 
   const dump = account.exportFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id));
   assert.equal(dump.account.username, user.username);
   assert.equal(dump.server_slots.length, 1);
   assert.equal(dump.minecraft_accounts.length, 1);
+  assert.deepEqual(dump.minecraft_accounts[0].tags, ['Farm', 'Hauptkonto']);
+  assert.equal(dump.minecraft_accounts[0].favorite, true);
   assert.equal(dump.tickets.length, 1);
   assert.deepEqual(dump.included, account.EXPORT_PARTS);
   const profileOnly = account.exportFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id), ['profile']);
@@ -4047,6 +4053,34 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   serverProcess.stdout.on('data', (chunk) => (childOutput += chunk));
   serverProcess.stderr.on('data', (chunk) => (childOutput += chunk));
   await waitForHealth(base, serverProcess);
+
+  // Der Name bleibt die Microsoft-Identität. Für die eigene Arbeitsordnung gibt es stattdessen
+  // synchronisierte Tags und einen Favoriten: Duplikate verschwinden, ohne dass der erste
+  // geschriebene, lesbare Tag verloren geht.
+  const organizedAccount = await api(base, `/api/accounts/${account.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { tags: 'Farm, Hauptkonto, farm', favorite: true },
+  });
+  assert.equal(organizedAccount.response.status, 200);
+  assert.deepEqual(organizedAccount.data.account.tags, ['Farm', 'Hauptkonto']);
+  assert.equal(organizedAccount.data.account.favorite, true);
+  const organizedList = await api(base, '/api/accounts', { token: USER_TOKEN });
+  const listedOrganized = organizedList.data.accounts.find((entry) => entry.id === account.id);
+  assert.deepEqual(listedOrganized.tags, ['Farm', 'Hauptkonto']);
+  assert.equal(listedOrganized.favorite, true);
+  const tooManyTags = await api(base, `/api/accounts/${account.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { tags: 'eins, zwei, drei, vier, fünf, sechs' },
+  });
+  assert.equal(tooManyTags.response.status, 400);
+  const foreignOrganization = await api(base, `/api/accounts/${account.id}`, {
+    token: ADMIN_TOKEN,
+    method: 'PATCH',
+    body: { favorite: false },
+  });
+  assert.equal(foreignOrganization.response.status, 404);
 
   // Die Verbindungsdiagnose braucht den letzten dokumentierten Zustand auch dann, wenn nach einem
   // Dienstneustart kein Live-Bot mehr im Speicher steht. Der Profil-Endpunkt liefert genau den
