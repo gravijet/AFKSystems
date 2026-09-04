@@ -15,7 +15,7 @@ import * as roles from '../roles.js';
 import * as schedules from '../schedules.js';
 import * as mcping from '../mcping.js';
 import { timezoneOf } from '../profile.js';
-import { planView, addonView } from './core.js';
+import { planView, addonView, accountTags } from './core.js';
 import { mergeLines, stripFormatting } from '../../public/assets/js/chatlog.js';
 import { wrap, requireString, requireInt, bad, notFound, parseAddress, slugify, HttpError, langOf } from '../util.js';
 
@@ -51,7 +51,7 @@ function membersOf(profile) {
   const rows = db
     .prepare(
       `SELECT pa.account_id, pa.note, pa.proxy_id, pa.wanted, pa.ordinal,
-              a.name, a.uuid, a.status, a.last_error, a.kind, a.suspended, a.suspend_reason,
+              a.name, a.uuid, a.status, a.last_error, a.kind, a.suspended, a.suspend_reason, a.tags, a.favorite,
               b.state, b.connections, b.uptime_sec, b.last_error AS bot_error,
               last_state.type AS last_state_type, last_state.detail AS last_state_detail,
               last_state.created_at AS last_state_at
@@ -93,6 +93,8 @@ function membersOf(profile) {
       account_error: row.last_error,
       suspended: Boolean(row.suspended),
       suspend_reason: row.suspend_reason || '',
+      tags: accountTags(row.tags),
+      favorite: Boolean(row.favorite),
       note: row.note,
       proxy_id: row.proxy_id,
       wanted: Boolean(row.wanted),

@@ -14,12 +14,18 @@ export function noAccounts(root, profile) {
     <a class="btn btn-primary" href="#/servers/${profile.id}/connect">${escapeHtml(tr('tab.connect'))}</a></div>`;
 }
 
+// Spielname bleibt unverändert; Stern und Tags helfen nur bei der persönlichen Auswahl.
+export function accountLabel(account) {
+  const tags = Array.isArray(account?.tags) ? account.tags.filter((tag) => typeof tag === 'string') : [];
+  return `${account?.favorite ? '★ ' : ''}${account?.name || ''}${tags.length ? ` · ${tags.join(', ')}` : ''}`;
+}
+
 export function accountPicker(members) {
   return `<div class="row wrap" style="margin-bottom:1rem">
     ${members
       .map(
         (member) => `<label class="check small"><input type="checkbox" data-target="${member.account_id}" checked>
-          ${escapeHtml(member.name)}</label>`
+          ${escapeHtml(accountLabel(member))}</label>`
       )
       .join('')}
   </div>`;

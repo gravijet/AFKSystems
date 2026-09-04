@@ -10,7 +10,7 @@ import {
 } from '../ui.js';
 import { mergeLines, stripFormatting, WINDOW_MS } from '../chatlog.js';
 import { state, appbar, refresh, draw, drawSide, profileById, tabsFor, linesOf, ensureMeta } from '../app.js';
-import { noAccounts, accountPicker, commandRunner, anyOnline, itemSlot } from './parts.js';
+import { noAccounts, accountLabel, accountPicker, commandRunner, anyOnline, itemSlot } from './parts.js';
 import {
   preferences,
   setPreference,
@@ -486,7 +486,7 @@ async function tabConnect(root, profile) {
                     .map(
                       (member) => `<label class="check small">
                         <input type="checkbox" data-recv="${member.account_id}" checked>
-                        ${escapeHtml(member.name)}</label>`
+                        ${escapeHtml(accountLabel(member))}</label>`
                     )
                     .join('')}
                 </div>`
@@ -502,7 +502,9 @@ async function tabConnect(root, profile) {
                 ? `<select id="sender" class="mini" style="min-width:8rem">
                     <option value="">${escapeHtml(tr('srv.chatAll'))}</option>
                     ${members
-                      .map((member) => `<option value="${member.account_id}">${escapeHtml(member.name)}</option>`)
+                      .map(
+                        (member) => `<option value="${member.account_id}">${escapeHtml(accountLabel(member))}</option>`
+                      )
                       .join('')}
                   </select>`
                 : ''
@@ -585,7 +587,7 @@ async function tabConnect(root, profile) {
       <img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy" decoding="async">
       <div class="grow" style="min-width:0">
         <div class="row" style="gap:.4rem">
-          <span class="strong truncate">${escapeHtml(member.name)}</span>
+          <span class="strong truncate" title="${escapeHtml(accountLabel(member))}">${escapeHtml(accountLabel(member))}</span>
           ${
             member.suspended
               ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>`
@@ -1411,7 +1413,7 @@ async function tabConnect(root, profile) {
           label: tr('ov.col.account'),
           type: 'select',
           value: free[0].id,
-          options: free.map((account) => ({ value: account.id, label: account.name })),
+          options: free.map((account) => ({ value: account.id, label: accountLabel(account) })),
         },
       ],
       { submit: tr('common.create') }
@@ -1478,7 +1480,7 @@ async function bindSpam(profile, members) {
 
   function spamRow(entry) {
     const names = entry.accounts.length
-      ? entry.accounts.map((id) => members.find((m) => m.account_id === id)?.name || id).join(', ')
+      ? entry.accounts.map((id) => accountLabel(members.find((m) => m.account_id === id)) || id).join(', ')
       : tr('common.all');
     return `<tr>
       <td class="mono">${escapeHtml(entry.message)}</td>
@@ -1542,7 +1544,7 @@ async function editSpam(profile, members, entry) {
         value: entry?.accounts?.length === 1 ? String(entry.accounts[0]) : '',
         options: [
           { value: '', label: tr('common.all') },
-          ...members.map((member) => ({ value: String(member.account_id), label: member.name })),
+          ...members.map((member) => ({ value: String(member.account_id), label: accountLabel(member) })),
         ],
       },
     ],
@@ -2307,10 +2309,11 @@ function timePicker(minutes) {
 
 async function tabSchedule(root, profile) {
   const data = await api(`/profiles/${profile.id}/schedules`);
-  const accountName = (id) =>
-    profile.accounts.find((entry) => entry.account_id === id)?.name ||
-    state.accounts.find((entry) => entry.id === id)?.name ||
-    `#${id}`;
+  const accountName = (id) => {
+    const account =
+      profile.accounts.find((entry) => entry.account_id === id) || state.accounts.find((entry) => entry.id === id);
+    return account ? accountLabel(account) : `#${id}`;
+  };
 
   const paint = () => {
     root.innerHTML = `
@@ -2431,7 +2434,7 @@ async function tabSchedule(root, profile) {
                     (member) =>
                       `<option value="${member.account_id}" ${
                         current.account_id === member.account_id ? 'selected' : ''
-                      }>${escapeHtml(member.name)}</option>`
+                      }>${escapeHtml(accountLabel(member))}</option>`
                   )
                   .join('')}
               </select>
@@ -2616,7 +2619,7 @@ async function tabProxies(root, profile) {
               .map(
                 (member) => `<tr>
                   <td><span class="row"><img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy" decoding="async">${escapeHtml(
-                    member.name
+                    accountLabel(member)
                   )}</span></td>
                   <td><select data-proxy="${member.account_id}" style="max-width:22rem">
                     <option value="">${escapeHtml(tr('common.nothing'))}</option>
@@ -2744,7 +2747,10 @@ async function tabMacros(root, profile) {
     ].filter(Boolean);
     const targetNames = macro.accounts.length
       ? macro.accounts
-          .map((accountId) => profile.accounts.find((member) => member.account_id === accountId)?.name || `#${accountId}`)
+          .map(
+            (accountId) =>
+              accountLabel(profile.accounts.find((member) => member.account_id === accountId)) || `#${accountId}`
+          )
           .join(', ')
       : tr('common.all');
     return `<article class="card">
@@ -2814,7 +2820,7 @@ async function tabMacros(root, profile) {
             label: tr('ov.col.account'),
             type: 'select',
             value: String(online[0].account_id),
-            options: online.map((member) => ({ value: String(member.account_id), label: member.name })),
+            options: online.map((member) => ({ value: String(member.account_id), label: accountLabel(member) })),
           },
         ],
         { submit: tr('srv.testMacro'), note: tr('srv.testMacroHint') }
@@ -2930,7 +2936,7 @@ async function editMacro(profile, macro, template = null) {
               (member) =>
                 `<option value="${member.account_id}" ${
                   draft?.accounts?.length === 1 && draft.accounts[0] === member.account_id ? 'selected' : ''
-                }>${escapeHtml(member.name)}</option>`
+                }>${escapeHtml(accountLabel(member))}</option>`
             )
             .join('')}
         </select>
