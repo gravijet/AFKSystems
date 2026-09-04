@@ -885,6 +885,17 @@ export const S = {
     en: 'Every Minecraft account you have is already on this server.',
     de: 'Alle deine Minecraft-Konten sitzen schon auf diesem Server.',
   },
+  'srv.addCapacityFull': {
+    en: 'This server slot has reached its account limit.',
+    de: 'Dieser Serverplatz hat sein Kontolimit erreicht.',
+  },
+  'srv.addCapacity': {
+    en: '{chosen} of {max} available places selected',
+    de: '{chosen} von {max} freien Plätzen ausgewählt',
+  },
+  'srv.addAllPossible': { en: 'Select all possible', de: 'Alle möglichen wählen' },
+  'srv.addSelected': { en: 'Add selected', de: 'Auswahl hinzufügen' },
+  'srv.addedAccounts': { en: '{n} account(s) added.', de: '{n} Konto/Konten hinzugefügt.' },
   'srv.noAccounts': { en: 'No account on this server yet.', de: 'Noch kein Konto auf diesem Server.' },
   'srv.pickAccounts': { en: 'Which accounts?', de: 'Welche Konten?' },
   'srv.remove': { en: 'Take off this server', de: 'Von diesem Server nehmen' },

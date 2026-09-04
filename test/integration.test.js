@@ -4164,16 +4164,25 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     body: { ordinal: 0 },
   });
   assert.equal(unassignedOrder.response.status, 404);
+  const secondAppendedOrderAccount = createAccount(user, { name: 'Last order' });
   const appendedOrderAccount = await api(base, `/api/profiles/${orderProfile.id}/accounts`, {
     token: USER_TOKEN,
     method: 'POST',
-    body: { account_id: unattachedOrderAccount.id },
+    // Die Oberfläche sendet mehrere Konten gemeinsam. Die API nimmt ihre Reihenfolge als
+    // Startreihenfolge und schreibt sie atomar hinter die bestehenden Mitglieder.
+    body: { accounts: [secondAppendedOrderAccount.id, unattachedOrderAccount.id] },
   });
   assert.equal(appendedOrderAccount.response.status, 200);
   assert.deepEqual(
     appendedOrderAccount.data.profile.accounts.map((entry) => entry.account_id),
-    [thirdOrderAccount.id, account.id, secondOrderAccount.id, unattachedOrderAccount.id]
+    [thirdOrderAccount.id, account.id, secondOrderAccount.id, secondAppendedOrderAccount.id, unattachedOrderAccount.id]
   );
+  const overfullOrder = await api(base, `/api/profiles/${orderProfile.id}/accounts`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { accounts: [createAccount(user).id] },
+  });
+  assert.equal(overfullOrder.response.status, 402);
   db.prepare('DELETE FROM profiles WHERE id = ?').run(orderProfile.id);
   assert.equal(diagnosticAccount?.retry, null);
 
