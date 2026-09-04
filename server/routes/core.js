@@ -1402,7 +1402,7 @@ const accountView = (row) => ({
  * haben. Der Parser ist absichtlich tolerant: Ein alter oder beschädigter Wert darf keine
  * Kontenübersicht unbrauchbar machen.
  */
-function accountTags(raw) {
+export function accountTags(raw) {
   try {
     const value = JSON.parse(raw || '[]');
     return Array.isArray(value) ? value.filter((tag) => typeof tag === 'string') : [];

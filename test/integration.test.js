@@ -4098,6 +4098,8 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const diagnosticAccount = profilesWithHistory.data.profiles
     .find((entry) => entry.id === profile.id)
     ?.accounts.find((entry) => entry.account_id === account.id);
+  assert.deepEqual(diagnosticAccount?.tags, ['Farm', 'Hauptkonto']);
+  assert.equal(diagnosticAccount?.favorite, true);
   assert.deepEqual(diagnosticAccount?.last_state, {
     type: 'error',
     detail: 'Connection reset',

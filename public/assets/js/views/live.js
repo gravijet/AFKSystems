@@ -21,7 +21,7 @@
 
 import { api, icon, escapeHtml, mcText, tr, $, $$, toast, fail } from '../ui.js';
 import { state } from '../app.js';
-import { noAccounts, anyOnline, itemSlot } from './parts.js';
+import { noAccounts, accountLabel, anyOnline, itemSlot } from './parts.js';
 
 // ---------------------------------------------------------------- Einstellungen des Betrachters
 //
@@ -176,13 +176,13 @@ export async function tabPov(root, profile) {
 
   function shell(member) {
     return `<article class="pov" data-account="${member.account_id}" tabindex="0"
-        aria-label="${escapeHtml(tr('pov.stageLabel', { name: member.name }))}">
+        aria-label="${escapeHtml(tr('pov.stageLabel', { name: accountLabel(member) }))}">
       <header>
         <span class="row" style="gap:.4rem;min-width:0">
           <label class="pov-select" hidden>
             <input type="checkbox" data-select="${member.account_id}">
           </label>
-          <span class="truncate strong">${escapeHtml(member.name)}</span>
+          <span class="truncate strong" title="${escapeHtml(accountLabel(member))}">${escapeHtml(accountLabel(member))}</span>
         </span>
         <span class="small muted pov-status mono"></span>
       </header>
@@ -1096,7 +1096,7 @@ export async function tabInventory(root, profile) {
     if (!items) {
       if (!bot?.online) return '';
       return `<article class="board is-empty">
-        <header>${escapeHtml(member.name)}</header>
+        <header>${escapeHtml(accountLabel(member))}</header>
         <p class="board-note">${escapeHtml(tr('inv.waiting'))}</p>
       </article>`;
     }
@@ -1122,7 +1122,7 @@ export async function tabInventory(root, profile) {
       });
 
     return `<article class="board inv-card">
-      <header>${escapeHtml(member.name)}</header>
+      <header>${escapeHtml(accountLabel(member))}</header>
       <div class="inv-top">
         <div class="inv-block">
           <span class="inv-label">${escapeHtml(tr('inv.armor'))}</span>
