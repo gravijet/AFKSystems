@@ -585,6 +585,44 @@ async function tabConnect(root, profile) {
       })
     );
 
+    $$('[data-account-note]', box).forEach((button) =>
+      button.addEventListener('click', async () => {
+        const accountId = Number(button.dataset.accountNote);
+        const member = members.find((entry) => entry.account_id === accountId);
+        if (!member) return;
+        button.disabled = true;
+        try {
+          const answer = await formDialog(
+            tr('srv.accountNote'),
+            [
+              {
+                key: 'note',
+                type: 'textarea',
+                label: tr('srv.accountNote'),
+                value: member.note || '',
+                maxLength: 200,
+                placeholder: tr('srv.accountNotePlaceholder'),
+                hint: tr('srv.accountNoteHint'),
+              },
+            ],
+            { submit: tr('common.save') }
+          );
+          if (!answer) return;
+          await api(`/profiles/${profile.id}/accounts/${accountId}`, {
+            method: 'PATCH',
+            body: { note: answer.note },
+          });
+          await refresh({ accounts: false });
+          ok(tr('srv.accountNoteSaved'));
+          draw();
+        } catch (error) {
+          fail(error);
+        } finally {
+          button.disabled = false;
+        }
+      })
+    );
+
     $$('[data-account-order]', box).forEach((button) =>
       button.addEventListener('click', async () => {
         button.disabled = true;
@@ -665,6 +703,13 @@ async function tabConnect(root, profile) {
           }
         </div>
         ${
+          member.note
+            ? `<div class="small muted truncate" title="${escapeHtml(member.note)}">${icon('message')} ${escapeHtml(
+                member.note
+              )}</div>`
+            : ''
+        }
+        ${
           blockedByElsewhere
             ? `<div class="bot-conflict" role="status">${icon('alert')}<span>${escapeHtml(
                 tr('srv.accountElsewhere', { n: elsewhere.length })
@@ -692,6 +737,10 @@ async function tabConnect(root, profile) {
           title="${escapeHtml(blockedByElsewhere ? tr('srv.accountElsewhereHint') : '')}"
           ${running || (profile.active && !member.suspended && !blockedByElsewhere) ? '' : 'disabled'}>${escapeHtml(
             running ? tr('ov.stop') : tr('ov.start')
+          )}</button>
+        <button class="btn btn-ghost btn-sm" data-account-note="${member.account_id}"
+          title="${escapeHtml(tr('srv.editAccountNote'))}" aria-label="${escapeHtml(tr('srv.editAccountNote'))}">${icon(
+            'message'
           )}</button>
         <button class="btn btn-ghost btn-sm" data-events="${member.account_id}"
           title="${escapeHtml(tr('srv.eventsTitle'))}">${icon('clock')}</button>
