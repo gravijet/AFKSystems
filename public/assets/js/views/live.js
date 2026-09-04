@@ -231,6 +231,12 @@ export async function tabPov(root, profile) {
       dead: false,
       frameTimer: null,
       stateTimer: null,
+      frameLoading: false,
+      stateLoading: false,
+      // Texturierte Bilder und ihr Zustand werden nur für Bühnen in oder nahe der sichtbaren
+      // Fläche abgefragt. Voxelbilder reisen ohnehin über die Live-Leitung und bleiben davon
+      // unberührt.
+      visible: false,
       // Was der Voxelweg braucht: ob wir für dieses Konto schon `:pov live` geschickt haben.
       voxelAsked: false,
     };
@@ -243,19 +249,41 @@ export async function tabPov(root, profile) {
 
   /** Läuft dieser Reiter noch? Nach einem Wechsel hängen die Flächen unten am toten DOM. */
   const alive = () => state.route.name === 'server' && state.route.id === profile.id && state.route.tab === 'pov';
+  let observer = null;
+
+  /** Einen Bildabruf nur für eine sichtbare texturierte Bühne vormerken. */
+  function scheduleFrame(stage, wait = 0) {
+    clearTimeout(stage.frameTimer);
+    stage.frameTimer = null;
+    if (stage.dead || !alive() || document.hidden || !stage.visible || stage.frameLoading) return;
+    stage.frameTimer = setTimeout(() => pullFrame(stage), Math.max(0, wait));
+  }
+
+  /** Der Zustandsabruf gehört zum Bild und bleibt daher ebenfalls außerhalb des Bildschirms aus. */
+  function scheduleState(stage, wait = 0) {
+    clearTimeout(stage.stateTimer);
+    stage.stateTimer = null;
+    if (stage.dead || !alive() || document.hidden || !stage.visible || stage.stateLoading) return;
+    stage.stateTimer = setTimeout(() => pullState(stage), Math.max(0, wait));
+  }
 
   // ------------------------------------------------------------ Bilder holen
 
   async function pullFrame(stage) {
-    if (stage.dead) return;
-    if (!alive()) return stop();
+    stage.frameTimer = null;
+    if (stage.dead || !alive()) return stop();
+    if (document.hidden || !stage.visible || stage.frameLoading) return;
+    stage.frameLoading = true;
     let wait = Math.round(1000 / rate);
     const bot = botOf(stage);
-    if (document.hidden) {
-      // Ein Bild für einen Reiter im Hintergrund ist Rechenzeit für eine schwarze Fläche. Ganz
-      // aufhören wäre falsch – wer zurückkommt, soll nicht auf den Neustart einer Schleife warten.
-      wait = 1000;
-    } else if (!bot?.online || !bot?.pov?.web) {
+    if (!bot?.online) {
+      setHint(stage, '');
+      // Der WebSocket weckt die Bühne bei einem neuen Zustand wieder auf. Offline weiterzutakten
+      // hätte weder ein Bild noch eine neue Information gebracht.
+      stage.frameLoading = false;
+      return;
+    }
+    if (!bot.pov?.web) {
       wait = 1200;
     } else {
       try {
@@ -269,7 +297,14 @@ export async function tabPov(root, profile) {
           // Ereignis fällt aus, wenn schon das übernächste unterwegs ist –, sondern alles, was
           // zwei Bilder zurückliegt. Das aktuelle und sein Vorgänger bleiben stehen: Eines zeigt
           // der Browser gerade, das andere hält er noch fest, während er das neue dekodiert.
-          const url = URL.createObjectURL(await response.blob());
+          const blob = await response.blob();
+          // Während eines langsamen Abrufs kann die Ansicht verlassen werden. Dann darf weder
+          // eine unreferenzierte Blob-URL entstehen noch ein bereits entfernter Knoten mutieren.
+          if (stage.dead || !alive() || document.hidden || !stage.visible) {
+            stage.frameLoading = false;
+            return;
+          }
+          const url = URL.createObjectURL(blob);
           stage.urls.push(url);
           while (stage.urls.length > 2) URL.revokeObjectURL(stage.urls.shift());
           stage.lastUrl = url;
@@ -287,15 +322,22 @@ export async function tabPov(root, profile) {
         wait = 2000;
       }
     }
-    stage.frameTimer = setTimeout(() => pullFrame(stage), wait);
+    stage.frameLoading = false;
+    scheduleFrame(stage, wait);
   }
 
   async function pullState(stage) {
-    if (stage.dead) return;
-    if (!alive()) return stop();
+    stage.stateTimer = null;
+    if (stage.dead || !alive()) return stop();
+    if (document.hidden || !stage.visible || stage.stateLoading) return;
+    stage.stateLoading = true;
     let wait = 700;
     const bot = botOf(stage);
-    if (document.hidden || !bot?.online || !bot?.pov?.web) {
+    if (!bot?.online) {
+      stage.stateLoading = false;
+      return;
+    }
+    if (!bot.pov?.web) {
       wait = 1500;
     } else {
       try {
@@ -303,7 +345,14 @@ export async function tabPov(root, profile) {
           raw: true,
         });
         if (response.ok) {
-          stage.world = await response.json();
+          const world = await response.json();
+          // Auch ein JSON-Abruf kann beim Wegscrollen oder Verlassen der Ansicht zu Ende gehen.
+          // Dann verursacht er weder DOM-Arbeit noch einen weiteren Takt im Hintergrund.
+          if (stage.dead || !alive() || document.hidden || !stage.visible) {
+            stage.stateLoading = false;
+            return;
+          }
+          stage.world = world;
           paintOverlay(stage);
         } else {
           wait = 2000;
@@ -312,7 +361,8 @@ export async function tabPov(root, profile) {
         wait = 2500;
       }
     }
-    stage.stateTimer = setTimeout(() => pullState(stage), wait);
+    stage.stateLoading = false;
+    scheduleState(stage, wait);
   }
 
   // ------------------------------------------------------------ Anzeige
@@ -874,6 +924,7 @@ export async function tabPov(root, profile) {
     window.removeEventListener('hashchange', stop);
     window.removeEventListener('pagehide', stop);
     document.removeEventListener('visibilitychange', onVisible);
+    observer?.disconnect();
     for (const stage of stages.values()) {
       stage.dead = true;
       clearTimeout(stage.frameTimer);
@@ -896,15 +947,21 @@ export async function tabPov(root, profile) {
     }
   }
 
-  // Ein zugeklappter Laptop soll die Schleifen nicht im Vollgas weiterlaufen lassen; sie prüfen
-  // `document.hidden` selbst, brauchen dafür aber einen Anstoß, wenn jemand zurückkommt.
+  // Ein zugeklappter Laptop soll weder Timer noch Bildanfragen behalten. Beim Zurückkehren
+  // startet ausschließlich, was der Observer gerade als sichtbar meldet.
   const onVisible = () => {
-    if (document.hidden) return;
+    if (document.hidden) {
+      for (const stage of stages.values()) {
+        clearTimeout(stage.frameTimer);
+        clearTimeout(stage.stateTimer);
+        stage.frameTimer = null;
+        stage.stateTimer = null;
+      }
+      return;
+    }
     for (const stage of stages.values()) {
-      clearTimeout(stage.frameTimer);
-      clearTimeout(stage.stateTimer);
-      pullFrame(stage);
-      pullState(stage);
+      scheduleFrame(stage, stage.accountId % 5 * 80);
+      scheduleState(stage, stage.accountId % 5 * 80 + 40);
     }
   };
   document.addEventListener('visibilitychange', onVisible);
@@ -962,12 +1019,42 @@ export async function tabPov(root, profile) {
     for (const button of $$('[data-tool="pip"]')) button.hidden = false;
   }
 
+  const stageByNode = new Map([...stages.values()].map((stage) => [stage.node, stage]));
+  if ('IntersectionObserver' in window) {
+    observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const stage = stageByNode.get(entry.target);
+          if (!stage) continue;
+          stage.visible = entry.isIntersecting;
+          if (!stage.visible) {
+            clearTimeout(stage.frameTimer);
+            clearTimeout(stage.stateTimer);
+            stage.frameTimer = null;
+            stage.stateTimer = null;
+            continue;
+          }
+          // Bei mehreren Bühnen verhindert der kleine Versatz einen Stoß gleicher Abrufe.
+          const offset = stage.accountId % 5 * 80;
+          scheduleFrame(stage, offset);
+          scheduleState(stage, offset + 40);
+        }
+      },
+      { rootMargin: '220px 0px' }
+    );
+    for (const stage of stages.values()) observer.observe(stage.node);
+  } else {
+    // Rückfall für ältere Browser: volle Funktion, nur ohne Sichtbarkeitsoptimierung.
+    for (const stage of stages.values()) stage.visible = true;
+  }
+
   for (const stage of stages.values()) {
     const bot = botOf(stage);
     if (bot?.views?.pov) paintVoxel(stage, bot.views.pov);
     setHint(stage, '');
-    pullFrame(stage);
-    pullState(stage);
+    const offset = stage.accountId % 5 * 80;
+    scheduleFrame(stage, offset);
+    scheduleState(stage, offset + 40);
   }
   updateMode();
 
@@ -982,6 +1069,10 @@ export async function tabPov(root, profile) {
     if (!stage) return;
     if (event.type === 'state') {
       updateMode();
+      // Ein Bot kann gerade erst online oder texturiert geworden sein. Die Bühne wartet nicht
+      // auf ihren alten Takt, aber nur dann, wenn sie im sichtbaren Bereich liegt.
+      scheduleFrame(stage);
+      scheduleState(stage);
       return;
     }
     if (event.type !== 'view' || event.kind !== 'pov') return;

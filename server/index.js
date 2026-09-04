@@ -6,7 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { assetVersion, config, paths } from './config.js';
-import { db, getSetting } from './db.js';
+import { cached, db, getSetting } from './db.js';
 import * as auth from './auth.js';
 import { supervisor } from './supervisor.js';
 import './macros.js'; // hängt die Macro-Engine in den Supervisor
@@ -684,42 +684,79 @@ const PAGES = {
   terms: { view: 'legal', legal: 'terms' },
 };
 
+/**
+ * Fertige öffentliche Dokumente, bis sich ihr Datenstand ändert.
+ *
+ * Die öffentlichen Seiten entstehen vollständig auf dem Server: Tarife, Fähigkeiten,
+ * Einstellungen, Rechtstexte und Übersetzungen werden zu HTML zusammengesetzt. Das ist richtig
+ * für das erste Bild und für Suchmaschinen, aber dieselbe Arbeit pro Besucher zu wiederholen ist
+ * unnötig. `cached` verwirft diese Map bei *jeder* lokalen oder externen SQLite-Änderung; ein
+ * geänderter Preis oder Rechtstext kann deshalb nicht als alte Seite hängenbleiben.
+ *
+ * In Entwicklung bleibt die Map bewusst aus. Dort sollen eine geänderte Vorlage oder ein
+ * übersetzter Satz unmittelbar beim nächsten Neuladen sichtbar sein, ohne einen Dienstneustart.
+ */
+const publicDocuments = cached(() => new Map());
+
+function publicDocument(key, render, stamp = '') {
+  if (process.env.NODE_ENV !== 'production') return render();
+  const documents = publicDocuments();
+  const found = documents.get(key);
+  if (found?.stamp === stamp) return found.html;
+  const html = render();
+  // Der Schlüssel bleibt pro Adresse stabil. Ändert ein Client-Sync die sichtbaren Fähigkeiten,
+  // wird genau dieser Eintrag ersetzt statt für jeden Stundentakt eine weitere HTML-Fassung im
+  // Speicher zu behalten.
+  documents.set(key, { stamp, html });
+  return html;
+}
+
+// Ein Client-Sync verändert die Funktionsseite und die Versionsangabe ohne Datenbank-Schreibzugriff.
+// `checkedAt` ist genau der Zeitpunkt eines solchen Syncs und gehört deshalb in den Dokumentschlüssel.
+const publicClientStamp = () => String(binaries.state.checkedAt || 0);
+const publicYear = () => String(new Date().getFullYear());
+
 /** Eine feste Seite bauen: Kopfdaten, dazu was die Seite an Beweglichem braucht. */
 function renderPage(slug, lang) {
-  const entry = PAGES[slug];
-  // Was auf jeder Seite vorkommt (Discord in der Kopfleiste, der Inhaltsschutz), steht an einer
-  // Stelle.
-  const vars = {
-    path: slug ? `/${slug}` : '',
-    // Nur die Bedienungssperre steht am <html>. Der Schutz der Dateien ist eine Sache des
-    // Servers und geht den Browser nichts an.
-    shield: protect.uiLocked() ? '1' : '0',
-    ...landing.commonVars(lang),
-  };
-  if (entry.noindex) vars.robotsTag = NOINDEX;
-  if (entry.title) vars.title = `${pages.t(entry.title, lang)} – ${config.brand}`;
-  if (entry.description) vars.description = pages.t(entry.description, lang);
-  if (entry.legal) Object.assign(vars, landing.legalVars(entry.legal, lang));
-  if (entry.vars) Object.assign(vars, entry.vars(lang));
-  return pages.render(entry.view, lang, vars);
+  return publicDocument(`page:${publicYear()}:${lang}:${slug}`, () => {
+    const entry = PAGES[slug];
+    // Was auf jeder Seite vorkommt (Discord in der Kopfleiste, der Inhaltsschutz), steht an einer
+    // Stelle.
+    const vars = {
+      path: slug ? `/${slug}` : '',
+      // Nur die Bedienungssperre steht am <html>. Der Schutz der Dateien ist eine Sache des
+      // Servers und geht den Browser nichts an.
+      shield: protect.uiLocked() ? '1' : '0',
+      ...landing.commonVars(lang),
+    };
+    if (entry.noindex) vars.robotsTag = NOINDEX;
+    if (entry.title) vars.title = `${pages.t(entry.title, lang)} – ${config.brand}`;
+    if (entry.description) vars.description = pages.t(entry.description, lang);
+    if (entry.legal) Object.assign(vars, landing.legalVars(entry.legal, lang));
+    if (entry.vars) Object.assign(vars, entry.vars(lang));
+    return pages.render(entry.view, lang, vars);
+  }, publicClientStamp());
 }
 
 /** Das Dashboard – eine Seite, der Rest steht im Browser-Router. */
-const renderApp = (lang) =>
-  pages.render('app', lang, {
-    shield: protect.uiLocked() ? '1' : '0',
-    // Nicht "app": so heißt schon das Raster im Inneren der Seite (.app in app.css). Stand beides
-    // da, war der <body> selbst ein Raster mit einer 17,5-rem-Spalte – und das ganze Dashboard
-    // stand am PC zusammengequetscht am linken Rand.
-    bodyClass: 'dash',
-    robotsTag: NOINDEX,
-    path: '/app',
-    title: `${pages.t('nav.dashboard', lang)} – ${config.brand}`,
-    // Der Browser holt das Modul und seinen statischen Abhängigkeitsbaum direkt nach dem kritischen
-    // Stylesheet. Das konkrete Ansichtsmodul wählt app.js anschließend passend zur URL, damit ein
-    // direkter Aufruf der Einstellungen nicht nebenbei die Übersicht lädt.
-    resourceHints: pages.preload(lang, ['app.js', 'ui.js', 'preferences.js', 'chatlog.js']),
-  });
+function renderApp(lang) {
+  return publicDocument(`app:${publicYear()}:${lang}`, () =>
+    pages.render('app', lang, {
+      shield: protect.uiLocked() ? '1' : '0',
+      // Nicht "app": so heißt schon das Raster im Inneren der Seite (.app in app.css). Stand beides
+      // da, war der <body> selbst ein Raster mit einer 17,5-rem-Spalte – und das ganze Dashboard
+      // stand am PC zusammengequetscht am linken Rand.
+      bodyClass: 'dash',
+      robotsTag: NOINDEX,
+      path: '/app',
+      title: `${pages.t('nav.dashboard', lang)} – ${config.brand}`,
+      // Der Browser holt das Modul und seinen statischen Abhängigkeitsbaum direkt nach dem kritischen
+      // Stylesheet. Das konkrete Ansichtsmodul wählt app.js anschließend passend zur URL, damit ein
+      // direkter Aufruf der Einstellungen nicht nebenbei die Übersicht lädt.
+      resourceHints: pages.preload(lang, ['app.js', 'ui.js', 'preferences.js', 'chatlog.js']),
+    })
+  );
+}
 
 // Ohne Sprache in der Adresse: dorthin schicken, wo die Sprache drinsteht.
 app.get('/', (req, res) => res.redirect(302, `/${pages.langFor(req)}`));

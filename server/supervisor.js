@@ -2255,6 +2255,36 @@ class Supervisor extends EventEmitter {
     return matches.sort((a, b) => a.profile_name.localeCompare(b.profile_name) || a.profile_id - b.profile_id);
   }
 
+  /**
+   * Alle tatsächlich laufenden Sitzungen, nach Minecraft-Konto gruppiert.
+   *
+   * Die normale Einzelprüfung oben bleibt für einen Startvorgang ideal: Dort geht es um genau
+   * ein Konto und die Antwort muss keinen weiteren Speicher anlegen. Die Profilliste dagegen
+   * beschreibt unter Umständen viele Zuordnungen auf einmal. Für jede davon erneut durch alle
+   * laufenden Bots zu laufen, wächst mit `Zuordnungen × Bots`. Dieser Index wird nur für solche
+   * Sammelansichten gebaut; aus ihm lässt sich die gleiche Antwort wie mit `runningElsewhere`
+   * bilden, aber ohne den wiederholten vollständigen Rundgang.
+   */
+  runningByAccount() {
+    const grouped = new Map();
+    for (const bot of this.bots.values()) {
+      if (!bot.running) continue;
+      const accountId = bot.account.id;
+      const entries = grouped.get(accountId) || [];
+      entries.push({
+        profile_id: bot.profile.id,
+        profile_name: bot.profile.name,
+        state: bot.state,
+        online: bot.online,
+      });
+      grouped.set(accountId, entries);
+    }
+    for (const entries of grouped.values()) {
+      entries.sort((a, b) => a.profile_name.localeCompare(b.profile_name) || a.profile_id - b.profile_id);
+    }
+    return grouped;
+  }
+
   /** Befehle, die der Client selbst takten soll: Beitrittsbefehle und Dauer-Wiederholungen. */
   joinCommands(profileId, accountId) {
     const out = [];
