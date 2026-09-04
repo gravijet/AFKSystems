@@ -26,7 +26,9 @@ fi
 
 echo "== Dateien nach $ZIEL =="
 mkdir -p "$ZIEL"
-# data/ und node_modules/ nicht mitkopieren: Daten bleiben, Module werden frisch installiert.
+# data/ und node_modules/ nicht mitkopieren: Daten bleiben, und die installierten Module gehören
+# allein zum Zielsystem. Ein Stempel weiter unten entscheidet anhand von Lockfile und Node-Fassung,
+# ob sie wirklich neu gebaut werden müssen.
 rsync -a --delete \
   --exclude 'data/' --exclude 'node_modules/' --exclude '.git/' --exclude '.env' \
   "$QUELLE/" "$ZIEL/"
@@ -41,9 +43,40 @@ if [ ! -f "$ZIEL/.env" ]; then
 fi
 chmod 600 "$ZIEL/.env"
 
+dependency_key() {
+  # Die Laufzeit gehört in den Schlüssel: Native Module aus einer anderen Node-Hauptversion können
+  # vorhanden aussehen, aber beim nächsten require() scheitern. Paket- und Lockfile decken sowohl
+  # direkte als auch transitive Abhängigkeiten ab; jede Abweichung führt garantiert zu npm ci.
+  {
+    node --version
+    sha256sum "$1/package.json" "$1/package-lock.json"
+  } | sha256sum | awk '{print $1}'
+}
+
+install_dependencies() {
+  local root="$1"
+  local label="$2"
+  local expected stamp
+  expected="$(dependency_key "$root")"
+  stamp="$root/node_modules/.afksystems-deps-stamp"
+
+  if [ -d "$root/node_modules" ] && [ -f "$stamp" ] && [ "$(cat "$stamp")" = "$expected" ]; then
+    echo "$label unverändert – Abhängigkeiten bleiben."
+    return
+  fi
+
+  echo "$label geändert oder unvollständig – Abhängigkeiten installieren."
+  (
+    cd "$root"
+    sudo -u "$DIENST" -H npm ci --omit=dev 2>/dev/null || npm ci --omit=dev
+  )
+  # Erst nach erfolgreichem npm ci schreiben: Ein Netz- oder Buildfehler darf nie einen
+  # unveränderten Bestand vortäuschen und beim nächsten Lauf zum Überspringen führen.
+  printf '%s\n' "$expected" > "$stamp"
+}
+
 echo "== Abhängigkeiten =="
-cd "$ZIEL"
-sudo -u "$DIENST" -H npm ci --omit=dev 2>/dev/null || npm ci --omit=dev
+install_dependencies "$ZIEL" "Panel"
 
 mkdir -p "$ZIEL/data"
 chown -R "$DIENST:$DIENST" "$ZIEL"
@@ -51,7 +84,7 @@ chown -R "$DIENST:$DIENST" "$ZIEL"
 # Browser müssen Frontend-Dateien zwangsläufig erhalten. In der Produktionskopie werden sie aber
 # minimiert ausgeliefert: weniger Traffic und deutlich weniger bequem 1:1 zu kopieren, ohne die
 # wartbaren Quellen im Repository zu beschädigen.
-sudo -u "$DIENST" -H npm run assets:protect
+( cd "$ZIEL" && sudo -u "$DIENST" -H npm run assets:protect )
 
 echo "== systemd =="
 install -m 0644 "$QUELLE/deploy/afksystems.service" /etc/systemd/system/$DIENST.service
@@ -60,17 +93,24 @@ systemctl daemon-reload
 systemctl enable "$DIENST"
 systemctl restart "$DIENST"
 sleep 3
-systemctl --no-pager --lines=10 status "$DIENST" || true
+if ! systemctl is-active --quiet "$DIENST"; then
+  # `systemctl status` wäre hier zwar bequem, enthält aber die vollständige Befehlszeile eines
+  # Bots. Darin können Zugangsdaten stehen; die Diagnose gehört deshalb ins geschützte Journal
+  # des Betreibers und nicht in die Standardausgabe eines Deployments.
+  echo "$DIENST ist nach dem Neustart nicht aktiv." >&2
+  exit 1
+fi
+echo "$DIENST aktiv."
 
 echo "== Discord-Bot =="
 # Der Bot ist ein eigener Dienst. Er wird nur angefasst, wenn seine .env schon ausgefüllt ist –
 # sonst liefe er in eine Schleife aus Neustarts, und die Einrichtung steht in docs/discord-bot.md.
-# Die Abhängigkeiten kommen **immer** – auch wenn der Bot noch nicht eingerichtet ist. Vorher
-# hingen sie an derselben Bedingung wie das Starten, und der Hinweis darunter schickte den
-# Betreiber in einen Dienst, der nur "Cannot find module 'discord.js'" ins Protokoll schreiben
-# konnte. Installieren kostet nichts; starten ist die Entscheidung, die von der .env abhängt.
+# Auch ohne eingerichteten Bot werden dessen Abhängigkeiten beim ersten Lauf oder nach einer
+# Lockfile-Änderung vorbereitet. Der Hinweis darunter führt dann nicht in einen Dienst, dem noch
+# `discord.js` fehlt; bei unverändertem Bestand kostet ein normales Panel-Deployment dagegen
+# keinen vollständigen zweiten Paketaufbau.
 [ -f "$ZIEL/bot/.env" ] || cp "$QUELLE/bot/.env.example" "$ZIEL/bot/.env"
-( cd "$ZIEL/bot" && sudo -u "$DIENST" -H npm ci --omit=dev 2>/dev/null || npm ci --omit=dev )
+install_dependencies "$ZIEL/bot" "Discord-Bot"
 chown -R "$DIENST:$DIENST" "$ZIEL/bot"
 chmod 600 "$ZIEL/bot/.env"
 
