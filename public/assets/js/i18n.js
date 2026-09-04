@@ -2591,8 +2591,43 @@ export const S = {
   },
   'set.export': { en: 'Download my data', de: 'Meine Daten herunterladen' },
   'set.exportWhat': {
-    en: 'One file with your account, server slots, Minecraft accounts, bookings, top-ups, tickets and messages. Readable JSON, nothing left out.',
-    de: 'Eine Datei mit Konto, Serverplätzen, Minecraft-Konten, Buchungen, Aufladungen, Tickets und Nachrichten. Lesbares JSON, ohne Auslassungen.',
+    en: 'Choose exactly which of your data categories to include. The JSON file never contains passwords, sign-in tokens or Discord webhooks.',
+    de: 'Wähle genau die eigenen Datenbereiche aus, die in die JSON-Datei gehören. Passwörter, Anmelde-Tokens und Discord-Webhooks bleiben immer draußen.',
+  },
+  'set.exportChoose': { en: 'Choose data for download', de: 'Daten für den Download wählen' },
+  'set.exportChooseWhat': {
+    en: 'All categories are preselected. You can download only the parts you need.',
+    de: 'Alle Bereiche sind vorausgewählt. Du kannst nur die Teile herunterladen, die du brauchst.',
+  },
+  'set.exportNone': {
+    en: 'Choose at least one data category.',
+    de: 'Wähle mindestens einen Datenbereich aus.',
+  },
+  'set.exportPart.profile': {
+    en: 'Account, profile and preferences',
+    de: 'Konto, Profil und Einstellungen',
+  },
+  'set.exportPart.minecraft': { en: 'Minecraft accounts', de: 'Minecraft-Konten' },
+  'set.exportPart.servers': { en: 'Server slots and bot status', de: 'Serverplätze und Bot-Status' },
+  'set.exportPart.automation': {
+    en: 'Macros and schedules',
+    de: 'Makros und Zeitpläne',
+  },
+  'set.exportPart.billing': {
+    en: 'Credit history, top-ups and receipts',
+    de: 'Guthabenverlauf, Aufladungen und Belege',
+  },
+  'set.exportPart.support': {
+    en: 'Tickets and conversation history',
+    de: 'Tickets und Gesprächsverlauf',
+  },
+  'set.exportPart.activity': {
+    en: 'Panel messages and notifications',
+    de: 'Panel-Nachrichten und Benachrichtigungen',
+  },
+  'set.exportPart.security': {
+    en: 'Sign-in devices and account activity',
+    de: 'Anmeldegeräte und Kontoaktivität',
   },
   'set.deleteTitle': { en: 'Delete account', de: 'Konto löschen' },
   'set.deleteWhat': {

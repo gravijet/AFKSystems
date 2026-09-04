@@ -3278,10 +3278,15 @@ test('the data export carries the account but no keys, and deletion waits out it
   assert.equal(dump.server_slots.length, 1);
   assert.equal(dump.minecraft_accounts.length, 1);
   assert.equal(dump.tickets.length, 1);
+  assert.deepEqual(dump.included, account.EXPORT_PARTS);
+  const profileOnly = account.exportFor(db.prepare('SELECT * FROM users WHERE id = ?').get(user.id), ['profile']);
+  assert.deepEqual(profileOnly.included, ['profile']);
+  assert.equal(profileOnly.account.username, user.username);
+  assert.equal(profileOnly.minecraft_accounts, undefined);
   // Schlüssel sind keine Auskunft: Die Datei liegt danach im Download-Ordner und geht per Mail
   // weiter – ein Passwort-Hash oder ein Sitzungs-Token darin wäre der Zugang, nicht die Auskunft.
   const asText = JSON.stringify(dump);
-  assert.doesNotMatch(asText, /password_hash|verify_token|reset_token|pending_email_token/);
+  assert.doesNotMatch(asText, /password_hash|verify_token|reset_token|pending_email_token|discord_webhook/);
 
   // Ein Administrator kann sich hier nicht selbst löschen – sonst bleibt niemand übrig, der
   // andere hereinlässt.
@@ -5266,6 +5271,32 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   const myData = JSON.parse(await exportResponse.text());
   assert.equal(myData.account.id, stranger.id);
   assert.equal(myData.account.city, 'Wien');
+  assert.deepEqual(myData.included, [
+    'profile',
+    'minecraft',
+    'servers',
+    'automation',
+    'billing',
+    'support',
+    'activity',
+    'security',
+  ]);
+
+  // Ein Download muss nicht jedes Detail enthalten. Die Auswahl begrenzt die Abfragen auf die
+  // angeforderten Bereiche; ein fremder Bereich ist keine stillschweigende leere Antwort.
+  const partialExport = await fetch(`${base}/api/me/export?parts=profile,billing`, {
+    headers: { cookie: 'afk_session=stranger-session' },
+  });
+  assert.equal(partialExport.status, 200);
+  const selectedData = JSON.parse(await partialExport.text());
+  assert.deepEqual(selectedData.included, ['profile', 'billing']);
+  assert.equal(selectedData.account.id, stranger.id);
+  assert.ok(Array.isArray(selectedData.ledger));
+  assert.equal(selectedData.minecraft_accounts, undefined);
+  const invalidExport = await fetch(`${base}/api/me/export?parts=profile,not-a-category`, {
+    headers: { cookie: 'afk_session=stranger-session' },
+  });
+  assert.equal(invalidExport.status, 400);
 
   // Ein gesunder Serverplatz mit einem Konto darauf – daran lässt sich zeigen, dass die
   // angemeldete Löschung den Start verhindert und nicht irgendetwas anderes.

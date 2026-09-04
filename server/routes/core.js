@@ -1282,6 +1282,33 @@ router.post(
 // ---------------------------------------------------------------- Eigene Daten
 
 /**
+ * Eine optionale, aber strikte Auswahl für den Download.
+ *
+ * Ein leerer Wert wäre eine Datei, die nur so aussieht, als wäre etwas passiert; ein unbekannter
+ * Wert darf stillschweigend weder verschwinden noch eine künftige interne Tabelle treffen.
+ * Wiederholungen werden ebenfalls abgewiesen, statt später in einer Audit-Zeile mehrdeutig zu
+ * werden. Ohne `parts` bleibt der vollständige Download kompatibel mit vorhandenen Links.
+ */
+function exportParts(raw) {
+  if (raw === undefined) return null;
+  if (typeof raw !== 'string' || raw.length > 160) {
+    throw bad('Die Auswahl für den Datenexport ist ungültig.', {
+      en: 'The data export selection is invalid.',
+    });
+  }
+  const parts = raw.split(',');
+  if (!parts.length || parts.length > account.EXPORT_PARTS.length || parts.some((part) => !part)) {
+    throw bad('Wähle mindestens einen Datenbereich aus.', { en: 'Choose at least one data category.' });
+  }
+  if (new Set(parts).size !== parts.length || parts.some((part) => !account.EXPORT_PARTS.includes(part))) {
+    throw bad('Die Auswahl für den Datenexport ist ungültig.', {
+      en: 'The data export selection is invalid.',
+    });
+  }
+  return parts;
+}
+
+/**
  * Alles, was hier über dieses Konto steht – als Datei.
  *
  * Nicht als JSON-Antwort für das Panel, sondern als Download: Der Wert dieser Auskunft liegt
@@ -1292,9 +1319,9 @@ router.get(
   '/me/export',
   auth.requireUser,
   wrap((req, res) => {
-    const data = account.exportFor(req.user);
+    const data = account.exportFor(req.user, exportParts(req.query.parts));
     const day = new Date().toISOString().slice(0, 10);
-    audit(req.user.id, 'data-export', null, req.ip);
+    audit(req.user.id, 'data-export', { parts: data.included }, req.ip);
     res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
