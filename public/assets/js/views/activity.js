@@ -18,7 +18,7 @@ import {
   ok,
   confirmDialog,
 } from '../ui.js';
-import { state, appbar, drawSide } from '../app.js';
+import { state, appbar, updateShellBadges } from '../app.js';
 
 /** Die Überschrift über einem Tag – einmal gebaut, für jede Zeile derselbe. */
 const DAY_HEADING = new Intl.DateTimeFormat(locale, {
@@ -47,7 +47,7 @@ export async function render(root) {
   let loading = false;
 
   state.stats.notifications_unread = data.unread || 0;
-  drawSide();
+  updateShellBadges();
 
   root.innerHTML = `
     ${appbar(
@@ -186,7 +186,7 @@ export async function render(root) {
       list.push(...(page.notifications || []).filter((item) => !known.has(item.id)));
       hasMore = Boolean(page.has_more);
       state.stats.notifications_unread = page.unread || 0;
-      drawSide();
+      updateShellBadges();
     } catch (error) {
       fail(error);
       hasMore = true;
@@ -202,16 +202,16 @@ export async function render(root) {
     const now = Date.now();
     for (const item of wanted) item.read_at = now;
     state.stats.notifications_unread = Math.max(0, (state.stats.notifications_unread || 0) - wanted.length);
-    drawSide();
+    updateShellBadges();
     paint();
     try {
       const answer = await api('/me/notifications', { method: 'PATCH', body: { ids } });
       state.stats.notifications_unread = answer.unread || 0;
-      drawSide();
+      updateShellBadges();
     } catch (error) {
       for (const item of wanted) item.read_at = null;
       state.stats.notifications_unread += wanted.length;
-      drawSide();
+      updateShellBadges();
       paint();
       fail(error);
     }
@@ -223,7 +223,7 @@ export async function render(root) {
     const previous = item.read_at;
     item.read_at = null;
     state.stats.notifications_unread = (state.stats.notifications_unread || 0) + 1;
-    drawSide();
+    updateShellBadges();
     paint();
     try {
       const answer = await api('/me/notifications', {
@@ -231,12 +231,12 @@ export async function render(root) {
         body: { ids: [id], unread: true },
       });
       state.stats.notifications_unread = answer.unread || 0;
-      drawSide();
+      updateShellBadges();
       ok(tr('act.markedUnread'));
     } catch (error) {
       item.read_at = previous;
       state.stats.notifications_unread = Math.max(0, (state.stats.notifications_unread || 0) - 1);
-      drawSide();
+      updateShellBadges();
       paint();
       fail(error);
     }
@@ -272,7 +272,7 @@ export async function render(root) {
     const now = Date.now();
     for (const item of unread) item.read_at = now;
     state.stats.notifications_unread = 0;
-    drawSide();
+    updateShellBadges();
     paint();
     try {
       await api('/me/notifications', { method: 'PATCH' });
@@ -281,7 +281,7 @@ export async function render(root) {
     } catch (error) {
       for (const item of unread) item.read_at = null;
       state.stats.notifications_unread = previous;
-      drawSide();
+      updateShellBadges();
       paint();
       fail(error);
     }
