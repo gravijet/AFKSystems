@@ -1406,6 +1406,56 @@ router.get(
   })
 );
 
+// Eine persönliche Anmeldungsprüfung statt einer weiteren ungefilterten Kontenliste.
+// Ein Zugriffstoken verrät dem Panel kein verlässliches Ablaufdatum. Deshalb stehen hier keine
+// erfundenen Termine, sondern nur Microsoft-Konten mit einem echten Anmeldefehler. Die Wirkung
+// stammt aus realen Zuordnungen; die Wiederanmeldung bleibt im Gerätecode-Ablauf einzeln.
+router.get(
+  '/accounts/review',
+  auth.requireUser,
+  wrap((req, res) => {
+    mslogin.reconcile(req.user.id);
+    const rows = db
+      .prepare(
+        `SELECT * FROM mc_accounts
+          WHERE user_id = ?
+            AND kind = 'microsoft'
+            AND suspended = 0
+            AND (status <> 'ok' OR last_error IS NOT NULL)
+          ORDER BY name COLLATE NOCASE`
+      )
+      .all(req.user.id);
+    const assignments = db.prepare(
+      `SELECT p.id, p.name, pa.wanted, b.state
+         FROM profile_accounts pa
+         JOIN profiles p ON p.id = pa.profile_id AND p.user_id = ?
+    LEFT JOIN bots b ON b.profile_id = pa.profile_id AND b.account_id = pa.account_id
+        WHERE pa.account_id = ?
+        ORDER BY p.ordinal, p.id`
+    );
+    res.json({
+      accounts: rows.map((row) => {
+        const slots = assignments.all(req.user.id, row.id).map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          wanted: Boolean(entry.wanted),
+          state: entry.state || 'offline',
+          online: entry.state === 'online',
+        }));
+        return {
+          ...accountView(row),
+          slots,
+          impact: {
+            slots: slots.length,
+            online: slots.filter((slot) => slot.online).length,
+            waiting_to_start: slots.filter((slot) => slot.wanted && slot.state !== 'online').length,
+          },
+        };
+      }),
+    });
+  })
+);
+
 router.post(
   '/accounts/login',
   auth.requireUser,

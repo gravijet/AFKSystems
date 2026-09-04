@@ -4,7 +4,7 @@ import { api, icon, escapeHtml, datetime, tr, $, $$, ok, fail, confirmDialog, fo
 import { state, appbar, refresh, draw } from '../app.js';
 
 export async function render(root) {
-  const data = await api('/accounts');
+  const [data, review] = await Promise.all([api('/accounts'), api('/accounts/review')]);
   state.accounts = data.accounts;
   await refresh({ accounts: false, me: false });
   let query = '';
@@ -30,7 +30,9 @@ export async function render(root) {
   const ready = state.accounts.filter((account) => !needsAttention(account)).length;
   const attention = state.accounts.length - ready;
   const unused = state.accounts.filter((account) => !usedOn(account).length).length;
-  const attentionAccounts = state.accounts.filter(needsAttention);
+  const reviewAccounts = review.accounts || [];
+  const reviewIds = new Set(reviewAccounts.map((account) => account.id));
+  const attentionAccounts = state.accounts.filter((account) => needsAttention(account) && !reviewIds.has(account.id));
   const activeAccounts = state.accounts.filter((account) => activeOn(account).length);
 
   root.innerHTML = `
@@ -50,6 +52,8 @@ export async function render(root) {
 
     <div class="note warn" style="margin-bottom:1.5rem">${icon('alert')}
       <div><strong>${escapeHtml(tr('rules.title'))}</strong><br>${escapeHtml(tr('rules.text'))}</div></div>
+
+    ${loginReviewSection(reviewAccounts)}
 
     ${
       attentionAccounts.length
@@ -122,6 +126,20 @@ export async function render(root) {
           </div>`
     }`;
 
+  function loginReviewSection(accounts) {
+    if (!accounts.length) return '';
+    return `<section class="panel account-login-review" id="account-login-review">
+      <header>
+        <h3>${icon('key')} ${escapeHtml(tr('acc.loginReviewTitle'))}</h3>
+        <span class="pill missing">${accounts.length}</span>
+      </header>
+      <div class="body">
+        <p class="small muted" style="margin:0">${escapeHtml(tr('acc.loginReviewText'))}</p>
+        <div class="account-login-review-list">${accounts.map(loginReviewRow).join('')}</div>
+      </div>
+    </section>`;
+  }
+
   function summaryTile(value, number, key, symbol) {
     return `<button type="button" class="stat account-stat" data-account-filter="${value}"
       aria-pressed="${filter === value}">
@@ -153,6 +171,39 @@ export async function render(root) {
             )}</button>`
           : ''
       }
+    </div>`;
+  }
+
+  function loginReviewRow(account) {
+    const slots = account.slots || [];
+    const impact = account.impact || { slots: slots.length, online: 0, waiting_to_start: 0 };
+    const impactText = [
+      tr('acc.assignedServers', { n: impact.slots }),
+      tr('acc.onlineOn', { n: impact.online }),
+      impact.waiting_to_start ? tr('acc.waitingToStart', { n: impact.waiting_to_start }) : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    return `<div class="account-login-review-row">
+      <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
+      <div class="grow" style="min-width:0">
+        <strong class="truncate">${escapeHtml(account.name)}</strong>
+        <span class="small muted truncate">${escapeHtml(account.last_error || tr('acc.errorHint'))}</span>
+        <span class="small muted">${escapeHtml(impactText)}</span>
+        ${
+          slots.length
+            ? `<div class="account-review-slots">${slots
+                .map(
+                  (slot) => `<a class="pill" href="#/servers/${slot.id}/connect">
+                    <span class="dot ${slot.online ? 'live' : ''}"></span>${escapeHtml(slot.name)}</a>`
+                )
+                .join('')}</div>`
+            : ''
+        }
+      </div>
+      <button class="btn btn-sm btn-primary" data-relogin="${account.id}">${icon('refresh')} ${escapeHtml(
+        tr('acc.renew')
+      )}</button>
     </div>`;
   }
 
@@ -339,6 +390,10 @@ export async function render(root) {
     if (account?.kind === 'microsoft' && !account.suspended) startLogin({ account });
   };
   $('#account-attention')?.addEventListener('click', (event) => {
+    const relogin = event.target.closest('[data-relogin]');
+    if (relogin) reloginFor(relogin.dataset.relogin);
+  });
+  $('#account-login-review')?.addEventListener('click', (event) => {
     const relogin = event.target.closest('[data-relogin]');
     if (relogin) reloginFor(relogin.dataset.relogin);
   });

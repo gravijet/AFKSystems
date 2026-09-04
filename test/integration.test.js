@@ -4780,6 +4780,28 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     body: { low_balance_warning: -2 },
   });
   assert.equal(invalidPersonalWarning.response.status, 400);
+  // Die persönliche Microsoft-Prüfung zeigt nur die eigenen wirklich fehlerhaften Anmeldungen
+  // samt ihren tatsächlichen Serverplatz-Auswirkungen. Sie liefert weder Zugangsdaten noch eine
+  // Sammelaktion, die Konten oder Bots umhängen könnte.
+  const reviewAccount = createAccount(user, { name: 'NeedsMicrosoftReview' });
+  db.prepare("UPDATE mc_accounts SET kind = 'microsoft', status = 'error', last_error = 'Sign-in expired' WHERE id = ?").run(
+    reviewAccount.id
+  );
+  db.prepare('INSERT INTO profile_accounts (profile_id, account_id, wanted) VALUES (?, ?, 1)').run(
+    profile.id,
+    reviewAccount.id
+  );
+  const loginReview = await api(base, '/api/accounts/review', { token: USER_TOKEN });
+  assert.equal(loginReview.response.status, 200);
+  const reviewed = loginReview.data.accounts.find((entry) => entry.id === reviewAccount.id);
+  assert.ok(reviewed);
+  assert.deepEqual(reviewed.slots.map((slot) => slot.id), [profile.id]);
+  assert.equal(reviewed.impact.slots, 1);
+  assert.equal(reviewed.impact.waiting_to_start, 1);
+  assert.equal(Object.hasOwn(reviewed, 'token'), false);
+  const otherLoginReview = await api(base, '/api/accounts/review', { token: ADMIN_TOKEN });
+  assert.equal(otherLoginReview.response.status, 200);
+  assert.equal(otherLoginReview.data.accounts.some((entry) => entry.id === reviewAccount.id), false);
   const invalidSelection = await api(base, `/api/profiles/${profile.id}/chat.txt?accounts=999999`, {
     token: USER_TOKEN,
   });

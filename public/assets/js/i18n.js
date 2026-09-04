@@ -768,6 +768,18 @@ export const S = {
     en: 'Restore each Microsoft account individually. No bot is stopped or reassigned by this step.',
     de: 'Stelle jedes Microsoft-Konto einzeln wieder her. Dabei wird kein Bot gestoppt oder neu zugeordnet.',
   },
+  'acc.loginReviewTitle': {
+    en: 'Microsoft sign-ins to restore',
+    de: 'Microsoft-Anmeldungen wiederherstellen',
+  },
+  'acc.loginReviewText': {
+    en: 'Only accounts with a real sign-in error appear here. Each restore is separate: no account is reassigned and no bot is stopped automatically.',
+    de: 'Hier stehen nur Konten mit einem echten Anmeldefehler. Jede Wiederherstellung bleibt einzeln: Es wird kein Konto umgehängt und kein Bot automatisch gestoppt.',
+  },
+  'acc.waitingToStart': {
+    en: '{n} slot(s) waiting to start',
+    de: '{n} Platz/Plätze warten auf den Start',
+  },
   'acc.unused': { en: 'Not assigned', de: 'Nicht zugeordnet' },
   'acc.search': { en: 'Search accounts or servers', de: 'Konten oder Server suchen' },
   'acc.filter.all': { en: 'All accounts', de: 'Alle Konten' },
