@@ -409,10 +409,10 @@ function createProfile(req, { name, host, port, version, planId, nodeId, account
     }
   }
 
-  for (const accountId of members) {
+  for (const [ordinal, accountId] of members.entries()) {
     db.prepare(
-      'INSERT OR IGNORE INTO profile_accounts (profile_id, account_id, ordinal) VALUES (?, ?, 0)'
-    ).run(profile.id, accountId);
+      'INSERT OR IGNORE INTO profile_accounts (profile_id, account_id, ordinal) VALUES (?, ?, ?)'
+    ).run(profile.id, accountId, ordinal);
   }
   roles.changed(req.user.id);
   audit(req.user.id, 'profile-create', { name, host, port, plan: plan.slug });
@@ -1091,11 +1091,14 @@ router.post(
         en: `This plan allows ${plan.max_accounts} account(s) on this server.`,
       });
     }
+    let ordinal =
+      (db.prepare('SELECT MAX(ordinal) AS max_ordinal FROM profile_accounts WHERE profile_id = ?').get(profile.id)
+        .max_ordinal ?? -1) + 1;
     for (const accountId of fresh) {
       db.prepare(
         `INSERT INTO profile_accounts (profile_id, account_id, note, ordinal)
-         VALUES (?, ?, ?, 0) ON CONFLICT(profile_id, account_id) DO NOTHING`
-      ).run(profile.id, accountId, req.body?.note || null);
+         VALUES (?, ?, ?, ?) ON CONFLICT(profile_id, account_id) DO NOTHING`
+      ).run(profile.id, accountId, req.body?.note || null, ordinal++);
     }
     res.json({ profile: profileView(profile, langOf(req)) });
   })
@@ -1108,12 +1111,28 @@ router.patch(
     const plan = billing.featuresOf(profile);
     const account = ownedAccount(req, req.params.accountId);
     const body = req.body || {};
+    // Die Reihenfolge ist genau die sichtbare Reihenfolge. Alte Bestände können noch mehrfach
+    // denselben Ordinalwert haben; der Name macht sie dann stabil, bis die erste Verschiebung
+    // daraus eine eindeutige, fortlaufende Ordnung macht.
+    const members = db
+      .prepare(
+        `SELECT pa.account_id
+           FROM profile_accounts pa JOIN mc_accounts a ON a.id = pa.account_id
+          WHERE pa.profile_id = ?
+          ORDER BY pa.ordinal, a.name COLLATE NOCASE`
+      )
+      .all(profile.id);
+    const from = members.findIndex((member) => member.account_id === account.id);
+    if (from < 0) {
+      throw notFound('Dieses Konto liegt nicht auf diesem Serverplatz.', {
+        en: 'This account is not assigned to this server slot.',
+      });
+    }
+
+    const updates = [];
+    let reordered = null;
     if (body.note !== undefined) {
-      db.prepare('UPDATE profile_accounts SET note = ? WHERE profile_id = ? AND account_id = ?').run(
-        String(body.note || '').slice(0, 200) || null,
-        profile.id,
-        account.id
-      );
+      updates.push(['note', String(body.note || '').slice(0, 200) || null]);
     }
     if (body.proxy_id !== undefined) {
       if (!plan.proxy) {
@@ -1128,12 +1147,34 @@ router.patch(
       ) {
         throw notFound('Dieser Proxy ist dir nicht zugeteilt.', { en: 'That proxy is not assigned to you.' });
       }
-      db.prepare('UPDATE profile_accounts SET proxy_id = ? WHERE profile_id = ? AND account_id = ?').run(
-        proxyId,
-        profile.id,
-        account.id
-      );
+      updates.push(['proxy_id', proxyId]);
     }
+    if (body.ordinal !== undefined) {
+      const target = requireInt(body.ordinal, 'Reihenfolge', { min: 0, max: members.length - 1 });
+      if (target !== from) {
+        const ordered = members.map((member) => member.account_id);
+        ordered.splice(target, 0, ordered.splice(from, 1)[0]);
+        reordered = ordered;
+      }
+    }
+    // Eine Proxy-Prüfung oder eine ungültige Zielposition darf nicht nachträglich nur die Notiz
+    // ändern. Alle zulässigen Änderungen dieses Dialogs gehen deshalb gemeinsam in die Datenbank.
+    db.transaction(() => {
+      for (const [field, value] of updates) {
+        db.prepare(`UPDATE profile_accounts SET ${field} = ? WHERE profile_id = ? AND account_id = ?`).run(
+          value,
+          profile.id,
+          account.id
+        );
+      }
+      if (reordered) {
+        const setOrdinal = db.prepare(
+          'UPDATE profile_accounts SET ordinal = ? WHERE profile_id = ? AND account_id = ?'
+        );
+        reordered.forEach((accountId, ordinal) => setOrdinal.run(ordinal, profile.id, accountId));
+      }
+    })();
+    if (reordered) audit(req.user.id, 'profile-account-order', { profile: profile.id, account: account.id });
     res.json({ profile: profileView(profile, langOf(req)) });
   })
 );

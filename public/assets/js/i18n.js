@@ -1222,6 +1222,9 @@ export const S = {
   'srv.dir.right': { en: 'Right', de: 'Rechts' },
   'srv.positionMissing': { en: 'No coordinates received.', de: 'Keine Koordinaten empfangen.' },
   'srv.positionLook': { en: 'View: {yaw}° / {pitch}°', de: 'Blick: {yaw}° / {pitch}°' },
+  'srv.accountOrderUp': { en: 'Move account up', de: 'Konto nach oben schieben' },
+  'srv.accountOrderDown': { en: 'Move account down', de: 'Konto nach unten schieben' },
+  'srv.accountOrderSaved': { en: 'Account order saved.', de: 'Kontoreihenfolge gespeichert.' },
   'srv.look': { en: 'Look', de: 'Blickrichtung' },
   'srv.lookHint': { en: 'where the bot faces', de: 'wohin der Bot schaut' },
   // Himmelsrichtungen ausgeschrieben: "E" konnte auf Deutsch auch "Ende" heißen, und die vier

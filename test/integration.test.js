@@ -4105,6 +4105,76 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
     detail: 'Connection reset',
     t: lastState,
   });
+
+  // Die Reihenfolge gehört zum Serverplatz, nicht zum Minecraft-Konto. Der Kunde kann seine
+  // tägliche Arbeitsreihenfolge deshalb ändern, ohne Namen, Anmeldung oder andere Plätze zu
+  // berühren; der Server schreibt danach eine eindeutige fortlaufende Reihenfolge zurück.
+  const orderProfile = createProfile(user, billing.planBySlug('premium'), { name: 'Order test' });
+  const secondOrderAccount = createAccount(user, { name: 'Middle order' });
+  const thirdOrderAccount = createAccount(user, { name: 'First order' });
+  for (const [ordinal, accountId] of [account.id, secondOrderAccount.id, thirdOrderAccount.id].entries()) {
+    db.prepare('INSERT INTO profile_accounts (profile_id, account_id, ordinal) VALUES (?, ?, ?)').run(
+      orderProfile.id,
+      accountId,
+      ordinal
+    );
+  }
+  const movedOrderAccount = await api(base, `/api/profiles/${orderProfile.id}/accounts/${thirdOrderAccount.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { ordinal: 0 },
+  });
+  assert.equal(movedOrderAccount.response.status, 200);
+  assert.deepEqual(
+    movedOrderAccount.data.profile.accounts.map((entry) => entry.account_id),
+    [thirdOrderAccount.id, account.id, secondOrderAccount.id]
+  );
+  assert.deepEqual(
+    db
+      .prepare('SELECT account_id, ordinal FROM profile_accounts WHERE profile_id = ? ORDER BY ordinal')
+      .all(orderProfile.id),
+    [
+      { account_id: thirdOrderAccount.id, ordinal: 0 },
+      { account_id: account.id, ordinal: 1 },
+      { account_id: secondOrderAccount.id, ordinal: 2 },
+    ]
+  );
+  const impossibleOrder = await api(base, `/api/profiles/${orderProfile.id}/accounts/${account.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { ordinal: 3 },
+  });
+  assert.equal(impossibleOrder.response.status, 400);
+  const atomicOrder = await api(base, `/api/profiles/${orderProfile.id}/accounts/${account.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { note: 'must not be saved', ordinal: 3 },
+  });
+  assert.equal(atomicOrder.response.status, 400);
+  assert.equal(
+    db
+      .prepare('SELECT note FROM profile_accounts WHERE profile_id = ? AND account_id = ?')
+      .get(orderProfile.id, account.id).note,
+    null
+  );
+  const unattachedOrderAccount = createAccount(user);
+  const unassignedOrder = await api(base, `/api/profiles/${orderProfile.id}/accounts/${unattachedOrderAccount.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { ordinal: 0 },
+  });
+  assert.equal(unassignedOrder.response.status, 404);
+  const appendedOrderAccount = await api(base, `/api/profiles/${orderProfile.id}/accounts`, {
+    token: USER_TOKEN,
+    method: 'POST',
+    body: { account_id: unattachedOrderAccount.id },
+  });
+  assert.equal(appendedOrderAccount.response.status, 200);
+  assert.deepEqual(
+    appendedOrderAccount.data.profile.accounts.map((entry) => entry.account_id),
+    [thirdOrderAccount.id, account.id, secondOrderAccount.id, unattachedOrderAccount.id]
+  );
+  db.prepare('DELETE FROM profiles WHERE id = ?').run(orderProfile.id);
   assert.equal(diagnosticAccount?.retry, null);
 
   const englishHome = await (await fetch(`${base}/en`)).text();
