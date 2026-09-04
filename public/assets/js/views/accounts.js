@@ -34,6 +34,9 @@ export async function render(root) {
   const reviewIds = new Set(reviewAccounts.map((account) => account.id));
   const attentionAccounts = state.accounts.filter((account) => needsAttention(account) && !reviewIds.has(account.id));
   const activeAccounts = state.accounts.filter((account) => activeOn(account).length);
+  const accountTags = [...new Set(state.accounts.flatMap((account) => account.tags || []))].sort((a, b) =>
+    a.localeCompare(b)
+  );
 
   root.innerHTML = `
     ${appbar(
@@ -110,6 +113,17 @@ export async function render(root) {
               <option value="unused">${escapeHtml(tr('acc.filter.unused'))}</option>
               <option value="offline">${escapeHtml(tr('acc.filter.offline'))}</option>
               <option value="running">${escapeHtml(tr('acc.filter.running'))}</option>
+              <option value="favorite">${escapeHtml(tr('acc.filter.favorite'))}</option>
+              ${
+                accountTags.length
+                  ? `<optgroup label="${escapeHtml(tr('acc.filter.tags'))}">${accountTags
+                      .map(
+                        (tag) =>
+                          `<option value="tag:${escapeHtml(encodeURIComponent(tag))}">${escapeHtml(tag)}</option>`
+                      )
+                      .join('')}</optgroup>`
+                  : ''
+              }
             </select>
             <select id="account-sort" class="mini" aria-label="${escapeHtml(tr('common.order'))}">
               <option value="name">${escapeHtml(tr('acc.sort.name'))}</option>
@@ -227,6 +241,7 @@ export async function render(root) {
   }
 
   function visibleAccounts() {
+    const tagFilter = accountTags.find((tag) => `tag:${encodeURIComponent(tag)}` === filter);
     return state.accounts
       .filter((account) => {
         const use = usedOn(account);
@@ -235,7 +250,9 @@ export async function render(root) {
         if (filter === 'unused' && use.length) return false;
         if (filter === 'offline' && account.kind !== 'offline') return false;
         if (filter === 'running' && !activeOn(account).length) return false;
-        return !query || `${account.name} ${use.map((profile) => profile.name).join(' ')}`.toLowerCase().includes(query);
+        if (filter === 'favorite' && !account.favorite) return false;
+        if (tagFilter && !(account.tags || []).includes(tagFilter)) return false;
+        return !query || `${account.name} ${(account.tags || []).join(' ')} ${use.map((profile) => profile.name).join(' ')}`.toLowerCase().includes(query);
       })
       .sort((a, b) => {
         if (order === 'usage') return usedOn(b).length - usedOn(a).length || a.name.localeCompare(b.name);
@@ -259,6 +276,13 @@ export async function render(root) {
           <span class="small muted">${escapeHtml(
             tr(account.kind === 'offline' ? 'acc.kind.offline' : 'acc.kind.microsoft')
           )}</span>
+          ${
+            account.tags?.length
+              ? `<div class="account-tags">${account.tags
+                  .map((tag) => `<span class="pill">${escapeHtml(tag)}</span>`)
+                  .join('')}</div>`
+              : ''
+          }
         </div>
         ${
           suspended
@@ -308,6 +332,12 @@ export async function render(root) {
       </dl>
 
       <div class="row wrap account-actions">
+        <button class="btn btn-sm" data-account-favorite="${account.id}" aria-pressed="${account.favorite}"
+          title="${escapeHtml(tr(account.favorite ? 'acc.favoriteRemove' : 'acc.favoriteAdd'))}">
+          ${icon('star')} ${escapeHtml(tr(account.favorite ? 'acc.favoriteRemove' : 'acc.favoriteAdd'))}</button>
+        <button class="btn btn-sm" data-account-organize="${account.id}">${icon('bookmark')} ${escapeHtml(
+          tr('acc.organize')
+        )}</button>
         ${
           account.kind === 'offline'
             ? ''
@@ -401,6 +431,41 @@ export async function render(root) {
   $('#account-grid')?.addEventListener('click', async (event) => {
     const relogin = event.target.closest('[data-relogin]');
     if (relogin) return reloginFor(relogin.dataset.relogin);
+    const favorite = event.target.closest('[data-account-favorite]');
+    if (favorite) {
+      const account = state.accounts.find((entry) => entry.id === Number(favorite.dataset.accountFavorite));
+      if (!account) return;
+      try {
+        const result = await api(`/accounts/${account.id}`, {
+          method: 'PATCH',
+          body: { favorite: !account.favorite },
+        });
+        state.accounts = state.accounts.map((entry) => (entry.id === account.id ? result.account : entry));
+        paint();
+      } catch (error) {
+        fail(error);
+      }
+      return;
+    }
+    const organize = event.target.closest('[data-account-organize]');
+    if (organize) {
+      const account = state.accounts.find((entry) => entry.id === Number(organize.dataset.accountOrganize));
+      if (!account) return;
+      const answer = await formDialog(
+        tr('acc.organizeTitle', { name: account.name }),
+        [{ key: 'tags', label: tr('acc.tags'), value: (account.tags || []).join(', '), hint: tr('acc.tagsHint') }],
+        { submit: tr('common.save') }
+      );
+      if (!answer) return;
+      try {
+        const result = await api(`/accounts/${account.id}`, { method: 'PATCH', body: { tags: answer.tags } });
+        state.accounts = state.accounts.map((entry) => (entry.id === account.id ? result.account : entry));
+        draw();
+      } catch (error) {
+        fail(error);
+      }
+      return;
+    }
     const button = event.target.closest('[data-remove]');
     if (button) {
       const account = state.accounts.find((entry) => entry.id === Number(button.dataset.remove));

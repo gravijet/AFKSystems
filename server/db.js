@@ -1656,6 +1656,20 @@ const migrations = [
     name: '041-persoenliche-guthabenwarnung',
     sql: `ALTER TABLE users ADD COLUMN low_balance_warning INTEGER NOT NULL DEFAULT -1;`,
   },
+
+  {
+    // Der Minecraft-Name ist die Identität bei Microsoft und darf deshalb nicht zum
+    // Organisationsnamen umfunktioniert werden. Tags und ein Favorit lösen die reale Frage
+    // „welches meiner vielen Konten ist das?“ ohne die Anmeldung, den Skin oder Zuordnungen zu
+    // verändern. Das JSON bleibt erweiterbar, falls später einmal ein Tag eine eigene Farbe
+    // oder Beschreibung bekommt; der Dienst akzeptiert heute bewusst nur eine kleine,
+    // bereinigte Liste einfacher Texte.
+    name: '042-konto-tags-und-favoriten',
+    sql: `
+      ALTER TABLE mc_accounts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE mc_accounts ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
+    `,
+  },
 ];
 
 /**
