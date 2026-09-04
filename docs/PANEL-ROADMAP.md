@@ -68,7 +68,7 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 ### 4. Konten zuverlässig halten
 
-- [ ] Sammelansicht für ablaufende/fehlerhafte Microsoft-Anmeldungen mit sicherem
+- [x] Sammelansicht für ablaufende/fehlerhafte Microsoft-Anmeldungen mit sicherem
       Wiederanmeldeweg.
   - [x] Fehlerhafte Anmeldungen stehen zusätzlich als handlungsorientierte Warteliste mit ihren
         tatsächlichen Platz- und Online-Auswirkungen bereit; jede Wiederanmeldung bleibt einzeln
