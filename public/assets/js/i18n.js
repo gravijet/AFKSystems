@@ -1236,6 +1236,17 @@ export const S = {
   'srv.accountOrderUp': { en: 'Move account up', de: 'Konto nach oben schieben' },
   'srv.accountOrderDown': { en: 'Move account down', de: 'Konto nach unten schieben' },
   'srv.accountOrderSaved': { en: 'Account order saved.', de: 'Kontoreihenfolge gespeichert.' },
+  'srv.accountNote': { en: 'Account note', de: 'Kontonotiz' },
+  'srv.editAccountNote': { en: 'Edit account note', de: 'Kontonotiz ändern' },
+  'srv.accountNotePlaceholder': {
+    en: 'For example: overnight account at the farm',
+    de: 'Zum Beispiel: Nachtkonto an der Farm',
+  },
+  'srv.accountNoteHint': {
+    en: 'Only you see this note on this server slot. It is never sent to Minecraft.',
+    de: 'Diese Notiz siehst nur du auf diesem Serverplatz. Sie wird nie an Minecraft gesendet.',
+  },
+  'srv.accountNoteSaved': { en: 'Account note saved.', de: 'Kontonotiz gespeichert.' },
   'srv.look': { en: 'Look', de: 'Blickrichtung' },
   'srv.lookHint': { en: 'where the bot faces', de: 'wohin der Bot schaut' },
   // Himmelsrichtungen ausgeschrieben: "E" konnte auf Deutsch auch "Ende" heißen, und die vier

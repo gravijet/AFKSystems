@@ -647,7 +647,8 @@ export function formDialog(
         }
         if (field.type === 'textarea') {
           return `<div class="field"><label for="${id}">${escapeHtml(field.label)}</label>
-            <textarea id="${id}" name="${field.key}" placeholder="${escapeHtml(field.placeholder || '')}">${value}</textarea>
+            <textarea id="${id}" name="${field.key}" placeholder="${escapeHtml(field.placeholder || '')}"
+              ${field.maxLength !== undefined ? `maxlength="${field.maxLength}"` : ''}>${value}</textarea>
             ${field.hint ? `<span class="hint">${escapeHtml(field.hint)}</span>` : ''}</div>`;
         }
         return `<div class="field"><label for="${id}">${escapeHtml(field.label)}</label>

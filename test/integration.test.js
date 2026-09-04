@@ -4139,6 +4139,35 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
       { account_id: secondOrderAccount.id, ordinal: 2 },
     ]
   );
+  // Eine Kontonotiz gehört zur Zuordnung, nicht zum Minecraft-Konto: Dasselbe Konto darf auf
+  // einem anderen Platz deshalb eine andere Aufgabe beschreiben. Ein leeres Feld löscht sie
+  // wieder, statt eine unsichtbare Leerzeichen-Notiz zu hinterlassen.
+  const savedAccountNote = await api(base, `/api/profiles/${orderProfile.id}/accounts/${account.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { note: 'Nachts an der Farm' },
+  });
+  assert.equal(savedAccountNote.response.status, 200);
+  assert.equal(
+    savedAccountNote.data.profile.accounts.find((entry) => entry.account_id === account.id)?.note,
+    'Nachts an der Farm'
+  );
+  assert.equal(
+    db
+      .prepare('SELECT note FROM profile_accounts WHERE profile_id = ? AND account_id = ?')
+      .get(orderProfile.id, account.id).note,
+    'Nachts an der Farm'
+  );
+  const clearedAccountNote = await api(base, `/api/profiles/${orderProfile.id}/accounts/${account.id}`, {
+    token: USER_TOKEN,
+    method: 'PATCH',
+    body: { note: '' },
+  });
+  assert.equal(clearedAccountNote.response.status, 200);
+  assert.equal(
+    clearedAccountNote.data.profile.accounts.find((entry) => entry.account_id === account.id)?.note,
+    null
+  );
   const impossibleOrder = await api(base, `/api/profiles/${orderProfile.id}/accounts/${account.id}`, {
     token: USER_TOKEN,
     method: 'PATCH',

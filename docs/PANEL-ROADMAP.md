@@ -82,6 +82,9 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Mehrere vorhandene Konten lassen sich in einer Auswahl zugleich an einen Serverplatz hängen:
       Auswahlzähler und Tarifkapazität bleiben sichtbar, die API übernimmt die geprüfte Auswahl
       gemeinsam und behält ihre Startreihenfolge bei.
+- [x] Jede Kontozuordnung kann eine eigene, kurze Notiz tragen: Sie bleibt auf genau diesem
+      Serverplatz sichtbar, lässt sich direkt an der Kontozeile ändern und wird nie an Minecraft
+      übertragen.
 - [x] Vorgänge, die ein Konto entfernen oder neu verbinden, mit klarer Auswirkungsanzeige auf
       laufende Bots versehen.
 
