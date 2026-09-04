@@ -28,6 +28,11 @@ export const state = {
   todos: [], // was der Kunde gerade zu tun hat – berechnet der Server (server/todos.js)
   bots: new Map(), // key "profil:konto" -> Zustand
   lines: new Map(), // key -> Chatzeilen (Ringpuffer)
+  // Die zwei Indizes gehören zu den Live-Ereignissen. Ein Statuswechsel darf nicht erst alle
+  // Serverplätze und alle zugeordneten Konten durchsuchen, nur um genau dieses eine Konto zu
+  // finden. `refresh()` baut sie aus derselben Antwort wie `profiles` neu auf.
+  profileIndex: new Map(), // profile id -> profile
+  profileMembers: new Map(), // profile id -> (account id -> member)
   route: { name: 'overview', id: null, tab: null },
   onLive: null, // die aktive Ansicht darf sich für Live-Daten anmelden
 };
@@ -86,14 +91,38 @@ export async function refresh({ profiles = true, accounts = true, me = true } = 
   if (profiles) jobs.push(api('/profiles').then((data) => { state.profiles = data.profiles; }));
   if (accounts) jobs.push(api('/accounts').then((data) => { state.accounts = data.accounts; }));
   await Promise.all(jobs);
+  if (profiles) rebuildProfileIndex();
+}
+
+/** Verknüpft die Momentaufnahme der API mit den flüchtigen WebSocket-Daten. */
+function rebuildProfileIndex() {
+  state.profileIndex.clear();
+  state.profileMembers.clear();
+  const activeKeys = new Set();
   for (const profile of state.profiles) {
+    state.profileIndex.set(profile.id, profile);
+    const members = new Map();
+    state.profileMembers.set(profile.id, members);
     for (const member of profile.accounts) {
-      state.bots.set(`${profile.id}:${member.account_id}`, member);
+      members.set(member.account_id, member);
+      const key = `${profile.id}:${member.account_id}`;
+      activeKeys.add(key);
+      // `views` kommt ausschließlich über die Live-Leitung. Ein gewöhnliches Nachladen der
+      // Profil-Liste darf ein gerade sichtbares Scoreboard oder Menü nicht wegwerfen.
+      const previous = state.bots.get(key);
+      state.bots.set(key, { ...previous, ...member, views: previous?.views || member.views });
     }
+  }
+  // Gelöschte oder abgehängte Konten dürfen weder Botzustand noch Chatverlauf im lange offenen
+  // Panel zurücklassen. Das hält den Speicher auch nach vielen Verwaltungsaktionen begrenzt.
+  for (const key of state.bots.keys()) {
+    if (activeKeys.has(key)) continue;
+    state.bots.delete(key);
+    state.lines.delete(key);
   }
 }
 
-export const profileById = (id) => state.profiles.find((profile) => profile.id === Number(id));
+export const profileById = (id) => state.profileIndex.get(Number(id));
 
 /** Chatzeilen eines Bots aus dem Zwischenspeicher. */
 export function linesOf(key) {
@@ -104,8 +133,8 @@ function pushLine(key, entry) {
   const list = state.lines.get(key) || [];
   list.push(entry);
   // Wie viel Verlauf ein Platz behält, hängt an seinem Tarif – der Server sagt es im Profil.
-  const profileId = Number(key.split(':')[0]);
-  const limit = profileById(profileId)?.chat_limit || 200;
+  const profileId = Number(key.slice(0, key.indexOf(':')));
+  const limit = state.profileIndex.get(profileId)?.chat_limit || 200;
   if (list.length > limit) list.splice(0, list.length - limit);
   state.lines.set(key, list);
 }
@@ -118,28 +147,91 @@ let reconnectTimer = null;
 let panelReady = false;
 let ticketStatsTimer = null;
 let notificationStatsTimer = null;
-let sideFrame = null;
-let sideTimer = null;
-let lastSideDraw = 0;
+let profilePatchFrame = null;
+let profilePatchTimer = null;
+let lastProfilePatch = 0;
+let liveConnected = false;
+const dirtyProfiles = new Set();
 
 // Statusmeldungen mehrerer Bots können dauerhaft schneller eintreffen als der Bildschirm sie
-// sinnvoll zeigen kann. Die Seitenleiste besteht aus Navigation, Suche und allen Serverplätzen;
-// sie sechzigmal je Sekunde komplett neu aufzubauen kostet deutlich mehr als der kleine Punkt,
-// der sich darin ändert. Zehn Aktualisierungen je Sekunde bleiben visuell unmittelbar, lassen
-// dem Hauptinhalt und Eingaben aber zuverlässig Zeit.
+// sinnvoll zeigen kann. Punkt und Zähler des betroffenen Serverplatzes werden deshalb getrennt
+// und höchstens zehnmal je Sekunde aktualisiert. Das bleibt visuell unmittelbar, lässt aber dem
+// Hauptinhalt und Eingaben zuverlässig Zeit.
 const SIDE_DRAW_INTERVAL = 100;
 
-/** Mehrere Bot-Ereignisse in demselben Bild brauchen nur eine neue Seitenleiste. */
-function scheduleSideDraw() {
-  if (sideFrame !== null || sideTimer !== null) return;
-  const elapsed = performance.now() - lastSideDraw;
-  sideTimer = setTimeout(() => {
-    sideTimer = null;
-    sideFrame = requestAnimationFrame(() => {
-      sideFrame = null;
-      drawSide();
+/** Die Statuspunkte werden getrennt vom strukturellen Neuaufbau der Leiste behandelt. */
+function clearProfilePatches() {
+  if (profilePatchTimer !== null) clearTimeout(profilePatchTimer);
+  if (profilePatchFrame !== null) cancelAnimationFrame(profilePatchFrame);
+  profilePatchTimer = null;
+  profilePatchFrame = null;
+  dirtyProfiles.clear();
+}
+
+/**
+ * Ein Botzustand ändert in der Seitenleiste nur den Punkt und dessen Zähler. Der frühere Weg
+ * setzte für jede Nachricht das komplette Suchfeld, alle Gruppen und alle Listener neu ein.
+ * Auch diese kleinen Patches sind auf zehn Bilder je Sekunde gebündelt, damit viele Bots beim
+ * gemeinsamen Start nicht unnötig Layoutarbeit auslösen.
+ */
+function scheduleProfilePatch(profileId) {
+  if (!Number.isInteger(profileId)) return;
+  dirtyProfiles.add(profileId);
+  if (profilePatchFrame !== null || profilePatchTimer !== null) return;
+  const elapsed = performance.now() - lastProfilePatch;
+  profilePatchTimer = setTimeout(() => {
+    profilePatchTimer = null;
+    profilePatchFrame = requestAnimationFrame(() => {
+      profilePatchFrame = null;
+      lastProfilePatch = performance.now();
+      for (const id of dirtyProfiles) patchProfileIndicator(id);
+      dirtyProfiles.clear();
     });
   }, Math.max(0, SIDE_DRAW_INTERVAL - elapsed));
+}
+
+function profileTone(profile) {
+  return profile.suspended ? 'warn' : profile.online ? 'ok' : profile.total ? 'idle' : 'empty';
+}
+
+function patchProfileIndicator(profileId) {
+  const profile = profileById(profileId);
+  if (!profile) return;
+  for (const node of document.querySelectorAll(`[data-profile-id="${profileId}"]`)) {
+    const dot = node.querySelector('[data-profile-dot]');
+    if (dot) dot.className = `side-dot is-${profileTone(profile)}`;
+    const count = node.querySelector('[data-profile-count]');
+    if (count) count.textContent = `${profile.online}/${profile.total}`;
+  }
+}
+
+function displayCount(value) {
+  const count = Math.max(0, Number(value) || 0);
+  return count > 99 ? '99+' : String(count);
+}
+
+function setCount(selector, value) {
+  const count = Math.max(0, Number(value) || 0);
+  for (const node of document.querySelectorAll(selector)) {
+    node.hidden = !count;
+    if (count) node.textContent = displayCount(count);
+  }
+}
+
+/** Aktualisiert reine Zähler ohne die Navigation mitsamt Eingabefokus neu zu erzeugen. */
+export function updateShellBadges() {
+  setCount('[data-side-badge="todos"]', state.todos?.length || 0);
+  setCount('[data-side-badge="tickets"]', state.stats?.tickets_unread || 0);
+  setCount('[data-side-badge="notifications"]', state.stats?.notifications_unread || 0);
+  setCount('[data-side-badge="staff-tickets"]', state.stats?.staff_tickets || 0);
+  setCount('[data-mobile-badge="tickets"]', state.stats?.tickets_unread || 0);
+  setCount('[data-mobile-badge="staff-tickets"]', state.stats?.staff_tickets || 0);
+  setCount('[data-appbar-badge="notifications"]', state.stats?.notifications_unread || 0);
+}
+
+function updateBalance() {
+  const text = credits(state.me?.credits ?? 0);
+  for (const node of document.querySelectorAll('[data-balance]')) node.textContent = text;
 }
 
 /**
@@ -154,7 +246,7 @@ function refreshTicketStats() {
       .then((data) => {
         state.stats = data.stats;
         state.todos = data.todos || [];
-        scheduleSideDraw();
+        updateShellBadges();
       })
       .catch(() => {});
   }, 180);
@@ -167,13 +259,7 @@ function refreshNotificationStats() {
     api('/me/notifications?limit=1')
       .then((data) => {
         if (state.stats) state.stats.notifications_unread = data.unread || 0;
-        scheduleSideDraw();
-        const badge = document.querySelector('.appbar-bell > span');
-        const button = document.querySelector('.appbar-bell');
-        const unread = data.unread || 0;
-        if (button && unread && !badge) button.insertAdjacentHTML('beforeend', `<span>${unread > 99 ? '99+' : unread}</span>`);
-        else if (badge && unread) badge.textContent = unread > 99 ? '99+' : String(unread);
-        else badge?.remove();
+        updateShellBadges();
       })
       .catch(() => {});
   }, 280);
@@ -202,7 +288,12 @@ function connect() {
       return;
     }
     if (message.type === 'hello') {
-      for (const bot of message.bots) state.bots.set(bot.key, { ...state.bots.get(bot.key), ...bot });
+      const changedProfiles = new Set();
+      for (const bot of message.bots) {
+        state.bots.set(bot.key, { ...state.bots.get(bot.key), ...bot });
+        changedProfiles.add(Number(String(bot.key).split(':', 1)[0]));
+      }
+      for (const profileId of changedProfiles) scheduleProfilePatch(profileId);
       state.onLive?.({ type: 'hello' });
       return;
     }
@@ -233,22 +324,28 @@ function connect() {
       // Zähler in der Seitenleiste stimmen sonst nicht mehr.
       const [profileId, accountId] = message.key.split(':').map(Number);
       const profile = profileById(profileId);
-      const member = profile?.accounts.find((entry) => entry.account_id === accountId);
+      const member = state.profileMembers.get(profileId)?.get(accountId);
       if (member) {
+        const wasOnline = Boolean(member.online);
+        const hasOnline = Object.hasOwn(message.state, 'online');
         member.state = message.state.state;
-        member.online = message.state.online;
+        if (hasOnline) member.online = Boolean(message.state.online);
         member.detail = message.state.detail;
         member.last_error = message.state.last_error;
-        profile.online = profile.accounts.filter((entry) => entry.online).length;
+        if (profile && hasOnline && wasOnline !== member.online) {
+          profile.online = Math.max(0, (Number(profile.online) || 0) + (member.online ? 1 : -1));
+        }
       }
-      scheduleSideDraw();
-      refreshNotificationStats();
+      scheduleProfilePatch(profileId);
+      // Nur Fehler und eine abgelaufene Anmeldung erzeugen eine Aktivitätsmeldung. Normale
+      // Online-/Offline-Wechsel sind absichtlich stumm (siehe server/index.js).
+      if (message.state.state === 'auth' || message.state.state === 'error') refreshNotificationStats();
       state.onLive?.({ type: 'state', key: message.key, state: message.state });
       return;
     }
     if (message.type === 'credits') {
       if (state.me) state.me.credits = message.balance;
-      scheduleSideDraw();
+      updateBalance();
       refreshNotificationStats();
       state.onLive?.({ type: 'credits' });
       return;
@@ -260,7 +357,7 @@ function connect() {
         profile.active = false;
       }
       toast(tr('dash.suspended', { name: message.name }), 'bad');
-      scheduleSideDraw();
+      scheduleProfilePatch(Number(message.profile_id));
       refreshNotificationStats();
       state.onLive?.({ type: 'suspended', profile_id: message.profile_id });
     }
@@ -277,6 +374,7 @@ function connect() {
 }
 
 function setLive(online) {
+  liveConnected = online;
   const node = $('#live-dot');
   if (node) {
     node.style.color = online ? 'var(--ok)' : 'var(--text-2)';
@@ -478,13 +576,21 @@ export const tabsFor = (profile) =>
 // ---------------------------------------------------------------- Bausteine
 
 /** Ein Eintrag der Navigation: Symbol, Beschriftung, optional eine Zahl. */
-function navItem({ href, label, iconName, active, badge = 0 }) {
+function navItem({ href, label, iconName, active, badge = 0, badgeKey = '' }) {
   return `<a class="side-item ${active ? 'active' : ''}" href="${href}"
     title="${escapeHtml(label)}" data-find="${escapeHtml(label.toLowerCase())}"
     ${active ? 'aria-current="page"' : ''}>
     <span class="side-item-icon">${icon(iconName)}</span>
     <span class="side-item-label">${escapeHtml(label)}</span>
-    ${badge ? `<span class="side-badge">${badge > 99 ? '99+' : badge}</span>` : ''}
+    ${
+      badgeKey
+        ? `<span class="side-badge" data-side-badge="${badgeKey}" ${badge ? '' : 'hidden'}>${
+            badge ? displayCount(badge) : ''
+          }</span>`
+        : badge
+          ? `<span class="side-badge">${displayCount(badge)}</span>`
+          : ''
+    }
   </a>`;
 }
 
@@ -498,15 +604,14 @@ function navItem({ href, label, iconName, active, badge = 0 }) {
  * Namen darunter verdeckte. Das traf jedes frisch angelegte Konto.
  */
 function serverItem(profile, active) {
-  const tone = profile.suspended ? 'warn' : profile.online ? 'ok' : profile.total ? 'idle' : 'empty';
   const favorite = isFavoriteServer(state.me?.id, profile.id);
   return `<a class="side-item side-server ${active ? 'active' : ''}"
     href="#/servers/${profile.id}/connect" title="${escapeHtml(profile.name)}"
-    data-find="${escapeHtml(profile.name.toLowerCase())}">
-    <span class="side-item-icon"><span class="side-dot is-${tone}"></span></span>
+    data-profile-id="${profile.id}" data-find="${escapeHtml(profile.name.toLowerCase())}">
+    <span class="side-item-icon"><span class="side-dot is-${profileTone(profile)}" data-profile-dot></span></span>
     <span class="side-item-label">${escapeHtml(profile.name)}</span>
     ${favorite ? `<span class="side-favorite" aria-label="${escapeHtml(tr('srv.favorite'))}">${icon('star')}</span>` : ''}
-    <span class="side-count">${profile.online}/${profile.total}</span>
+    <span class="side-count" data-profile-count>${profile.online}/${profile.total}</span>
   </a>`;
 }
 
@@ -563,6 +668,7 @@ function adminSection() {
             iconName: item.icon,
             active: current === item.key,
             badge: item.key === 'tickets' ? waiting : 0,
+            badgeKey: item.key === 'tickets' ? 'staff-tickets' : '',
           })
         )
         .join('')}
@@ -574,7 +680,9 @@ function adminSection() {
     title: tr('dash.admin'),
     iconName: 'shield',
     open: sectionOpen('admin', state.route.name === 'admin'),
-    headExtra: waiting ? `<span class="side-badge">${waiting > 99 ? '99+' : waiting}</span>` : '',
+    headExtra: `<span class="side-badge" data-side-badge="staff-tickets" ${waiting ? '' : 'hidden'}>${
+      waiting ? displayCount(waiting) : ''
+    }</span>`,
     body,
   });
 }
@@ -582,15 +690,7 @@ function adminSection() {
 // ---------------------------------------------------------------- Zeichnen
 
 export function drawSide() {
-  if (sideTimer !== null) {
-    clearTimeout(sideTimer);
-    sideTimer = null;
-  }
-  if (sideFrame !== null) {
-    cancelAnimationFrame(sideFrame);
-    sideFrame = null;
-  }
-  lastSideDraw = performance.now();
+  clearProfilePatches();
   applySideLayout();
   const route = state.route;
   const unread = state.stats?.tickets_unread || 0;
@@ -653,6 +753,7 @@ export function drawSide() {
             // Die offenen Aufgaben stehen in der Übersicht. Die Zahl daneben ist der Grund,
             // überhaupt hinzusehen – sonst findet sie nur, wer ohnehin schon dort ist.
             badge: item.hash === '#/' ? todoCount : 0,
+            badgeKey: item.hash === '#/' ? 'todos' : '',
           })
         ).join('')}
       </nav>
@@ -685,6 +786,8 @@ export function drawSide() {
                 : item.hash === '#/activity'
                   ? state.stats?.notifications_unread || 0
                   : 0,
+            badgeKey:
+              item.hash === '#/tickets' ? 'tickets' : item.hash === '#/activity' ? 'notifications' : '',
           })
         ).join('')}
       </nav>
@@ -710,7 +813,7 @@ export function drawSide() {
       <a class="side-balance" href="#/credits" title="${escapeHtml(tr('dash.credits'))}">
         <span class="side-item-icon">${icon('wallet')}<span class="dot" id="live-dot"></span></span>
         <span class="side-balance-text">
-          <span class="side-balance-value">${credits(state.me?.credits ?? 0)}</span>
+          <span class="side-balance-value" data-balance>${credits(state.me?.credits ?? 0)}</span>
           <span class="side-balance-note">${escapeHtml(costLine())}</span>
         </span>
       </a>
@@ -765,6 +868,8 @@ export function drawSide() {
   applyFilter();
 
   drawMobileNav();
+  setLive(liveConnected);
+  updateShellBadges();
 }
 
 /**
@@ -823,8 +928,13 @@ function drawMobileNav() {
   root.innerHTML = `${items
     .map((item) => {
       const badge = item.staffBadge ? waiting : item.hash === '#/tickets' ? unread : 0;
+      const badgeKey = item.staffBadge ? 'staff-tickets' : item.hash === '#/tickets' ? 'tickets' : '';
       return `<a href="${item.hash}" ${routeMatches(item.hash) ? 'aria-current="page"' : ''}>
-      <span class="mobile-nav-icon">${icon(item.icon)}${badge ? `<i>${badge > 99 ? '99+' : badge}</i>` : ''}</span>
+      <span class="mobile-nav-icon">${icon(item.icon)}${
+        badgeKey
+          ? `<i data-mobile-badge="${badgeKey}" ${badge ? '' : 'hidden'}>${badge ? displayCount(badge) : ''}</i>`
+          : ''
+      }</span>
       <span>${escapeHtml(tr(item.hash === '#/accounts' ? 'dash.accountsShort' : item.key))}</span>
     </a>`;
     })
@@ -1026,7 +1136,9 @@ export function appbar(title, actionsHtml = '', subtitle = '') {
         title="${escapeHtml(tr('pal.placeholder'))}">${icon('search')}<kbd>${escapeHtml(tr('pal.shortcut'))}</kbd></button>
       <a class="btn btn-ghost btn-sm appbar-bell" href="#/activity"
         aria-label="${escapeHtml(tr('dash.activity'))}" title="${escapeHtml(tr('dash.activity'))}">
-        ${icon('bell')}${unread ? `<span>${unread > 99 ? '99+' : unread}</span>` : ''}</a>
+        ${icon('bell')}<span data-appbar-badge="notifications" ${unread ? '' : 'hidden'}>${
+          unread ? displayCount(unread) : ''
+        }</span></a>
       ${actionsHtml}
     </div>
   </div>`;
