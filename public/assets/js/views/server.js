@@ -574,9 +574,28 @@ async function tabConnect(root, profile) {
         if (member) openEventLog(member);
       })
     );
+
+    $$('[data-account-order]', box).forEach((button) =>
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        try {
+          await api(`/profiles/${profile.id}/accounts/${button.dataset.accountOrder}`, {
+            method: 'PATCH',
+            body: { ordinal: Number(button.dataset.accountPosition) },
+          });
+          await refresh({ accounts: false });
+          ok(tr('srv.accountOrderSaved'));
+          draw();
+        } catch (error) {
+          fail(error);
+        } finally {
+          button.disabled = false;
+        }
+      })
+    );
   };
 
-  function botRow(member) {
+  function botRow(member, index) {
     const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
     const running = bot.state && bot.state !== 'offline';
     const elsewhere = member.running_elsewhere || [];
@@ -649,6 +668,16 @@ async function tabConnect(root, profile) {
         }
       </div>
       <div class="row" style="gap:.25rem">
+        <button class="btn btn-ghost btn-sm" data-account-order="${member.account_id}" data-account-position="${
+          index - 1
+        }" title="${escapeHtml(tr('srv.accountOrderUp'))}" aria-label="${escapeHtml(tr('srv.accountOrderUp'))}" ${
+          index === 0 ? 'disabled' : ''
+        }>↑</button>
+        <button class="btn btn-ghost btn-sm" data-account-order="${member.account_id}" data-account-position="${
+          index + 1
+        }" title="${escapeHtml(tr('srv.accountOrderDown'))}" aria-label="${escapeHtml(tr('srv.accountOrderDown'))}" ${
+          index === members.length - 1 ? 'disabled' : ''
+        }>↓</button>
         <button class="btn btn-sm ${running ? '' : 'btn-primary'}" data-toggle="${member.account_id}"
           title="${escapeHtml(blockedByElsewhere ? tr('srv.accountElsewhereHint') : '')}"
           ${running || (profile.active && !member.suspended && !blockedByElsewhere) ? '' : 'disabled'}>${escapeHtml(

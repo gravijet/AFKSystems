@@ -76,6 +76,9 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Eindeutige Zuordnungsübersicht: welches Minecraft-Konto läuft auf welchen Plätzen und wo
       steht ein Konflikt an; parallele Starts werden zentral auch für Zeitpläne und Wiederanläufe
       verhindert und führen direkt zum bereits aktiven Platz.
+- [x] Eigene Kontoreihenfolge je Serverplatz: Die sichtbare Start-, Chat- und Steuerauswahl lässt
+      sich mit tastaturbedienbaren Auf-/Ab-Knöpfen dauerhaft ordnen; neu zugeordnete Konten werden
+      ans Ende gesetzt.
 - [x] Vorgänge, die ein Konto entfernen oder neu verbinden, mit klarer Auswirkungsanzeige auf
       laufende Bots versehen.
 
