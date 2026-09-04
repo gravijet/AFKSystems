@@ -403,6 +403,10 @@ async function tabConnect(root, profile) {
   const free = state.accounts.filter(
     (account) => !members.some((member) => member.account_id === account.id)
   );
+  // `features` ist die aktuelle Kapazität einschließlich gebuchter Zusätze. Die Zahl wird hier
+  // einmal festgehalten, damit Knopf, Dialog und Auswahlzähler dieselbe Grenze meinen.
+  const maxAccounts = Number(profile.features?.max_accounts) || 0;
+  const freePlaces = Math.max(0, maxAccounts - members.length);
   // Der Zielserver wird einmal beim Öffnen gefragt. Der Wert lebt nur für diesen Reiter: Er ist
   // eine Momentaufnahme eines fremden Servers, keine Profileinstellung und kein Wert, den wir
   // versehentlich für einen späteren Besuch als aktuell ausgeben dürfen.
@@ -420,9 +424,15 @@ async function tabConnect(root, profile) {
       <button class="btn btn-sm" id="stop">${icon('stop')} ${escapeHtml(tr('srv.stopAll'))}</button>
       <button class="btn btn-sm" id="restart" title="${escapeHtml(tr('common.retry'))}">${icon('refresh')}</button>
       <div class="grow"></div>
-      <button class="btn btn-sm" id="attach" ${free.length && profile.active ? '' : 'disabled'}>${icon('plus')} ${escapeHtml(
-        tr('srv.addAccounts')
-      )}</button>
+      <button class="btn btn-sm" id="attach" ${
+        free.length && profile.active && freePlaces ? '' : 'disabled'
+      } title="${escapeHtml(
+        !freePlaces
+          ? tr('srv.addCapacityFull')
+          : free.length
+            ? ''
+            : tr('srv.addNoneLeft')
+      )}">${icon('plus')} ${escapeHtml(tr('srv.addAccounts'))}</button>
     </div>
 
     <!-- Die vier Antworten stehen in der Reihenfolge einer echten Fehlersuche: zuerst die Bots,
@@ -1434,27 +1444,80 @@ async function tabConnect(root, profile) {
 
   async function attach() {
     if (!free.length) return toast(tr('srv.addNoneLeft'));
-    const data = await formDialog(
-      tr('srv.addAccounts'),
-      [
-        {
-          key: 'account_id',
-          label: tr('ov.col.account'),
-          type: 'select',
-          value: free[0].id,
-          options: free.map((account) => ({ value: account.id, label: accountLabel(account) })),
-        },
-      ],
-      { submit: tr('common.create') }
-    );
-    if (!data) return;
+    if (!freePlaces) return toast(tr('srv.addCapacityFull'), 'warn');
+
+    // Ein einfacher Select hat die vorhandene Mehrfach-API unsichtbar gemacht: Bei fünf
+    // vorbereiteten Konten musste man denselben Dialog fünfmal öffnen. Die Kästchen behalten
+    // die Namen, Tags und Favoriten aus der Kontoverwaltung bei und begrenzen nur die Auswahl,
+    // nicht die Information, die der Kunde vorher sieht.
+    const selected = await new Promise((resolve) => {
+      const dialog = document.createElement('dialog');
+      dialog.innerHTML = `
+        <form method="dialog">
+          <header><h3>${escapeHtml(tr('srv.addAccounts'))}</h3></header>
+          <div class="body stack">
+            <div class="row spread wrap">
+              <p class="small muted" style="margin:0">${escapeHtml(
+                tr('srv.addCapacity', { chosen: 0, max: freePlaces })
+              )}</p>
+              <button class="btn btn-ghost btn-sm" type="button" id="attach-all">${escapeHtml(
+                tr('srv.addAllPossible')
+              )}</button>
+            </div>
+            <div class="stack" id="attach-accounts">
+              ${free
+                .map(
+                  (account) => `<label class="check"><input type="checkbox" data-attach-account value="${account.id}">
+                    <span>${escapeHtml(accountLabel(account))}</span></label>`
+                )
+                .join('')}
+            </div>
+          </div>
+          <footer>
+            <button class="btn" value="cancel" type="submit">${escapeHtml(tr('common.cancel'))}</button>
+            <button class="btn btn-primary" value="ok" type="submit" disabled>${escapeHtml(
+              tr('srv.addSelected')
+            )}</button>
+          </footer>
+        </form>`;
+      document.body.append(dialog);
+      const boxes = $$('[data-attach-account]', dialog);
+      const counter = dialog.querySelector('.muted');
+      const confirm = dialog.querySelector('button[value="ok"]');
+      const update = () => {
+        const chosen = boxes.filter((box) => box.checked);
+        for (const box of boxes) box.disabled = !box.checked && chosen.length >= freePlaces;
+        counter.textContent = tr('srv.addCapacity', { chosen: chosen.length, max: freePlaces });
+        confirm.disabled = !chosen.length;
+      };
+      boxes.forEach((box) => box.addEventListener('change', update));
+      dialog.querySelector('#attach-all').addEventListener('click', () => {
+        boxes.forEach((box, index) => {
+          box.checked = index < freePlaces;
+        });
+        update();
+      });
+      let result = null;
+      dialog.querySelector('form').addEventListener('submit', (event) => {
+        if (event.submitter?.value !== 'ok') return;
+        result = boxes.filter((box) => box.checked).map((box) => Number(box.value));
+      });
+      dialog.addEventListener('close', () => {
+        dialog.remove();
+        resolve(result);
+      });
+      dialog.showModal();
+      boxes[0]?.focus();
+    });
+    if (!selected?.length) return;
     try {
       await api(`/profiles/${profile.id}/accounts`, {
         method: 'POST',
-        body: { account_id: Number(data.account_id) },
+        body: { accounts: selected },
       });
       await refresh({ accounts: false });
       draw();
+      ok(tr('srv.addedAccounts', { n: selected.length }));
     } catch (error) {
       fail(error);
     }

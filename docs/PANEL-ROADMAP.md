@@ -79,6 +79,9 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 - [x] Eigene Kontoreihenfolge je Serverplatz: Die sichtbare Start-, Chat- und Steuerauswahl lässt
       sich mit tastaturbedienbaren Auf-/Ab-Knöpfen dauerhaft ordnen; neu zugeordnete Konten werden
       ans Ende gesetzt.
+- [x] Mehrere vorhandene Konten lassen sich in einer Auswahl zugleich an einen Serverplatz hängen:
+      Auswahlzähler und Tarifkapazität bleiben sichtbar, die API übernimmt die geprüfte Auswahl
+      gemeinsam und behält ihre Startreihenfolge bei.
 - [x] Vorgänge, die ein Konto entfernen oder neu verbinden, mit klarer Auswirkungsanzeige auf
       laufende Bots versehen.
 

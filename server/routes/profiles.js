@@ -1094,12 +1094,18 @@ router.post(
     let ordinal =
       (db.prepare('SELECT MAX(ordinal) AS max_ordinal FROM profile_accounts WHERE profile_id = ?').get(profile.id)
         .max_ordinal ?? -1) + 1;
-    for (const accountId of fresh) {
-      db.prepare(
-        `INSERT INTO profile_accounts (profile_id, account_id, note, ordinal)
-         VALUES (?, ?, ?, ?) ON CONFLICT(profile_id, account_id) DO NOTHING`
-      ).run(profile.id, accountId, req.body?.note || null, ordinal++);
-    }
+    // Eine Sammelauswahl ist eine Aktion, nicht eine Reihe halbfertiger Aktionen. Falls die
+    // Datenbank den Vorgang nicht vollständig übernehmen kann, bleibt deshalb auch kein Teil
+    // der Auswahl auf dem Platz zurück. Die Besitz- und Tarifprüfungen stehen bewusst davor,
+    // damit die Transaktion selbst nur noch die bereits geprüften Einträge schreibt.
+    const addMember = db.prepare(
+      `INSERT INTO profile_accounts (profile_id, account_id, note, ordinal)
+       VALUES (?, ?, ?, ?) ON CONFLICT(profile_id, account_id) DO NOTHING`
+    );
+    db.transaction(() => {
+      for (const accountId of fresh) addMember.run(profile.id, accountId, req.body?.note || null, ordinal++);
+    })();
+    if (fresh.length) audit(req.user.id, 'profile-accounts-attach', { profile: profile.id, accounts: fresh });
     res.json({ profile: profileView(profile, langOf(req)) });
   })
 );
