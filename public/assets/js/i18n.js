@@ -1813,7 +1813,7 @@ export const S = {
   'adm.settings': { en: 'Settings', de: 'Einstellungen' },
   'adm.mails': { en: 'Mail log', de: 'Mail-Protokoll' },
   'adm.client': { en: 'Client', de: 'Client' },
-  'adm.clientOutdated': {
+  'adm.clientOutdatedCount': {
     en: '{n} of {total} running bots still hold the old client file',
     de: '{n} von {total} laufenden Bots halten noch die alte Client-Datei',
   },
@@ -3208,7 +3208,7 @@ export const S = {
     en: 'The bot is fetching the settings again.',
     de: 'Der Bot holt die Einstellungen erneut.',
   },
-  'adm.botRestart': { en: 'Restart bot', de: 'Bot neu starten' },
+  'adm.discordBotRestart': { en: 'Restart bot', de: 'Bot neu starten' },
   'adm.botRestartAsk': {
     en: 'Restart the Discord bot? Tickets and roles pause for a few seconds.',
     de: 'Den Discord-Bot neu starten? Tickets und Rollen pausieren für ein paar Sekunden.',

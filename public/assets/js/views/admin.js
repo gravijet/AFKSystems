@@ -4246,7 +4246,7 @@ async function settings(root) {
     ['#bot-restart', 'restart', true],
   ]) {
     $(selector)?.addEventListener('click', async (event) => {
-      if (ask && !(await confirmDialog(tr('adm.botRestartAsk'), { confirm: tr('adm.botRestart') }))) {
+      if (ask && !(await confirmDialog(tr('adm.botRestartAsk'), { confirm: tr('adm.discordBotRestart') }))) {
         return;
       }
       const button = event.currentTarget;
@@ -4315,7 +4315,7 @@ async function client(root) {
       data.outdated
         ? `<div class="note" style="margin-bottom:1.25rem">${icon('download')}
             <div class="grow">
-              <strong>${escapeHtml(tr('adm.clientOutdated', { n: data.outdated, total: data.running }))}</strong>
+              <strong>${escapeHtml(tr('adm.clientOutdatedCount', { n: data.outdated, total: data.running }))}</strong>
               <div class="small muted mono">${Object.entries(data.outdated_by_version || {})
                 .sort((a, b) => b[1] - a[1])
                 .map(([version, count]) => `${escapeHtml(version)}: ${count}`)
