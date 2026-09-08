@@ -7,13 +7,11 @@ import { parseFormatting } from './chatlog.js';
 // Die Sprache steht im <html lang="…">, das der Server schon richtig ausliefert. Von dort holen
 // wir sie – so gibt es keinen zweiten Ort, an dem sie stehen könnte, und nichts blitzt falsch auf.
 //
-// **Die Texte kommen einsprachig.** Bisher stand hier ein Import von i18n.js, und die trägt jeden
-// Text in beiden Sprachen: rund tausendvierhundert Schlüssel, hundertdreißig Kilobyte übersetztes
-// JavaScript, das größte Stück auf dem Weg zum ersten Bild – und die Hälfte davon in einer Sprache,
-// die dieser Besucher nie zu sehen bekommt. Der Server rechnet daraus beim Hochfahren je Sprache
-// eine eigene Fassung und schreibt ihre Adresse ins <html> (siehe server/strings.js). Welche gilt,
-// entscheidet also die Stelle, die auch die Seite ausliefert; hier steht kein zweites Mal eine
-// Liste von Sprachen.
+// **Die Texte kommen einsprachig und abschnittsweise.** Der Server rechnet aus i18n.js eine
+// einsprachige Fassung für den Panel-Rahmen und eine für jede lazy geladene Ansicht. Welche gilt,
+// entscheidet die Stelle, die auch die Seite ausliefert; hier steht keine zweite Textquelle und
+// keine zweite Sprachliste. Das erste Bild muss so weder die Verwaltung noch den Servereditor
+// parsen, und beim Wechsel in eine Ansicht liegen ihre Texte parallel zu ihrem Modul bereit.
 //
 // Ein `await` auf Modulebene: Jedes Modul, das ui.js benutzt, wartet damit auf die Texte. Das ist
 // richtig so – ohne sie hätte es nichts zu zeichnen –, und es kostet nichts, weil der <head> die
@@ -24,7 +22,13 @@ const stringsUrl =
   // Rückfalltür für eine Seite, die noch aus einem Zwischenspeicher stammt: dann steht das
   // Attribut nicht da, und die Adresse ergibt sich aus der eigenen.
   new URL(`./i18n.${documentElement.lang === 'de' ? 'de' : 'en'}.js`, import.meta.url).pathname;
-const { t, LANGS, DEFAULT_LANG, LANG } = await import(stringsUrl);
+const initialStrings = await import(stringsUrl);
+const { LANGS, DEFAULT_LANG, LANG } = initialStrings;
+// Der Wörterbestand wächst nur um die Texte einer gerade geöffneten Ansicht. Ein Objekt ohne
+// Prototyp verhindert dabei, dass ein unbekannter dynamischer Schlüssel wie `constructor` einen
+// geerbten Wert statt seiner eigenen Bezeichnung zurückgibt.
+const strings = Object.assign(Object.create(null), initialStrings.STRINGS || {});
+const stringLoads = new Map();
 //
 // Gemerkt wird sie **im Browser** (localStorage `afk-lang`) und zusätzlich im Cookie `lang`, das
 // der Server liest. Der Ablauf ist damit:
@@ -77,7 +81,31 @@ export const lang = pageLang;
 export const locale = lang === 'de' ? 'de-DE' : 'en-GB';
 
 /** Ein Text in der Sprache dieser Seite. Eine andere gibt es im Browser nicht. */
-export const tr = (key, vars = null) => t(key, vars);
+export const tr = (key, vars = null) => {
+  let text = Object.hasOwn(strings, key) ? strings[key] : key;
+  if (vars) {
+    for (const name of Object.keys(vars)) text = text.replaceAll(`{${name}}`, String(vars[name]));
+  }
+  return text;
+};
+
+/** Lädt die Texte einer Ansicht nur einmal und teilt sie danach mit allen Komponenten. */
+export function ensureStrings(scope) {
+  if (!scope) return Promise.resolve();
+  if (stringLoads.has(scope)) return stringLoads.get(scope);
+  const job = import(new URL(`./i18n.${scope}.${lang}.js`, import.meta.url))
+    .then((module) => Object.assign(strings, module.STRINGS || {}))
+    .catch((error) => {
+      // Ein hängen gebliebener Fehlschlag darf keine Dauerkarte sein: Ohne diese Zeile blieb ein
+      // einziger Netzwerkaussetzer beim Laden einer Ansicht für den Rest der Sitzung bestehen –
+      // jeder weitere Versuch bekam dasselbe abgelehnte Versprechen zurück, ohne die Adresse noch
+      // einmal anzufragen.
+      stringLoads.delete(scope);
+      throw error;
+    });
+  stringLoads.set(scope, job);
+  return job;
+}
 
 /** Ein Feld, das der Server in beiden Sprachen liefert: {de, en} oder ein fertiger Text. */
 export const pick = (value) =>
@@ -524,16 +552,13 @@ export function panel(title, bodyHtml, actionsHtml = '') {
 }
 
 /**
- * Bestätigungsdialog, der ein Versprechen zurückgibt.
+ * Ja/Nein, als Versprechen.
  *
  * **Aufgelöst wird beim Schließen, nicht beim Klick.** Ein `<dialog>` lässt sich auch mit der
  * Escape-Taste schließen, und dabei fällt kein Klick an: Das Versprechen wurde dann nie
  * aufgelöst. Jeder Aufrufer wartet mit `await` darauf – der Ablauf blieb also mitten im Schritt
  * stehen, und mit ihm ein Knopf, der auf seine Antwort wartete. Dass dabei meistens genau das
  * herauskam, was ein "Abbrechen" bewirkt hätte, war Zufall und kein Entwurf.
- */
-/**
- * Ja/Nein.
  *
  * `extra` hängt zusätzlich einen **Link** in den Fuß – für den Fall, dass die eigentliche Antwort
  * gar nicht "ja" oder "nein" ist, sondern "erst dort hin". Der Discord-Beitritt ist genau so ein

@@ -5,7 +5,7 @@
 // einfacher zu verstehen als jede feinere Aktualisierung, und schnell genug.
 
 import {
-  api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, safeLink, avatar, $, fail, toast,
+  api, icon, themeSwitch, escapeHtml, credits, tr, url, lang, safeLink, avatar, $, fail, toast, ensureStrings,
 } from './ui.js';
 import {
   applyPreferences,
@@ -229,9 +229,18 @@ export function updateShellBadges() {
   setCount('[data-appbar-badge="notifications"]', state.stats?.notifications_unread || 0);
 }
 
+/** Setzt denselben Text auf jeden Knoten mit diesem Attribut – Betrag und Monatszeile teilen sich das. */
+function setText(selector, text) {
+  for (const node of document.querySelectorAll(selector)) node.textContent = text;
+}
+
 function updateBalance() {
-  const text = credits(state.me?.credits ?? 0);
-  for (const node of document.querySelectorAll('[data-balance]')) node.textContent = text;
+  setText('[data-balance]', credits(state.me?.credits ?? 0));
+}
+
+/** Der Betrag und die Monatszeile ändern sich unabhängig voneinander. */
+function updateBalanceNote() {
+  setText('[data-balance-note]', costLine());
 }
 
 /**
@@ -526,6 +535,7 @@ let railMode = storedFlag(SIDE_RAIL_KEY);
 
 /** Was im Suchfeld steht. Überlebt das Neuzeichnen, das bei jedem Zustandswechsel passiert. */
 let sideFilter = '';
+let sideStructure = '';
 
 function sectionOpen(key, fallback = true) {
   // Der aktuelle Bereich ist beim allerersten Besuch geöffnet. Danach zählt ausschließlich die
@@ -689,13 +699,86 @@ function adminSection() {
 
 // ---------------------------------------------------------------- Zeichnen
 
+/**
+ * Alles, was die Seitenleiste strukturell verändert.
+ *
+ * Online-Zähler, Statuspunkt, Guthaben und Badges gehören ausdrücklich nicht dazu: Sie werden
+ * darunter punktuell ersetzt. Gerade auf der Übersicht kamen vorher bei vielen Botmeldungen
+ * hundert Links, Suchattribute und Event-Listener erneut ins DOM, obwohl sich sichtbar nur ein
+ * Punkt geändert hatte.
+ */
+function sideStructureKey() {
+  // `JSON.stringify` statt handgestrickter Trennzeichen: `profile.name` ist frei wählbarer Text
+  // eines Kunden und könnte selbst ":" oder "|" enthalten. Mit manuellem `join` hätten zwei
+  // unterschiedliche Zustände dann zufällig denselben Schlüssel ergeben können – und die Leiste
+  // hätte einen nötigen vollständigen Neuaufbau übersprungen.
+  const profiles = state.profiles.map((profile) => [
+    profile.id,
+    profile.name,
+    Number(isFavoriteServer(state.me?.id, profile.id)),
+    Number(Boolean(profile.plan?.free_slot)),
+    state.route.name === 'server' && state.route.id === profile.id
+      ? tabsFor(profile).map((tab) => tab.key)
+      : [],
+  ]);
+  const user = state.me || {};
+  return JSON.stringify([
+    [state.route.name, state.route.id || '', state.route.tab || ''],
+    profiles,
+    state.meta?.discord_invite || '',
+    user.id || '',
+    user.role || '',
+    user.display_name || '',
+    user.avatar || '',
+    user.avatar_source || '',
+    user.monthly_cost || 0,
+    user.free_access?.reason || '',
+  ]);
+}
+
+/** Je Serverplatz nur der Zustand, den {@link patchProfileIndicator} tatsächlich zeichnet. */
+function profileMetricKey(profile) {
+  return `${profile.online || 0}:${profile.total || 0}:${Number(Boolean(profile.suspended))}`;
+}
+
+// Merkt sich je Serverplatz den zuletzt gezeichneten Zustand. So patcht ein einzelner
+// Statuswechsel bei dreißig Serverplätzen auch nur diesen einen Punkt – nicht alle dreißig, nur
+// weil sich irgendeiner von ihnen geändert hat.
+const patchedProfileMetrics = new Map();
+
+function patchSideMetrics() {
+  const liveIds = new Set();
+  for (const profile of state.profiles) {
+    liveIds.add(profile.id);
+    const key = profileMetricKey(profile);
+    if (patchedProfileMetrics.get(profile.id) !== key) {
+      patchProfileIndicator(profile.id);
+      patchedProfileMetrics.set(profile.id, key);
+    }
+  }
+  for (const id of patchedProfileMetrics.keys()) {
+    if (!liveIds.has(id)) patchedProfileMetrics.delete(id);
+  }
+  updateBalance();
+  updateBalanceNote();
+  updateShellBadges();
+  setLive(liveConnected);
+}
+
 export function drawSide() {
-  clearProfilePatches();
   applySideLayout();
   const route = state.route;
+  const side = $('#side');
+  const structure = sideStructureKey();
+  if (side.dataset.sideReady === 'true' && structure === sideStructure) {
+    patchSideMetrics();
+    drawMobileNav();
+    return;
+  }
+
+  clearProfilePatches();
   const unread = state.stats?.tickets_unread || 0;
   const todoCount = state.todos?.length || 0;
-  const side = $('#side');
   side.classList.remove('boot-side');
   side.removeAttribute('aria-busy');
 
@@ -814,7 +897,7 @@ export function drawSide() {
         <span class="side-item-icon">${icon('wallet')}<span class="dot" id="live-dot"></span></span>
         <span class="side-balance-text">
           <span class="side-balance-value" data-balance>${credits(state.me?.credits ?? 0)}</span>
-          <span class="side-balance-note">${escapeHtml(costLine())}</span>
+          <span class="side-balance-note" data-balance-note>${escapeHtml(costLine())}</span>
         </span>
       </a>
       <div class="side-user">
@@ -829,7 +912,12 @@ export function drawSide() {
       </div>
     </div>`;
 
-  $('#new-profile').addEventListener('click', () => import('./views/server.js').then((m) => m.newProfile()));
+  $('#new-profile').addEventListener('click', () =>
+    ensureStrings('server')
+      .then(() => import('./views/server.js'))
+      .then((module) => module.newProfile())
+      .catch(fail)
+  );
   side.querySelectorAll('[data-side-section]').forEach((details) => {
     details.addEventListener('toggle', () =>
       storeFlag(`${SIDE_SECTION_PREFIX}${details.dataset.sideSection}`, details.open)
@@ -867,9 +955,10 @@ export function drawSide() {
   }
   applyFilter();
 
+  sideStructure = structure;
+  side.dataset.sideReady = 'true';
   drawMobileNav();
-  setLive(liveConnected);
-  updateShellBadges();
+  patchSideMetrics();
 }
 
 /**
@@ -922,6 +1011,8 @@ const ADMIN_MOBILE_NAV = [
 function drawMobileNav() {
   const root = $('#mobile-nav');
   if (!root) return;
+  const structure = `${state.route.name}:${state.route.id || ''}:${state.route.tab || ''}:${state.me?.role || ''}`;
+  if (root.dataset.structure === structure) return;
   const unread = state.stats?.tickets_unread || 0;
   const waiting = state.stats?.staff_tickets || 0;
   const items = state.me?.role === 'admin' ? ADMIN_MOBILE_NAV : MOBILE_NAV;
@@ -943,6 +1034,7 @@ function drawMobileNav() {
       <span class="mobile-nav-icon">${icon('menu')}</span>
       <span>${escapeHtml(tr('nav.menu'))}</span>
     </button>`;
+  root.dataset.structure = structure;
 }
 
 function routeMatches(hash) {
@@ -1008,7 +1100,7 @@ document.addEventListener('click', (event) => {
  * beim Laden gegenseitig brauchen, sind ein Kreis, zwei die sich beim Aufruf brauchen nicht.
  */
 export async function showPalette(initial = '') {
-  const palette = await import('./palette.js');
+  const [, palette] = await Promise.all([ensureStrings('palette'), import('./palette.js')]);
   palette.openPalette(initial);
 }
 
@@ -1159,6 +1251,25 @@ const VIEWS = {
   admin: () => import('./views/admin.js'),
 };
 
+// Die Texte einer Ansicht reisen zusammen mit ihrem Code. Der feste Panel-Rahmen ist bereits
+// da; erst hier kommt beispielsweise der große Satz an Server- oder Verwaltungsbeschriftungen
+// hinzu. Beides gleichzeitig anzustoßen vermeidet einen zusätzlichen Netzumlauf vor dem Rendern.
+const VIEW_STRING_SCOPES = {
+  overview: 'overview',
+  accounts: 'accounts',
+  servers: 'server',
+  server: 'server',
+  proxies: 'proxies',
+  credits: 'billing',
+  activity: 'activity',
+  tickets: 'tickets',
+  settings: 'settings',
+  admin: 'admin',
+};
+
+const loadView = (name) =>
+  Promise.all([ensureStrings(VIEW_STRING_SCOPES[name]), VIEWS[name]()]).then(([, module]) => module);
+
 // Die meisten Startansichten brauchen nur den Rahmen des Panels. Tarife, Zahlungswege,
 // Client-Fähigkeiten und die Beschreibungen aller Macro-Felder sind dagegen nur in diesen
 // Ansichten sichtbar. Bis dahin bleibt die kleine /meta?scope=panel-Antwort genug.
@@ -1215,7 +1326,7 @@ export async function draw() {
   drawSide();
   try {
     if (FULL_META_VIEWS.has(state.route.name)) await ensureMeta();
-    const module = await VIEWS[state.route.name]();
+    const module = await loadView(state.route.name);
     await module.render($('#main'), state.route);
     animateRoute(state.route);
   } catch (error) {
@@ -1403,7 +1514,7 @@ async function boot() {
       ? ensureMeta()
       : api('/meta?scope=panel').then((meta) => { state.meta = meta; });
     const dataJob = refresh();
-    const viewJob = VIEWS[firstRoute.name]();
+    const viewJob = loadView(firstRoute.name);
     await Promise.all([metaJob, dataJob, viewJob]);
     applyPreferences(state.me?.id);
     if (!location.hash) history.replaceState(null, '', startHash(state.me?.id, state.profiles));

@@ -13,7 +13,6 @@ import {
   tr,
   locale,
   $,
-  $$,
   fail,
   ok,
   confirmDialog,

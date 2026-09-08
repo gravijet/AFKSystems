@@ -439,14 +439,10 @@ async function tabConnect(root, profile) {
          dann der Zielserver, danach ein möglicher Wiederanlauf und zuletzt die Client-Datei.
          Vorher lagen sie über Kontenliste, Ping-Zeile und Update-Hinweis verstreut; bei einem
          Ausfall musste man die Seite lesen, statt den nächsten sinnvollen Schritt zu erkennen. -->
-    <section class="connection-diagnosis" aria-labelledby="connection-diagnosis-title">
-      <div class="connection-diagnosis-head">
-        <div>
-          <h2 id="connection-diagnosis-title">${escapeHtml(tr('srv.diagnosisTitle'))}</h2>
-          <p>${escapeHtml(tr('srv.diagnosisLead'))}</p>
-        </div>
-      </div>
-      <div class="connection-diagnosis-grid" id="connection-diagnosis" aria-live="polite"></div>
+    <section class="panel connection-diagnosis" aria-labelledby="connection-diagnosis-title">
+      <header><h3 id="connection-diagnosis-title">${escapeHtml(tr('srv.diagnosisTitle'))}</h3>
+        <span class="small muted">${escapeHtml(tr('srv.diagnosisLead'))}</span></header>
+      <div class="body connection-diagnosis-grid" id="connection-diagnosis" aria-live="polite"></div>
     </section>
 
     <div class="split">
@@ -659,8 +655,8 @@ async function tabConnect(root, profile) {
             member.suspended
               ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>`
               : member.account_status === 'error'
-              ? `<span class="pill missing">${escapeHtml(tr('acc.error'))}</span>`
-              : ''
+                ? `<span class="pill missing">${escapeHtml(tr('acc.error'))}</span>`
+                : ''
           }
         </div>
         <div class="small muted truncate">

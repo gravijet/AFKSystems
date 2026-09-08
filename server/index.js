@@ -675,11 +675,11 @@ const PAGES = {
   // eintippt. Im Dashboard liegt es andersherum (siehe renderApp): Dort ist das erste Bild nur ein
   // Platzhalter, und die 80 ms, die es später kommt, sparen eine halbe Sekunde, bis wirklich etwas
   // dasteht.
-  login: { view: 'login', title: 'auth.login.title', noindex: true },
-  register: { view: 'register', title: 'auth.register.title' },
-  forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true },
-  reset: { view: 'reset', title: 'auth.reset.title', noindex: true },
-  verify: { view: 'verify', title: 'auth.verify.title', noindex: true },
+  login: { view: 'login', title: 'auth.login.title', noindex: true, stringsScope: 'auth' },
+  register: { view: 'register', title: 'auth.register.title', stringsScope: 'auth' },
+  forgot: { view: 'forgot', title: 'auth.forgot.title', noindex: true, stringsScope: 'auth' },
+  reset: { view: 'reset', title: 'auth.reset.title', noindex: true, stringsScope: 'auth' },
+  verify: { view: 'verify', title: 'auth.verify.title', noindex: true, stringsScope: 'auth' },
   privacy: { view: 'legal', legal: 'privacy' },
   terms: { view: 'legal', legal: 'terms' },
 };
@@ -727,6 +727,7 @@ function renderPage(slug, lang) {
       // Nur die Bedienungssperre steht am <html>. Der Schutz der Dateien ist eine Sache des
       // Servers und geht den Browser nichts an.
       shield: protect.uiLocked() ? '1' : '0',
+      stringsScope: entry.stringsScope || '',
       ...landing.commonVars(lang),
     };
     if (entry.noindex) vars.robotsTag = NOINDEX;
@@ -747,13 +748,16 @@ function renderApp(lang) {
       // da, war der <body> selbst ein Raster mit einer 17,5-rem-Spalte – und das ganze Dashboard
       // stand am PC zusammengequetscht am linken Rand.
       bodyClass: 'dash',
+      // Beim ersten Bild genügen die Texte des festen Rahmens. Die aktive Ansicht ergänzt ihre
+      // Fassung parallel zu ihrem lazy geladenen Modul (ui.js `ensureStrings`).
+      stringsScope: 'panel',
       robotsTag: NOINDEX,
       path: '/app',
       title: `${pages.t('nav.dashboard', lang)} – ${config.brand}`,
       // Der Browser holt das Modul und seinen statischen Abhängigkeitsbaum direkt nach dem kritischen
       // Stylesheet. Das konkrete Ansichtsmodul wählt app.js anschließend passend zur URL, damit ein
       // direkter Aufruf der Einstellungen nicht nebenbei die Übersicht lädt.
-      resourceHints: pages.preload(lang, ['app.js', 'ui.js', 'preferences.js', 'chatlog.js']),
+      resourceHints: pages.preload(lang, ['app.js', 'ui.js', 'preferences.js', 'chatlog.js'], 'panel'),
     })
   );
 }
