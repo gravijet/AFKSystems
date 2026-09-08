@@ -802,7 +802,7 @@ async function tabConnect(root, profile) {
     csvButton.disabled = !rows.length;
     csvButton.addEventListener('click', () => {
       const csv = [
-        ['Zeit', 'Art', 'Detail'].join(','),
+        [tr('srv.eventCsvTime'), tr('srv.eventCsvType'), tr('srv.eventCsvDetail')].join(','),
         ...rows.map((row) => [new Date(row.t).toISOString(), row.type, row.detail || ''].map(csvCell).join(',')),
       ].join('\n');
       const link = document.createElement('a');

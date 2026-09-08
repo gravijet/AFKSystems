@@ -265,15 +265,22 @@ export class ApiError extends Error {
 }
 
 export async function api(path, { method = 'GET', body, raw = false, keepalive = false } = {}) {
-  const response = await fetch(`/api${path}`, {
-    method,
-    headers: body ? { 'content-type': 'application/json', 'accept-language': lang } : { 'accept-language': lang },
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin',
-    // Für Anfragen, die noch hinausgehen sollen, während die Seite schon geht: "Live-Ansicht
-    // stoppen" ist genau das, und ohne diesen Zusatz bricht der Browser sie ab.
-    keepalive,
-  });
+  let response;
+  try {
+    response = await fetch(`/api${path}`, {
+      method,
+      headers: body ? { 'content-type': 'application/json', 'accept-language': lang } : { 'accept-language': lang },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'same-origin',
+      // Für Anfragen, die noch hinausgehen sollen, während die Seite schon geht: "Live-Ansicht
+      // stoppen" ist genau das, und ohne diesen Zusatz bricht der Browser sie ab.
+      keepalive,
+    });
+  } catch {
+    // fetch() selbst schlägt fehl, bevor eine Antwort da ist (offline, abgebrochen, DNS) – der
+    // Browser meldet das in technischem Englisch. Das zeigen wir nie roh an.
+    throw new ApiError(tr('common.offline'), 0, 'offline');
+  }
   if (raw) return response;
   let data = null;
   try {

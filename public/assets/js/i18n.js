@@ -62,6 +62,10 @@ export const S = {
   'common.free': { en: 'Free', de: 'Gratis' },
   'common.retry': { en: 'Reload', de: 'Neu laden' },
   'common.error': { en: 'That went wrong', de: 'Das ging schief' },
+  'common.offline': {
+    en: 'No connection. Check your internet and try again.',
+    de: 'Keine Verbindung. Internet prüfen und erneut versuchen.',
+  },
   'common.search': { en: 'Search', de: 'Suchen' },
   'common.all': { en: 'All', de: 'Alle' },
   'common.never': { en: 'never', de: 'nie' },
@@ -1048,6 +1052,9 @@ export const S = {
   'srv.eventDropped': { en: 'Lines dropped', de: 'Zeilen ausgelassen' },
   'srv.eventSnapshot': { en: 'Snapshot saved', de: 'Bild gesichert' },
   'srv.eventSnapshotView': { en: 'View image', de: 'Bild ansehen' },
+  'srv.eventCsvTime': { en: 'Time', de: 'Zeit' },
+  'srv.eventCsvType': { en: 'Type', de: 'Art' },
+  'srv.eventCsvDetail': { en: 'Detail', de: 'Detail' },
 
   // Die neue Client-Fassung. Der Ton ist absichtlich ruhig: Nichts ist kaputt – ein Bot mit der
   // Fassung von letzter Woche tut, was er letzte Woche getan hat. Neu ist nur, dass es etwas
