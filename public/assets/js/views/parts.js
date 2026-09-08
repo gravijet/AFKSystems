@@ -136,7 +136,6 @@ export function itemSlot({ item, index, accountId, profileId, extra = '', tag = 
         ? `<span class="slot-tip">
              <span class="slot-tip-name">${mcText(item.name || String(item.id ?? ''))}</span>
              ${(item.lore || []).map((line) => `<span class="slot-tip-lore">${mcText(line)}</span>`).join('')}
-             ${typeof item.id === 'string' ? `<span class="slot-tip-id">${escapeHtml(item.id)}</span>` : ''}
            </span>`
         : ''
     }

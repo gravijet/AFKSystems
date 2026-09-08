@@ -53,14 +53,19 @@ class ApiError extends Error {
 }
 
 export async function api(path, { method = 'GET', body } = {}) {
-  const response = await fetch(`/api${path}`, {
-    method,
-    headers: body
-      ? { 'content-type': 'application/json', 'accept-language': LANG }
-      : { 'accept-language': LANG },
-    body: body ? JSON.stringify(body) : undefined,
-    credentials: 'same-origin',
-  });
+  let response;
+  try {
+    response = await fetch(`/api${path}`, {
+      method,
+      headers: body
+        ? { 'content-type': 'application/json', 'accept-language': LANG }
+        : { 'accept-language': LANG },
+      body: body ? JSON.stringify(body) : undefined,
+      credentials: 'same-origin',
+    });
+  } catch {
+    throw new ApiError(tr('common.offline'), 0, 'offline');
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new ApiError(data.error || tr('common.error'), response.status, data.code || null);
