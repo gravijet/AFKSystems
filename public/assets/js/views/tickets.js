@@ -290,18 +290,6 @@ async function list(root) {
 }
 
 /**
- * Eine Zeile der Ticketliste.
- *
- * **Die Benachrichtigung steht am Ticket.** Die Zahl in der Seitenleiste sagt, dass etwas da ist;
- * sie sagt nicht, wo. Wer drei Tickets offen hat, stand damit vor drei gleich aussehenden Zeilen
- * und musste sie der Reihe nach aufmachen. Hier steht jetzt an genau der Zeile, um die es geht,
- * ein Punkt und das Wort „Neu“ – und zwar auch dann, wenn es nur ein einziges Ticket gibt: Die
- * Auskunft „hier ist etwas passiert“ hängt nicht daran, wie viele Zeilen daneben stehen.
- *
- * (Und das `<li>` hatte kein schließendes `>`. Der Punkt für den Zustand wurde deshalb vom Browser
- * als Attribut des Listeneintrags gelesen und nie gezeichnet – seit es ihn gibt.)
- */
-/**
  * Die zweite Zeile eines Ticketeintrags: der Anfang der letzten Nachricht.
  *
  * Vorher stand dort „3 Nachrichten“. Das ist eine Zahl über das Ticket und nichts über die Sache –
@@ -325,6 +313,18 @@ function preview(ticket, { mineIsStaff = false } = {}) {
   )}`;
 }
 
+/**
+ * Eine Zeile der Ticketliste.
+ *
+ * **Die Benachrichtigung steht am Ticket.** Die Zahl in der Seitenleiste sagt, dass etwas da ist;
+ * sie sagt nicht, wo. Wer drei Tickets offen hat, stand damit vor drei gleich aussehenden Zeilen
+ * und musste sie der Reihe nach aufmachen. Hier steht jetzt an genau der Zeile, um die es geht,
+ * ein Punkt und das Wort „Neu“ – und zwar auch dann, wenn es nur ein einziges Ticket gibt: Die
+ * Auskunft „hier ist etwas passiert“ hängt nicht daran, wie viele Zeilen daneben stehen.
+ *
+ * (Und das `<li>` hatte kein schließendes `>`. Der Punkt für den Zustand wurde deshalb vom Browser
+ * als Attribut des Listeneintrags gelesen und nie gezeichnet – seit es ihn gibt.)
+ */
 function row(ticket) {
   // Anklickbar heißt auch: mit der Tastatur erreichbar. Ohne `role`/`tabindex` war die ganze
   // Ticketliste für jeden unbedienbar, der keine Maus benutzt.

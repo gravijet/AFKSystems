@@ -57,7 +57,7 @@ export function render(name, lang, vars = {}) {
     assets: `/assets/v/${assetVersion}`,
     // Welche Textdatei zu dieser Seite gehört. Sie steht am <html>, damit ui.js sie laden kann,
     // ohne selbst zu wissen, welche Sprachen es gibt – siehe server/strings.js.
-    stringsFile: strings.fileFor(lang),
+    stringsScope: '',
     // Kopfdaten. Jede Seite darf sie überschreiben; ohne Angabe steht die Startseite da.
     title: t('meta.title', lang),
     description: t('meta.description', lang),
@@ -74,6 +74,10 @@ export function render(name, lang, vars = {}) {
     deCurrent: lang === 'de' ? 'aria-current="true"' : '',
     ...vars,
   };
+  // `stringsFile` wird aus dem gewählten Bereich gerechnet, nicht blind aus einem möglicherweise
+  // mitgegebenen Dateinamen übernommen. Eine Vorlage kann damit nur einen Bereich wählen, nie
+  // versehentlich eine Sprache oder eine fremde Asset-Adresse.
+  values.stringsFile = strings.fileFor(lang, values.stringsScope);
   // Nur laden, wenn die Bedienungssperre wirklich aktiv ist. Dann bleibt das Skript bewusst im
   // Kopf und synchron, damit kein ungeschütztes erstes Bild aufblitzt. Im Normalbetrieb spart das
   // eine blockierende Datei auf jeder öffentlichen Seite und im Panel.
@@ -116,9 +120,9 @@ export function render(name, lang, vars = {}) {
  * Panels (views/) holt app.js absichtlich erst, wenn jemand hinsieht – sie hier aufzuzählen würde
  * genau das rückgängig machen.
  */
-export function preload(lang, modules) {
+export function preload(lang, modules, stringsScope = '') {
   const base = `/assets/v/${assetVersion}/js`;
-  return [...modules, strings.fileFor(lang)]
+  return [...modules, strings.fileFor(lang, stringsScope)]
     .map((file) => `<link rel="modulepreload" href="${base}/${file}" />`)
     .join('\n    ');
 }

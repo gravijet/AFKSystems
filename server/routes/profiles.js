@@ -84,7 +84,10 @@ function memberRowsFor(profileIds) {
        LIMIT 1
     )
         WHERE pa.profile_id IN (${placeholders})
-     ORDER BY pa.profile_id, pa.ordinal, a.name COLLATE NOCASE`
+     -- "ordinal" ist beim Hinzufügen und Verschieben lückenlos. Der stabile Kontoschlüssel ist
+     -- nur der Gleichstandbrecher für alte Daten und lässt SQLite diese gesamte Reihenfolge direkt
+     -- aus profile_accounts_profile_ordinal lesen (statt sie für jedes Nachladen zu sortieren).
+     ORDER BY pa.profile_id, pa.ordinal, pa.account_id`
     )
     .all(...profileIds);
   const grouped = new Map(profileIds.map((id) => [id, []]));

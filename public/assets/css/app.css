@@ -341,11 +341,6 @@ textarea {
   box-shadow: inset 0 0 0 1px var(--primary);
 }
 
-.btn-ok {
-  background: var(--ok);
-  box-shadow: inset 0 0 0 1px var(--ok);
-  color: #04170f;
-}
 .btn-danger {
   background: transparent;
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--bad) 45%, transparent);
@@ -395,18 +390,6 @@ textarea {
 .card.tight {
   padding: 0.9rem;
 }
-.card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin-bottom: 1rem;
-}
-.card-head h3 {
-  font-size: 1rem;
-  font-weight: 600;
-}
-
 /* Ein Panel füllt die Höhe, die ihm das Raster gibt: Kopf oben, Körper darunter, und der Körper
  * nimmt den Rest. Ohne das endete jedes Panel dort, wo sein Inhalt aufhört – nebeneinander waren
  * das drei Kästen mit drei verschiedenen Unterkanten. */
@@ -1707,27 +1690,6 @@ body.site > main {
   margin-top: 1.5rem;
 }
 
-.topup {
-  display: grid;
-  gap: 1.5rem;
-  margin-top: clamp(2rem, 4vw, 3rem);
-  padding-top: clamp(1.75rem, 3.5vw, 2.5rem);
-  box-shadow: inset 0 1px 0 var(--line);
-}
-@media (min-width: 860px) {
-  .topup {
-    grid-template-columns: 20rem 1fr;
-    gap: 2.5rem;
-  }
-}
-.topup-copy h3 {
-  font-size: 1.125rem;
-}
-.topup-copy p {
-  margin-top: 0.5rem;
-  color: var(--text-2);
-  font-size: 0.9375rem;
-}
 .topup-list {
   display: grid;
   gap: 0.75rem;
@@ -3091,7 +3053,7 @@ dialog.totp-dialog {
 }
 .bulk #bulk-count {
   min-width: 8rem;
-  color: var(--muted);
+  color: var(--text-2);
 }
 .bulk[data-empty='false'] #bulk-count {
   color: var(--text);
@@ -3117,7 +3079,7 @@ dialog.palette {
   box-shadow: inset 0 -1px 0 var(--line-soft);
 }
 .palette-head .icon {
-  color: var(--muted);
+  color: var(--text-2);
   flex: none;
 }
 .palette-head input {
@@ -3147,7 +3109,7 @@ dialog.palette {
   font-size: 0.7rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--text-2);
 }
 .palette-hit {
   display: flex;
@@ -3173,7 +3135,7 @@ dialog.palette {
 }
 .palette-icon {
   display: flex;
-  color: var(--muted);
+  color: var(--text-2);
   flex: none;
 }
 .palette-text {
@@ -3190,7 +3152,7 @@ dialog.palette {
 }
 .palette-value {
   flex: none;
-  color: var(--muted);
+  color: var(--text-2);
 }
 .palette-foot {
   display: flex;
@@ -3210,7 +3172,7 @@ dialog.palette {
   font-family: var(--mono);
   font-size: 0.7rem;
   text-align: center;
-  color: var(--muted);
+  color: var(--text-2);
 }
 
 /* ---------------------------------------------------------------- Meldungen */
@@ -3390,23 +3352,6 @@ dialog.palette {
   font-weight: 600;
 }
 
-/* Aufladepakete als Knopfliste. */
-.pack-button {
-  width: 100%;
-  padding: 0.7rem 0.9rem;
-  border: 0;
-  border-radius: var(--r-xl);
-  background: var(--surface-2);
-  box-shadow: inset 0 0 0 1px var(--line);
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.pack-button:hover {
-  box-shadow: inset 0 0 0 1px var(--primary);
-}
-
 /* Tarifauswahl im Serverplatz. */
 /* Die Tarifkästen im Panel: gleich hoch, damit die Knöpfe darunter auf einer Linie stehen.
  * Die Merkmalsliste dehnt sich (`.plan-list.grow`), der Rest bleibt oben. */
@@ -3460,10 +3405,6 @@ hr.rule {
   white-space: nowrap;
   border: 0;
 }
-.grid.three {
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
-}
-
 /* Beschriftete Werte. Zwei Spalten, damit die Werte untereinander stehen und nicht zittern. */
 .facts {
   display: grid;
@@ -3524,38 +3465,24 @@ hr.rule {
 /* Konten links, Chat rechts. Unter 62rem untereinander – auf dem Handy ist nebeneinander nichts. */
 .connection-diagnosis {
   margin: 0 0 1.25rem;
-  padding: 1rem 1.1rem 1.1rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--surface);
-}
-.connection-diagnosis-head h2 {
-  margin: 0;
-  font-size: 1rem;
-}
-.connection-diagnosis-head p {
-  margin: 0.25rem 0 0;
-  color: var(--text-2);
-  font-size: 0.8125rem;
 }
 .connection-diagnosis-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(12.5rem, 1fr));
   gap: 0.65rem;
-  margin-top: 0.85rem;
 }
 .connection-diagnosis-card {
   display: flex;
   flex-direction: column;
   min-width: 0;
   padding: 0.75rem;
-  border: 1px solid var(--line-soft);
-  border-radius: calc(var(--radius) - 0.2rem);
+  border-radius: var(--r-xl);
   background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
 }
-.connection-diagnosis-card.is-good { border-color: color-mix(in srgb, var(--ok) 45%, var(--line-soft)); }
-.connection-diagnosis-card.is-warn { border-color: color-mix(in srgb, var(--warn) 55%, var(--line-soft)); }
-.connection-diagnosis-card.is-bad { border-color: color-mix(in srgb, var(--bad) 55%, var(--line-soft)); }
+.connection-diagnosis-card.is-good { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 45%, var(--line-soft)); }
+.connection-diagnosis-card.is-warn { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warn) 55%, var(--line-soft)); }
+.connection-diagnosis-card.is-bad { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bad) 55%, var(--line-soft)); }
 .connection-diagnosis-label {
   color: var(--text-2);
   font-size: 0.75rem;
@@ -3717,35 +3644,6 @@ hr.rule {
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 0.14em;
-}
-
-/* ---------------------------------------------------------------- Der Zielserver
- *
- * Sitzt am Fuß der Kontenliste und ist absichtlich ruhig: Er beantwortet eine Frage, die man nur
- * stellt, wenn etwas nicht geht. Der MOTD darin kommt von einem fremden Server, kann drei Zeilen
- * lang sein und beliebige Farben tragen – deshalb eine feste Höhe mit Überlauf statt eines
- * Kastens, der je nach Server die halbe Seite einnimmt. */
-.mcstatus {
-  box-shadow: inset 0 1px 0 var(--line-soft);
-  padding: 0.7rem 1.1rem;
-}
-.mcstatus-icon {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--r-sm);
-  /* Serversymbole sind 64×64-Pixelgrafiken. Weichgezeichnet sehen sie aus wie ein Ladefehler. */
-  image-rendering: pixelated;
-  flex: none;
-}
-.mcstatus-motd {
-  margin-top: 0.2rem;
-  font-size: 0.8125rem;
-  line-height: 1.45;
-  /* Der MOTD hat Zeilenumbrüche, und die meint der Server so. */
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  max-height: 4.5rem;
-  overflow: auto;
 }
 
 /* ---------------------------------------------------------------- Live-Ansicht (POV)
@@ -4752,7 +4650,7 @@ hr.rule {
   display: grid;
   gap: 0.6rem;
   padding: 0.9rem;
-  border-radius: var(--r-xl, 0.9rem);
+  border-radius: var(--r-xl);
   background: var(--surface-2);
   box-shadow: inset 0 0 0 1px var(--line);
 }
@@ -4886,17 +4784,16 @@ hr.rule {
   align-items: center;
   margin: 0 0 1.5rem;
   padding: 1.1rem 1.2rem;
-  border: 1px solid var(--line);
   border-radius: var(--r-2xl);
   background: var(--surface-2);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow), inset 0 0 0 1px var(--line);
 }
 .renewal-runway.is-gap {
-  border-color: color-mix(in srgb, var(--bad) 38%, var(--line));
+  box-shadow: var(--shadow), inset 0 0 0 1px color-mix(in srgb, var(--bad) 38%, var(--line));
   background: color-mix(in srgb, var(--bad) 7%, var(--surface-2));
 }
 .renewal-runway.is-covered {
-  border-color: color-mix(in srgb, var(--ok) 34%, var(--line));
+  box-shadow: var(--shadow), inset 0 0 0 1px color-mix(in srgb, var(--ok) 34%, var(--line));
   background: color-mix(in srgb, var(--ok) 6%, var(--surface-2));
 }
 .renewal-runway-icon {
@@ -6377,11 +6274,8 @@ body.dash .main > .grid > .panel {
     font-size: 1.35rem;
     overflow-wrap: anywhere;
   }
-  .panel > header,
-  .card-head {
-    flex-wrap: wrap;
-  }
   .panel > header {
+    flex-wrap: wrap;
     padding: 0.85rem 0.9rem;
   }
   .panel > .body,
@@ -6572,7 +6466,7 @@ body.dash .main > .grid > .panel {
 
 /* Offene Entwicklerwerkzeuge: der Inhalt geht weg, der Hinweis kommt. Nicht als Sperre gedacht –
    wer die Werkzeuge schließt, sieht sofort wieder alles. */
-.devtools-open body > *:not(.shield-veil) {
+.devtools-open body > * {
   filter: blur(18px) saturate(0.2);
   pointer-events: none;
   user-select: none;
@@ -7086,8 +6980,8 @@ dialog.shortcuts {
 .dashboard-order {
   flex: 0 1 29rem;
   width: 100%;
-  border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
   overflow: hidden;
 }
 .dashboard-order-row {
@@ -7099,7 +6993,7 @@ dialog.shortcuts {
   background: var(--surface);
 }
 .dashboard-order-row + .dashboard-order-row {
-  border-top: 1px solid var(--line-soft);
+  box-shadow: inset 0 1px 0 var(--line-soft);
 }
 .dashboard-order-position {
   display: grid;
@@ -7136,17 +7030,17 @@ dialog.shortcuts {
   gap: .25rem 1rem;
   width: 100%;
   padding: 1rem;
-  border: 1px solid var(--line-soft);
   border-radius: var(--r-lg);
   background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
   color: var(--text);
   text-align: left;
   cursor: pointer;
 }
 .macro-template:hover,
 .macro-template:focus-visible {
-  border-color: var(--accent);
   background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--primary);
 }
 .macro-template > span:not(.macro-template-open) {
   grid-column: 1 / -1;
@@ -7160,7 +7054,7 @@ dialog.shortcuts {
   display: inline-flex;
   align-items: center;
   gap: .3rem;
-  color: var(--accent);
+  color: var(--primary-text);
   font-size: .78rem;
   font-weight: 700;
 }
@@ -7297,7 +7191,7 @@ dialog.shortcuts {
 }
 .account-attention {
   margin-bottom: 1.25rem;
-  border-color: color-mix(in oklab, var(--warn) 36%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 36%, var(--line));
 }
 .account-attention header h3 {
   display: inline-flex;
@@ -7332,7 +7226,7 @@ dialog.shortcuts {
 }
 .account-login-review {
   margin-bottom: 1.25rem;
-  border-color: color-mix(in oklab, var(--bad) 36%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--bad) 36%, var(--line));
 }
 .account-login-review header h3 {
   display: inline-flex;
@@ -7373,7 +7267,7 @@ dialog.shortcuts {
 }
 .account-live {
   margin-bottom: 1.25rem;
-  border-color: color-mix(in oklab, var(--ok) 32%, var(--line));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ok) 32%, var(--line));
 }
 .account-live header h3 {
   display: inline-flex;

@@ -1670,6 +1670,44 @@ const migrations = [
       ALTER TABLE mc_accounts ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0;
     `,
   },
+
+  {
+    // Diese drei Ordnungen sind der normale erste Datenweg des Panels: Serverplätze nach ihrer
+    // eigenen Reihenfolge, Konten nach ihrem (groß-/kleinschreibungsfreien) Namen und Konten je
+    // Serverplatz. Die vorhandenen Eindeutigkeitsindizes finden die Zeilen, müssen sie danach
+    // aber jeweils in eine temporäre B-Tree-Tabelle sortieren. Bei einem Konto mit vielen
+    // Serverplätzen und Bots passiert das vor dem ersten Bild und bei jedem Nachziehen erneut.
+    //
+    // Die Indizes folgen exakt WHERE + ORDER BY. Sie beschleunigen damit auch die gleichartigen
+    // Kunden- und Admin-Listen, ohne einen breit geratenen, unbenutzten Mehrfachindex anzulegen.
+    name: '043-panel-listen-ohne-temporaere-sortierung',
+    sql: `
+      CREATE INDEX profiles_user_ordinal ON profiles(user_id, ordinal, id);
+      CREATE INDEX mc_accounts_user_name_nocase ON mc_accounts(user_id, name COLLATE NOCASE, id);
+      CREATE INDEX profile_accounts_profile_ordinal ON profile_accounts(profile_id, ordinal, account_id);
+    `,
+    run() {
+      // Ältere Installationen konnten mehrere Zuordnungen mit der Standardposition 0 haben.
+      // Ihre bisherige sichtbare Reihenfolge war Position, danach Name. Einmal in eine echte
+      // Reihenfolge zu überführen erhält dieses Bild und macht den neuen Index zugleich vollständig
+      // nutzbar; neue Zuordnungen bekommen ohnehin immer die nächste Position.
+      const profiles = db.prepare('SELECT DISTINCT profile_id FROM profile_accounts').all();
+      const members = db.prepare(
+        `SELECT pa.account_id
+           FROM profile_accounts pa JOIN mc_accounts a ON a.id = pa.account_id
+          WHERE pa.profile_id = ?
+          ORDER BY pa.ordinal, a.name COLLATE NOCASE, pa.account_id`
+      );
+      const setOrdinal = db.prepare(
+        'UPDATE profile_accounts SET ordinal = ? WHERE profile_id = ? AND account_id = ?'
+      );
+      for (const profile of profiles) {
+        members.all(profile.profile_id).forEach((member, ordinal) =>
+          setOrdinal.run(ordinal, profile.profile_id, member.account_id)
+        );
+      }
+    },
+  },
 ];
 
 /**

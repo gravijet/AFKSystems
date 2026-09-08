@@ -17,6 +17,7 @@ import {
   debounce,
   locale,
   confirmDialog,
+  ensureStrings,
 } from '../ui.js';
 import { state, appbar, refresh, drawSide, draw } from '../app.js';
 import { preferences } from '../preferences.js';
@@ -542,7 +543,12 @@ export async function render(root) {
   }
 
   for (const id of ['#new-profile-2', '#new-profile-3']) {
-    $(id)?.addEventListener('click', () => import('./server.js').then((m) => m.newProfile()));
+    $(id)?.addEventListener('click', () =>
+      ensureStrings('server')
+        .then(() => import('./server.js'))
+        .then((module) => module.newProfile())
+        .catch(fail)
+    );
   }
 
   // ------------------------------------------------------------ Suchen, sortieren, auswählen

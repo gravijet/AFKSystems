@@ -20,7 +20,7 @@
 // Für Nicht-Administratoren bleibt die Palette nützlich, aber ruhig: Sie zeigt dann nur die
 // eigenen Seiten. Die Suche ist eine Admin-Schnittstelle und wird gar nicht erst gefragt.
 
-import { api, icon, escapeHtml, tr, $, $$, debounce, ok, fail } from './ui.js';
+import { api, icon, escapeHtml, tr, $, $$, debounce, ok, fail, ensureStrings } from './ui.js';
 import { state, go, draw, refresh, showShortcuts, ADMIN_GROUPS, NAV_PRIMARY, NAV_ACCOUNT } from './app.js';
 import { isFavoriteServer } from './preferences.js';
 
@@ -68,10 +68,6 @@ const KIND_ICONS = {
 };
 
 let open = false;
-
-export function paletteOpen() {
-  return open;
-}
 
 export async function openPalette(initial = '') {
   if (open) return;
@@ -156,7 +152,10 @@ export async function openPalette(initial = '') {
     if (!hit) return;
     close();
     if (hit.action === 'new-server') {
-      import('./views/server.js').then((module) => module.newProfile());
+      ensureStrings('server')
+        .then(() => import('./views/server.js'))
+        .then((module) => module.newProfile())
+        .catch(fail);
       return;
     }
     if (hit.action === 'shortcuts') {

@@ -3554,6 +3554,27 @@ test('the same query text is only translated once', () => {
   assert.equal(db.prepare(sql).get().eins, 1);
 });
 
+test('the panel lists use their ordering indexes instead of temporary sort tables', () => {
+  const plans = [
+    ['profiles', 'SELECT * FROM profiles WHERE user_id = 1 ORDER BY ordinal, id', 'profiles_user_ordinal'],
+    [
+      'accounts',
+      'SELECT * FROM mc_accounts WHERE user_id = 1 ORDER BY name COLLATE NOCASE',
+      'mc_accounts_user_name_nocase',
+    ],
+    [
+      'profile members',
+      'SELECT profile_id, account_id FROM profile_accounts WHERE profile_id IN (1, 2, 3) ORDER BY profile_id, ordinal, account_id',
+      'profile_accounts_profile_ordinal',
+    ],
+  ];
+  for (const [name, sql, index] of plans) {
+    const detail = db.prepare(`EXPLAIN QUERY PLAN ${sql}`).all().map((row) => row.detail).join(' | ');
+    assert.match(detail, new RegExp(index), `${name} nutzt seinen Reihenfolgenindex`);
+    assert.doesNotMatch(detail, /TEMP B-TREE/i, `${name} baut keine temporäre Sortierung`);
+  }
+});
+
 test('assets are packed once and served without compressing them again', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'afksystems-assets-'));
   const style = path.join(dir, 'app.css');
@@ -3639,6 +3660,7 @@ test('the browser gets one language of the texts, and it really is a module', as
   assert.equal(fileFor('de'), 'i18n.de.js');
   assert.equal(fileFor('en'), 'i18n.en.js');
   assert.equal(fileFor('de', 'auth'), 'i18n.auth.de.js');
+  assert.equal(fileFor('de', 'panel'), 'i18n.panel.de.js');
   assert.equal(fileFor('kl'), 'i18n.en.js', 'eine unbekannte Sprache fällt auf die Vorgabe zurück');
 
   const german = ask('/assets/v/jetzt/js/i18n.de.js', { 'accept-encoding': 'identity' });
@@ -3651,6 +3673,7 @@ test('the browser gets one language of the texts, and it really is a module', as
   const source = german.sent.toString();
   const module = await import(`data:text/javascript,${encodeURIComponent(source)}`);
   assert.equal(module.LANG, 'de');
+  assert.equal(module.STRINGS['nav.dashboard'], t('nav.dashboard', 'de'));
   assert.equal(module.t('nav.dashboard'), t('nav.dashboard', 'de'));
   assert.equal(module.t('bill.title'), t('bill.title', 'de'));
   assert.equal(module.t('den.gibt.es.nicht'), 'den.gibt.es.nicht');
@@ -3676,6 +3699,21 @@ test('the browser gets one language of the texts, and it really is a module', as
   assert.equal(authModule.t('nav.dashboard'), 'nav.dashboard');
   assert.ok(authGerman.sent.length < german.sent.length / 4);
 
+  // Der Panel-Rahmen ist beim ersten Bild klein. Die Übersicht ergänzt ihre Texte erst zusammen
+  // mit ihrem lazy geladenen Modul; zusammengemischt werden sie im Browser (ui.js), nicht in
+  // einer zweiten Datei oder einer zweiten Übersetzungstabelle.
+  const panelGerman = ask('/assets/v/jetzt/js/i18n.panel.de.js', { 'accept-encoding': 'identity' });
+  const panelModule = await import(`data:text/javascript,${encodeURIComponent(panelGerman.sent.toString())}`);
+  assert.equal(panelModule.t('dash.overview'), t('dash.overview', 'de'));
+  assert.equal(panelModule.t('adm.users'), t('adm.users', 'de'), 'Admin-Navigation bleibt im Rahmen lesbar');
+  assert.equal(panelModule.t('bill.title'), 'bill.title', 'Abrechnungstexte warten auf ihre Ansicht');
+  assert.ok(panelGerman.sent.length < german.sent.length / 3, 'der erste Textblock bleibt deutlich kleiner');
+
+  const overviewGerman = ask('/assets/v/jetzt/js/i18n.overview.de.js', { 'accept-encoding': 'identity' });
+  const overviewModule = await import(`data:text/javascript,${encodeURIComponent(overviewGerman.sent.toString())}`);
+  assert.equal(overviewModule.t('ov.start'), t('ov.start', 'de'));
+  assert.equal(overviewModule.t('dash.overview'), 'dash.overview', 'Bereiche bleiben voneinander getrennt');
+
   // Gepackt kommt es kleiner heraus – und entpackt ist es dasselbe.
   const packed = ask('/assets/v/jetzt/js/i18n.de.js', { 'accept-encoding': 'br, gzip' });
   assert.equal(packed.res.headers['content-encoding'], 'br');
@@ -3697,6 +3735,7 @@ test('the browser gets one language of the texts, and it really is a module', as
   assert.match(bookmarked.res.headers['cache-control'], /max-age=60/);
   // Alles andere geht diesen Handler nichts an.
   assert.equal(ask('/assets/v/jetzt/js/i18n.kl.js').passed, true);
+  assert.equal(ask('/assets/v/jetzt/js/i18n.unbekannt.de.js').passed, true);
   assert.equal(ask('/assets/v/jetzt/js/app.js').passed, true);
   assert.equal(ask('/assets/v/jetzt/js/views/i18n.de.js').passed, true);
 });
