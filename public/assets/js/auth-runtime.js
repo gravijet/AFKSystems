@@ -63,7 +63,7 @@ export async function api(path, { method = 'GET', body } = {}) {
   });
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new ApiError(data.error || `${tr('common.error')} (${response.status})`, response.status, data.code || null);
+    throw new ApiError(data.error || tr('common.error'), response.status, data.code || null);
   }
   return data;
 }
