@@ -1382,6 +1382,25 @@ jobs.every('standort-eigen', 15_000, localNodeTick, {
 });
 
 /**
+ * Einen Messpunkt je Standort im Verlauf ablegen.
+ *
+ * Zehn Minuten sind eng genug, um nach ein paar Stunden eine erkennbare Kurve zu haben, und
+ * weit genug, dass die Tabelle über Monate nicht aus dem Ruder läuft (siehe `aufraeumen` weiter
+ * unten). Ein Standort ohne Ressourcen – `egress`, oder ein `agent` gerade ohne Leitung –
+ * schreibt keine Zeile: eine erfundene Null wäre eine falsche Auslastung und keine echte Lücke.
+ */
+jobs.every(
+  'standort-verlauf',
+  600_000,
+  () => {
+    for (const node of nodes.list()) {
+      nodes.recordHistory(node, nodes.resources(node));
+    }
+  },
+  { label: { de: 'Standort-Verlauf aufzeichnen', en: 'Record location history' } }
+);
+
+/**
  * Zeitpläne: Was fällig ist, wird ausgeführt.
  *
  * Jede Minute – seltener ginge nicht, denn ein Zeitplan ist auf die Minute genau. Was in dieser
@@ -1446,6 +1465,9 @@ jobs.every(
     heads.cleanup();
     // Ereigniszeilen der Bots (Verlauf im Serverplatz-Reiter), älter als die Aufbewahrungsfrist.
     supervisor.cleanupEvents();
+    // Und genauso der Standort-Verlauf: 30 Tage reichen für jede sinnvolle Rückschau, danach
+    // wächst die Tabelle ohne Nutzen weiter.
+    nodes.cleanupHistory();
     // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
     // fällt an der jüngsten Datei – ein Neustart um drei Uhr nachts vergisst so keinen Tag.
     const made = backup.dailyTick();

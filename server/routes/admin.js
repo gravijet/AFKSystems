@@ -3304,6 +3304,20 @@ admin.get(
   })
 );
 
+/**
+ * Der Verlauf eines Standorts – für das Diagramm in der Standort-Karte, das nicht nur den
+ * jetzigen Wert zeigt, sondern auch, ob er sich einer Grenze nähert.
+ */
+admin.get(
+  '/nodes/:id/history',
+  wrap((req, res) => {
+    const node = nodes.byId(requireInt(req.params.id, 'Standort'));
+    if (!node) throw notFound('Diesen Standort gibt es nicht.', { en: 'No such location.' });
+    const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 24));
+    res.json(nodes.history(node.id, hours));
+  })
+);
+
 /** Ein neues Token. Der Standort fliegt damit sofort heraus – das ist der Sinn. */
 admin.post(
   '/nodes/:id/token',

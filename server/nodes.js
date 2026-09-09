@@ -78,6 +78,82 @@ export function resources(node) {
   return null;
 }
 
+/**
+ * Einen Messpunkt für den Verlauf ablegen. Wird von der Aufgabe `standort-verlauf`
+ * (server/index.js) alle zehn Minuten für jeden Standort mit Ressourcen aufgerufen – ein
+ * `egress`-Standort oder ein `agent` ohne Leitung liefert `stats === null` und wird übersprungen,
+ * eine leere Zeile wäre keine Messung.
+ */
+export function recordHistory(node, stats) {
+  if (!stats) return;
+  db.prepare(
+    `INSERT INTO node_metrics_history (node_id, cpu_percent, mem_percent, disk_percent, bots_running, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(
+    node.id,
+    stats.cpu_percent ?? null,
+    stats.memory?.percent ?? null,
+    stats.disk?.percent ?? null,
+    usage(node.id).bots_running,
+    Date.now()
+  );
+}
+
+/** Verlaufszeilen, die älter sind als die Aufbewahrungsfrist, wieder loswerden. */
+export function cleanupHistory(maxAgeMs = 30 * 24 * 60 * 60 * 1000) {
+  return db.prepare('DELETE FROM node_metrics_history WHERE created_at < ?').run(Date.now() - maxAgeMs)
+    .changes;
+}
+
+/**
+ * Der Verlauf eines Standorts, in feste Stunden-Buckets gepackt – lückenlos, wie schon bei den
+ * Übersichts-Diagrammen (`GET /admin/stats`): eine Stunde ohne Messung ist eine Lücke im
+ * Diagramm und keine erfundene Null, denn anders als bei Umsätzen ist "keine Messung" hier ein
+ * eigener, ehrlicher Zustand (Standort war offline, oder der Takt lief noch nicht so lange).
+ */
+export function history(nodeId, hours = 24) {
+  const span = Math.min(168, Math.max(1, Math.round(hours)));
+  const bucketMs = 3_600_000;
+  const now = Date.now();
+  const start = now - span * bucketMs;
+  const rows = db
+    .prepare(
+      `SELECT cpu_percent, mem_percent, disk_percent, bots_running, created_at
+         FROM node_metrics_history WHERE node_id = ? AND created_at >= ? ORDER BY created_at`
+    )
+    .all(nodeId, start);
+
+  const buckets = new Map();
+  for (const row of rows) {
+    const at = Math.floor(row.created_at / bucketMs) * bucketMs;
+    const bucket = buckets.get(at) || { at, cpu: [], mem: [], disk: [], bots: [] };
+    if (row.cpu_percent !== null) bucket.cpu.push(row.cpu_percent);
+    if (row.mem_percent !== null) bucket.mem.push(row.mem_percent);
+    if (row.disk_percent !== null) bucket.disk.push(row.disk_percent);
+    bucket.bots.push(row.bots_running);
+    buckets.set(at, bucket);
+  }
+  const avg = (values) => (values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : null);
+
+  const node = byId(nodeId);
+  return {
+    buckets: [...buckets.values()]
+      .sort((a, b) => a.at - b.at)
+      .map((bucket) => ({
+        at: bucket.at,
+        cpu: avg(bucket.cpu),
+        mem: avg(bucket.mem),
+        disk: avg(bucket.disk),
+        bots: avg(bucket.bots),
+      })),
+    thresholds: {
+      cpu: node?.max_cpu_percent || 0,
+      mem: node?.max_mem_percent || 0,
+      disk: node?.max_disk_percent || 0,
+    },
+  };
+}
+
 /** Ist der Standort gerade ansprechbar? `local` immer, `egress` immer, `agent` nur mit Leitung. */
 export function reachable(node) {
   if (!node?.active) return false;

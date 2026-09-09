@@ -118,8 +118,13 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 ### 7. Operative Verwaltung
 
-- [ ] Admin-Operationsseite um klar getrennte Warnungen für Knoten, Warteschlangen, Clientstände,
-      Proxy-Kapazität und fehlgeschlagene Hintergrundjobs erweitern.
+- [x] Admin-Operationsseite um klar getrennte Warnungen für Knoten, Clientstände, Proxy-Kapazität
+      und fehlgeschlagene Hintergrundjobs erweitern: Die bisher eine flache Liste ist jetzt nach
+      Bereich gruppiert, dazu zeigen zwei Diagramme den Job- und Proxy-Zustand als Verteilung statt
+      nur als Einzelzahl.
+  - [ ] "Warteschlangen" bleibt offen: Es gibt im Betrieb aktuell keine Warteschlangen-Abstraktion
+        (nur der Sortiermodus im Ticket-Verlauf) – dafür muss erst geklärt werden, was hier als
+        Warteschlange zählen soll.
 - [ ] Wartungsmodus mit Zeitfenster, Zielgruppe, Vorschau und automatischem Ende ausstatten.
 - [ ] Gestaffelte Aktionen (Client-Neustarts, Knotenverschiebungen) mit Fortschritt,
       Teilfehlern und Audit-Eintrag sichtbar machen.
@@ -128,7 +133,10 @@ sichere nächste Aktion und bleibt auf Desktop wie Mobilgerät verständlich. Ke
 
 ### 8. Standorte, Schutz und Nachvollziehbarkeit
 
-- [ ] Knoten-Kapazitäten als Zeitreihe und mit Frühwarnschwellen zeigen, nicht nur als Momentwert.
+- [x] Knoten-Kapazitäten als Zeitreihe und mit Frühwarnschwellen zeigen, nicht nur als Momentwert:
+      Ein Zehn-Minuten-Takt legt je Standort einen Messpunkt ab, die Standort-Karte zeigt CPU,
+      Arbeitsspeicher und Festplatte der letzten 24 Stunden als Verlauf mit eingezeichneter
+      Grenze, und die Aufräum-Aufgabe hält die Historie auf 30 Tage begrenzt.
 - [ ] Agenten-/Client-Synchronisierung prüfbar und bei Fehlern gezielt wiederholbar machen.
 - [ ] Sicherheitsereignisse mit Schweregrad, betroffenen Ressourcen und konkreter Gegenmaßnahme
       bündeln.
