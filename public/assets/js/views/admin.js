@@ -824,13 +824,13 @@ async function systemWebhook(root) {
 /**
  * Sicherungen der Datenbank.
  *
- * Der Weg zurück steht als Befehl daneben und nicht als Knopf: Eine Datenbank auszutauschen,
- * während das Panel auf ihr arbeitet, geht nicht gut aus – offene Verbindungen zeigen weiter auf
- * die alte Datei. Ein Knopf, der so tut, als ginge das, wäre die gefährlichere Bequemlichkeit.
+ * Der Weg zurück steht in der Doku (docs/verwaltung.md) und nicht als Knopf hier: Eine Datenbank
+ * auszutauschen, während das Panel auf ihr arbeitet, geht nicht gut aus – offene Verbindungen
+ * zeigen weiter auf die alte Datei. Ein Knopf, der so tut, als ginge das, wäre die gefährlichere
+ * Bequemlichkeit, und der rohe Shell-Befehl gehört nicht in die Oberfläche eines Kunden-Panels.
  */
 async function backups(root) {
   const data = await api('/admin/backups');
-  const command = `systemctl stop afksystems && cp ${data.dir}/<datei> ${data.db} && systemctl start afksystems`;
 
   root.innerHTML = panel(
     tr('bak.title'),
@@ -855,8 +855,8 @@ async function backups(root) {
       )
     )}
     <div class="body stack" style="padding:1rem 1.25rem">
-      <p class="small muted">${escapeHtml(tr('bak.restore'))}</p>
-      <code class="mono small" style="display:block;overflow-x:auto;white-space:pre">${escapeHtml(command)}</code>
+      <p class="small muted">${escapeHtml(tr('bak.restore'))}
+        ${escapeHtml(tr('adm.detail'))}: <span class="mono">docs/verwaltung.md</span></p>
     </div>`,
     `<span class="small muted">${escapeHtml(bytes(data.total))}</span>
      <button class="btn btn-sm btn-primary" id="bak-now">${icon('disk')} ${escapeHtml(tr('bak.now'))}</button>`
@@ -4674,7 +4674,7 @@ async function audit(root) {
           .map(
             (entry) =>
               `<option value="${escapeHtml(entry.action)}" ${action === entry.action ? 'selected' : ''}>${escapeHtml(
-                entry.action
+                entry.label
               )} (${entry.n})</option>`
           )
           .join('')}
@@ -4700,7 +4700,7 @@ async function audit(root) {
                         ? `<a href="#/admin/users/${entry.user_id}">${escapeHtml(entry.display_name || `#${entry.user_id}`)}</a>`
                         : '<span class="muted">System</span>'
                     }</span>
-                    <span class="log-action mono">${escapeHtml(entry.action)}</span>
+                    <span class="log-action">${escapeHtml(entry.action_label || entry.action)}</span>
                     <span class="log-summary small muted truncate">${escapeHtml(entry.summary || '')}</span>
                     ${
                       entry.detail_parsed?.fields?.length
