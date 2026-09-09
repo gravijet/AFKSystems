@@ -3268,6 +3268,44 @@ dialog.palette {
   overflow-x: auto;
 }
 
+/* Die API-Dokumentation: derselbe Codeblock wie oben, unabhängig davon benannt – sie hat mit der
+   Ticket-Antwort nichts zu tun, nur dieselbe Optik. */
+.api-pre {
+  margin: 0.6rem 0 0;
+  padding: 0.85rem 1rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+.api-endpoints {
+  display: grid;
+  gap: 0.9rem;
+  margin-top: 1rem;
+}
+.api-endpoint {
+  padding: 0.9rem 1rem;
+  border-radius: var(--r-lg);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.api-route {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--primary-text);
+}
+.api-endpoint p {
+  margin: 0.35rem 0 0;
+  color: var(--text-2);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -4275,11 +4313,6 @@ hr.rule {
  * bekommen sie hier nicht: die schickt der Server als Farbcode mit, und die soll gelten. */
 .slot-tip-lore {
   font-size: 0.71875rem;
-}
-.slot-tip-id {
-  margin-top: 0.15rem;
-  color: #8b8fa3;
-  font-size: 0.6875rem;
 }
 /* Eine Menütafel ist schmaler als eine Anzeigetafel – neun Felder brauchen keine 17 rem. */
 .menu-card {
@@ -5330,11 +5363,6 @@ h5.dc-head {
   font-weight: 550;
   white-space: nowrap;
 }
-.dc-channel {
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-  color: var(--text);
-}
-
 /* Ein Spoiler ist verdeckt und nicht gelöscht: Die Fläche steht in der Breite des Textes da,
  * damit sichtbar bleibt, dass dort etwas steht. */
 .dc-spoiler {
@@ -6981,44 +7009,6 @@ dialog.shortcuts {
   padding: 0;
   place-items: center;
 }
-.preference-dashboard {
-  align-items: flex-start;
-}
-.dashboard-order {
-  flex: 0 1 29rem;
-  width: 100%;
-  border-radius: var(--r-lg);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
-  overflow: hidden;
-}
-.dashboard-order-row {
-  display: flex;
-  align-items: center;
-  gap: .65rem;
-  min-height: 3.15rem;
-  padding: .45rem .55rem;
-  background: var(--surface);
-}
-.dashboard-order-row + .dashboard-order-row {
-  box-shadow: inset 0 1px 0 var(--line-soft);
-}
-.dashboard-order-position {
-  display: grid;
-  width: 1.6rem;
-  height: 1.6rem;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--text-2);
-  font: 700 .72rem var(--mono);
-}
-.dashboard-order-actions {
-  display: inline-flex;
-  gap: .25rem;
-}
-.dashboard-order-reset {
-  margin-top: .5rem;
-}
 .schedule-preflight {
   margin: 0;
 }
@@ -7195,117 +7185,6 @@ dialog.shortcuts {
    zu den zwei Konten, die eine neue Anmeldung brauchen. */
 .account-summary {
   margin-bottom: 1rem;
-}
-.account-attention {
-  margin-bottom: 1.25rem;
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 36%, var(--line));
-}
-.account-attention header h3 {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.account-attention header .icon {
-  width: 1rem;
-  height: 1rem;
-  color: var(--warn-text);
-}
-.account-attention-list {
-  display: grid;
-  gap: 0.6rem;
-  margin-top: 0.9rem;
-}
-.account-attention-row {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: var(--r-lg);
-  background: color-mix(in oklab, var(--warn) 7%, var(--surface));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--warn) 18%, var(--line-soft));
-}
-.account-attention-row .grow {
-  display: grid;
-  gap: 0.15rem;
-}
-.account-attention-row .btn {
-  flex: none;
-}
-.account-login-review {
-  margin-bottom: 1.25rem;
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--bad) 36%, var(--line));
-}
-.account-login-review header h3 {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.account-login-review header .icon {
-  width: 1rem;
-  height: 1rem;
-  color: var(--bad-text);
-}
-.account-login-review-list {
-  display: grid;
-  gap: 0.6rem;
-  margin-top: 0.9rem;
-}
-.account-login-review-row {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  padding: 0.7rem 0.75rem;
-  border-radius: var(--r-lg);
-  background: color-mix(in oklab, var(--bad) 7%, var(--surface));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--bad) 18%, var(--line-soft));
-}
-.account-login-review-row .grow {
-  display: grid;
-  gap: 0.15rem;
-}
-.account-login-review-row .btn {
-  flex: none;
-}
-.account-review-slots {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-  margin-top: 0.25rem;
-}
-.account-live {
-  margin-bottom: 1.25rem;
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ok) 32%, var(--line));
-}
-.account-live header h3 {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.account-live header h3 .icon {
-  width: 1rem;
-  height: 1rem;
-  color: var(--ok-text);
-}
-.account-live-list {
-  display: grid;
-  gap: 0.55rem;
-  margin-top: 0.9rem;
-}
-.account-live-row {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  padding: 0.65rem 0.75rem;
-  border-radius: var(--r-lg);
-  background: color-mix(in oklab, var(--ok) 6%, var(--surface));
-  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ok) 16%, var(--line-soft));
-}
-.account-live-row .grow {
-  display: grid;
-  gap: 0.15rem;
-}
-.account-live-row .btn {
-  flex: none;
 }
 .account-stat {
   position: relative;

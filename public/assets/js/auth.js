@@ -339,6 +339,7 @@ if (page === 'register') {
       method: 'POST',
       body: {
         email,
+        full_name: $('#full_name').value.trim(),
         username: $('#username').value.trim(),
         password: $('#password').value,
         password2: $('#password2').value,

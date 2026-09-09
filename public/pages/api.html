@@ -1,0 +1,94 @@
+{{> head}}
+{{> nav}}
+
+    <main id="main">
+      <section class="band">
+        <div class="page">
+          <header class="band-head">
+            <h1>{{api.title}}</h1>
+            <p class="lead">{{api.lead}}</p>
+          </header>
+
+          <h2>{{api.authTitle}}</h2>
+          <p>{{api.authText}}</p>
+          <pre class="api-pre">Authorization: Bearer &lt;token&gt;</pre>
+          <p>{{api.authNote}}</p>
+          <div class="hero-cta">
+            <a class="btn btn-primary" href="/{{lang}}/app#/settings/security">{{api.tokensCta}}</a>
+          </div>
+
+          <h2>{{api.endpointsTitle}}</h2>
+          <div class="api-endpoints">
+            <div class="api-endpoint">
+              <code class="api-route">GET {{origin}}/api/me</code>
+              <p>{{api.ep.me}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">GET {{origin}}/api/profiles</code>
+              <p>{{api.ep.profiles}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">GET {{origin}}/api/profiles/:id</code>
+              <p>{{api.ep.profile}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">POST {{origin}}/api/profiles/:id/start</code>
+              <p>{{api.ep.start}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">POST {{origin}}/api/profiles/:id/stop</code>
+              <p>{{api.ep.stop}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">GET {{origin}}/api/profiles/:id/events</code>
+              <p>{{api.ep.events}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">GET {{origin}}/api/tickets</code>
+              <p>{{api.ep.ticketsList}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">GET {{origin}}/api/tickets/:id</code>
+              <p>{{api.ep.ticketGet}}</p>
+            </div>
+            <div class="api-endpoint">
+              <code class="api-route">POST {{origin}}/api/tickets</code>
+              <p>{{api.ep.ticketCreate}}</p>
+            </div>
+          </div>
+
+          <h2>GET /api/me</h2>
+          <pre class="api-pre">{
+  "user": {
+    "id": 128,
+    "display_name": "Jonas",
+    "credits": 340,
+    "low_balance_warning": -1
+  },
+  "stats": {
+    "profiles": 2,
+    "bots_running": 2,
+    "bots_online": 2,
+    "monthly_cost": 12,
+    "free_slots_left": 0,
+    "tickets_unread": 0
+  }
+}</pre>
+
+          <h2>POST /api/tickets</h2>
+          <pre class="api-pre">// Request
+{ "subject": "Bot won't reconnect", "body": "It disconnected around 14:00 and hasn't come back." }
+
+// Response
+{ "ticket": { "id": 4711, "subject": "Bot won't reconnect", "status": "open", … } }</pre>
+
+          <h2>{{api.errorsTitle}}</h2>
+          <p>{{api.errorsText}}</p>
+        </div>
+      </section>
+    </main>
+
+{{> footer}}
+    <script type="module" src="{{assets}}/js/landing.js"></script>
+  </body>
+</html>

@@ -1410,6 +1410,7 @@ async function users(root) {
       tr('adm.newUser'),
       [
         { key: 'email', label: tr('auth.register.email'), type: 'email', required: true },
+        { key: 'full_name', label: tr('auth.register.fullName'), required: true },
         { key: 'username', label: tr('auth.register.username'), required: true },
         { key: 'password', label: tr('auth.register.password'), type: 'password', required: true },
         {
@@ -1839,7 +1840,7 @@ async function userDetail(root, id) {
         (data.audit || []).map(
           (entry) => `<tr>
             <td class="small muted mono">${datetime(entry.created_at)}</td>
-            <td class="small mono">${escapeHtml(entry.action)}</td>
+            <td class="small">${escapeHtml(entry.action_label || entry.action)}</td>
             <td class="small muted">${escapeHtml(entry.summary || '')}</td>
           </tr>`
         )
@@ -4618,7 +4619,7 @@ async function mails(root) {
     <div class="row wrap" style="margin-bottom:1rem">
       <select id="status" class="mini" style="max-width:12rem">
         <option value="all" ${status === 'all' ? 'selected' : ''}>${escapeHtml(tr('common.all'))}</option>
-        <option value="sent" ${status === 'sent' ? 'selected' : ''}>ok</option>
+        <option value="sent" ${status === 'sent' ? 'selected' : ''}>${escapeHtml(tr('adm.mailStatusSent'))}</option>
         <option value="failed" ${status === 'failed' ? 'selected' : ''}>${escapeHtml(
           tr('set.mailFailed')
         )}</option>
@@ -4638,7 +4639,7 @@ async function mails(root) {
       // Die Spalten hießen früher to_address und ok – beides gibt es in der Tabelle nicht, die
       // Anzeige blieb deshalb leer. Sie heißen recipient und status.
       table(
-        ['', tr('auth.register.email'), tr('tk.subject'), 'kind', tr('common.status')],
+        ['', tr('auth.register.email'), tr('tk.subject'), tr('adm.mailKind'), tr('common.status')],
         data.mails.map(
           (mail) => `<tr data-mail="${mail.id}" style="cursor:pointer">
             <td class="small muted mono">${datetime(mail.created_at)}</td>
@@ -4652,7 +4653,7 @@ async function mails(root) {
             <td class="small muted mono">${escapeHtml(mail.kind)}</td>
             <td><span class="pill ${mail.status === 'sent' ? '' : 'missing'}"
               title="${escapeHtml(mail.error || '')}">${escapeHtml(
-                mail.status === 'sent' ? 'ok' : mail.error || 'error'
+                mail.status === 'sent' ? tr('adm.mailStatusSent') : mail.error || tr('common.error')
               )}</span></td>
           </tr>`
         )
