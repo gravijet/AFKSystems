@@ -20,6 +20,7 @@ export const S = {
   'nav.features': { en: 'Features', de: 'Funktionen' },
   'nav.pricing': { en: 'Pricing', de: 'Preise' },
   'nav.faq': { en: 'Questions', de: 'Fragen' },
+  'nav.api': { en: 'API', de: 'API' },
   'nav.login': { en: 'Log in', de: 'Anmelden' },
   'nav.register': { en: 'Create account', de: 'Konto anlegen' },
   'nav.dashboard': { en: 'Dashboard', de: 'Dashboard' },
@@ -110,6 +111,10 @@ export const S = {
   'meta.faq.description': {
     en: 'Answers about staying online, signing in with Microsoft, credits and what happens when they run out.',
     de: 'Antworten zu Dauerbetrieb, Anmeldung mit Microsoft, Guthaben und was passiert, wenn es aufgebraucht ist.',
+  },
+  'meta.api.description': {
+    en: 'The AFKSystems API: read your server slots and credits, start or stop bots, read the connection history, read and open support tickets.',
+    de: 'Die AFKSystems-API: Serverplätze und Guthaben lesen, Bots starten oder stoppen, den Verbindungsverlauf lesen, Support-Tickets lesen und eröffnen.',
   },
 
   'hero.title.a': { en: 'Your accounts stay', de: 'Deine Konten bleiben' },
@@ -330,6 +335,41 @@ export const S = {
     de: 'Leg ein Konto an und mach im Panel ein Ticket auf. Dort antworten wir.',
   },
 
+  // ------------------------------------------------ API
+  'api.title': { en: 'API access', de: 'API-Zugriff' },
+  'api.lead': {
+    en: 'A small, read-mostly API for your own account. Enough to check on your bots from a script, not enough to do anything a leaked token would regret.',
+    de: 'Eine kleine, überwiegend lesende API für das eigene Konto. Genug, um von einem Skript aus nach den eigenen Bots zu sehen – nicht genug, um bei einem geleakten Token Schaden anzurichten.',
+  },
+  'api.authTitle': { en: 'Authentication', de: 'Anmeldung' },
+  'api.authText': {
+    en: 'Create a token under Settings → Security → API access. Send it with every request as an Authorization header:',
+    de: 'Erzeuge ein Token unter Einstellungen → Sicherheit → API-Zugang. Schicke es bei jeder Anfrage als Authorization-Kopfzeile mit:',
+  },
+  'api.authNote': {
+    en: 'A token authenticates as you, but only for the endpoints below – not for anything a browser session can do.',
+    de: 'Ein Token meldet dich an wie eine Sitzung im Browser, aber nur für die unten stehenden Wege – für nichts sonst, was eine Browser-Sitzung dürfte.',
+  },
+  'api.endpointsTitle': { en: 'Endpoints', de: 'Endpunkte' },
+  'api.ep.me': { en: 'Your account: credits, plan usage, unread counts.', de: 'Das eigene Konto: Guthaben, Nutzung, ungelesene Anzahlen.' },
+  'api.ep.profiles': { en: 'All your server slots, with bot status.', de: 'Alle eigenen Serverplätze, mit Bot-Status.' },
+  'api.ep.profile': { en: 'One server slot in detail.', de: 'Ein Serverplatz im Detail.' },
+  'api.ep.start': { en: 'Start the bots on a server slot.', de: 'Die Bots eines Serverplatzes starten.' },
+  'api.ep.stop': { en: 'Stop the bots on a server slot.', de: 'Die Bots eines Serverplatzes stoppen.' },
+  'api.ep.events': {
+    en: 'Connection history of a server slot (joins, disconnects, world changes).',
+    de: 'Verbindungsverlauf eines Serverplatzes (Verbindungen, Trennungen, Weltwechsel).',
+  },
+  'api.ep.ticketsList': { en: 'Your support tickets.', de: 'Die eigenen Support-Tickets.' },
+  'api.ep.ticketGet': { en: 'One ticket, with its messages.', de: 'Ein Ticket, mit seinem Nachrichtenverlauf.' },
+  'api.ep.ticketCreate': { en: 'Open a new support ticket.', de: 'Ein neues Support-Ticket eröffnen.' },
+  'api.errorsTitle': { en: 'Errors', de: 'Fehler' },
+  'api.errorsText': {
+    en: 'Every error comes back as JSON: {"error": "…"}. The HTTP status says what kind: 401 without a valid token, 403 for an endpoint the token may not use, 404 for something that is not yours or does not exist, 429 when a lot of requests arrive at once.',
+    de: 'Jeder Fehler kommt als JSON zurück: {"error": "…"}. Der HTTP-Status sagt, welche Art: 401 ohne gültiges Token, 403 für einen Weg, den das Token nicht nutzen darf, 404 für etwas, das nicht dir gehört oder nicht existiert, 429 bei vielen Anfragen auf einmal.',
+  },
+  'api.tokensCta': { en: 'Create an API token', de: 'API-Token erstellen' },
+
   'cta.title': { en: 'Start with the free slot', de: 'Fang mit dem Gratis-Platz an' },
   'cta.lead': {
     en: 'Link Discord and stay in the AFKSystems server to keep the free slot active.',
@@ -414,6 +454,11 @@ export const S = {
     de: 'Ein Serverplatz ist mit aktiver AFKSystems-Discord-Mitgliedschaft gratis. Zahlungsdaten brauchst du nicht.',
   },
   'auth.register.email': { en: 'Email address', de: 'E-Mail-Adresse' },
+  'auth.register.fullName': { en: 'Your name', de: 'Dein Name' },
+  'auth.register.fullNameHint': {
+    en: 'Shown in tickets, emails and the panel – not the same as the username.',
+    de: 'Steht in Tickets, E-Mails und im Panel – nicht dasselbe wie der Benutzername.',
+  },
   'auth.register.username': { en: 'Username', de: 'Benutzername' },
   'auth.register.usernameHint': {
     en: '3–24 characters: letters, digits, dot, underscore, hyphen.',
@@ -767,23 +812,6 @@ export const S = {
   'acc.total': { en: 'All accounts', de: 'Alle Konten' },
   'acc.ready': { en: 'Ready to start', de: 'Startklar' },
   'acc.needsAttention': { en: 'Need attention', de: 'Handlungsbedarf' },
-  'acc.attentionTitle': { en: 'Accounts needing attention', de: 'Konten mit Handlungsbedarf' },
-  'acc.attentionText': {
-    en: 'Restore each Microsoft account individually. No bot is stopped or reassigned by this step.',
-    de: 'Stelle jedes Microsoft-Konto einzeln wieder her. Dabei wird kein Bot gestoppt oder neu zugeordnet.',
-  },
-  'acc.loginReviewTitle': {
-    en: 'Microsoft sign-ins to restore',
-    de: 'Microsoft-Anmeldungen wiederherstellen',
-  },
-  'acc.loginReviewText': {
-    en: 'Only accounts with a real sign-in error appear here. Each restore is separate: no account is reassigned and no bot is stopped automatically.',
-    de: 'Hier stehen nur Konten mit einem echten Anmeldefehler. Jede Wiederherstellung bleibt einzeln: Es wird kein Konto umgehängt und kein Bot automatisch gestoppt.',
-  },
-  'acc.waitingToStart': {
-    en: '{n} slot(s) waiting to start',
-    de: '{n} Platz/Plätze warten auf den Start',
-  },
   'acc.unused': { en: 'Not assigned', de: 'Nicht zugeordnet' },
   'acc.search': { en: 'Search accounts or servers', de: 'Konten oder Server suchen' },
   'acc.filter.all': { en: 'All accounts', de: 'Alle Konten' },
@@ -810,14 +838,7 @@ export const S = {
     de: 'Startet oder läuft auf {n} Serverplatz/-plätzen',
   },
   'acc.activeNow': { en: 'Currently active', de: 'Gerade aktiv' },
-  'acc.activeTitle': { en: 'Live account assignments', de: 'Aktive Konto-Zuordnungen' },
-  'acc.activeText': {
-    en: 'Each Minecraft account can run on one server slot at a time. Open the live slot to stop or inspect it.',
-    de: 'Jedes Minecraft-Konto kann gleichzeitig auf einem Serverplatz laufen. Öffne den aktiven Platz zum Stoppen oder Prüfen.',
-  },
-  'acc.openServer': { en: 'Open server slot', de: 'Serverplatz öffnen' },
   'acc.assignNow': { en: 'Assign to a server slot', de: 'Jetzt einem Serverplatz zuordnen' },
-  'acc.connections': { en: 'Connections so far', de: 'Verbindungen bisher' },
   'acc.connectedSince': { en: 'Added', de: 'Hinzugefügt' },
   'acc.errorHint': {
     en: 'Microsoft rejected the saved sign-in. Sign in again to renew it.',
@@ -1049,7 +1070,6 @@ export const S = {
   'srv.eventsCsv': { en: 'Download as CSV', de: 'Als CSV herunterladen' },
   'srv.eventWorld': { en: 'Changed world', de: 'Welt gewechselt' },
   'srv.eventDeath': { en: 'Died', de: 'Gestorben' },
-  'srv.eventDropped': { en: 'Lines dropped', de: 'Zeilen ausgelassen' },
   'srv.eventSnapshot': { en: 'Snapshot saved', de: 'Bild gesichert' },
   'srv.eventSnapshotView': { en: 'View image', de: 'Bild ansehen' },
   'srv.eventCsvTime': { en: 'Time', de: 'Zeit' },
@@ -1082,7 +1102,6 @@ export const S = {
     de: '{n} Bot(s) jetzt neu starten? Jeder verlässt den Server und kommt wieder – auf Servern mit Warteschlange kostet das den Platz darin.',
   },
   'srv.clientUpdateDone': { en: '{n} bot(s) are restarting.', de: '{n} Bot(s) starten neu.' },
-  'srv.clientOld': { en: 'Client {v}', de: 'Client {v}' },
   // Die eigene Notiz und das Kopieren eines Serverplatzes.
   'srv.note': { en: 'Your note', de: 'Deine Notiz' },
   'srv.notePlaceholder': {
@@ -1222,10 +1241,6 @@ export const S = {
     de: 'Die Verbindung ist aus unbekanntem Grund gescheitert.',
   },
 
-  'srv.clientOldHint': {
-    en: 'This bot started with that version. A newer one is on disk.',
-    de: 'Mit dieser Fassung ist der Bot gestartet. Auf der Platte liegt eine neuere.',
-  },
   'srv.walk': { en: 'Walk', de: 'Gehen' },
   'srv.walkHint': { en: 'a few blocks at a time', de: 'ein paar Blöcke auf einmal' },
   'srv.blocks': { en: 'Blocks per step', de: 'Blöcke je Schritt' },
@@ -1547,14 +1562,6 @@ export const S = {
     en: 'Screenshots and files up to {max}. They appear in Discord as well.',
     de: 'Screenshots und Dateien bis {max}. Sie erscheinen auch in Discord.',
   },
-  'tk.diagnostic': { en: 'Include server diagnostic context', de: 'Server-Diagnosekontext anhängen' },
-  'tk.diagnosticNone': { en: 'No server context', de: 'Kein Serverkontext' },
-  'tk.diagnosticHint': {
-    en: 'The exact context is shown for review before sending.',
-    de: 'Der genaue Kontext wird vor dem Absenden vollständig zur Prüfung gezeigt.',
-  },
-  'tk.diagnosticReview': { en: 'Review diagnostic context', de: 'Diagnosekontext prüfen' },
-  'tk.diagnosticSend': { en: 'Send with this context', de: 'Mit diesem Kontext senden' },
   'tk.tooBig': { en: '{name} is larger than {max}.', de: '{name} ist größer als {max}.' },
   'tk.tooMany': { en: 'At most ten files per message.', de: 'Höchstens zehn Dateien je Nachricht.' },
   'tk.uploading': { en: 'Uploading {i} of {n} …', de: 'Lade {i} von {n} hoch …' },
@@ -1819,6 +1826,8 @@ export const S = {
   'adm.announce': { en: 'Announcement', de: 'Ankündigung' },
   'adm.settings': { en: 'Settings', de: 'Einstellungen' },
   'adm.mails': { en: 'Mail log', de: 'Mail-Protokoll' },
+  'adm.mailKind': { en: 'Type', de: 'Art' },
+  'adm.mailStatusSent': { en: 'Sent', de: 'Verschickt' },
   'adm.client': { en: 'Client', de: 'Client' },
   'adm.clientOutdatedCount': {
     en: '{n} of {total} running bots still hold the old client file',
@@ -2345,21 +2354,6 @@ export const S = {
   'set.startPage': { en: 'When opening the panel', de: 'Beim Öffnen des Panels' },
   'set.start.overview': { en: 'Show the overview', de: 'Übersicht zeigen' },
   'set.start.last': { en: 'Continue where I left off', de: 'Dort weitermachen, wo ich war' },
-  'set.dashboardOrder': { en: 'Overview order', de: 'Reihenfolge der Übersicht' },
-  'set.dashboardOrderSub': {
-    en: 'Put the areas you use most at the top. This is saved on this device.',
-    de: 'Lege die Bereiche, die du am häufigsten brauchst, nach oben. Die Reihenfolge bleibt auf diesem Gerät.',
-  },
-  'set.dashboard.focus': { en: 'Operating status', de: 'Betriebsstatus' },
-  'set.dashboard.analytics': { en: 'Credits and figures', de: 'Guthaben und Kennzahlen' },
-  'set.dashboard.bots': { en: 'Bot control', de: 'Bot-Steuerung' },
-  'set.dashboard.pov': { en: 'Live views', de: 'Live-Ansichten' },
-  'set.dashboard.quick': { en: 'Quick access', de: 'Schnellzugriff' },
-  'set.dashboardMoveUp': { en: 'Move {name} up', de: '{name} nach oben verschieben' },
-  'set.dashboardMoveDown': { en: 'Move {name} down', de: '{name} nach unten verschieben' },
-  'set.dashboardReset': { en: 'Restore standard order', de: 'Standardreihenfolge wiederherstellen' },
-  'set.up': { en: 'Up', de: 'Hoch' },
-  'set.down': { en: 'Down', de: 'Runter' },
   'set.shortcuts': { en: 'View keyboard shortcuts', de: 'Tastaturkürzel ansehen' },
   'set.deviceSaved': { en: 'Saved on this device.', de: 'Auf diesem Gerät gespeichert.' },
   'set.dangerZone': { en: 'Account', de: 'Konto' },
@@ -2644,43 +2638,8 @@ export const S = {
   },
   'set.export': { en: 'Download my data', de: 'Meine Daten herunterladen' },
   'set.exportWhat': {
-    en: 'Choose exactly which of your data categories to include. The JSON file never contains passwords, sign-in tokens or Discord webhooks.',
-    de: 'Wähle genau die eigenen Datenbereiche aus, die in die JSON-Datei gehören. Passwörter, Anmelde-Tokens und Discord-Webhooks bleiben immer draußen.',
-  },
-  'set.exportChoose': { en: 'Choose data for download', de: 'Daten für den Download wählen' },
-  'set.exportChooseWhat': {
-    en: 'All categories are preselected. You can download only the parts you need.',
-    de: 'Alle Bereiche sind vorausgewählt. Du kannst nur die Teile herunterladen, die du brauchst.',
-  },
-  'set.exportNone': {
-    en: 'Choose at least one data category.',
-    de: 'Wähle mindestens einen Datenbereich aus.',
-  },
-  'set.exportPart.profile': {
-    en: 'Account, profile and preferences',
-    de: 'Konto, Profil und Einstellungen',
-  },
-  'set.exportPart.minecraft': { en: 'Minecraft accounts', de: 'Minecraft-Konten' },
-  'set.exportPart.servers': { en: 'Server slots and bot status', de: 'Serverplätze und Bot-Status' },
-  'set.exportPart.automation': {
-    en: 'Macros and schedules',
-    de: 'Makros und Zeitpläne',
-  },
-  'set.exportPart.billing': {
-    en: 'Credit history, top-ups and receipts',
-    de: 'Guthabenverlauf, Aufladungen und Belege',
-  },
-  'set.exportPart.support': {
-    en: 'Tickets and conversation history',
-    de: 'Tickets und Gesprächsverlauf',
-  },
-  'set.exportPart.activity': {
-    en: 'Panel messages and notifications',
-    de: 'Panel-Nachrichten und Benachrichtigungen',
-  },
-  'set.exportPart.security': {
-    en: 'Sign-in devices and account activity',
-    de: 'Anmeldegeräte und Kontoaktivität',
+    en: 'Downloads everything stored about your account as a JSON file. It never contains passwords, sign-in tokens or Discord webhooks.',
+    de: 'Lädt alles, was zu deinem Konto gespeichert ist, als JSON-Datei herunter. Passwörter, Anmelde-Tokens und Discord-Webhooks bleiben immer draußen.',
   },
   'set.deleteTitle': { en: 'Delete account', de: 'Konto löschen' },
   'set.deleteWhat': {

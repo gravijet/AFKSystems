@@ -35,6 +35,11 @@
               <input id="email" name="email" type="email" autocomplete="email" required />
             </div>
             <div class="field">
+              <label for="full_name">{{auth.register.fullName}}</label>
+              <input id="full_name" name="full_name" type="text" autocomplete="name" maxlength="120" required />
+              <span class="hint">{{auth.register.fullNameHint}}</span>
+            </div>
+            <div class="field">
               <label for="username">{{auth.register.username}}</label>
               <input id="username" name="username" type="text" autocomplete="username" required />
               <span class="hint">{{auth.register.usernameHint}}</span>

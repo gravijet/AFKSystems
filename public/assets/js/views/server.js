@@ -33,7 +33,6 @@ const EVENT_LABELS = {
   offline: 'state.offline',
   world: 'srv.eventWorld',
   death: 'srv.eventDeath',
-  dropped: 'srv.eventDropped',
   snapshot: 'srv.eventSnapshot',
 };
 
@@ -684,16 +683,6 @@ async function tabConnect(root, profile) {
             bot.retry
               ? `<span class="pill">${escapeHtml(
                   tr('srv.retryOf', { n: bot.retry.tries, max: bot.retry.max })
-                )}</span>`
-              : ''
-          }
-          <!-- Mit welcher Client-Fassung dieser Lauf angefangen hat – aber nur, wenn sie
-               inzwischen abgelöst wurde. Bei allen anderen wäre es eine Zahl, die jede Zeile
-               länger macht und in keiner etwas erklärt. -->
-          ${
-            bot.outdated
-              ? `<span class="pill" title="${escapeHtml(tr('srv.clientOldHint'))}">${escapeHtml(
-                  tr('srv.clientOld', { v: bot.client_version || '?' })
                 )}</span>`
               : ''
           }

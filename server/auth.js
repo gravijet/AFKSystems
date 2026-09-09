@@ -434,11 +434,15 @@ export function referrerFor(code) {
   return db.prepare('SELECT id FROM users WHERE referral_code = ?').get(value)?.id || null;
 }
 
-export function register({ email, username, password, password2, language = 'en', ref = null }) {
+export function register({ email, full_name, username, password, password2, language = 'en', ref = null }) {
   const mailAddress = String(email || '').trim().toLowerCase();
   const name = String(username || '').trim();
+  const fullName = profile.readChanges({ full_name }).full_name || '';
   if (!EMAIL.test(mailAddress)) {
     throw bad('Das ist keine gültige E-Mail-Adresse.', { en: 'That is not a valid email address.' });
+  }
+  if (!fullName) {
+    throw bad('Wie dürfen wir dich nennen?', { en: 'What should we call you?' });
   }
   if (!USERNAME.test(name)) {
     throw bad('Benutzername: 3–24 Zeichen, nur Buchstaben, Ziffern, . _ und -', {
@@ -476,13 +480,14 @@ export function register({ email, username, password, password2, language = 'en'
 
   const info = db
     .prepare(
-      `INSERT INTO users (email, username, password_hash, role, language, email_verified, verify_token,
+      `INSERT INTO users (email, username, full_name, password_hash, role, language, email_verified, verify_token,
                           verify_sent_at, created_at, referral_code, referred_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
     .run(
       mailAddress,
       name,
+      fullName,
       hashPassword(password),
       role,
       language === 'de' ? 'de' : 'en',

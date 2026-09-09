@@ -787,7 +787,7 @@ admin.get(
         .all(id)
         .map((row) => {
           const parsed = explainDetail(row.detail, lang);
-          const out = { ...row, detail_parsed: parsed };
+          const out = { ...row, detail_parsed: parsed, action_label: actionLabel(row.action, lang) };
           return { ...out, summary: summarize(out, lang) };
         }),
       deletion: account.deletionOf(user),
@@ -893,6 +893,7 @@ admin.post(
     const body = req.body || {};
     const user = auth.register({
       email: body.email,
+      full_name: body.full_name,
       username: body.username,
       password: body.password,
       password2: body.password,

@@ -12,7 +12,7 @@
 // der Route. Die Rolle allein reicht nicht: Ein Admin ist unter "Support" selbst Kunde.
 
 import {
-  api, icon, escapeHtml, datetime, since, safeLink, tr, $, $$, ok, fail, toast, confirmDialog, formDialog, debounce,
+  api, icon, escapeHtml, datetime, since, safeLink, tr, $, $$, ok, fail, toast, formDialog, debounce,
   fileSize, avatar, locale, credits, date,
 } from '../ui.js';
 import { state, appbar, refresh, draw, go } from '../app.js';
@@ -364,13 +364,6 @@ async function create() {
   // schon, worum es geht, und ein Ticket, das beim Abschicken verschwindet, weil ein Feld leer
   // war, ist schlimmer als eines ohne Text.
   const draftKey = `afk-new-ticket-draft-${state.me?.id || 0}`;
-  let diagnosticProfiles = [];
-  try {
-    diagnosticProfiles = (await api('/tickets/diagnostics')).profiles || [];
-  } catch {
-    // Support darf nicht daran scheitern, dass die Komfortliste gerade nicht erreichbar ist.
-    diagnosticProfiles = [];
-  }
   const answer = await formDialog(
     tr('tk.new'),
     [
@@ -382,38 +375,11 @@ async function create() {
         type: 'files',
         hint: tr('tk.filesHint', { max: fileSize(MAX_UPLOAD) }),
       },
-      ...(diagnosticProfiles.length
-        ? [
-            {
-              key: 'diagnostic_profile_id',
-              label: tr('tk.diagnostic'),
-              type: 'select',
-              value: '',
-              hint: tr('tk.diagnosticHint'),
-              options: [
-                { value: '', label: tr('tk.diagnosticNone') },
-                ...diagnosticProfiles.map((profile) => ({
-                  value: String(profile.id),
-                  label: `${profile.name} · ${profile.address}`,
-                })),
-              ],
-            },
-          ]
-        : []),
     ],
     { submit: tr('tk.send'), draftKey }
   );
   if (!answer) return;
   try {
-    if (answer.diagnostic_profile_id) {
-      const diagnostic = await api(`/tickets/diagnostics?profile_id=${encodeURIComponent(answer.diagnostic_profile_id)}`);
-      const accepted = await confirmDialog(diagnostic.diagnostic.preview, {
-        title: tr('tk.diagnosticReview'),
-        confirm: tr('tk.diagnosticSend'),
-        danger: false,
-      });
-      if (!accepted) return;
-    }
     const files = await uploadFiles(answer.files, {
       onProgress: (index, total) => total > 1 && toast(tr('tk.uploading', { i: index, n: total })),
     });
@@ -423,7 +389,6 @@ async function create() {
         subject: answer.subject,
         body: answer.body,
         files,
-        diagnostic_profile_id: answer.diagnostic_profile_id ? Number(answer.diagnostic_profile_id) : undefined,
       },
     });
     try {
@@ -643,14 +608,14 @@ async function one(root, id, { staff, backHash }) {
             )
           : ''
       }
-      ${fact(tr('tk.firstReply'), waitedFor())}
+      ${staff ? fact(tr('tk.firstReply'), waitedFor()) : ''}
       ${fact(
         ticket.status === 'closed' ? tr('tk.closedAt') : tr('tk.lastActivity'),
         `<span class="mono">${since(ticket.status === 'closed' ? ticket.closed_at : ticket.updated_at)}</span>`
       )}
       ${fact(tr('tk.nextExpected'), `<span class="truncate">${escapeHtml(nextWork().text)}</span>`)}
       ${
-        Number(ticket.reopened) > 0
+        staff && Number(ticket.reopened) > 0
           ? fact(tr('tk.reopenedTimes'), `<span class="mono">${Number(ticket.reopened)}×</span>`)
           : ''
       }

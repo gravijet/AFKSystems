@@ -274,11 +274,12 @@ app.use((req, res, next) => {
 });
 
 /**
- * Ein API-Token ist enger als eine Sitzung im Browser: Es kann den eigenen Bot-Status lesen und
- * Bots starten oder stoppen, sonst nichts. Kein Zugriff auf Zahlungen, Zugangsdaten, das Konto
- * selbst oder – wichtig – auf die Tokenverwaltung: Ein einzelnes geleaktes Token darf sich nicht
- * selbst weitere ausstellen. Was dazukommen soll, kommt hier dazu, nicht durch ein weiter
- * gefasstes Token.
+ * Ein API-Token ist enger als eine Sitzung im Browser: eigenen Status und Guthaben lesen, Bots
+ * starten oder stoppen, den Verlauf eines Serverplatzes lesen, eigene Support-Tickets lesen und
+ * anlegen – sonst nichts. Kein Zugriff auf Zahlungen, Zugangsdaten, das Konto selbst oder –
+ * wichtig – auf die Tokenverwaltung: Ein einzelnes geleaktes Token darf sich nicht selbst weitere
+ * ausstellen. Was dazukommen soll, kommt hier dazu, nicht durch ein weiter gefasstes Token. Diese
+ * Liste ist zugleich die Grundlage der Dokumentation unter /api.
  */
 const API_TOKEN_ALLOW = [
   { method: 'GET', path: /^\/me$/ },
@@ -286,6 +287,10 @@ const API_TOKEN_ALLOW = [
   { method: 'GET', path: /^\/profiles\/\d+$/ },
   { method: 'POST', path: /^\/profiles\/\d+\/start$/ },
   { method: 'POST', path: /^\/profiles\/\d+\/stop$/ },
+  { method: 'GET', path: /^\/profiles\/\d+\/events$/ },
+  { method: 'GET', path: /^\/tickets$/ },
+  { method: 'GET', path: /^\/tickets\/\d+$/ },
+  { method: 'POST', path: /^\/tickets$/ },
 ];
 app.use('/api', (req, _res, next) => {
   if (!req.apiToken) return next();
@@ -510,6 +515,7 @@ app.get('/sitemap.xml', (req, res) => {
     '/features',
     '/pricing',
     '/faq',
+    '/api',
     // Eine geschlossene Registrierung gehört nicht in die Sitemap: Wer über die Suche darauf
     // stößt, findet ein Formular, das ihm absagt.
     ...(Number(getSetting('registration_open')) && config.registrationOpen ? ['/register'] : []),
@@ -664,6 +670,7 @@ const PAGES = {
     vars: landing.pricingVars,
   },
   faq: { view: 'faq', title: 'faq.title', description: 'meta.faq.description' },
+  api: { view: 'api', title: 'api.title', description: 'meta.api.description' },
   // **Hier ausdrücklich keine Ladehinweise für JavaScript.** Es lag nahe, den Anmeldeseiten
   // dieselben `modulepreload`-Zeilen zu geben wie dem Dashboard – gemessen war es falsch: Auf einer
   // gedrosselten Leitung (1,6 Mbit/s, 150 ms Umlauf) kam das erste Bild dadurch 108 ms **später**,

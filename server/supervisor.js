@@ -1268,11 +1268,9 @@ class Bot extends EventEmitter {
       // weg. Für jemanden, der später fragt "warum fehlt hier ein Stück Chat", ist genau das der
       // Unterschied zwischen "nichts passiert" und "wir haben's, aber verloren".
       case 'output':
+        // Nur für die Auswertung festgehalten (siehe server.js, Filter auf 'dropped') – kein
+        // Ereignis, das für den Kunden im Chat-Verlauf etwas bedeutet.
         this.logEvent('dropped', event.text || '');
-        this.push(
-          'status',
-          'Zeilen wurden ausgelassen: Die Ausgabe kam schneller, als das Panel sie lesen konnte.'
-        );
         break;
       case 'disconnect': {
         // Der Grund ist das Wertvollste, was in dieser Sitzung noch passiert – er sagt, warum es

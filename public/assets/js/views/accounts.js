@@ -4,7 +4,7 @@ import { api, icon, escapeHtml, datetime, tr, $, $$, ok, fail, confirmDialog, fo
 import { state, appbar, refresh, draw } from '../app.js';
 
 export async function render(root) {
-  const [data, review] = await Promise.all([api('/accounts'), api('/accounts/review')]);
+  const data = await api('/accounts');
   state.accounts = data.accounts;
   await refresh({ accounts: false, me: false });
   let query = '';
@@ -30,9 +30,6 @@ export async function render(root) {
   const ready = state.accounts.filter((account) => !needsAttention(account)).length;
   const attention = state.accounts.length - ready;
   const unused = state.accounts.filter((account) => !usedOn(account).length).length;
-  const reviewAccounts = review.accounts || [];
-  const reviewIds = new Set(reviewAccounts.map((account) => account.id));
-  const attentionAccounts = state.accounts.filter((account) => needsAttention(account) && !reviewIds.has(account.id));
   const activeAccounts = state.accounts.filter((account) => activeOn(account).length);
   const accountTags = [...new Set(state.accounts.flatMap((account) => account.tags || []))].sort((a, b) =>
     a.localeCompare(b)
@@ -55,42 +52,6 @@ export async function render(root) {
 
     <div class="note warn" style="margin-bottom:1.5rem">${icon('alert')}
       <div><strong>${escapeHtml(tr('rules.title'))}</strong><br>${escapeHtml(tr('rules.text'))}</div></div>
-
-    ${loginReviewSection(reviewAccounts)}
-
-    ${
-      attentionAccounts.length
-        ? `<section class="panel account-attention" id="account-attention">
-            <header>
-              <h3>${icon('alert')} ${escapeHtml(tr('acc.attentionTitle'))}</h3>
-              <span class="pill missing">${attentionAccounts.length}</span>
-            </header>
-            <div class="body">
-              <p class="small muted" style="margin:0">${escapeHtml(tr('acc.attentionText'))}</p>
-              <div class="account-attention-list">
-                ${attentionAccounts.map(attentionRow).join('')}
-              </div>
-            </div>
-          </section>`
-        : ''
-    }
-
-    ${
-      activeAccounts.length
-        ? `<section class="panel account-live" id="account-live">
-            <header>
-              <h3>${icon('play')} ${escapeHtml(tr('acc.activeTitle'))}</h3>
-              <span class="pill primary">${activeAccounts.length}</span>
-            </header>
-            <div class="body">
-              <p class="small muted" style="margin:0">${escapeHtml(tr('acc.activeText'))}</p>
-              <div class="account-live-list">
-                ${activeAccounts.flatMap(liveAssignmentRows).join('')}
-              </div>
-            </div>
-          </section>`
-        : ''
-    }
 
     ${
       state.accounts.length
@@ -140,20 +101,6 @@ export async function render(root) {
           </div>`
     }`;
 
-  function loginReviewSection(accounts) {
-    if (!accounts.length) return '';
-    return `<section class="panel account-login-review" id="account-login-review">
-      <header>
-        <h3>${icon('key')} ${escapeHtml(tr('acc.loginReviewTitle'))}</h3>
-        <span class="pill missing">${accounts.length}</span>
-      </header>
-      <div class="body">
-        <p class="small muted" style="margin:0">${escapeHtml(tr('acc.loginReviewText'))}</p>
-        <div class="account-login-review-list">${accounts.map(loginReviewRow).join('')}</div>
-      </div>
-    </section>`;
-  }
-
   function summaryTile(value, number, key, symbol) {
     return `<button type="button" class="stat account-stat" data-account-filter="${value}"
       aria-pressed="${filter === value}">
@@ -161,83 +108,6 @@ export async function render(root) {
       <span class="v">${number}</span>
       <span class="k">${escapeHtml(tr(key))}</span>
     </button>`;
-  }
-
-  function attentionRow(account) {
-    const assigned = usedOn(account);
-    const live = onlineOn(account);
-    const detail = account.suspended
-      ? account.suspend_reason || tr('acc.suspendedHint')
-      : account.last_error || tr('acc.errorHint');
-    return `<div class="account-attention-row">
-      <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
-      <div class="grow" style="min-width:0">
-        <strong class="truncate">${escapeHtml(account.name)}</strong>
-        <span class="small muted truncate">${escapeHtml(detail)}</span>
-        <span class="small muted">${escapeHtml(
-          tr('acc.assignedServers', { n: assigned.length })
-        )} · ${escapeHtml(tr('acc.onlineOn', { n: live.length }))}</span>
-      </div>
-      ${
-        account.kind === 'microsoft' && !account.suspended
-          ? `<button class="btn btn-sm btn-primary" data-relogin="${account.id}">${icon('refresh')} ${escapeHtml(
-              tr('acc.renew')
-            )}</button>`
-          : ''
-      }
-    </div>`;
-  }
-
-  function loginReviewRow(account) {
-    const slots = account.slots || [];
-    const impact = account.impact || { slots: slots.length, online: 0, waiting_to_start: 0 };
-    const impactText = [
-      tr('acc.assignedServers', { n: impact.slots }),
-      tr('acc.onlineOn', { n: impact.online }),
-      impact.waiting_to_start ? tr('acc.waitingToStart', { n: impact.waiting_to_start }) : '',
-    ]
-      .filter(Boolean)
-      .join(' · ');
-    return `<div class="account-login-review-row">
-      <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
-      <div class="grow" style="min-width:0">
-        <strong class="truncate">${escapeHtml(account.name)}</strong>
-        <span class="small muted truncate">${escapeHtml(account.last_error || tr('acc.errorHint'))}</span>
-        <span class="small muted">${escapeHtml(impactText)}</span>
-        ${
-          slots.length
-            ? `<div class="account-review-slots">${slots
-                .map(
-                  (slot) => `<a class="pill" href="#/servers/${slot.id}/connect">
-                    <span class="dot ${slot.online ? 'live' : ''}"></span>${escapeHtml(slot.name)}</a>`
-                )
-                .join('')}</div>`
-            : ''
-        }
-      </div>
-      <button class="btn btn-sm btn-primary" data-relogin="${account.id}">${icon('refresh')} ${escapeHtml(
-        tr('acc.renew')
-      )}</button>
-    </div>`;
-  }
-
-  function liveAssignmentRows(account) {
-    return activeOn(account).map((profile) => {
-      const member = profile.accounts.find((entry) => entry.account_id === account.id);
-      const stateKey = member?.state || 'starting';
-      return `<div class="account-live-row">
-        <img class="head" src="${escapeHtml(account.head)}" alt="" loading="lazy" decoding="async">
-        <div class="grow" style="min-width:0">
-          <strong class="truncate">${escapeHtml(account.name)}</strong>
-          <span class="small muted truncate">${escapeHtml(profile.name)} · ${escapeHtml(
-            stateKey === 'online' ? tr('acc.onlineOn', { n: 1 }) : tr('acc.activeOn', { n: 1 })
-          )}</span>
-        </div>
-        <a class="btn btn-sm" href="#/servers/${profile.id}/connect">${icon('arrow')} ${escapeHtml(
-          tr('acc.openServer')
-        )}</a>
-      </div>`;
-    });
   }
 
   function visibleAccounts() {
@@ -327,7 +197,6 @@ export async function render(root) {
       </div>
 
       <dl class="account-facts">
-        <div><dt>${escapeHtml(tr('acc.connections'))}</dt><dd>${account.connections}</dd></div>
         <div><dt>${escapeHtml(tr('acc.connectedSince'))}</dt><dd>${datetime(account.created_at)}</dd></div>
       </dl>
 
@@ -419,15 +288,6 @@ export async function render(root) {
     const account = state.accounts.find((entry) => entry.id === Number(id));
     if (account?.kind === 'microsoft' && !account.suspended) startLogin({ account });
   };
-  $('#account-attention')?.addEventListener('click', (event) => {
-    const relogin = event.target.closest('[data-relogin]');
-    if (relogin) reloginFor(relogin.dataset.relogin);
-  });
-  $('#account-login-review')?.addEventListener('click', (event) => {
-    const relogin = event.target.closest('[data-relogin]');
-    if (relogin) reloginFor(relogin.dataset.relogin);
-  });
-
   $('#account-grid')?.addEventListener('click', async (event) => {
     const relogin = event.target.closest('[data-relogin]');
     if (relogin) return reloginFor(relogin.dataset.relogin);

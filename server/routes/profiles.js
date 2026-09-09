@@ -1379,6 +1379,9 @@ router.get(
     for (const member of membersOf(profile)) {
       if (only && !only.includes(member.account_id)) continue;
       for (const entry of supervisor.eventsOf(profile.id, member.account_id, since)) {
+        // "dropped" heißt nur: der Client war mit Zeilen schneller, als das Panel sie lesen
+        // konnte – eine interne Pufferwarnung, kein Ereignis für Kunde oder API-Token.
+        if (entry.type === 'dropped') continue;
         events.push({ ...entry, account_id: member.account_id, account: member.name });
       }
     }
