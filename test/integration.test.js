@@ -56,6 +56,7 @@ const { Roles } = await import('../bot/handlers/roles.js');
 const { ChannelAccess } = await import('../bot/handlers/channelAccess.js');
 const { Panel } = await import('../bot/panel.js');
 const linkedRoles = await import('../server/linked-roles.js');
+const nodes = await import('../server/nodes.js');
 
 let sequence = 0;
 let serverProcess = null;
@@ -5731,6 +5732,43 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(operations.response.status, 200);
   assert.ok(Array.isArray(operations.data.alerts));
   assert.equal(typeof operations.data.proxy.total, 'number');
+
+  // Standort-Verlauf: kein Momentwert mehr, sondern eine Zeitreihe mit Frühwarnschwelle.
+  const local = nodes.localNode();
+  db.prepare('DELETE FROM node_metrics_history').run();
+  nodes.recordHistory(local, { cpu_percent: 42, memory: { percent: 55 }, disk: { percent: 12 } });
+  const rowsAfterRecord = db.prepare('SELECT * FROM node_metrics_history WHERE node_id = ?').all(local.id);
+  assert.equal(rowsAfterRecord.length, 1, 'ein Messpunkt legt genau eine Zeile an');
+  assert.equal(rowsAfterRecord[0].cpu_percent, 42);
+
+  const nodeHistory = await api(base, `/api/admin/nodes/${local.id}/history?hours=24`, { token: ADMIN_TOKEN });
+  assert.equal(nodeHistory.response.status, 200);
+  assert.ok(Array.isArray(nodeHistory.data.buckets));
+  assert.equal(nodeHistory.data.buckets.length, 1);
+  assert.equal(nodeHistory.data.buckets[0].cpu, 42);
+  assert.equal(typeof nodeHistory.data.thresholds.cpu, 'number');
+  const notStaffHistory = await api(base, `/api/admin/nodes/${local.id}/history`, { token: USER_TOKEN });
+  assert.equal(notStaffHistory.response.status, 403);
+
+  // Ein Standort ohne Ressourcen (egress bzw. gerade offline) schreibt keine erfundene Zeile.
+  db.prepare('DELETE FROM node_metrics_history').run();
+  nodes.recordHistory(local, null);
+  assert.equal(
+    db.prepare('SELECT COUNT(*) AS n FROM node_metrics_history').get().n,
+    0,
+    'ohne Messwert entsteht keine Zeile'
+  );
+
+  // Aufräumen entfernt nur, was älter ist als die Aufbewahrungsfrist.
+  const old = Date.now() - 40 * 24 * 60 * 60 * 1000;
+  db.prepare(
+    'INSERT INTO node_metrics_history (node_id, cpu_percent, mem_percent, disk_percent, bots_running, created_at) VALUES (?, 10, 10, 10, 0, ?)'
+  ).run(local.id, old);
+  nodes.recordHistory(local, { cpu_percent: 20, memory: { percent: 20 }, disk: { percent: 20 } });
+  const removed = nodes.cleanupHistory();
+  assert.equal(removed, 1, 'nur die alte Zeile wird entfernt');
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM node_metrics_history').get().n, 1);
+  db.prepare('DELETE FROM node_metrics_history').run();
   const rolloutPreview = await api(base, '/api/admin/client/rollout-preview', { token: ADMIN_TOKEN });
   assert.equal(rolloutPreview.response.status, 200);
   assert.equal(rolloutPreview.data.spacing_ms, 5000);

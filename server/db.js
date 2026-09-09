@@ -1708,6 +1708,28 @@ const migrations = [
       }
     },
   },
+
+  {
+    // Bisher stand in `nodes.stats` immer nur der letzte gemeldete Wert – jede Meldung
+    // überschrieb die vorherige. Damit ließ sich nie sehen, ob ein Standort sich langsam einer
+    // Grenze nähert oder ob eine Auslastungsspitze eben erst war oder schon seit Stunden anhält.
+    // Diese Tabelle hält stattdessen einen Verlauf, den `server/index.js` im Zehn-Minuten-Takt
+    // füllt (Aufgabe `standort-verlauf`) und die stündliche Aufräum-Aufgabe nach 30 Tagen wieder
+    // leert – genau wie schon bei den Bot-Ereigniszeilen.
+    name: '044-standort-verlauf',
+    sql: `
+      CREATE TABLE node_metrics_history (
+        id           INTEGER PRIMARY KEY,
+        node_id      INTEGER NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+        cpu_percent  REAL,
+        mem_percent  REAL,
+        disk_percent REAL,
+        bots_running INTEGER NOT NULL DEFAULT 0,
+        created_at   INTEGER NOT NULL
+      );
+      CREATE INDEX node_metrics_history_node_time ON node_metrics_history(node_id, created_at);
+    `,
+  },
 ];
 
 /**

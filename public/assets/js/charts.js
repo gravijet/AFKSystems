@@ -85,11 +85,11 @@ const wrap = (width, height, inner, klass = '') =>
  * Eine Reihe, deshalb keine Legende – der Titel über dem Diagramm sagt, was gezeigt wird. Beim
  * Zeigen erscheint eine Sprechblase mit dem genauen Wert (siehe `bindHover`).
  */
-export function line(points, { format = String, height = 160, color = SERIES[0] } = {}) {
+export function line(points, { format = String, height = 160, color = SERIES[0], threshold = 0 } = {}) {
   const width = 320;
   const box = frame({ height });
   if (!points.length) return empty(width, height);
-  const max = ceiling(Math.max(...points.map((point) => point.value)));
+  const max = ceiling(Math.max(...points.map((point) => point.value), threshold));
   const span = width - box.left - box.right;
   const step = points.length > 1 ? span / (points.length - 1) : 0;
   const at = (index) => box.left + (points.length > 1 ? index * step : span / 2);
@@ -114,6 +114,16 @@ export function line(points, { format = String, height = 160, color = SERIES[0] 
     )
     .join('');
 
+  // Die Frühwarnschwelle: eine gestrichelte Linie, die stehen bleibt, auch wenn die Ist-Werte
+  // gerade weit darunter liegen – das Diagramm reicht in dem Fall bis zur Schwelle hoch statt
+  // bis zum höchsten Messwert, sonst wäre "noch weit weg" nicht von "genau an der Grenze" zu
+  // unterscheiden.
+  const thresholdLine = threshold
+    ? `<line x1="${box.left}" y1="${num(height_(threshold))}" x2="${width - box.right}" y2="${num(
+        height_(threshold)
+      )}" class="c-threshold"><title>${escapeHtml(format(threshold))}</title></line>`
+    : '';
+
   const labels = tickLabels(points, at, box, height);
   return wrap(
     width,
@@ -121,7 +131,7 @@ export function line(points, { format = String, height = 160, color = SERIES[0] 
     `${grid(box, max, format, width)}
      <path d="${area}" class="c-area" style="--c:${color}"/>
      <path d="${path}" class="c-line" style="--c:${color}"/>
-     ${dots}${labels}`
+     ${thresholdLine}${dots}${labels}`
   );
 }
 

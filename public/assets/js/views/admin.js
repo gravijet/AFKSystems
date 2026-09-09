@@ -2739,6 +2739,45 @@ async function accounts(root) {
 // Platte verbraucht. Deshalb steht auf jeder Karte, was die Maschine gerade tut – und deshalb
 // steht das an einem Proxy nirgends: eine Adresse hat keine Auslastung.
 
+/**
+ * Der Verlauf eines Standorts als drei Linien mit ihrer jeweiligen Frühwarnschwelle.
+ *
+ * Eine Stunde ohne Messung ist eine Lücke, keine erfundene Null (siehe `nodes.history` im
+ * Server) – Buckets ohne Wert fallen deshalb aus der jeweiligen Reihe heraus statt als 0 %
+ * gezeichnet zu werden, was einen Absturz behauptete, der nie stattfand.
+ */
+function renderNodeHistory(history) {
+  const buckets = history.buckets || [];
+  if (!buckets.length) {
+    return `<p class="small muted" style="margin:.6rem 0 0">${escapeHtml(tr('nd.historyEmpty'))}</p>`;
+  }
+  const langCode = lang === 'de' ? 'de-DE' : 'en-GB';
+  const time = new Intl.DateTimeFormat(langCode, { hour: '2-digit', minute: '2-digit' });
+  const pct = (n) => `${Math.round(n)} %`;
+  const series = (key) =>
+    buckets
+      .filter((bucket) => bucket[key] !== null && bucket[key] !== undefined)
+      .map((bucket) => {
+        const label = time.format(new Date(bucket.at));
+        return { label, short: label, value: bucket[key] };
+      });
+  const metrics = [
+    { key: 'cpu', title: tr('nd.historyCpu') },
+    { key: 'mem', title: tr('nd.historyRam') },
+    { key: 'disk', title: tr('nd.historyDisk') },
+  ];
+  return `<div class="grid three" style="margin-top:.8rem;gap:.8rem">${metrics
+    .map((metric) => {
+      const threshold = history.thresholds?.[metric.key] || 0;
+      return chart.card({
+        title: metric.title,
+        chart: chart.line(series(metric.key), { format: pct, threshold }),
+        foot: threshold ? escapeHtml(tr('nd.threshold', { n: threshold })) : '',
+      });
+    })
+    .join('')}</div>`;
+}
+
 async function nodes(root) {
   const data = await api('/admin/nodes');
   const { users: userList } = await api('/admin/users?filter=all');
@@ -2823,6 +2862,17 @@ async function nodes(root) {
             </div>
 
             ${load(node)}
+
+            ${
+              node.kind === 'egress'
+                ? ''
+                : `<details class="node-history" data-history="${node.id}">
+                    <summary>${escapeHtml(tr('nd.history'))}</summary>
+                    <div data-history-body="${node.id}">
+                      <p class="small muted" style="margin:.6rem 0 0">${escapeHtml(tr('nd.historyLoading'))}</p>
+                    </div>
+                  </details>`
+            }
 
             <dl class="facts" style="margin-top:1rem">
               <div><dt>${escapeHtml(tr('adm.profiles'))}</dt>
@@ -2974,6 +3024,23 @@ async function nodes(root) {
       }
     })
   );
+
+  // Der Verlauf lädt erst beim ersten Aufklappen – ein Standort, den niemand aufklappt, kostet
+  // keine zusätzliche Anfrage.
+  $$('[data-history]').forEach((details) => {
+    let loaded = false;
+    details.addEventListener('toggle', async () => {
+      if (!details.open || loaded) return;
+      loaded = true;
+      const body = details.querySelector(`[data-history-body="${details.dataset.history}"]`);
+      try {
+        const history = await api(`/admin/nodes/${details.dataset.history}/history?hours=24`);
+        body.innerHTML = renderNodeHistory(history);
+      } catch (error) {
+        body.innerHTML = `<p class="small bad" style="margin:.6rem 0 0">${escapeHtml(tr('common.error'))}</p>`;
+      }
+    });
+  });
 
   $('#new').addEventListener('click', async () => {
     const answer = await formDialog(tr('common.create'), fields(), {
@@ -4936,6 +5003,25 @@ async function security(root) {
 // eine Ausnahme rechtfertigt keine zweite Zustandsverteilung neben der, die die Kundenansicht
 // ohnehin schon hat.
 
+/** Zu welcher Gruppe eine Warnung gehört – für die getrennte Darstellung auf der Betriebsseite. */
+const ALERT_GROUPS = {
+  'node-offline': 'nodes',
+  'node-full': 'nodes',
+  'client-error': 'client',
+  'client-outdated': 'client',
+  'job-failed': 'jobs',
+  'proxy-unused': 'proxies',
+};
+const ALERT_GROUP_ORDER = ['nodes', 'client', 'jobs', 'proxies', 'other'];
+
+/** Eine einzelne Warnzeile – unverändert gegenüber vorher, nur jetzt in einer Gruppe statt in einer langen Liste. */
+const alertRow = (alert) =>
+  `<a class="note ${alert.severity === 'bad' ? 'bad' : 'warn'}" href="#${alert.route}" style="margin:0;text-decoration:none">
+    ${icon('alert')}<div><strong>${escapeHtml(operationAlertText(alert))}</strong>
+      <p class="small" style="margin:.2rem 0 0">${escapeHtml(operationAlertHint(alert))}</p></div>
+    <span aria-hidden="true">${icon('chevron-right')}</span>
+  </a>`;
+
 async function ops(root) {
   let timer = null;
   let onlyRunning = true;
@@ -4943,6 +5029,41 @@ async function ops(root) {
   const paint = (data, jobs, operations) => {
     const bots = data.bots.filter((bot) => (onlyRunning ? bot.state !== 'offline' : true));
     const nodes = data.nodes;
+
+    const grouped = new Map();
+    for (const alert of operations.alerts) {
+      const group = ALERT_GROUPS[alert.kind] || 'other';
+      if (!grouped.has(group)) grouped.set(group, []);
+      grouped.get(group).push(alert);
+    }
+    const groupTitle = (group) =>
+      group === 'other' ? tr('ops.attention') : tr(`ops.group.${group}`);
+
+    // Job-Zustände und Proxy-Kapazität als Momentaufnahme: keine erfundene Historie, sondern
+    // dieselben Zahlen, die auch die Tabellen darunter und `operations.proxy` schon zeigen –
+    // hier nur als Verteilung statt als Einzelwerte.
+    const jobsRunning = jobs.filter((job) => job.running).length;
+    const jobsFailed = jobs.filter((job) => !job.running && job.last_error).length;
+    const jobsOk = jobs.length - jobsRunning - jobsFailed;
+    const jobStatus = chart.stacked(
+      [
+        { label: tr('ops.chart.jobsOk'), value: jobsOk, color: 'var(--ok)' },
+        { label: tr('ops.chart.jobsFailed'), value: jobsFailed, color: 'var(--bad)' },
+        { label: tr('ops.chart.jobsRunning'), value: jobsRunning, color: 'var(--warn)' },
+      ],
+      { format: (n) => String(n) }
+    );
+    const proxy = operations.proxy || { total: 0, assigned: 0, in_use: 0 };
+    const proxyUnused = Math.max(0, proxy.assigned - proxy.in_use);
+    const proxyFree = Math.max(0, proxy.total - proxy.assigned);
+    const proxyCapacity = chart.stacked(
+      [
+        { label: tr('ops.chart.proxyInUse'), value: proxy.in_use, color: 'var(--ok)' },
+        { label: tr('ops.chart.proxyUnused'), value: proxyUnused, color: 'var(--warn)' },
+        { label: tr('ops.chart.proxyFree'), value: proxyFree, color: 'var(--chart-1)' },
+      ],
+      { format: (n) => String(n) }
+    );
 
     root.innerHTML = `
       <div class="grid four" style="margin-bottom:1.5rem">
@@ -4952,20 +5073,24 @@ async function ops(root) {
         ${stat(tr('ops.errors'), String(data.bots.filter((bot) => bot.last_error).length), tr('ops.errorsFoot'))}
       </div>
 
+      <div class="grid two" style="margin-bottom:1.5rem">
+        ${chart.card({ title: tr('ops.chart.jobStatus'), note: tr('ops.jobs'), chart: jobStatus })}
+        ${chart.card({ title: tr('ops.chart.proxyCapacity'), note: tr('adm.proxies'), chart: proxyCapacity })}
+      </div>
+
       ${
         operations.alerts.length
-          ? panel(
-              tr('ops.attention'),
-              `<div class="stack">${operations.alerts
-                .map(
-                  (alert) => `<a class="note ${alert.severity === 'bad' ? 'bad' : 'warn'}" href="#${alert.route}" style="margin:0;text-decoration:none">
-                    ${icon('alert')}<div><strong>${escapeHtml(operationAlertText(alert))}</strong>
-                      <p class="small" style="margin:.2rem 0 0">${escapeHtml(operationAlertHint(alert))}</p></div>
-                    <span aria-hidden="true">${icon('chevron-right')}</span>
-                  </a>`
+          ? ALERT_GROUP_ORDER.filter((group) => grouped.has(group))
+              .map((group) =>
+                panel(
+                  groupTitle(group),
+                  `<div class="stack">${grouped
+                    .get(group)
+                    .map(alertRow)
+                    .join('')}</div>`
                 )
-                .join('')}</div>`
-            )
+              )
+              .join('')
           : `<div class="note" style="margin-bottom:1.5rem">${icon('check')}<div>${escapeHtml(tr('ops.attentionNone'))}</div></div>`
       }
 
