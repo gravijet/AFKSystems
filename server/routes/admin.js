@@ -2693,6 +2693,133 @@ function explainDetail(raw, lang = 'de') {
   return { text: '', fields };
 }
 
+/**
+ * Beschriftung je Protokoll-Art.
+ *
+ * `action` steht in der Datenbank als technischer Code (`node-create`, `admin-bot-restart`, …) –
+ * praktisch zum Filtern und Suchen, aber niemand liest ihn gern. Diese Tabelle übersetzt jeden
+ * bekannten Code in einen Satzanfang; ein Code, der hier fehlt (neu, oder ein dynamischer wie
+ * `admin-server-${action}` mit einem noch unbekannten Wert), fällt auf eine automatisch aus dem
+ * Code gebildete Fassung zurück statt roh zu erscheinen.
+ */
+const ACTION_LABELS = {
+  de: {
+    'account-add': 'Konto hinzugefügt', 'account-add-offline': 'Offline-Konto hinzugefügt',
+    'account-delete-cancelled': 'Löschung abgebrochen', 'account-delete-requested': 'Löschung angefragt',
+    'account-erased': 'Konto gelöscht', 'account-organize': 'Konto einsortiert', 'account-refresh': 'Anmeldung erneuert',
+    'account-remove': 'Konto entfernt', 'addon-add': 'Zusatz gebucht', 'addon-create': 'Zusatz angelegt',
+    'addon-delete': 'Zusatz gelöscht', 'addon-remove': 'Zusatz abbestellt', 'addon-update': 'Zusatz geändert',
+    'admin-bulk': 'Sammelaktion', 'admin-credits': 'Guthaben angepasst', 'admin-delete-cancelled': 'Löschung abgebrochen',
+    'admin-export': 'Daten exportiert', 'admin-extend': 'Laufzeit verlängert', 'admin-impersonate': 'Als Nutzer angemeldet',
+    'admin-login-link-created': 'Anmeldelink erstellt', 'admin-login-link-used': 'Anmeldelink verwendet',
+    'admin-logout': 'Nutzer abgemeldet', 'admin-mail': 'Mail verschickt', 'admin-password': 'Kennwort gesetzt',
+    'admin-plan': 'Tarif geändert', 'admin-premium': 'Premium vergeben', 'admin-profile-address': 'Serveradresse gesetzt',
+    'admin-profile-delete': 'Serverplatz gelöscht', 'admin-session-end': 'Sitzung beendet',
+    'admin-settings': 'Einstellungen geändert', 'admin-settings-clear': 'Einstellung zurückgesetzt',
+    'admin-ticket-create': 'Ticket erstellt', 'admin-totp-reset': 'Zwei-Faktor zurückgesetzt',
+    'admin-user-create': 'Konto angelegt', 'admin-bot-restart': 'Discord-Bot neu gestartet',
+    'admin-bot-reload': 'Discord-Bot neu geladen', 'admin-bot-start': 'Bot gestartet', 'admin-bot-stop': 'Bot gestoppt',
+    'admin-server-start': 'Serverplatz gestartet', 'admin-server-stop': 'Serverplatz gestoppt',
+    'admin-server-restart': 'Serverplatz neu gestartet', 'admin-server-addon': 'Zusatz am Serverplatz geändert',
+    'admin-server-rollout': 'Client-Update verteilt', 'admin-server-lock': 'Serverplatz gesperrt',
+    'admin-server-unlock': 'Serverplatz entsperrt', 'admin-server-send': 'Chatnachricht gesendet',
+    'announcement-create': 'Ankündigung erstellt', 'announcement-mail': 'Ankündigung verschickt',
+    'api-token-created': 'API-Zugang erstellt', 'api-token-revoked': 'API-Zugang entzogen',
+    'avatar-change': 'Bild geändert', 'backup-create': 'Sicherung erstellt', 'backup-delete': 'Sicherung gelöscht',
+    'backup-download': 'Sicherung heruntergeladen', 'broadcast': 'Rundmail verschickt',
+    'client-rollout': 'Client-Update verteilt', 'client-sync': 'Client abgeglichen', 'data-export': 'Eigene Daten exportiert',
+    'device-forgotten': 'Gerät vergessen', 'discord-link': 'Discord verknüpft', 'discord-unlink': 'Discord getrennt',
+    'google-link': 'Google verknüpft', 'google-unlink': 'Google getrennt',
+    'discord-role-connection': 'Discord-Rollenverbindung', 'email-changed': 'E-Mail geändert',
+    'email-change-requested': 'E-Mail-Änderung angefragt', 'email-verified': 'E-Mail bestätigt',
+    'ip-block': 'IP-Adresse gesperrt', 'ip-unblock': 'IP-Adresse entsperrt', 'job-run': 'Aufgabe ausgeführt',
+    'login-code-failed': 'Anmeldecode fehlgeschlagen', 'login-code-sent': 'Anmeldecode verschickt',
+    'node-create': 'Standort angelegt', 'node-delete': 'Standort gelöscht', 'node-move': 'Serverplatz umgezogen',
+    'node-token': 'Standort-Schlüssel erneuert', 'node-update': 'Standort geändert',
+    'password-change': 'Kennwort geändert', 'password-reset': 'Kennwort zurückgesetzt',
+    'plan-create': 'Tarif angelegt', 'plan-delete': 'Tarif gelöscht', 'plan-set': 'Tarif zugewiesen',
+    'plan-update': 'Tarif geändert', 'profile-account-order': 'Kontoreihenfolge geändert',
+    'profile-accounts-attach': 'Konten zugewiesen', 'profile-change': 'Serverplatz geändert',
+    'profile-copy': 'Serverplatz kopiert', 'profile-create': 'Serverplatz angelegt', 'profile-delete': 'Serverplatz gelöscht',
+    'proxy-create': 'Proxy angelegt', 'referral-rewarded': 'Empfehlung belohnt', 'register': 'Registriert',
+    'resource-delete': 'Client-Datei gelöscht', 'resource-fetch': 'Client-Datei geholt',
+    'resource-upload': 'Client-Datei hochgeladen', 'schedule-create': 'Zeitplan angelegt',
+    'schedule-delete': 'Zeitplan gelöscht', 'schedule-update': 'Zeitplan geändert', 'session-revoke': 'Sitzung beendet',
+    'session-revoked': 'Sitzungen beendet', 'stripe-test': 'Zahlungsanbindung getestet',
+    'system-report': 'Systembericht abgerufen', 'template-create': 'Textbaustein angelegt',
+    'template-delete': 'Textbaustein gelöscht', 'ticket-add-user': 'Person zu Ticket hinzugefügt',
+    'ticket-assign': 'Ticket zugewiesen', 'ticket-create': 'Ticket erstellt', 'ticket-priority': 'Dringlichkeit geändert',
+    'ticket-remove-user': 'Person aus Ticket entfernt', 'ticket-status': 'Ticketstatus geändert',
+    'ticket-status-discord': 'Ticketstatus über Discord geändert', 'topup-paid': 'Aufladung bezahlt',
+    'topup-refund': 'Aufladung erstattet', 'topup-refunded': 'Aufladung erstattet', 'topup-settle': 'Aufladung bestätigt',
+    'totp-disabled': 'Zwei-Faktor deaktiviert', 'totp-enabled': 'Zwei-Faktor aktiviert',
+    'totp-recovery-used': 'Wiederherstellungscode verwendet', 'totp-replay': 'Zwei-Faktor-Code abgelehnt',
+    'username-change': 'Name geändert', 'voucher-create': 'Gutschein erstellt', 'voucher-redeem': 'Gutschein eingelöst',
+  },
+  en: {
+    'account-add': 'Account added', 'account-add-offline': 'Offline account added',
+    'account-delete-cancelled': 'Deletion cancelled', 'account-delete-requested': 'Deletion requested',
+    'account-erased': 'Account erased', 'account-organize': 'Account organised', 'account-refresh': 'Login refreshed',
+    'account-remove': 'Account removed', 'addon-add': 'Extra booked', 'addon-create': 'Extra created',
+    'addon-delete': 'Extra deleted', 'addon-remove': 'Extra cancelled', 'addon-update': 'Extra changed',
+    'admin-bulk': 'Bulk action', 'admin-credits': 'Credits adjusted', 'admin-delete-cancelled': 'Deletion cancelled',
+    'admin-export': 'Data exported', 'admin-extend': 'Runtime extended', 'admin-impersonate': 'Logged in as user',
+    'admin-login-link-created': 'Login link created', 'admin-login-link-used': 'Login link used',
+    'admin-logout': 'User signed out', 'admin-mail': 'Mail sent', 'admin-password': 'Password set',
+    'admin-plan': 'Plan changed', 'admin-premium': 'Premium granted', 'admin-profile-address': 'Server address set',
+    'admin-profile-delete': 'Server slot deleted', 'admin-session-end': 'Session ended',
+    'admin-settings': 'Settings changed', 'admin-settings-clear': 'Setting reset',
+    'admin-ticket-create': 'Ticket created', 'admin-totp-reset': 'Two-factor reset',
+    'admin-user-create': 'Account created', 'admin-bot-restart': 'Discord bot restarted',
+    'admin-bot-reload': 'Discord bot reloaded', 'admin-bot-start': 'Bot started', 'admin-bot-stop': 'Bot stopped',
+    'admin-server-start': 'Server slot started', 'admin-server-stop': 'Server slot stopped',
+    'admin-server-restart': 'Server slot restarted', 'admin-server-addon': 'Extra changed on server slot',
+    'admin-server-rollout': 'Client update rolled out', 'admin-server-lock': 'Server slot locked',
+    'admin-server-unlock': 'Server slot unlocked', 'admin-server-send': 'Chat message sent',
+    'announcement-create': 'Announcement created', 'announcement-mail': 'Announcement mailed',
+    'api-token-created': 'API access created', 'api-token-revoked': 'API access revoked',
+    'avatar-change': 'Avatar changed', 'backup-create': 'Backup created', 'backup-delete': 'Backup deleted',
+    'backup-download': 'Backup downloaded', 'broadcast': 'Broadcast mail sent',
+    'client-rollout': 'Client update rolled out', 'client-sync': 'Client synced', 'data-export': 'Own data exported',
+    'device-forgotten': 'Device forgotten', 'discord-link': 'Discord linked', 'discord-unlink': 'Discord unlinked',
+    'google-link': 'Google linked', 'google-unlink': 'Google unlinked',
+    'discord-role-connection': 'Discord role connection', 'email-changed': 'Email changed',
+    'email-change-requested': 'Email change requested', 'email-verified': 'Email verified',
+    'ip-block': 'IP address blocked', 'ip-unblock': 'IP address unblocked', 'job-run': 'Job run',
+    'login-code-failed': 'Login code failed', 'login-code-sent': 'Login code sent',
+    'node-create': 'Location created', 'node-delete': 'Location deleted', 'node-move': 'Server slot moved',
+    'node-token': 'Location key renewed', 'node-update': 'Location changed',
+    'password-change': 'Password changed', 'password-reset': 'Password reset',
+    'plan-create': 'Plan created', 'plan-delete': 'Plan deleted', 'plan-set': 'Plan assigned',
+    'plan-update': 'Plan changed', 'profile-account-order': 'Account order changed',
+    'profile-accounts-attach': 'Accounts attached', 'profile-change': 'Server slot changed',
+    'profile-copy': 'Server slot copied', 'profile-create': 'Server slot created', 'profile-delete': 'Server slot deleted',
+    'proxy-create': 'Proxy created', 'referral-rewarded': 'Referral rewarded', 'register': 'Registered',
+    'resource-delete': 'Client file deleted', 'resource-fetch': 'Client file fetched',
+    'resource-upload': 'Client file uploaded', 'schedule-create': 'Schedule created',
+    'schedule-delete': 'Schedule deleted', 'schedule-update': 'Schedule changed', 'session-revoke': 'Session ended',
+    'session-revoked': 'Sessions ended', 'stripe-test': 'Payment link tested',
+    'system-report': 'System report fetched', 'template-create': 'Reply template created',
+    'template-delete': 'Reply template deleted', 'ticket-add-user': 'Person added to ticket',
+    'ticket-assign': 'Ticket assigned', 'ticket-create': 'Ticket created', 'ticket-priority': 'Priority changed',
+    'ticket-remove-user': 'Person removed from ticket', 'ticket-status': 'Ticket status changed',
+    'ticket-status-discord': 'Ticket status changed via Discord', 'topup-paid': 'Top-up paid',
+    'topup-refund': 'Top-up refunded', 'topup-refunded': 'Top-up refunded', 'topup-settle': 'Top-up confirmed',
+    'totp-disabled': 'Two-factor disabled', 'totp-enabled': 'Two-factor enabled',
+    'totp-recovery-used': 'Recovery code used', 'totp-replay': 'Two-factor code rejected',
+    'username-change': 'Name changed', 'voucher-create': 'Voucher created', 'voucher-redeem': 'Voucher redeemed',
+  },
+};
+
+/** Bekannte Bezeichnung, sonst der Code lesbar auseinandergezogen statt roh gezeigt. */
+function actionLabel(action, lang = 'de') {
+  const known = ACTION_LABELS[lang === 'en' ? 'en' : 'de'][action];
+  if (known) return known;
+  return action
+    .replace(/[_-]+/g, ' ')
+    .replace(/^./, (char) => char.toUpperCase());
+}
+
 /** Kurze Zusammenfassung für die Zeile selbst – damit man nicht jede aufklappen muss. */
 function summarize(entry, lang = 'de') {
   const detail = entry.detail_parsed;
@@ -2738,7 +2865,7 @@ admin.get(
       .all(...values)
       .map((row) => {
         const parsed = explainDetail(row.detail, lang);
-        const out = { ...row, detail_parsed: parsed };
+        const out = { ...row, detail_parsed: parsed, action_label: actionLabel(row.action, lang) };
         return { ...out, summary: summarize(out, lang) };
       });
 
@@ -2746,7 +2873,9 @@ admin.get(
       entries,
       actions: db
         .prepare('SELECT action, COUNT(*) AS n FROM audit GROUP BY action ORDER BY action')
-        .all(),
+        .all()
+        .map((row) => ({ ...row, label: actionLabel(row.action, lang) }))
+        .sort((a, b) => a.label.localeCompare(b.label, lang)),
     });
   })
 );
