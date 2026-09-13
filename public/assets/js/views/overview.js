@@ -62,6 +62,10 @@ function arrangeOverviewWorkspace() {
 
 export async function render(root) {
   stopPovThumbnails();
+  if (!root.querySelector('[data-overview-workspace]')) {
+    insights = null;
+    notificationPreview = null;
+  }
   const bots = [...state.bots.values()].filter((bot) => bot.state && bot.state !== 'offline');
   const online = bots.filter((bot) => bot.online).length;
   // Nur Bots, die gerade wirklich ein Bild senden – nicht jeder Serverplatz mit gebuchter

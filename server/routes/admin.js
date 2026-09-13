@@ -1662,9 +1662,9 @@ admin.get(
   wrap((req, res) => {
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
     // Vor dem Markieren merken, wo dieser Mitarbeiter stehen geblieben war (siehe tickets.js).
-    const seenUntil = tickets.markRead(ticket, req.user);
     const owner = db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
     const messages = tickets.messages(ticket.id, { staff: true, limit: 100, newest: true });
+    const seenUntil = tickets.markRead(ticket, req.user, { staff: true, upto: messages.at(-1)?.id || 0 });
     res.json({
       ticket: ticketView(tickets.withAssignee(ticket)),
       messages,
@@ -1713,13 +1713,13 @@ admin.get(
   '/tickets/:id/messages',
   wrap((req, res) => {
     const ticket = tickets.get(requireInt(req.params.id, 'Ticket'), req.user);
-    const since = Number(req.query.since) || 0;
-    const before = Number(req.query.before) || 0;
-    tickets.markRead(ticket, req.user);
+    const since = req.query.since === undefined ? null : requireInt(req.query.since, 'Nachricht');
+    const before = req.query.before === undefined ? null : requireInt(req.query.before, 'Nachricht', { min: 1 });
     const messages = tickets.messages(ticket.id, {
       staff: true,
-      ...(since ? { after: since, limit: 100 } : before ? { before, limit: 100, newest: true } : { limit: 100, newest: true }),
+      ...(since !== null ? { after: since, limit: 100 } : before !== null ? { before, limit: 100, newest: true } : { limit: 100, newest: true }),
     });
+    tickets.markRead(ticket, req.user, { staff: true, upto: messages.at(-1)?.id || 0 });
     res.json({
       ticket: ticketView(tickets.withAssignee(ticket)),
       messages,

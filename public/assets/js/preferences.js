@@ -35,6 +35,10 @@ const allowed = {
 };
 
 const keyOf = (userId) => `afk-preferences-${Number(userId) || 'guest'}`;
+// Bei gesperrtem oder vollem Speicher gelten Änderungen wenigstens im offenen Panel weiter.
+// Erfolgreiche Speicherzugriffe bleiben frisch, damit Änderungen aus anderen Tabs ankommen.
+const memory = new Map();
+const unsaved = new Set();
 
 /**
  * Die Fassung dieses Speicherformats. Steht als `v` im gespeicherten Satz.
@@ -82,10 +86,14 @@ function clean(raw) {
 }
 
 export function preferences(userId) {
+  const key = keyOf(userId);
+  if (unsaved.has(key)) return clean(memory.get(key));
   try {
-    return clean(migrate(JSON.parse(localStorage.getItem(keyOf(userId)) || '{}')));
+    const value = clean(migrate(JSON.parse(localStorage.getItem(key) || '{}')));
+    memory.set(key, value);
+    return clean(value);
   } catch {
-    return { ...DEFAULTS };
+    return clean(memory.get(key));
   }
 }
 
@@ -115,10 +123,13 @@ function thin(value) {
 
 function write(userId, value) {
   const next = clean(value);
+  const key = keyOf(userId);
+  memory.set(key, next);
   try {
-    localStorage.setItem(keyOf(userId), JSON.stringify(thin(next)));
+    localStorage.setItem(key, JSON.stringify(thin(next)));
+    unsaved.delete(key);
   } catch {
-    /* Im privaten Modus gilt die Wahl bis zum nächsten Neuladen über die DOM-Attribute weiter. */
+    unsaved.add(key);
   }
   window.dispatchEvent(new CustomEvent('afk:preferences', { detail: next }));
   return next;

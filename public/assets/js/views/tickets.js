@@ -983,6 +983,7 @@ async function one(root, id, { staff, backHash }) {
     try {
       const first = messages[0].id;
       const page = await api(`${base}/messages?before=${first}`);
+      if (!thread.isConnected) return;
       const known = new Set(messages.map((entry) => entry.id));
       const older = page.messages.filter((entry) => !known.has(entry.id));
       messages = older.concat(messages);
@@ -1325,8 +1326,43 @@ async function one(root, id, { staff, backHash }) {
     return true;
   };
 
+  let loadingMessages = false;
+  let reloadWanted = false;
+  const loadMessages = async () => {
+    reloadWanted = true;
+    if (loadingMessages) return;
+    loadingMessages = true;
+    try {
+      do {
+        reloadWanted = false;
+        let hasMore;
+        do {
+          const last = messages.at(-1)?.id || 0;
+          const fresh = await api(`${base}/messages?since=${last}`).catch(() => null);
+          if (!fresh || !thread.isConnected) return;
+          if (mergeMessages(fresh.messages)) {
+            typers.clear();
+            paintTyping();
+            paint();
+          }
+          if (fresh.reads) {
+            reads = fresh.reads;
+            paintReads();
+          }
+          Object.assign(ticket, fresh.ticket);
+          paintStatus(fresh.ticket.status);
+          // Ein Ereignis kann mehr als eine Seite neuer Nachrichten ankündigen. Erst aufhören,
+          // wenn der Nachschlag vollständig ist; weitere Ereignisse teilen sich diesen Lauf.
+          hasMore = fresh.has_more && (messages.at(-1)?.id || 0) > last;
+        } while (hasMore);
+      } while (reloadWanted && thread.isConnected);
+    } finally {
+      loadingMessages = false;
+    }
+  };
+
   state.onLive = async (event) => {
-    if (event.type !== 'ticket' || event.message.ticket_id !== Number(id)) return;
+    if (!thread.isConnected || event.type !== 'ticket' || event.message.ticket_id !== Number(id)) return;
     const message = event.message;
     if (staff ? !message.audience?.staff : !message.audience?.customer) return;
 
@@ -1370,20 +1406,7 @@ async function one(root, id, { staff, backHash }) {
     if (event.event === 'message') {
       // Nachschlag holen statt der Nachricht aus der Meldung zu vertrauen: so stimmen Reihenfolge
       // und Rechte auch dann, wenn zwei Antworten gleichzeitig eintreffen.
-      const last = messages.length ? messages[messages.length - 1].id : 0;
-      const fresh = await api(`${base}/messages?since=${last}`).catch(() => null);
-      if (!fresh) return;
-      if (mergeMessages(fresh.messages)) {
-        typers.clear();
-        paintTyping();
-        paint();
-      }
-      if (fresh.reads) {
-        reads = fresh.reads;
-        paintReads();
-      }
-      Object.assign(ticket, fresh.ticket);
-      paintStatus(fresh.ticket.status);
+      return loadMessages();
     }
   };
 }

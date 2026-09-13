@@ -2321,6 +2321,27 @@ test('a read mark says who saw how far, moves only forward, and knows two roles 
  * am Zug. Eine **interne Notiz** zählt dabei nicht als Antwort – wer eine Notiz schreibt, hat dem
  * Kunden nichts gesagt.
  */
+test('loading part of a ticket only acknowledges the delivered messages', () => {
+  const owner = createUser();
+  const staff = createUser({ role: 'admin' });
+  const ticket = tickets.create(owner, { subject: 'Paginated ticket', body: 'Question' });
+  const first = tickets.messages(ticket.id).at(-1).id;
+  tickets.reply(ticket, staff, 'First reply', { staff: true });
+  const second = tickets.messages(ticket.id).at(-1).id;
+  tickets.reply(ticket, staff, 'Still unread', { staff: true });
+  const last = tickets.messages(ticket.id).at(-1).id;
+  const unread = () => db.prepare('SELECT unread_user FROM tickets WHERE id = ?').get(ticket.id).unread_user;
+  const mark = () => tickets.reads(ticket.id).find((entry) => entry.user_id === owner.id && !entry.staff).last_message_id;
+  assert.equal(tickets.markRead(ticket, owner, { staff: false, upto: second }), first);
+  assert.equal(mark(), second);
+  assert.equal(unread(), 1, 'a reply outside the delivered page remains unread');
+  tickets.markRead(ticket, owner, { staff: false, upto: first });
+  assert.equal(mark(), second, 'loading older pages never moves the mark backwards');
+  tickets.markRead(ticket, owner, { staff: false, upto: last });
+  assert.equal(mark(), last);
+  assert.equal(unread(), 0);
+});
+
 test('a ticket records when the team first answered, and an internal note is not an answer', () => {
   const owner = createUser();
   const staff = createUser({ role: 'admin' });
@@ -5816,6 +5837,47 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   // Ohne hinterlegten Webhook gibt es nichts zu schicken, und das sagt die Absage auch.
   const noHook = await api(base, '/api/admin/system/report', { token: ADMIN_TOKEN, method: 'POST' });
   assert.equal(noHook.response.status, 400);
+
+  // Kunden- und Teamansicht bestätigen nur ausgelieferte Seiten, auch bei since=0.
+  for (const staffMode of [false, true]) {
+    const paged = tickets.create(user, { subject: 'Long paginated ticket', body: 'First message' });
+    const insert = db.prepare('INSERT INTO ticket_messages(ticket_id, user_id, role, body, internal, created_at) VALUES (?, ?, ?, ?, ?, ?)');
+    db.transaction(() => {
+      for (let index = 0; index < 220; index++) {
+        insert.run(paged.id, staffMode ? user.id : admin.id, staffMode ? 'user' : 'staff', `Message ${index}`, index % 17 === 0 ? 1 : 0, Date.now());
+      }
+    })();
+    db.prepare('UPDATE tickets SET unread_user = 1, unread_staff = 1 WHERE id = ?').run(paged.id);
+    const reader = staffMode ? admin : user;
+    const token = staffMode ? ADMIN_TOKEN : USER_TOKEN;
+    const endpoint = `/api/${staffMode ? 'admin/' : ''}tickets/${paged.id}`;
+    const expected = tickets.messages(paged.id, { staff: staffMode });
+    const column = staffMode ? 'unread_staff' : 'unread_user';
+    const mark = () => tickets.reads(paged.id).find((entry) => entry.user_id === reader.id && entry.staff === staffMode)?.last_message_id || 0;
+    const initial = await api(base, `${endpoint}/messages?since=0`, { token });
+    assert.equal(initial.response.status, 200);
+    assert.deepEqual(initial.data.messages.map((entry) => entry.id), expected.slice(0, 100).map((entry) => entry.id));
+    assert.equal(mark(), expected[99].id);
+    assert.equal(initial.data.ticket[column], true);
+    const older = await api(base, `${endpoint}/messages?before=${expected[30].id}`, { token });
+    assert.equal(older.response.status, 200);
+    assert.equal(mark(), expected[99].id);
+    assert.equal(older.data.ticket[column], true);
+    const empty = await api(base, `${endpoint}/messages?since=${expected.at(-1).id}`, { token });
+    assert.equal(empty.data.messages.length, 0);
+    assert.equal(mark(), expected[99].id, 'empty responses do not acknowledge unseen messages');
+    const second = await api(base, `${endpoint}/messages?since=${expected[99].id}`, { token });
+    assert.equal(second.data.messages.length, 100);
+    assert.equal(mark(), expected[199].id);
+    assert.equal(second.data.ticket[column], true);
+    const last = await api(base, `${endpoint}/messages?since=${expected[199].id}`, { token });
+    assert.deepEqual(last.data.messages.map((entry) => entry.id), expected.slice(200).map((entry) => entry.id));
+    assert.equal(mark(), expected.at(-1).id);
+    assert.equal(last.data.ticket[column], false);
+    const invalid = await api(base, `${endpoint}/messages?since=-1`, { token });
+    assert.equal(invalid.response.status, 400);
+    db.prepare('DELETE FROM tickets WHERE id = ?').run(paged.id);
+  }
 
   assert.doesNotMatch(childOutput, /Unexpected server response: 404/);
 });
