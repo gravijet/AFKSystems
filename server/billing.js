@@ -551,7 +551,8 @@ export function renewDue(now = Date.now()) {
     .prepare(
       `SELECT p.*, pl.price_credits, pl.name_de, pl.free_slot FROM profiles p
          JOIN plans pl ON pl.id = p.plan_id
-        WHERE pl.free_slot = 0 AND p.suspended = 0 AND p.paid_until IS NOT NULL AND p.paid_until <= ?`
+        WHERE pl.free_slot = 0 AND p.suspended = 0 AND p.paid_until IS NOT NULL AND p.paid_until <= ?
+        ORDER BY p.paid_until, p.id`
     )
     .all(now);
 

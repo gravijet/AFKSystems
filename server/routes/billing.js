@@ -100,7 +100,9 @@ router.get(
         due_in_days: Math.max(0, Math.ceil((slot.paid_until - Date.now()) / 86_400_000)),
         ...forecast,
       });
-      projectedBalance = Math.max(0, before - slot.price_credits);
+      // Ohne Deckung wird der Platz stillgelegt; sein Restguthaben bleibt für spätere,
+      // günstigere Verlängerungen verfügbar (billing.renewOne).
+      if (covered) projectedBalance -= slot.price_credits;
     }
     // `months_left` is a useful coarse number, but it hides the actual order of renewals. Keep a
     // compact, explicitly non-speculative runway alongside it: no guessed future deposits, price

@@ -44,6 +44,7 @@ export async function render(root) {
   let event = 'all';
   let unreadOnly = false;
   let loading = false;
+  let loadVersion = 0;
 
   state.stats.notifications_unread = data.unread || 0;
   updateShellBadges();
@@ -85,6 +86,12 @@ export async function render(root) {
       <div class="activity-more" id="activity-more"></div>
     </section>`;
 
+  // Diese Knoten gehören zu genau dieser Ansicht. Späte Antworten dürfen nach einem
+  // Seitenwechsel weder fehlende Elemente anfassen noch eine neue Aktivitätsansicht ändern.
+  const listNode = $('#activity-list');
+  const readAllButton = $('#read-all');
+  const clearReadButton = $('#clear-read');
+
   function filtered() {
     return list.filter((item) => {
       if (event !== 'all' && item.event !== event) return false;
@@ -95,6 +102,9 @@ export async function render(root) {
   }
 
   function paint() {
+    if (!listNode.isConnected) return;
+    readAllButton.disabled = !(state.stats.notifications_unread > 0);
+    clearReadButton.disabled = !list.some((item) => item.read_at);
     const visible = filtered();
     $('#activity-count').textContent = tr('act.count', { n: visible.length, total: list.length });
     if (!visible.length) {
@@ -167,7 +177,8 @@ export async function render(root) {
 
   /** Ältere Meldungen nachladen. Der Cursor ist die letzte sichtbare ID, kein wackeliger Offset. */
   async function loadMore({ reset = false } = {}) {
-    if (loading) return;
+    if (loading && !reset) return;
+    const version = ++loadVersion;
     loading = true;
     if (reset) {
       list = [];
@@ -181,17 +192,21 @@ export async function render(root) {
       const before = reset || !list.length ? '' : `&before=${list.at(-1).id}`;
       const kind = event === 'all' ? '' : `&event=${encodeURIComponent(event)}`;
       const page = await api(`/me/notifications?limit=40${kind}${before}`);
+      if (version !== loadVersion || !listNode.isConnected) return;
       const known = new Set(list.map((item) => item.id));
       list.push(...(page.notifications || []).filter((item) => !known.has(item.id)));
       hasMore = Boolean(page.has_more);
       state.stats.notifications_unread = page.unread || 0;
       updateShellBadges();
     } catch (error) {
+      if (version !== loadVersion || !listNode.isConnected) return;
       fail(error);
       hasMore = true;
     } finally {
-      loading = false;
-      paint();
+      if (version === loadVersion && listNode.isConnected) {
+        loading = false;
+        paint();
+      }
     }
   }
 
@@ -207,6 +222,7 @@ export async function render(root) {
       const answer = await api('/me/notifications', { method: 'PATCH', body: { ids } });
       state.stats.notifications_unread = answer.unread || 0;
       updateShellBadges();
+      paint();
     } catch (error) {
       for (const item of wanted) item.read_at = null;
       state.stats.notifications_unread += wanted.length;
@@ -231,6 +247,7 @@ export async function render(root) {
       });
       state.stats.notifications_unread = answer.unread || 0;
       updateShellBadges();
+      paint();
       ok(tr('act.markedUnread'));
     } catch (error) {
       item.read_at = previous;
@@ -274,8 +291,10 @@ export async function render(root) {
     updateShellBadges();
     paint();
     try {
-      await api('/me/notifications', { method: 'PATCH' });
-      $('#read-all').disabled = true;
+      const answer = await api('/me/notifications', { method: 'PATCH' });
+      state.stats.notifications_unread = answer.unread || 0;
+      updateShellBadges();
+      paint();
       ok(tr('act.marked'));
     } catch (error) {
       for (const item of unread) item.read_at = null;
@@ -291,7 +310,6 @@ export async function render(root) {
     try {
       await api('/me/notifications', { method: 'DELETE' });
       list = list.filter((item) => !item.read_at);
-      $('#clear-read').disabled = true;
       paint();
       ok(tr('act.cleared'));
     } catch (error) {

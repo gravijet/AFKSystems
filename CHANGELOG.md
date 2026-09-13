@@ -1,5 +1,14 @@
 # Änderungen vom 13. September 2026
 
+- Zeitpläne lösen bei schwankenden Sekunden im Minutentakt nicht erneut aus. Vorschau und
+  Nachholen berücksichtigen Sommerzeitwechsel, ausfallende und doppelte Uhrzeiten sowie
+  Zeitzonen mit halben und viertel Stunden.
+- Aktivitätszentrale: „Alle gelesen“ und „Gelesene löschen“ folgen dem aktuellen Zustand.
+  Schnelle Filterwechsel zeigen zuverlässig die zuletzt gewählte Kategorie; verspätete
+  Antworten nach einem Seitenwechsel verändern die neue Ansicht nicht.
+- Guthabenprognose: Nicht gedeckte Verlängerungen lassen das Restguthaben für günstigere
+  Plätze übrig. Die Abrechnung verarbeitet fällige Plätze in derselben zeitlichen Reihenfolge
+  wie die Vorschau.
 - Minecraft **1.8.8** in der Serverauswahl ergänzt. Die Verbindung nutzt den kompatiblen
   1.8.9-Modus (Protokoll 47) des aktuellen **AFKClient 2.7.0** aus dem GitHub-Release `latest`.
   Die Auswahl erscheint nur, wenn der installierte Client diesen Modus unterstützt.

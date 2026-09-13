@@ -58,6 +58,9 @@ function localAt(at, timeZone) {
           timeZone,
           hourCycle: 'h23',
           weekday: 'short',
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
           hour: '2-digit',
           minute: '2-digit',
         })
@@ -66,6 +69,7 @@ function localAt(at, timeZone) {
       .map((part) => [part.type, part.value])
   );
   return {
+    date: Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)),
     minutes: Number(parts.hour) * 60 + Number(parts.minute),
     weekday: WEEKDAYS[parts.weekday] ?? 0,
   };
@@ -116,19 +120,36 @@ const view = (row, timeZone = null) => ({
  * wenn derselbe Wochentag der einzige gewählte ist.
  */
 export function nextAt(row, timeZone, now = Date.now()) {
+  return occurrencesBetween(row, timeZone, now + 1, now + 8 * 86_400_000)[0] ?? null;
+}
+
+/**
+ * Lokale Kalendertage in echte Zeitpunkte übersetzen. Ein Tag hat bei einer Zeitumstellung
+ * nicht immer 24 Stunden. Wir sammeln deshalb die UTC-Abstände im Suchfenster und prüfen jeden
+ * Kandidaten zurück gegen die lokale Uhr: ausgefallene Uhrzeiten entfallen, doppelte bleiben
+ * zwei verschiedene Zeitpunkte. Alle Ergebnisse liegen auf vollen Minuten.
+ */
+function occurrencesBetween(row, timeZone, from, to) {
   const days = parseDays(row.days);
-  if (!days.length) return null;
-  const nowLocal = localAt(now, timeZone);
-  // Der heutige Zeitpunkt als absolute Zeit – von dort aus tageweise weiter. Auf die volle Minute
-  // abgerundet: Sonst trüge jeder angezeigte Zeitpunkt die Sekunden mit, zu denen jemand zufällig
-  // gerade die Seite geöffnet hat.
-  const today = Math.floor((now - (nowLocal.minutes - row.minutes) * 60_000) / 60_000) * 60_000;
-  for (let ahead = 0; ahead <= 8; ahead += 1) {
-    const at = today + ahead * 86_400_000;
-    if (at <= now) continue;
-    if (days.includes(localAt(at, timeZone).weekday)) return at;
+  if (!days.length) return [];
+  const dayMs = 86_400_000;
+  const offsets = new Set();
+  for (let probe = Math.floor(from / dayMs) * dayMs - dayMs; probe <= to + dayMs; probe += dayMs / 2) {
+    const local = localAt(probe, timeZone);
+    offsets.add(local.date + local.minutes * 60_000 - probe);
   }
-  return null;
+  const first = localAt(from, timeZone).date - dayMs;
+  const last = localAt(to, timeZone).date + dayMs;
+  const result = new Set();
+  for (let date = first; date <= last; date += dayMs) {
+    for (const offset of offsets) {
+      const at = date + row.minutes * 60_000 - offset;
+      if (at < from || at > to) continue;
+      const local = localAt(at, timeZone);
+      if (local.date === date && local.minutes === row.minutes && days.includes(local.weekday)) result.add(at);
+    }
+  }
+  return [...result].sort((a, b) => a - b);
 }
 
 export const listFor = (profileId, timeZone = null) =>
@@ -320,16 +341,9 @@ export function tick(now = Date.now()) {
   let done = 0;
   for (const row of rows) {
     const zone = timezoneOf(row);
-    const nowLocal = localAt(now, zone);
-    // Der letzte Zeitpunkt dieses Plans: heute, wenn er schon vorbei ist, sonst gestern.
-    let occurrence = now - (nowLocal.minutes - row.minutes) * 60_000;
-    if (nowLocal.minutes < row.minutes) occurrence -= 86_400_000;
-
-    if (now - occurrence > GRACE_MS) continue;
+    const occurrence = occurrencesBetween(row, zone, now - GRACE_MS, now).at(-1);
+    if (occurrence === undefined) continue;
     if (row.last_run_at && row.last_run_at >= occurrence) continue;
-    // Der Wochentag zählt zum **Zeitpunkt**, nicht zu jetzt: Ein Plan für Freitag 23:55, der um
-    // Samstag 0:02 nachgeholt wird, gehört immer noch zum Freitag.
-    if (!parseDays(row.days).includes(localAt(occurrence, zone).weekday)) continue;
 
     let result;
     try {
