@@ -3975,6 +3975,9 @@ test('a schedule fires once per occurrence, in the account time zone, and not to
   // Derselbe Zeitpunkt löst kein zweites Mal aus – das ist es, was aus einem Minutentakt genau
   // eine Ausführung je Zeitpunkt macht.
   assert.equal(schedules.tick(now + 30_000), 0);
+  // Der Timer läuft nicht sekundengenau: Auch ein späterer Sekundenanteil darf dieselbe
+  // lokale Minute nicht als neue Ausführung behandeln.
+  assert.equal(schedules.tick(now + 65_000), 0);
 
   // Wann er das nächste Mal dran ist, rechnet der Server aus – in der Zeitzone des Kontos und
   // nicht in der des Browsers, der gerade hinsieht.
@@ -3999,6 +4002,33 @@ test('a schedule fires once per occurrence, in the account time zone, and not to
   assert.equal(schedules.tick(Date.parse('2026-09-04T22:02:00Z')), 1);
   assert.ok(result(friday));
   assert.equal(result(saturday), null);
+});
+
+test('schedule previews and catch-up respect clock changes and fractional time zones', () => {
+  const next = (minutes, zone, now, days = '0,1,2,3,4,5,6') =>
+    schedules.nextAt({ minutes, days }, zone, Date.parse(now));
+  assert.equal(next(9 * 60, 'Europe/Berlin', '2026-03-28T12:00:00Z'), Date.parse('2026-03-29T07:00:00Z'));
+  assert.equal(next(9 * 60, 'Europe/Berlin', '2026-10-24T12:00:00Z'), Date.parse('2026-10-25T08:00:00Z'));
+  // 02:30 fällt im Frühjahr aus. Sonntags folgt darauf erst die nächste Woche.
+  assert.equal(next(150, 'Europe/Berlin', '2026-03-28T12:00:00Z', '0'), Date.parse('2026-04-05T00:30:00Z'));
+  // Im Herbst gibt es zwei echte Zeitpunkte mit derselben lokalen Uhrzeit.
+  assert.equal(next(150, 'Europe/Berlin', '2026-10-25T00:45:00Z'), Date.parse('2026-10-25T01:30:00Z'));
+  assert.equal(next(540, 'Asia/Kathmandu', '2026-09-01T00:00:00Z'), Date.parse('2026-09-01T03:15:00Z'));
+  // Lord Howe stellt nur eine halbe Stunde um.
+  assert.equal(next(540, 'Australia/Lord_Howe', '2026-10-03T12:00:00Z'), Date.parse('2026-10-03T22:00:00Z'));
+
+  const user = createUser();
+  db.prepare("UPDATE users SET timezone = 'Europe/Berlin' WHERE id = ?").run(user.id);
+  const slot = createProfile(user, billing.planBySlug('premium'));
+  const id = db.prepare(`INSERT INTO profile_schedules (profile_id, action, minutes, days, active, created_at)
+    VALUES (?, 'stop', 150, '0', 1, ?)`).run(slot.id, Date.now()).lastInsertRowid;
+  schedules.tick(Date.parse('2026-03-29T01:35:00Z'));
+  assert.equal(schedules.byId(id).last_run_at, null, 'nonexistent 02:30 must not run at 03:35');
+  schedules.tick(Date.parse('2026-10-25T01:35:00Z'));
+  assert.equal(schedules.byId(id).last_run_at, Date.parse('2026-10-25T01:35:00Z'));
+  schedules.tick(Date.parse('2026-10-25T01:36:45Z'));
+  assert.equal(schedules.byId(id).last_run_at, Date.parse('2026-10-25T01:35:00Z'));
+  db.prepare('DELETE FROM profile_schedules WHERE profile_id = ?').run(slot.id);
 });
 
 test('a schedule takes a weekday, a real time and only accounts that sit on this slot', () => {
@@ -5598,6 +5628,26 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   assert.equal(billingForecast.data.runway.renewal_count, 1);
   assert.equal(billingForecast.data.runway.covered_count, 1);
   assert.equal(billingForecast.data.runway.first_uncovered, null);
+  // Eine nicht gedeckte Verlängerung verbraucht kein Restguthaben. Die Vorschau muss
+  // dasselbe Ergebnis liefern wie die echte Abrechnung, auch bei umgekehrter ID-Reihenfolge.
+  for (const firstPlan of [billing.planBySlug('ultra'), copyPlan]) {
+    const forecastUser = createUser({ credits: copyPlan.price_credits });
+    const forecastToken = `forecast-${forecastUser.id}`;
+    createSession(forecastUser, forecastToken);
+    const laterSlot = createProfile(forecastUser, copyPlan, { paidUntil: Date.parse('2000-01-02T00:00:00Z') });
+    const earlierSlot = createProfile(forecastUser, firstPlan, { paidUntil: Date.parse('2000-01-01T00:00:00Z') });
+    const expectedId = firstPlan.id === copyPlan.id ? earlierSlot.id : laterSlot.id;
+    const forecast = await api(base, '/api/billing', { token: forecastToken });
+    assert.equal(forecast.response.status, 200);
+    assert.equal(forecast.data.runway.next.id, earlierSlot.id);
+    assert.equal(forecast.data.runway.covered_count, 1);
+    assert.equal(forecast.data.slots.find((slot) => slot.id === expectedId).forecast.covered, true);
+    assert.equal(forecast.data.runway.balance_after_covered, 0);
+    const actual = billing.renewDue(Date.parse('2000-01-03T00:00:00Z'));
+    assert.deepEqual(actual.renewed.filter((slot) => slot.userId === forecastUser.id).map((slot) => slot.profileId), [expectedId]);
+    assert.equal(db.prepare('SELECT credits FROM users WHERE id = ?').get(forecastUser.id).credits, 0);
+    db.prepare('DELETE FROM users WHERE id = ?').run(forecastUser.id);
+  }
   // Ein Tarifwechsel ist nie nur ein neuer Preis: Die Vorschau zeigt die Restgutschrift, die
   // neue Periode und den künftigen Monat getrennt – und bucht beim bloßen Ansehen nichts.
   const richerPlan = billing.planBySlug('ultra');
