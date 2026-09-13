@@ -15,6 +15,15 @@ const run = promisify(execFile);
 
 const MANIFEST = path.join(paths.bin, 'manifest.json');
 
+// Minecraft 1.8.8 und 1.8.9 sprechen beide Protokoll 47. Der Rust-Client benennt diesen
+// Modus 1.8.9; im Panel darf der Nutzer seine tatsächliche Serverversion wählen.
+// Quelle: PrismarineJS/minecraft-data, data/pc/common/protocolVersions.json.
+export const clientProtocol = (version) => version === '1.8.8' ? '1.8.9' : version;
+
+export function supportedVersions(versions) {
+  return [...new Set(versions.flatMap((version) => version === '1.8.9' ? ['1.8.8', version] : [version]))];
+}
+
 export const BUILDS = {
   slim: { file: 'afk-linux', label_de: 'Basis', label_en: 'Base', features: {} },
   move: {
@@ -298,7 +307,7 @@ export async function detect() {
       // "-m, --mc <version>  Protokoll: 1.21.1 | 1.21.11 | 26.1 | 26.2  (Standard: 26.1)"
       const line = /Protokoll:\s*([^\n(]+?)\s*\(Standard:\s*([^)]+)\)/.exec(help);
       if (line) {
-        entry.versions = line[1].split('|').map((v) => v.trim()).filter(Boolean);
+        entry.versions = supportedVersions(line[1].split('|').map((v) => v.trim()).filter(Boolean));
         entry.defaultVersion = line[2].trim();
       }
     } catch (error) {

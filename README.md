@@ -170,7 +170,13 @@ bekommt sie nur, wer die Ansicht gebucht hat. Ein Ultra-Platz ohne Live-Ansicht 
 `premium-items-afk-linux` – dieselben sichtbaren Fähigkeiten, ohne die Arbeit für ein Bild, das
 niemand ansieht.
 
-Alle Bauformen sprechen über `--mc` Minecraft 1.21.1, 1.21.11, 26.1 und 26.2. Nur ein vom Server
+Ab AFKClient 2.7.0 sprechen alle Bauformen über `--mc` Minecraft 1.8.9, 1.21.1, 1.21.11, 26.1 und
+26.2. Im Panel ist zusätzlich **Minecraft 1.8.8** auswählbar, sobald der Client 1.8.9 unterstützt:
+Beide verwenden Protokoll 47; der Start nutzt dafür `--mc 1.8.9`.
+
+Dasselbe Minecraft-Konto kann auf mehreren Serverplätzen gleichzeitig laufen. Start, Stopp und
+Wiederanlauf gelten jeweils nur für die betreffende Sitzung; die Tarif- und Kapazitätsgrenzen
+zählen weiterhin jede Sitzung. Ein vom Server
 angeordneter Transfer auf einen Unterserver bleibt Teil derselben Sitzung. Tablist und Playerlist
 gibt es in den Rust-Clients nicht mehr.
 

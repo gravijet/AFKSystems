@@ -832,6 +832,22 @@ test('mail templates never put customer text into the HTML unescaped', async () 
   assert.match(alertMail.text, /Xeon 1 übernimmt/);
 });
 
+test('Minecraft 1.8.8 is available only with the compatible client protocol and starts as 1.8.9', () => {
+  assert.deepEqual(binaries.supportedVersions(['1.21.1', '26.1']), ['1.21.1', '26.1']);
+  assert.deepEqual(binaries.supportedVersions(['1.8.9', '26.1']), ['1.8.8', '1.8.9', '26.1']);
+  assert.deepEqual(binaries.supportedVersions(['1.8.8', '1.8.9']), ['1.8.8', '1.8.9']);
+  const user = createUser();
+  const account = createAccount(user);
+  const profile = { ...createProfile(user, billing.planBySlug('premium')), mc_version: '1.8.8' };
+  const bot = new Bot(supervisor, { profile, account, user, plan: billing.featuresOf(profile) });
+  const args = bot.args({ offline: true });
+  assert.equal(args[args.indexOf('--mc') + 1], '1.8.9');
+  assert.equal(profile.mc_version, '1.8.8', 'the chosen server version stays visible');
+  profile.mc_version = '26.1';
+  const modern = bot.args({ offline: true });
+  assert.equal(modern[modern.indexOf('--mc') + 1], '26.1');
+});
+
 test('new Rust build selection covers all released feature combinations', () => {
   const previous = binaries.state.builds;
   binaries.state.builds = Object.fromEntries(
@@ -1825,37 +1841,46 @@ test('a bot that was in game comes back on its own – one that never got in doe
   assert.equal(supervisor.planRestart(waitingForLogin, { wasOnline: 30_000 }), false);
 });
 
-/**
- * Eine Zuordnung ist absichtlich wiederverwendbar, eine Minecraft-Sitzung aber nicht. Die Regel
- * sitzt im Supervisor, damit nicht nur der Startknopf, sondern auch Zeitpläne und Wiederanläufe
- * denselben Schutz haben.
- */
-test('one Minecraft account cannot start on two server slots at the same time', () => {
+test('one Minecraft account can run on multiple server slots with independent starts and stops', (t) => {
   const user = createUser();
-  const account = createAccount(user, { name: 'OnlyOneSession' });
+  const account = createAccount(user, { name: 'MultipleSessions' });
   const first = createProfile(user, billing.planBySlug('premium'), { name: 'Erster Platz' });
   const second = createProfile(user, billing.planBySlug('premium'), { name: 'Zweiter Platz' });
-  const plan = billing.featuresOf(first);
-  const live = new Bot(supervisor, { profile: first, account, user, plan });
-  // Ein Prozessobjekt genügt: Der Schutz muss greifen, bevor der zweite Start irgendeinen
-  // Client, eine Datenbankzeile oder einen Startwunsch erzeugt.
-  live.proc = {};
-  supervisor.bots.set(live.key, live);
+  db.prepare('UPDATE profiles SET host = ? WHERE id = ?').run('second.example.test', second.id);
+  second.host = 'second.example.test';
+  for (const profile of [first, second]) {
+    db.prepare('INSERT INTO profile_accounts (profile_id, account_id) VALUES (?, ?)').run(profile.id, account.id);
+  }
+  // Nur den Prozessstart ersetzen: Kapazität, Startwunsch und Sitzungszuordnung bleiben echt.
+  const start = t.mock.method(Bot.prototype, 'start', function () {
+    this.proc = {};
+    this.state = 'online';
+  });
+  t.mock.method(Bot.prototype, 'stop', function () {
+    this.proc = null;
+    this.state = 'offline';
+  });
+  t.mock.method(macroEngine, 'attach', () => {});
   try {
+    supervisor.start({ profile: first, account, user });
+    supervisor.start({ profile: second, account, user });
+    assert.equal(supervisor.runningCount(user.id), 2);
     assert.deepEqual(supervisor.runningElsewhere(second.id, account.id), [
-      { profile_id: first.id, profile_name: first.name, state: 'offline', online: false },
+      { profile_id: first.id, profile_name: first.name, state: 'online', online: true },
     ]);
-    assert.throws(
-      () => supervisor.start({ profile: second, account, user, plan: billing.featuresOf(second) }),
-      (error) => error.status === 409 && error.code === 'account-running-elsewhere' && /Erster Platz/.test(error.message)
-    );
+    supervisor.start({ profile: second, account, user });
+    assert.equal(start.mock.callCount(), 2, 'repeated Start does not duplicate a session');
+    supervisor.stop(first.id, account.id);
+    assert.equal(supervisor.get(second.id, account.id).running, true);
     assert.equal(
-      db.prepare('SELECT wanted FROM profile_accounts WHERE profile_id = ? AND account_id = ?').get(second.id, account.id),
-      undefined,
-      'eine abgewiesene zweite Sitzung hinterlässt keinen Startwunsch'
+      db.prepare('SELECT wanted FROM profile_accounts WHERE profile_id = ? AND account_id = ?').get(second.id, account.id).wanted,
+      1,
+      'stopping one server leaves the other server wanted'
     );
+    supervisor.start({ profile: first, account, user });
+    assert.equal(supervisor.runningCount(user.id), 2, 'a stopped session can restart while the other runs');
   } finally {
-    supervisor.bots.delete(live.key);
+    for (const profile of [first, second]) supervisor.bots.delete(`${profile.id}:${account.id}`);
   }
 });
 
