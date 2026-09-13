@@ -961,15 +961,17 @@ export function setPriority(ticket, priority, by) {
  * ist die grobe Auskunft für die eigene Seite ("hier ist etwas Neues"), die Marke die genaue für
  * die andere ("bis hierher hat er gelesen, um 14:32").
  */
-export function markRead(ticket, user, { staff = user.role === 'admin' } = {}) {
-  if (staff) {
-    db.prepare('UPDATE tickets SET unread_staff = 0 WHERE id = ?').run(ticket.id);
-  } else if (isParticipant(ticket.id, user.id)) {
-    db.prepare('UPDATE tickets SET unread_user = 0 WHERE id = ?').run(ticket.id);
-  } else {
-    return 0;
+export function markRead(ticket, user, { staff = user.role === 'admin', upto = null } = {}) {
+  if (!staff && !isParticipant(ticket.id, user.id)) return 0;
+  const before = see(ticket, user, { staff, upto });
+  const seen = readMark.get(ticket.id, user.id, staff ? 1 : 0)?.last_message_id || 0;
+  // Eine ältere Seite oder der erste Teil eines Nachschlags bestätigt keine neueren Antworten.
+  if (seen >= (newestVisible.get(ticket.id, staff ? 1 : 0)?.id || 0)) {
+    const column = staff ? 'unread_staff' : 'unread_user';
+    db.prepare(`UPDATE tickets SET ${column} = 0 WHERE id = ?`).run(ticket.id);
+    ticket[column] = 0;
   }
-  return see(ticket, user, { staff });
+  return before;
 }
 
 export const unreadFor = (user) =>

@@ -1,5 +1,13 @@
 # Änderungen vom 13. September 2026
 
+- Support: Lesebestätigungen erfassen nur ausgelieferte Nachrichten. Beim Nachladen älterer
+  Seiten bleiben neue Antworten ungelesen; der Live-Verlauf lädt größere Nachschläge vollständig
+  und verarbeitet gleichzeitige Ereignisse ohne konkurrierende Anfragen. Verspätete Antworten
+  nach einem Seitenwechsel verändern die neue Ansicht nicht.
+- Anzeigeeinstellungen und Serverfavoriten funktionieren während der Sitzung auch bei
+  gesperrtem oder vollem Browserspeicher. Die Auswahl bleibt je Nutzer getrennt.
+- Die Übersicht aktualisiert Diagramme und Aktivitätsvorschau bei der Rückkehr von einer
+  anderen Panel-Seite, statt den Stand des ersten Besuchs weiterzuzeigen.
 - Zeitpläne lösen bei schwankenden Sekunden im Minutentakt nicht erneut aus. Vorschau und
   Nachholen berücksichtigen Sommerzeitwechsel, ausfallende und doppelte Uhrzeiten sowie
   Zeitzonen mit halben und viertel Stunden.
