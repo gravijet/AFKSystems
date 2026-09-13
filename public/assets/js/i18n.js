@@ -1081,12 +1081,8 @@ export const S = {
   // Neueres gibt, und dass der Weg dorthin durch einen Neustart führt.
   'srv.clientNew': { en: 'A newer client is ready', de: 'Es liegt ein neuerer Client bereit' },
   'srv.accountElsewhere': {
-    en: 'This account is already starting or running on another server slot ({n}).',
-    de: 'Dieses Konto startet oder läuft bereits auf einem anderen Serverplatz ({n}).',
-  },
-  'srv.accountElsewhereHint': {
-    en: 'Stop the active session on the listed server slot first.',
-    de: 'Stoppe zuerst die aktive Sitzung auf dem aufgeführten Serverplatz.',
+    en: 'Also active on {n} other server slot(s):',
+    de: 'Auch auf {n} weiteren Serverplätzen aktiv:',
   },
   'srv.clientNewCount': {
     en: '{n} running bot(s) still use the file they started with. A restart picks up the new one.',
@@ -1116,8 +1112,8 @@ export const S = {
   'srv.copyTitle': { en: 'Copy this slot', de: 'Diesen Platz kopieren' },
   'srv.copy': { en: 'Make a copy', de: 'Kopie anlegen' },
   'srv.copyWhat': {
-    en: 'A new slot with the same settings, macros, schedules and repeated messages. The Minecraft accounts do not come along – one account can only be in one game at a time.',
-    de: 'Ein neuer Platz mit denselben Einstellungen, Makros, Zeitplänen und wiederkehrenden Nachrichten. Die Minecraft-Konten kommen nicht mit – ein Konto kann nur in einem Spiel gleichzeitig sein.',
+    en: 'A new slot with the same settings, macros, schedules and repeated messages. Assign your Minecraft accounts afterwards; the same account can run on several servers at once.',
+    de: 'Ein neuer Platz mit denselben Einstellungen, Makros, Zeitplänen und wiederkehrenden Nachrichten. Ordne danach deine Minecraft-Konten zu; dasselbe Konto kann auf mehreren Servern gleichzeitig laufen.',
   },
   'srv.copyNote': {
     en: 'The copy is a server slot of its own and costs what its plan costs. Booked extras do not come along.',

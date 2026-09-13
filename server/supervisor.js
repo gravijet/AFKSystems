@@ -690,7 +690,7 @@ class Bot extends EventEmitter {
     const args = [
       target,
       '--mc',
-      profile.mc_version,
+      binaries.clientProtocol(profile.mc_version),
       '--join-delay',
       String(profile.join_delay),
       '--chat-delay',
@@ -2228,16 +2228,9 @@ class Supervisor extends EventEmitter {
   /**
    * Andere tatsächlich laufende Sitzungen desselben Minecraft-Kontos.
    *
-   * Ein Konto darf mehreren Serverplätzen zugeordnet sein – genau dafür gibt es die zentrale
-   * Kontenliste. Zwei gleichzeitige Minecraft-Anmeldungen mit derselben Identität sind dagegen
-   * keine zweite Nutzung, sondern eine Rennsituation: Der zweite Zielserver wirft meist eine der
-   * beiden Sitzungen mit "already logged in" hinaus. Die Antwort muss aus dem Supervisor kommen,
-   * nicht nur aus einem einzelnen HTTP-Knopf, weil auch Zeitpläne, Wiederanläufe und
-   * Standortwechsel Bots starten können.
-   *
-   * `running` meint hier einen noch vorhandenen Prozess, also auch `starting` und `auth`.
-   * Gerade in diesen Sekunden wäre ein zweiter Start sonst möglich, obwohl die erste Anmeldung
-   * bereits unterwegs ist.
+   * Ein Konto kann auf mehreren Servern gleichzeitig laufen. Diese Liste informiert die
+   * Oberfläche über weitere Sitzungen; sie sperrt keinen Start. `running` schließt auch
+   * Prozesse ein, die noch starten oder sich anmelden.
    */
   runningElsewhere(profileId, accountId) {
     const matches = [];
@@ -2256,7 +2249,7 @@ class Supervisor extends EventEmitter {
   /**
    * Alle tatsächlich laufenden Sitzungen, nach Minecraft-Konto gruppiert.
    *
-   * Die normale Einzelprüfung oben bleibt für einen Startvorgang ideal: Dort geht es um genau
+   * Die normale Einzelprüfung oben bleibt für eine Detailansicht ideal: Dort geht es um genau
    * ein Konto und die Antwort muss keinen weiteren Speicher anlegen. Die Profilliste dagegen
    * beschreibt unter Umständen viele Zuordnungen auf einmal. Für jede davon erneut durch alle
    * laufenden Bots zu laufen, wächst mit `Zuordnungen × Bots`. Dieser Index wird nur für solche
@@ -2343,18 +2336,6 @@ class Supervisor extends EventEmitter {
     // Kapazitätsprüfungen: Bei voller Auslastung muss ein bereits laufender eigener Bot nicht
     // plötzlich als abgelehnt erscheinen.
     if (already?.running) return already.snapshot();
-    const elsewhere = this.runningElsewhere(profile.id, account.id);
-    if (elsewhere.length) {
-      const names = elsewhere.map((entry) => `"${entry.profile_name}"`).join(', ');
-      throw new HttpError(
-        409,
-        `Konto "${account.name}" läuft bereits auf ${names}. Stoppe es dort, bevor du es hier startest.`,
-        {
-          en: `Account "${account.name}" is already running on ${names}. Stop it there before starting it here.`,
-          code: 'account-running-elsewhere',
-        }
-      );
-    }
     if (this.runningCount() >= config.maxBotsTotal) {
       throw new HttpError(429, 'Der Server ist ausgelastet. Bitte später erneut versuchen.', {
         en: 'The server is at capacity. Please try again later.',

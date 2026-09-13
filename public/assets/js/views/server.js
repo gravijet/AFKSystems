@@ -642,9 +642,6 @@ async function tabConnect(root, profile) {
     const bot = state.bots.get(`${profile.id}:${member.account_id}`) || member;
     const running = bot.state && bot.state !== 'offline';
     const elsewhere = member.running_elsewhere || [];
-    // Eine Mehrfachzuordnung ist erlaubt, eine parallele Minecraft-Sitzung nicht. Dieser Hinweis
-    // steht direkt am Knopf: Erst hier entscheidet jemand, ob er dieses Konto wirklich startet.
-    const blockedByElsewhere = !running && elsewhere.length;
     return `<li class="botrow ${running ? 'is-on' : ''}">
       <img class="head" src="${escapeHtml(member.head)}" alt="" loading="lazy" decoding="async">
       <div class="grow" style="min-width:0">
@@ -695,8 +692,8 @@ async function tabConnect(root, profile) {
             : ''
         }
         ${
-          blockedByElsewhere
-            ? `<div class="bot-conflict" role="status">${icon('alert')}<span>${escapeHtml(
+          elsewhere.length
+            ? `<div class="small muted" role="status"><span>${escapeHtml(
                 tr('srv.accountElsewhere', { n: elsewhere.length })
               )}</span><span class="bot-conflict-links">${elsewhere
                 .map(
@@ -719,8 +716,7 @@ async function tabConnect(root, profile) {
           index === members.length - 1 ? 'disabled' : ''
         }>↓</button>
         <button class="btn btn-sm ${running ? '' : 'btn-primary'}" data-toggle="${member.account_id}"
-          title="${escapeHtml(blockedByElsewhere ? tr('srv.accountElsewhereHint') : '')}"
-          ${running || (profile.active && !member.suspended && !blockedByElsewhere) ? '' : 'disabled'}>${escapeHtml(
+          ${running || (profile.active && !member.suspended) ? '' : 'disabled'}>${escapeHtml(
             running ? tr('ov.stop') : tr('ov.start')
           )}</button>
         <button class="btn btn-ghost btn-sm" data-account-note="${member.account_id}"
@@ -2843,8 +2839,9 @@ async function tabMacros(root, profile) {
     }`;
 
   /** Der Name eines Schritts in der Sprache des Panels – nicht seine Kennung aus der Datenbank. */
-  const stepName = (type) =>
-    state.meta.actions.find((entry) => entry.type === type)?.label || type;
+  function stepName(type) {
+    return state.meta.actions.find((entry) => entry.type === type)?.label || type;
+  }
 
   function macroCard(macro) {
     const summary = macro.actions
