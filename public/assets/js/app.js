@@ -1359,7 +1359,8 @@ function announcements() {
   if (!list.length) return;
   let hidden = [];
   try {
-    hidden = JSON.parse(localStorage.getItem('afk-seen-news') || '[]');
+    const stored = JSON.parse(localStorage.getItem('afk-seen-news') || '[]');
+    hidden = Array.isArray(stored) ? stored.filter(Number.isSafeInteger) : [];
   } catch {
     hidden = [];
   }

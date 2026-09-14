@@ -1093,7 +1093,13 @@ function totpSetupDialog(setup) {
 
     const error = $('#totp-dialog-error', dialog);
     const field = $('#totp-first', dialog);
+    const button = $('#totp-confirm', dialog);
+    const cancelButton = $('#totp-cancel', dialog);
+    let submitting = false;
+    let finished = false;
     const finish = (value) => {
+      if (finished) return;
+      finished = true;
       dialog.close();
       resolve(value);
     };
@@ -1101,13 +1107,23 @@ function totpSetupDialog(setup) {
     $('#totp-copy', dialog).addEventListener('click', () => {
       navigator.clipboard?.writeText(setup.secret).then(() => ok(tr('common.copied'))).catch(() => {});
     });
-    $('#totp-cancel', dialog).addEventListener('click', () => finish(null));
-    dialog.addEventListener('cancel', () => finish(null));
+    cancelButton.addEventListener('click', () => {
+      if (!submitting) finish(null);
+    });
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      if (!submitting) finish(null);
+    });
     dialog.addEventListener('close', () => dialog.remove());
 
     const submit = async () => {
-      const button = $('#totp-confirm', dialog);
+      if (submitting || finished) return;
+      submitting = true;
+      // Nach dem Abschicken kann die Aktivierung nicht abgebrochen werden. Den Dialog bis
+      // zur Antwort offen halten, damit die einmaligen Wiederherstellungscodes sichtbar werden.
       button.disabled = true;
+      cancelButton.disabled = true;
+      field.disabled = true;
       error.classList.add('hide');
       try {
         const result = await api('/me/totp/enable', { method: 'POST', body: { code: field.value } });
@@ -1116,8 +1132,11 @@ function totpSetupDialog(setup) {
         error.textContent = problem.message;
         error.classList.remove('hide');
         field.value = '';
+        field.disabled = false;
         field.focus();
         button.disabled = false;
+        cancelButton.disabled = false;
+        submitting = false;
       }
     };
     $('#totp-confirm', dialog).addEventListener('click', submit);

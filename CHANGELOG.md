@@ -1,5 +1,12 @@
 # Änderungen vom 14. September 2026
 
+- Inventar: Verspätete Antworten nach Seitenwechseln oder erneutem Zeichnen überschreiben
+  keine andere Ansicht. Manuelles Aktualisieren erzeugt keine zusätzlichen Abfrageschleifen.
+- Zwei-Faktor-Einrichtung: Während der Aktivierung verhindert der Dialog doppelte Anfragen
+  und bleibt bis zur Antwort offen, damit die Wiederherstellungscodes nicht durch Abbrechen
+  verloren gehen. Nach einem Fehler sind Eingabe und Abbrechen wieder verfügbar.
+- Ankündigungen: Beschädigte oder falsch typisierte Einträge im Browser-Speicher blockieren
+  die Seitennavigation nicht mehr; gültige ausgeblendete Ankündigungen bleiben ausgeblendet.
 - Microsoft-Konten: Ein früh geschlossener Anmeldedialog bricht auch eine erst danach
   angelegte Sitzung ab. Statusabfragen überlappen nicht; verspätete Antworten verändern
   einen geschlossenen Dialog nicht mehr.
