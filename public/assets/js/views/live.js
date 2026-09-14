@@ -1115,30 +1115,45 @@ export async function tabInventory(root, profile) {
     </div>
     <div class="views" id="inv-views"></div>`;
 
+  let stopped = false;
   const alive = () =>
-    state.route.name === 'server' && state.route.id === profile.id && state.route.tab === 'inventory';
+    !stopped && root.isConnected && state.route.name === 'server' &&
+    state.route.id === profile.id && state.route.tab === 'inventory';
 
   /** Der texturierte Weg gibt das Inventar als Liste, der Textweg als Verzeichnis nach Feldnummer. */
   const worlds = new Map();
+  let loading = false;
+  let timer = null;
 
   async function pullState() {
-    if (!alive()) return;
-    for (const member of members) {
-      const bot = state.bots.get(`${profile.id}:${member.account_id}`);
-      if (!bot?.online || !bot?.pov?.web) continue;
-      try {
-        const response = await api(`/profiles/${profile.id}/pov/${member.account_id}/state.json`, {
-          raw: true,
-        });
-        if (response.ok) worlds.set(member.account_id, await response.json());
-      } catch {
-        /* der Bot ist gerade gegangen – dann steht eben der letzte Stand da */
+    if (!alive() || loading) return;
+    clearTimeout(timer);
+    timer = null;
+    loading = true;
+    try {
+      for (const member of members) {
+        if (!alive()) return;
+        const bot = state.bots.get(`${profile.id}:${member.account_id}`);
+        if (!bot?.online || !bot?.pov?.web) continue;
+        try {
+          const response = await api(`/profiles/${profile.id}/pov/${member.account_id}/state.json`, {
+            raw: true,
+          });
+          if (response.ok) {
+            const world = await response.json();
+            if (!alive()) return;
+            worlds.set(member.account_id, world);
+          }
+        } catch {
+          /* der Bot ist gerade gegangen – dann steht eben der letzte Stand da */
+        }
       }
+      if (alive()) paint();
+    } finally {
+      loading = false;
+      if (alive()) timer = setTimeout(pullState, 1500);
     }
-    paint();
-    if (alive()) timer = setTimeout(pullState, 1500);
   }
-  let timer = null;
 
   /** Der Textweg: `:inv` fragen, die Antwort kommt als Ansicht zurück (siehe supervisor.js). */
   async function askText() {
@@ -1173,8 +1188,9 @@ export async function tabInventory(root, profile) {
   }
 
   function paint() {
+    if (!alive()) return;
     const cards = members.map((member) => card(member)).filter(Boolean);
-    $('#inv-views').innerHTML =
+    $('#inv-views', root).innerHTML =
       cards.join('') ||
       `<div class="empty" style="grid-column:1/-1"><h3>${escapeHtml(tr('inv.empty'))}</h3>
         <p>${escapeHtml(tr('inv.emptyHint'))}</p></div>`;
@@ -1241,7 +1257,7 @@ export async function tabInventory(root, profile) {
   }
 
   function bindHands() {
-    for (const button of $$('#inv-views button[data-hand]')) {
+    for (const button of $$('#inv-views button[data-hand]', root)) {
       button.addEventListener('click', async () => {
         const accountId = Number(button.dataset.owner);
         try {
@@ -1270,6 +1286,7 @@ export async function tabInventory(root, profile) {
   window.addEventListener(
     'hashchange',
     () => {
+      stopped = true;
       clearTimeout(timer);
     },
     { once: true }
