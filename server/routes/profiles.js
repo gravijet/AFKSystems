@@ -373,9 +373,13 @@ router.get(
  *
  * Gibt den fertigen Serverplatz zurück, wie er in der Datenbank steht.
  */
-function createProfile(req, { name, host, port, version, planId, nodeId, accounts }) {
+function createProfile(req, { name, host, port, version, planId, nodeId, accounts, automationCounts }) {
   // Ohne Angabe: der kostenlose Platz, solange einer frei ist – sonst der günstigste bezahlte.
-  let plan = planId ? billing.planById(requireInt(planId, 'Tarif')) : null;
+  const explicitPlan = planId !== undefined && planId !== null && planId !== '';
+  let plan = explicitPlan ? billing.planById(requireInt(planId, 'Tarif', { min: 1 })) : null;
+  if (explicitPlan && !plan) {
+    throw bad('Diesen Tarif gibt es nicht.', { en: 'No such plan.' });
+  }
   if (!plan) {
     plan = billing.freeSlotAvailable(req.user.id) ? billing.freePlan() : billing.cheapestPaidPlan();
   }
@@ -385,6 +389,22 @@ function createProfile(req, { name, host, port, version, planId, nodeId, account
   // seine Nummer weiter buchen, obwohl der Betreiber ihn gerade aus dem Angebot genommen hat.
   if (!plan.active) {
     throw bad('Dieser Tarif wird nicht mehr angeboten.', { en: 'That plan is no longer offered.' });
+  }
+  // Auch eine Kopie muss in den Zieltarif passen, bevor ein Platz angelegt oder bezahlt wird.
+  if (automationCounts?.macros > plan.max_macros) {
+    throw new HttpError(402, `Dieser Tarif erlaubt ${plan.max_macros} Macros je Serverplatz.`, {
+      en: `This plan allows ${plan.max_macros} macros per server slot.`,
+    });
+  }
+  if (automationCounts?.spam > plan.max_macros) {
+    throw new HttpError(402, `Dieser Tarif erlaubt ${plan.max_macros} wiederholte Nachrichten je Serverplatz.`, {
+      en: `This plan allows ${plan.max_macros} repeated messages per server slot.`,
+    });
+  }
+  if (automationCounts?.schedules > schedules.MAX_PER_PROFILE) {
+    throw bad(`Höchstens ${schedules.MAX_PER_PROFILE} Zeitpläne je Serverplatz.`, {
+      en: `At most ${schedules.MAX_PER_PROFILE} schedules per server slot.`,
+    });
   }
   if (plan.free_slot && !billing.freeSlotAvailable(req.user.id)) {
     throw bad(
@@ -562,6 +582,11 @@ router.post(
       planId: body.plan_id ?? source.plan_id,
       nodeId: body.node_id ?? source.node_id,
       accounts: [],
+      automationCounts: Object.fromEntries(
+        [['macros', 'macros'], ['spam', 'spam'], ['schedules', 'profile_schedules']].map(([key, table]) => [
+          key, selection[key] ? db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE profile_id = ?`).get(source.id).n : 0,
+        ])
+      ),
     });
 
     // Die Einstellungen. Nur Spalten, die Verhalten beschreiben – nicht `paid_until`, nicht

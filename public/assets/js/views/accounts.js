@@ -19,9 +19,7 @@ export async function render(root) {
     usedOn(account).filter((profile) =>
       profile.accounts.some((member) => member.account_id === account.id && member.online)
     );
-  // `online` heißt wirklich im Spiel. Für die Bedienung ist aber auch ein gerade gestarteter
-  // Client belegt: Er darf nicht parallel auf einem zweiten Platz loslaufen. Deshalb hält die
-  // Kontenübersicht beide Zustände getrennt und verschweigt den Startvorgang nicht.
+  // `online` heißt im Spiel; auch ein startender Client zählt bereits als aktive Sitzung.
   const activeOn = (account) =>
     usedOn(account).filter((profile) =>
       profile.accounts.some((member) => member.account_id === account.id && member.state !== 'offline')
@@ -179,7 +177,7 @@ export async function render(root) {
               ? used
                   .map(
                     (profile) => `<a class="pill" href="#/servers/${profile.id}/connect">
-                      <span class="dot ${profile.online ? 'live' : ''}"></span>${escapeHtml(profile.name)}</a>`
+                      <span class="dot ${profile.accounts.some((member) => member.account_id === account.id && member.online) ? 'live' : ''}"></span>${escapeHtml(profile.name)}</a>`
                   )
                   .join('')
               : `<a class="account-unused" href="#/servers">${escapeHtml(tr('acc.assignNow'))} ${icon('arrow')}</a>`
@@ -372,12 +370,15 @@ async function startLogin({ account = null } = {}) {
   let session = null;
   let timer = null;
   let done = false;
+  let closed = false;
+  let polling = false;
 
   const stop = () => {
     clearInterval(timer);
     if (session && !done) api(`/accounts/login/${session.id}`, { method: 'DELETE' }).catch(() => {});
   };
   dialog.addEventListener('close', () => {
+    closed = true;
     stop();
     dialog.remove();
   });
@@ -386,7 +387,14 @@ async function startLogin({ account = null } = {}) {
   try {
     session = await api('/accounts/login', { method: 'POST' });
   } catch (error) {
+    if (closed) return;
     $('#login-body', dialog).innerHTML = `<p style="color:var(--bad-text)">${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  // Schließen kann vor der Antwort auf POST passieren. Erst jetzt kennen wir die Sitzung,
+  // die abgebrochen werden muss; ein Polling darf danach nicht mehr starten.
+  if (closed) {
+    stop();
     return;
   }
 
@@ -435,8 +443,11 @@ async function startLogin({ account = null } = {}) {
 
   paint(session);
   timer = setInterval(async () => {
+    if (closed || polling) return;
+    polling = true;
     try {
       const data = await api(`/accounts/login/${session.id}`);
+      if (closed) return;
       paint(data);
       if (data.status === 'done') {
         clearInterval(timer);
@@ -446,10 +457,13 @@ async function startLogin({ account = null } = {}) {
       }
       if (data.status === 'error') clearInterval(timer);
     } catch (error) {
+      if (closed) return;
       clearInterval(timer);
       $('#login-body', dialog).innerHTML = `<div class="note bad">${icon('alert')}<div>${escapeHtml(
         error.message
       )}</div></div>`;
+    } finally {
+      polling = false;
     }
   }, 2000);
 }

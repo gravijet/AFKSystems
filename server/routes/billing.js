@@ -297,6 +297,9 @@ router.post(
     }
 
     if (provider === 'transfer' || provider === 'paypal') {
+      if (!(provider === 'transfer' ? config.bankTransfer.iban : config.bankTransfer.paypal)) {
+        throw bad('Diese Zahlungsart ist nicht eingerichtet.', { en: 'This payment method is not configured.' });
+      }
       // Nur Ziffern und Großbuchstaben: base64url bringt "-" und "_" mit, und die kommen im
       // Verwendungszweck einer Überweisung nicht überall heil an.
       const reference = `AFK-${req.user.id}-${token(8).replace(/[^A-Za-z0-9]/g, '').toUpperCase().slice(0, 6)}`;

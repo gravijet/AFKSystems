@@ -1,3 +1,18 @@
+# Änderungen vom 14. September 2026
+
+- Microsoft-Konten: Ein früh geschlossener Anmeldedialog bricht auch eine erst danach
+  angelegte Sitzung ab. Statusabfragen überlappen nicht; verspätete Antworten verändern
+  einen geschlossenen Dialog nicht mehr.
+- Administration: Beim Wechsel zwischen Serverplätzen endet die Aktualisierung der alten
+  Ansicht. Ihre Antworten können keine Kontenliste des neu geöffneten Servers überschreiben.
+  Auch System- und Betriebsansichten verwerfen Antworten nach dem Verlassen.
+- Serverplätze: Unbekannte Tarifnummern werden beim Anlegen und Kopieren abgewiesen,
+  statt stillschweigend einen anderen Tarif zu buchen. Kopien prüfen die Grenzen für Makros,
+  wiederholte Nachrichten und Zeitpläne vor dem Anlegen und Abbuchen.
+- Guthaben: Nicht eingerichtete Zahlungsarten erzeugen keine offenen Aufladungen mehr.
+- Minecraft-Konten: Der Statuspunkt je Serverzuordnung zeigt den Zustand dieses Kontos,
+  statt den Online-Zustand eines anderen Bots auf demselben Server zu übernehmen.
+
 # Änderungen vom 13. September 2026
 
 - Support: Lesebestätigungen erfassen nur ausgelieferte Nachrichten. Beim Nachladen älterer

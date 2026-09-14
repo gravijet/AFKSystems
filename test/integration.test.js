@@ -4162,6 +4162,8 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
       HOST: '127.0.0.1',
       PORT: String(port),
       PUBLIC_URL: base,
+      BANK_IBAN: '',
+      PAYPAL_ME: '',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -4169,6 +4171,66 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   serverProcess.stdout.on('data', (chunk) => (childOutput += chunk));
   serverProcess.stderr.on('data', (chunk) => (childOutput += chunk));
   await waitForHealth(base, serverProcess);
+
+  // Nicht angebotene Zahlungsarten dürfen keine offenen Aufladungen ohne Zahlungsziel erzeugen.
+  const topupsBefore = db.prepare('SELECT COUNT(*) AS n FROM topups WHERE user_id = ?').get(user.id).n;
+  for (const provider of ['transfer', 'paypal']) {
+    const result = await api(base, '/api/billing/topup', {
+      token: USER_TOKEN, method: 'POST', body: { provider, package: 0 },
+    });
+    assert.equal(result.response.status, 400);
+    assert.match(result.data.error, /not configured|nicht eingerichtet/);
+  }
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM topups WHERE user_id = ?').get(user.id).n, topupsBefore);
+
+  // Tarifnummern aus alten Formularen und Kopien dürfen weder auf einen anderen Tarif
+  // ausweichen noch dessen Grenzen umgehen. Jede Absage lässt Guthaben und Plätze unverändert.
+  const copyOwner = createUser({ credits: 10_000, discordId: '200000000000009991', member: true });
+  const copyToken = 'copy-validation-session';
+  createSession(copyOwner, copyToken);
+  const sourceSlot = createProfile(copyOwner, billing.planBySlug('premium'));
+  const targetPlan = billing.freePlan();
+  for (let i = 0; i <= targetPlan.max_macros; i++) {
+    db.prepare(`INSERT INTO macros (profile_id, name, event, config, actions, created_at)
+      VALUES (?, ?, 'join', '{}', '[]', ?)`).run(sourceSlot.id, `Macro ${i}`, Date.now());
+    db.prepare(`INSERT INTO spam (profile_id, message, interval_sec, created_at)
+      VALUES (?, '/afk', 300, ?)`).run(sourceSlot.id, Date.now());
+  }
+  const validationBefore = {
+    balance: billing.balance(copyOwner.id),
+    profiles: db.prepare('SELECT COUNT(*) AS n FROM profiles WHERE user_id = ?').get(copyOwner.id).n,
+    ledger: db.prepare('SELECT COUNT(*) AS n FROM ledger WHERE user_id = ?').get(copyOwner.id).n,
+  };
+  const countValidationState = () => ({
+    balance: billing.balance(copyOwner.id),
+    profiles: db.prepare('SELECT COUNT(*) AS n FROM profiles WHERE user_id = ?').get(copyOwner.id).n,
+    ledger: db.prepare('SELECT COUNT(*) AS n FROM ledger WHERE user_id = ?').get(copyOwner.id).n,
+  });
+  for (const planId of [0, 99999999]) {
+    for (const endpoint of ['/api/profiles', `/api/profiles/${sourceSlot.id}/copy`]) {
+      const result = await api(base, endpoint, {
+        token: copyToken, method: 'POST',
+        body: { name: 'Invalid plan', address: 'mc.example.test', plan_id: planId },
+      });
+      assert.equal(result.response.status, 400);
+      assert.deepEqual(countValidationState(), validationBefore);
+    }
+  }
+  for (const selection of [{ macros: true, spam: false }, { macros: false, spam: true }]) {
+    const result = await api(base, `/api/profiles/${sourceSlot.id}/copy`, {
+      token: copyToken, method: 'POST',
+      body: { name: 'Too many automations', plan_id: targetPlan.id, copy: selection },
+    });
+    assert.equal(result.response.status, 402);
+    assert.deepEqual(countValidationState(), validationBefore);
+  }
+  const withoutAutomations = await api(base, `/api/profiles/${sourceSlot.id}/copy`, {
+    token: copyToken, method: 'POST',
+    body: { name: 'Fits the plan', plan_id: targetPlan.id, copy: { macros: false, spam: false } },
+  });
+  assert.equal(withoutAutomations.response.status, 200);
+  assert.deepEqual(withoutAutomations.data.copied, { macros: 0, spam: 0, schedules: 0 });
+  db.prepare('DELETE FROM users WHERE id = ?').run(copyOwner.id);
 
   // Der Name bleibt die Microsoft-Identität. Für die eigene Arbeitsordnung gibt es stattdessen
   // synchronisierte Tags und einen Favoriten: Duplikate verschwinden, ohne dass der erste
