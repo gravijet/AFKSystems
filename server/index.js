@@ -1079,6 +1079,9 @@ function push(userId, message) {
  */
 agents.events.on('node-online', ({ nodeId }) => {
   setTimeout(() => {
+    if (!agents.isOnline(nodeId)) return;
+    const node = nodes.byId(nodeId);
+    if (node) void systemreport.locationRecovered({ nodeName: node.name });
     const started = supervisor.restoreNode(nodeId);
     if (started) console.log(`[standort ${nodeId}] ${started} Bot(s) wieder gestartet.`);
   }, 4000).unref();
@@ -1112,26 +1115,11 @@ supervisor.on('node-start-failed', (failure) => {
 });
 
 supervisor.on('bot-line', ({ userId, key, entry }) => push(userId, { type: 'line', key, entry }));
-// Ein Zustandswechsel ist gleichzeitig die Quelle für Live-Anzeige und persönliche Aktivität.
-// Gemeldet werden nur Kanten, keine Zustände: hundert identische Snapshots eines Online-Bots sind
-// eine Verbindung, nicht hundert Meldungen. Erfolgreiches Onlinekommen und erwartetes Stoppen
-// bleiben still; Hilfe braucht nur ein echter Fehler oder eine abgelaufene Microsoft-Anmeldung.
-const lastBotNoticeState = new Map();
-supervisor.on('bot-state', ({ userId, key, state }) => {
+// Störungen werden zusammengefasst; der normale Start bleibt still.
+supervisor.on('bot-state', (event) => {
+  const { userId, key, state } = event;
   push(userId, { type: 'state', key, state });
-  const before = lastBotNoticeState.get(key) || {};
-  lastBotNoticeState.set(key, { state: state.state });
-  const profileName = () =>
-    db.prepare('SELECT name FROM profiles WHERE id = ? AND user_id = ?').get(state.profile_id, userId)?.name ||
-    'Server';
-  // Onlinekommen ist der erwartete Erfolg eines Starts und keine Nachricht. Besonders Zeitpläne
-  // und automatische Wiederverbindungen erzeugten sonst täglich eine Aktivität, obwohl nichts
-  // zu tun war. Nur Zustände, bei denen ein Mensch eingreifen muss, verlassen die Live-Ansicht.
-  if (state.state === 'auth' && before.state !== 'auth') {
-    notify.accountBroken(userId, state.account || 'Minecraft', state.detail || state.last_error || '');
-  } else if (state.state === 'error' && before.state !== 'error') {
-    notify.botTrouble(userId, state.account || 'Bot', state.detail || state.last_error || '');
-  }
+  notify.botState(event);
 });
 // Anzeigetafel und Menü. Sie gehen denselben Weg wie ein Zustandswechsel, damit die
 // Ansicht ohne Nachfragen aktuell ist.

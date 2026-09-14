@@ -5,10 +5,9 @@
 //
 // Wer taktet, hängt davon ab, wer es besser kann:
 //   * Der **Client** bekommt beim Start alles, was er selbst im Protokoll sieht und ohne Zutun
-//     abarbeiten kann – Beitrittsbefehle, Wiederholungen, und mit `--on` auch Weltwechsel, Tod
-//     und einfache Chat-Treffer. Das überlebt jeden Reconnect ohne Zutun des Panels.
+//     abarbeiten kann – feste Beitrittsbefehle. Platzhalter ersetzt das Panel je Konto.
 //   * Das **Panel** taktet alles, was sich zur Laufzeit ändern soll oder mehr als eine Chatzeile
-//     ist: Wartezeiten, Bewegung, reguläre Ausdrücke, Sperrzeiten, Zufall, Spam.
+//     ist: Zeittakte, Chat-Treffer, Wartezeiten, Bewegung, Sperrzeiten, Zufall und Spam.
 //
 // Welche Schritte es gibt, richtet sich danach, was die Bauform des Bots kann. Schritte, die kein
 // Client beherrscht (Blöcke abbauen, schlagen), gibt es hier bewusst nicht: Ein Knopf, der eine
@@ -413,12 +412,12 @@ const MAX_DEPTH = 3;
  */
 function fill(text, bot, context = {}) {
   return String(text ?? '')
-    .replace(/\{line\}/g, context.line || '')
-    .replace(/\{player\}/g, bot.account?.name || '')
-    .replace(/\{server\}/g, bot.profile?.name || '')
-    // `{1}` bis `{9}`: die Fanggruppen des regulären Ausdrucks. Eine Gruppe, die nicht getroffen
-    // hat, ist ein leerer Text und nicht das Wort "undefined".
-    .replace(/\{([1-9])\}/g, (_match, index) => context.groups?.[Number(index)] ?? '');
+    .replace(/\{(line|player|server|[1-9])\}/g, (_match, key) => {
+      if (key === 'line') return context.line || '';
+      if (key === 'player') return bot.account?.name || '';
+      if (key === 'server') return bot.profile?.name || '';
+      return context.groups?.[Number(key)] ?? '';
+    });
 }
 
 /** Eine ganze Zahl zwischen zwei Grenzen – für Streuung und Zufallspausen. */
@@ -542,6 +541,8 @@ class MacroEngine {
     // (Spam und Anti-AFK takten fest, ein Zeitmacro mit Streuung legt sich selbst neu).
     for (const timer of slot.timers) clearTimeout(timer);
     slot.timers.clear();
+    slot.generation += 1;
+    slot.running.clear();
   }
 
   /** Nach dem Ändern von Macros/Spam die Takte eines Serverplatzes neu aufziehen. */
@@ -552,24 +553,9 @@ class MacroEngine {
     }
   }
 
-  /**
-   * Erledigt das schon der Client? Beitritt und Zeittakt immer (über `--cmd`), Weltwechsel, Tod
-   * und einfache Chat-Treffer nur, wenn seine Bauform `--on` versteht.
-   *
-   * Ob ein Macro überhaupt an den Client gehen **darf**, beantwortet `clientCanTake` – dieselbe
-   * Funktion, mit der supervisor.js die Startargumente baut. Zwei Antworten auf diese Frage
-   * hießen: ein Macro läuft doppelt, einmal dort und einmal hier.
-   */
+  /** Nur feste Beitrittsbefehle liegen im Client; laufende Regeln bleiben änderbar. */
   handledByClient(bot, macro) {
-    if (!clientCanTake(macro)) return false;
-    if (macro.event === 'join' || macro.event === 'timer') return true;
-    if (!bot.caps.macros) return false;
-    if (macro.event === 'world' || macro.event === 'death') return true;
-    if (macro.event === 'chat') {
-      const config = JSON.parse(macro.config || '{}');
-      return Boolean(config.contains && !config.regex);
-    }
-    return false;
+    return clientCanTake(macro);
   }
 
   macrosFor(bot, event) {
@@ -706,6 +692,8 @@ class MacroEngine {
     if (!force && !this.allowed(slot, macro)) return;
     slot.running.add(String(macro.id));
     const generation = slot.generation;
+    const active = () => bot.running && slot.generation === generation;
+    context = { ...context, active };
     bot.push('system', `Macro "${macro.name}" läuft.`);
 
     try {
@@ -715,12 +703,13 @@ class MacroEngine {
         // Abgebrochen (`stop_macros`) – und zwar zwischen zwei Schritten, nicht mittendrin.
         if (slot.generation !== generation) break;
         if (action.delay) await wait(Number(action.delay) * 1000);
+        if (!active()) break;
         await this.step(bot, action, context);
       }
     } catch (error) {
       bot.push('error', `Macro "${macro.name}": ${error.message}`);
     } finally {
-      slot.running.delete(String(macro.id));
+      if (slot.generation === generation) slot.running.delete(String(macro.id));
     }
   }
 
@@ -830,11 +819,11 @@ class MacroEngine {
         notify.macroSaid(bot.userId, bot.profile.name, fill(action.text, bot, context));
         break;
       case 'reconnect': {
-        // Erst die Pause, dann trennen: Andersherum liefe der Rest dieses Ablaufs gegen einen Bot,
-        // den es nicht mehr gibt – jeder folgende Schritt wäre "Der Bot läuft gerade nicht".
+        // Der Supervisor hält den Wunsch auch dann, wenn der Client in der Pause endet.
         const pause = Math.min(600, Math.max(1, Number(action.seconds) || 5));
-        await wait(pause * 1000);
-        supervisor.reconnect(bot.profile.id, bot.account.id);
+        supervisor.reconnect(bot.profile.id, bot.account.id, { delaySeconds: pause });
+        this.slot(bot).generation += 1;
+        this.slot(bot).running.clear();
         break;
       }
       case 'disconnect':
@@ -848,6 +837,7 @@ class MacroEngine {
         // eingeschlossen. Das ist gewollt: „Brich alles ab“ meint auch sich selbst, und was
         // danach noch im Macro stünde, wäre eine Ausnahme, die niemand erwartet.
         this.slot(bot).generation += 1;
+        this.slot(bot).running.clear();
         break;
       }
       default:
@@ -881,6 +871,7 @@ class MacroEngine {
     for (const action of JSON.parse(macro.actions || '[]')) {
       if (!bot.running || slot.generation !== generation) break;
       if (action.delay) await wait(Number(action.delay) * 1000);
+      if (!bot.running || slot.generation !== generation || (context.active && !context.active())) break;
       await this.step(bot, action, { ...context, depth });
     }
   }

@@ -7,6 +7,7 @@
 // longer interval.
 
 import { db, getSetting } from './db.js';
+import * as incidents from './incidents.js';
 import { config } from './config.js';
 import { formatCredits, formatEuro } from './util.js';
 
@@ -588,8 +589,13 @@ export const scheduleFailed = (userId, profileName, when, reason) =>
  * Sperrzeit `state` und nicht `event`: Wer mehrere Bots auf demselben unerreichbaren Server hat,
  * bekommt sonst für jeden dieselbe Nachricht.
  */
-export const botGaveUp = (userId, name, reason) =>
-  notify(
+export const botGaveUp = (userId, name, reason, context = null) => {
+  if (context) {
+    const incidentKey = `bot:${userId}:${context.key}`;
+    incidents.open(incidentKey, { name, reason, profileName: context.profile.name, profileId: context.profile.id }, userId);
+    incidents.markNotified(incidentKey);
+  }
+  return notify(
     userId,
     { de: `Bot "${name}" kommt nicht zurück`, en: `Bot "${name}" is not coming back` },
     {
@@ -601,13 +607,14 @@ export const botGaveUp = (userId, name, reason) =>
       }`,
     },
     {
-      key: `bot-gaveup-${name}`,
+      key: `bot-gaveup-${context?.key || name}`,
       color: COLORS.bad,
       quiet: QUIET.state,
       event: 'bot',
       url: `${config.publicUrl}/en/app#/servers`,
     }
   );
+};
 
 export const botTrouble = (userId, name, reason) =>
   notify(
@@ -615,7 +622,7 @@ export const botTrouble = (userId, name, reason) =>
     { de: `Bot "${name}" hat ein Problem`, en: `Bot "${name}" has a problem` },
     {
       de: String(reason || 'Der Client wurde beendet.'),
-      en: 'The client stopped unexpectedly. Open the panel for the full reason.',
+      en: String(reason || 'The client stopped unexpectedly.'),
     },
     {
       key: `bot-${name}`,
@@ -625,3 +632,73 @@ export const botTrouble = (userId, name, reason) =>
       url: `${config.publicUrl}/en/app#/servers`,
     }
   );
+
+
+// Ein Aussetzer darf sich 60 Sekunden lang selbst erholen. Entwarnung erst nach 30
+// Sekunden im Spiel, damit eine flackernde Verbindung keine Folge von Meldungen erzeugt.
+const botNoticeTimers = new Map();
+export function botState({ userId, key, state }) {
+  const incidentKey = `bot:${userId}:${key}`;
+  const existing = incidents.get(incidentKey);
+  const clear = () => {
+    clearTimeout(botNoticeTimers.get(incidentKey)?.timer);
+    botNoticeTimers.delete(incidentKey);
+  };
+  const later = (kind, ms, work) => {
+    if (botNoticeTimers.get(incidentKey)?.kind === kind) return;
+    clear();
+    const timer = setTimeout(() => { botNoticeTimers.delete(incidentKey); work(); }, ms);
+    timer.unref?.();
+    botNoticeTimers.set(incidentKey, { kind, timer });
+  };
+  const profile = db.prepare('SELECT name FROM profiles WHERE id = ? AND user_id = ?')
+    .get(state.profile_id ?? null, userId);
+  if (!profile) {
+    clear();
+    incidents.close(incidentKey);
+    return;
+  }
+  if ((state.state === 'stopping' || (state.state === 'offline' && state.detail === 'gestoppt')) && !state.retry) {
+    clear();
+    incidents.close(incidentKey);
+    return;
+  }
+  if (state.state === 'online') {
+    if (!existing) return clear();
+    later('recovery', 30_000, () => {
+      const recovered = incidents.close(incidentKey);
+      if (!recovered?.notified_at) return;
+      const { name, profileName, profileId } = recovered.data;
+      void notify(userId,
+        { de: `Bot "${name}" läuft wieder`, en: `Bot "${name}" is back online` },
+        { de: `Auf "${profileName}" ist die Verbindung wieder stabil.`, en: `The connection on "${profileName}" is stable again.` },
+        { key: `${incidentKey}:recovered`, quiet: QUIET.event, color: COLORS.ok, event: 'bot',
+          url: `${config.publicUrl}/en/app#/servers/${profileId}/connect` });
+    });
+    return;
+  }
+  const problem = ['error', 'disconnected', 'reconnecting', 'auth'].includes(state.state);
+  if (!problem && !existing) return;
+  const profileName = profile.name;
+  const reason = state.last_error || state.detail || existing?.data.reason || '';
+  const incident = incidents.open(incidentKey, {
+    name: state.account || 'Bot', profileName, profileId: state.profile_id, reason,
+  }, userId);
+  if (incident.notified_at) return clear();
+  if (state.state === 'auth') {
+    clear();
+    if (incidents.markNotified(incidentKey)) void accountBroken(userId, state.account || 'Minecraft', reason);
+    return;
+  }
+  later('problem', Math.max(0, 60_000 - (Date.now() - incident.created_at)), () => {
+    const current = incidents.get(incidentKey);
+    if (!current || !incidents.markNotified(incidentKey)) return;
+    const { name, profileName, profileId, reason } = current.data;
+    void notify(userId,
+      { de: `Bot "${name}" hat ein Problem`, en: `Bot "${name}" has a problem` },
+      { de: `Auf "${profileName}" ist die Verbindung seit mindestens einer Minute unterbrochen.\n${reason}`,
+        en: `The connection on "${profileName}" has been interrupted for at least one minute.\n${reason}` },
+      { key: incidentKey, quiet: QUIET.event, color: COLORS.bad, event: 'bot',
+        url: `${config.publicUrl}/en/app#/servers/${profileId}/connect` });
+  });
+}
