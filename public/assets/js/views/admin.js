@@ -744,9 +744,10 @@ async function system(root) {
   paint(await api('/admin/metrics'));
   // Der erste CPU-Wert ist immer leer: er braucht eine zweite Messung zum Vergleichen.
   const tick = async () => {
-    if (state.route.name !== 'admin' || state.route.tab !== 'system') return clearInterval(timer);
+    if (!root.isConnected) return clearInterval(timer);
     try {
-      paint(await api('/admin/metrics'));
+      const data = await api('/admin/metrics');
+      if (root.isConnected) paint(data);
     } catch {
       /* beim nächsten Mal wieder */
     }
@@ -2433,13 +2434,19 @@ async function serverDetail(root, id) {
     if (autoscroll.checked) box.scrollTop = box.scrollHeight;
   };
 
+  let chatLoading = false;
   const load = async () => {
+    if (!root.isConnected || chatLoading) return;
+    chatLoading = true;
     try {
       const fresh = await api(`/admin/servers/${id}/chat`);
+      if (!root.isConnected) return;
       lines = fresh.lines;
       paint();
     } catch {
       /* beim nächsten Mal wieder */
+    } finally {
+      chatLoading = false;
     }
   };
   await load();
@@ -2507,12 +2514,15 @@ async function serverDetail(root, id) {
 
   /** Zustand, Fassung und Fehler der Bots neu holen – ohne den Rest der Seite anzufassen. */
   let accounts = data.accounts;
+  let refreshing = false;
   const refresh = async () => {
+    if (!root.isConnected || refreshing) return;
+    refreshing = true;
     try {
       const fresh = await api(`/admin/servers/${id}`);
       // Zwischen Absenden und Antwort kann die Seite gewechselt haben – dann gibt es die Liste
       // nicht mehr, und in sie zu schreiben wäre ein Fehler in der Konsole ohne jeden Nutzen.
-      if (!$('#botlist')) return;
+      if (!root.isConnected) return;
       accounts = fresh.accounts;
       $('#botlist').innerHTML = accountRows(accounts);
       $('#botcount').textContent = `${accounts.filter((entry) => entry.online).length}/${
@@ -2521,6 +2531,8 @@ async function serverDetail(root, id) {
       bindAccounts();
     } catch {
       /* beim nächsten Mal wieder */
+    } finally {
+      refreshing = false;
     }
   };
   bindAccounts();
@@ -2530,7 +2542,7 @@ async function serverDetail(root, id) {
   // Kontenliste hängt mit dran: Sie war bisher ein Standbild vom Moment des Öffnens, und wer einen
   // Bot startete, sah daneben minutenlang weiter "offline".
   const poll = setInterval(() => {
-    if (state.route.name !== 'admin' || state.route.tab !== 'servers') return clearInterval(poll);
+    if (!root.isConnected) return clearInterval(poll);
     load();
     refresh();
   }, 5000);
@@ -5208,11 +5220,11 @@ async function ops(root) {
   };
 
   const load = async () => {
-    if (state.route.name !== 'admin' || state.route.tab !== 'ops') return clearInterval(timer);
+    if (!root.isConnected) return clearInterval(timer);
     try {
       const [bots, jobs, operations] = await Promise.all([api('/admin/bots'), api('/admin/jobs'), api('/admin/operations')]);
       // Steht ein Dialog offen, wäre ein Neuzeichnen ein Griff unter der Hand weg.
-      if (document.querySelector('dialog[open]')) return;
+      if (!root.isConnected || document.querySelector('dialog[open]')) return;
       paint(bots, jobs.jobs, operations);
     } catch {
       /* beim nächsten Mal wieder */
