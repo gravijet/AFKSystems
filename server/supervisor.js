@@ -298,8 +298,8 @@ const AUTH_WAIT_MS = 10 * 60 * 1000;
 // Adresse, falsche Version, Bann, Whitelist –, lehnt ihn auch beim zwanzigsten Mal ab; ein Panel,
 // das trotzdem weiterstartet, ist eine Neustartschleife im Minutentakt und für den Minecraft-Server
 // nicht von einem Angriff zu unterscheiden. Die Trennlinie ist deshalb genau die aus der Frage:
-// **war er vorher im Spiel?** War er es, ist das Aus eine Störung und die Verbindung kommt zurück.
-// War er es nie, ist es eine Absage, und die wiederholt sich nicht von selbst.
+// War er vorher im Spiel oder meldet der erste Join einen vorübergehenden Fehler,
+// versucht das Panel es erneut. Echte Anmeldefehler brauchen eine neue Anmeldung.
 //
 // Drei Größen halten das im Rahmen:
 //
@@ -319,6 +319,13 @@ const AUTH_WAIT_MS = 10 * 60 * 1000;
 
 /** So oft wird ein Bot nacheinander neu gestartet, bevor das Panel es aufgibt. */
 const RESTART_MAX_TRIES = 8;
+
+const TRANSIENT_START_ERRORS = [
+  /timed?\s*out|timeout|zeitüberschreitung|econnreset|econnrefused|etimedout|eai_again/i,
+  /connection (?:refused|reset|closed)|network|netzwerk|standort|client beendet/i,
+  /server (?:restarting|startet neu)|bitte warte|please wait|too (?:many connections|fast)/i,
+  /already (?:connected|logged in)|not logged into your minecraft account|invalid session/i,
+];
 
 /** So lange muss ein Bot im Spiel gestanden haben, damit die Versuchskette wieder bei null steht. */
 const RESTART_STABLE_MS = 5 * 60 * 1000;
@@ -1004,6 +1011,7 @@ class Bot extends EventEmitter {
       this.lastError = error.message;
       this.push('error', `Start fehlgeschlagen: ${error.message}`);
       this.setState('error', error.message);
+      this.supervisor.planRestart(this);
     });
     this.proc.on('exit', (code, signal) => {
       // Sagt der Server, warum er getrennt hat, dann ist **das** der Grund. Der Rust-Client endet
@@ -1015,10 +1023,11 @@ class Bot extends EventEmitter {
           ? 'Die Verbindung zum Standort ist abgerissen.'
           : this.lastReason || `Client beendet (${signal || `Code ${code}`})`;
       if (!this.stopping && code !== 0) this.lastError = reason;
+      if (!this.stopping && !this.lastReason && signal !== 'LINK') this.supervisor.macros?.onDisconnect?.(this);
       // **Vor dem Aufräumen fragen, ob er im Spiel war.** `cleanup()` löscht die Antwort, und ohne
       // sie ist jeder Ausfall gleich – der gekickte Bot wie der, den der Server nie hereingelassen
       // hat. Genau dieser Unterschied entscheidet über den Wiederanlauf.
-      const wasOnline = this.onlineSince ? Date.now() - this.onlineSince : 0;
+      const wasOnline = this.onlineSince ? Math.max(1, Date.now() - this.onlineSince) : 0;
       this.push('system', reason);
       this.setState(this.stopping ? 'offline' : code === 0 ? 'offline' : 'error', reason);
       this.cleanup();
@@ -1043,11 +1052,12 @@ class Bot extends EventEmitter {
     return this;
   }
 
-  stop({ intended = true } = {}) {
+  stop({ intended = true, keepReconnect = false } = {}) {
     this.stopping = intended;
+    this.supervisor.macros?.detach?.(this);
     // Wer stoppt, meint es. Eine noch laufende Versuchskette würde den Bot Sekunden später wieder
     // hochfahren – und der Knopf im Panel sähe aus, als hätte er nicht funktioniert.
-    if (intended) this.supervisor.cancelRestart(this.key);
+    if (intended && !keepReconnect) this.supervisor.cancelRestart(this.key);
     clearTimeout(this.authTimer);
     for (const timer of this.timers) clearInterval(timer);
     this.timers.clear();
@@ -1081,6 +1091,7 @@ class Bot extends EventEmitter {
   }
 
   cleanup() {
+    this.supervisor.macros?.detach?.(this);
     if (this.startedAt) {
       const seconds = Math.round((Date.now() - this.startedAt) / 1000);
       db.prepare(
@@ -1570,6 +1581,7 @@ class Bot extends EventEmitter {
 
   /** Konto als "braucht neue Anmeldung" kennzeichnen – das Panel zeigt es an prominenter Stelle. */
   markAccountBroken(reason) {
+    this.account.status = 'error';
     db.prepare('UPDATE mc_accounts SET status = ?, last_error = ? WHERE id = ?').run(
       'error',
       reason,
@@ -1661,7 +1673,9 @@ class Bot extends EventEmitter {
     this.setState('online', name || this.account.name);
     if (!this.onlineSince) this.onlineSince = Date.now();
     clearTimeout(this.stableTimer);
-    this.stableTimer = setTimeout(() => this.supervisor.cancelRestart(this.key), RESTART_STABLE_MS);
+    this.stableTimer = setTimeout(() => {
+      if (!this.supervisor.retry?.get(this.key)?.timer) this.supervisor.cancelRestart(this.key);
+    }, RESTART_STABLE_MS);
     this.stableTimer.unref?.();
     this.connections += 1;
     db.prepare(
@@ -2004,21 +2018,20 @@ class Supervisor extends EventEmitter {
    */
   planRestart(bot, { wasOnline = 0 } = {}) {
     const chain = this.retry.get(bot.key);
-    // **Ohne laufende Kette braucht es einen Grund, überhaupt eine anzufangen: Er war im Spiel.**
-    // Wer es nie hinein geschafft hat, hat ein Problem, das ein zweiter Versuch nicht löst.
-    // Läuft die Kette dagegen schon, zählt sie weiter – dass *dieser* Versuch nicht bis ins Spiel
-    // kam, ist genau der Fall, für den es sie gibt.
-    if (!chain && !wasOnline) return false;
+    if (chain?.explicit && chain.timer) return true;
+    // Auch beim ersten Join können Netzwerkfehler oder kurze Serversperren auftreten.
+    // Echte Anmeldefehler kennzeichnet der Client am Konto; sie brauchen einen Menschen.
+    if (!chain && !wasOnline && !TRANSIENT_START_ERRORS.some((pattern) => pattern.test(bot.lastError || ''))) return false;
     // Eine abgelaufene Microsoft-Anmeldung wiederholt sich nicht von selbst. Sie braucht einen
     // Menschen mit einem Browser, und bis dahin wäre jeder Versuch nur ein weiterer Gerätecode.
-    if (bot.state === 'auth') return false;
+    if (bot.state === 'auth' || bot.account.status === 'error') return false;
 
     // Frisch aus der Datenbank und nicht aus `bot.profile`: Wer den Schalter eben erst umgelegt
     // hat, meint diesen Ausfall und nicht den nächsten.
     const profile = db
       .prepare('SELECT auto_reconnect, reconnect_delay, max_backoff FROM profiles WHERE id = ?')
       .get(bot.profile.id);
-    if (!profile?.auto_reconnect) return false;
+    if (!profile || (!profile.auto_reconnect && !chain?.explicit)) return false;
 
     const tries = (chain?.tries || 0) + 1;
     if (tries > RESTART_MAX_TRIES) {
@@ -2027,7 +2040,7 @@ class Supervisor extends EventEmitter {
         'error',
         `Nach ${RESTART_MAX_TRIES} Versuchen aufgegeben. Der Bot bleibt aus, bis du ihn wieder startest.`
       );
-      notify.botGaveUp(bot.userId, bot.account.name, bot.lastError || '');
+      notify.botGaveUp(bot.userId, bot.account.name, bot.lastError || '', bot);
       return false;
     }
 
@@ -2045,7 +2058,8 @@ class Supervisor extends EventEmitter {
     // Verdoppeln, bis die Obergrenze erreicht ist. `2 ** (tries - 1)` wächst schnell; deshalb
     // steht die Obergrenze davor und nicht dahinter.
     const seconds = Math.min(cap, base * 2 ** (tries - 1));
-    const entry = { tries, at: Date.now() + seconds * 1000, timer: null };
+    clearTimeout(chain?.timer);
+    const entry = { tries, at: Date.now() + seconds * 1000, timer: null, explicit: Boolean(chain?.explicit) };
     entry.timer = setTimeout(() => this.runRestart(bot.key), seconds * 1000);
     entry.timer.unref?.();
     this.retry.set(bot.key, entry);
@@ -2088,7 +2102,8 @@ class Supervisor extends EventEmitter {
         db.prepare(
           'UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?'
         ).run(profileId, accountId);
-        notify.botGaveUp(context.user.id, context.account.name, error.message);
+        if (bot) bot.setState('error', error.message);
+        notify.botGaveUp(context.user.id, context.account.name, error.message, bot);
         return;
       }
       const seconds = Math.min(
@@ -2099,6 +2114,10 @@ class Supervisor extends EventEmitter {
       entry.at = Date.now() + seconds * 1000;
       entry.timer = setTimeout(() => this.runRestart(key), seconds * 1000);
       entry.timer.unref?.();
+      if (bot) {
+        bot.retry = { tries: entry.tries, max: RESTART_MAX_TRIES, at: entry.at };
+        bot.setState('reconnecting', `Versuch ${entry.tries}/${RESTART_MAX_TRIES}, in ${seconds} s`);
+      }
     }
   }
 
@@ -2487,30 +2506,37 @@ class Supervisor extends EventEmitter {
    * Prozess läuft; ein Start gleich nach dem `kill` wäre deshalb ein „Neu verbinden“, das trennt
    * und nicht wiederkommt.
    */
-  reconnect(profileId, accountId) {
+  reconnect(profileId, accountId, { delaySeconds = 0 } = {}) {
     const bot = this.get(profileId, accountId);
-    if (!bot?.proc) return false;
+    if (!bot) return false;
+    const pending = this.retry.get(bot.key);
+    if (pending?.explicit && (pending.timer || !bot.online)) return true;
+    this.cancelRestart(bot.key);
     db.prepare('UPDATE profile_accounts SET wanted = 1 WHERE profile_id = ? AND account_id = ?').run(
-      profileId,
-      accountId
+      profileId, accountId
     );
-    bot.proc.once('exit', () => {
-      // Eine Sekunde Luft: Der Minecraft-Server räumt die alte Sitzung nicht in dem Moment ab, in
-      // dem unser Prozess endet, und ein Beitritt in diese Lücke wird als "already logged in"
-      // abgewiesen.
-      setTimeout(() => {
-        const context = this.context(profileId, accountId);
-        if (!context) return;
-        try {
-          this.start(context);
-        } catch (error) {
-          bot.lastError = error.message;
-          bot.push('error', error.message);
-        }
-      }, 1000).unref?.();
-    });
-    bot.push('system', 'Neu verbinden ...');
-    bot.stop();
+    const seconds = Math.max(0, Math.min(600, Number(delaySeconds) || 0));
+    const entry = { tries: 0, explicit: true, at: Date.now() + seconds * 1000, timer: null };
+    const schedule = (work, delay) => {
+      entry.at = Date.now() + delay;
+      entry.timer = setTimeout(() => {
+        if (this.retry.get(bot.key) !== entry) return;
+        work();
+      }, delay);
+      entry.timer.unref?.();
+    };
+    this.retry.set(bot.key, entry);
+    schedule(() => {
+      if (!bot.wanted()) return this.cancelRestart(bot.key);
+      if (!bot.proc) return this.runRestart(bot.key);
+      // Erst nach Prozessende starten. Der gleiche Eintrag bleibt durch Stop abbrechbar.
+      bot.proc.once('exit', () => {
+        if (this.retry.get(bot.key) === entry) schedule(() => this.runRestart(bot.key), 1000);
+      });
+      bot.stop({ keepReconnect: true });
+    }, seconds * 1000);
+    bot.retry = { tries: 0, max: RESTART_MAX_TRIES, at: entry.at };
+    bot.push('system', seconds ? `Neu verbinden in ${seconds} s ...` : 'Neu verbinden ...');
     return true;
   }
 
@@ -2793,7 +2819,9 @@ function simpleChatMacro(actions) {
   return (
     actions.length > 0 &&
     actions.every(
-      (action) => action.type === 'chat' && !action.delay && !String(action.text || '').trim().startsWith(':')
+      (action) => action.type === 'chat' && !action.delay &&
+        !String(action.text || '').trim().startsWith(':') &&
+        !/\{(?:line|player|server|[1-9])\}/.test(String(action.text || ''))
     )
   );
 }
@@ -2811,6 +2839,9 @@ function simpleChatMacro(actions) {
  * Wer eines davon gesetzt hat, hat es gemeint, und dann taktet das Panel.
  */
 function clientCanTake(macro) {
+  // Laufende Takte und Ereignisse müssen Änderungen an Text, Konten und Aktivierung
+  // sofort übernehmen. Startargumente des Clients könnten das erst nach einem Neustart.
+  if (macro.event !== 'join') return false;
   if (Number(macro.cooldown_sec) > 0) return false;
   if (Number(macro.chance ?? 100) < 100) return false;
   let config;

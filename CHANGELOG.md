@@ -1,5 +1,21 @@
 # Änderungen vom 14. September 2026
 
+- Makros: Mehrere ausgewählte Konten bleiben beim Bearbeiten erhalten; Namen, Auslöserwerte,
+  Sperrzeiten und Wahrscheinlichkeiten gehen beim Ergänzen oder Umsortieren von Schritten
+  nicht verloren. Doppelte Speicherklicks erzeugen keine doppelten Makros.
+- Wiederholte Nachrichten: Mehrere Konten können gemeinsam ausgewählt werden; bestehende
+  Zuordnungen werden beim Speichern nicht auf alle Konten erweitert.
+- Makro-Ausführung: Platzhalter werden je Konto ersetzt, eingesetzter Chattext bleibt wörtlich.
+  Zeit- und Ereignismakros übernehmen Änderungen an Text und Konten sofort. Abgebrochene
+  Schritte laufen nach Wartezeiten oder einem Clientneustart nicht weiter.
+- Wiederverbinden: Ein Makro-Neustart überlebt das Ende des Clients und funktioniert auch
+  für bereits offline befindliche Bots. Stop bricht ausstehende Neustarts ab. Vorübergehende
+  Fehler und kurze Join-Sperren werden auch beim ersten Beitritt mit begrenztem Backoff
+  erneut versucht; tatsächliche Microsoft-Anmeldefehler bleiben von diesen Versuchen ausgenommen.
+- Benachrichtigungen: Kurze Bot-Aussetzer bleiben still, anhaltende Störungen werden pro
+  Konto und Server zusammengefasst und mit dem konkreten Grund gemeldet. Nach stabiler
+  Rückkehr folgt eine Entwarnung. Standort- und andere Betriebsstörungen erhalten ebenfalls
+  eine Entwarnung; offene Störungen bleiben über Panel-Neustarts gespeichert.
 - Inventar: Verspätete Antworten nach Seitenwechseln oder erneutem Zeichnen überschreiben
   keine andere Ansicht. Manuelles Aktualisieren erzeugt keine zusätzlichen Abfrageschleifen.
 - Zwei-Faktor-Einrichtung: Während der Aktivierung verhindert der Dialog doppelte Anfragen

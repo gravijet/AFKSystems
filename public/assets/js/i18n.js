@@ -922,6 +922,7 @@ export const S = {
   'srv.addSelected': { en: 'Add selected', de: 'Auswahl hinzufügen' },
   'srv.addedAccounts': { en: '{n} account(s) added.', de: '{n} Konto/Konten hinzugefügt.' },
   'srv.noAccounts': { en: 'No account on this server yet.', de: 'Noch kein Konto auf diesem Server.' },
+  'srv.automationAccountsHint': { en: 'Select accounts. No selection means all accounts on this server.', de: 'Konten auswählen. Ohne Auswahl gilt die Automatisierung für alle Konten auf diesem Server.' },
   'srv.pickAccounts': { en: 'Which accounts?', de: 'Welche Konten?' },
   'srv.remove': { en: 'Take off this server', de: 'Von diesem Server nehmen' },
   'srv.suspended': {

@@ -1730,6 +1730,16 @@ const migrations = [
       CREATE INDEX node_metrics_history_node_time ON node_metrics_history(node_id, created_at);
     `,
   },
+  {
+    name: '045-notification-incidents',
+    sql: `CREATE TABLE notification_incidents (
+      key TEXT PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      data TEXT NOT NULL DEFAULT '{}',
+      created_at INTEGER NOT NULL,
+      notified_at INTEGER
+    );`,
+  },
 ];
 
 /**

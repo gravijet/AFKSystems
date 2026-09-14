@@ -1646,6 +1646,15 @@ async function bindSpam(profile, members) {
   );
 }
 
+/** Auch vorübergehend entfernte Konten behalten ihre explizite Auswahl. */
+function automationAccounts(members, selected = []) {
+  const options = members.map((member) => ({ id: member.account_id, label: accountLabel(member) }));
+  for (const id of selected) {
+    if (!options.some((option) => option.id === id)) options.push({ id, label: `#${id}` });
+  }
+  return options;
+}
+
 async function editSpam(profile, members, entry) {
   const data = await formDialog(
     tr('srv.spam'),
@@ -1659,16 +1668,10 @@ async function editSpam(profile, members, entry) {
         max: 86400,
         value: entry?.interval_sec ?? 300,
       },
-      {
-        key: 'accounts',
-        label: tr('ov.col.account'),
-        type: 'select',
-        value: entry?.accounts?.length === 1 ? String(entry.accounts[0]) : '',
-        options: [
-          { value: '', label: tr('common.all') },
-          ...members.map((member) => ({ value: String(member.account_id), label: accountLabel(member) })),
-        ],
-      },
+      { type: 'note', label: tr('srv.automationAccountsHint') },
+      ...automationAccounts(members, entry?.accounts).map(({ id, label }) => ({
+        key: `account_${id}`, type: 'checkbox', label, value: entry?.accounts?.includes(id) || false,
+      })),
     ],
     { submit: tr('common.save') }
   );
@@ -1676,7 +1679,7 @@ async function editSpam(profile, members, entry) {
   const body = {
     message: data.message,
     interval_sec: Number(data.interval_sec),
-    accounts: data.accounts ? [Number(data.accounts)] : [],
+    accounts: automationAccounts(members, entry?.accounts).filter(({ id }) => data[`account_${id}`]).map(({ id }) => id),
   };
   try {
     if (entry) await api(`/profiles/${profile.id}/spam/${entry.id}`, { method: 'PATCH', body });
@@ -3004,6 +3007,12 @@ async function editMacro(profile, macro, template = null) {
   // wurden, gehören dabei nicht verloren – sie liegen hier, bis der passende Auslöser wieder
   // sichtbar ist oder gespeichert wird.
   const configValues = { ...(draft?.config || {}) };
+  const values = {
+    name: draft?.name || (template ? tr(template.nameKey) : ''),
+    accounts: [...(draft?.accounts || [])],
+    cooldown: draft?.cooldown_sec ?? 0,
+    chance: draft?.chance ?? 100,
+  };
   // Nur Schritte anbieten, die dieser Serverplatz auch ausführen kann.
   const available = state.meta.actions.filter((action) => !action.needs || profile.caps[action.needs]);
 
@@ -3021,11 +3030,21 @@ async function editMacro(profile, macro, template = null) {
   $('#cancel', dialog).addEventListener('click', () => dialog.close());
 
   const paint = () => {
+    // Vor jedem Neuzeichnen den gesamten sichtbaren Entwurf sichern.
+    if ($('#name', dialog)) {
+      values.name = $('#name', dialog).value;
+      values.cooldown = $('#cooldown', dialog).value;
+      values.chance = $('#chance', dialog).value;
+      values.accounts = $$('[data-macro-account]', dialog).filter((input) => input.checked).map((input) => Number(input.value));
+      for (const input of $$('[data-config]', dialog)) {
+        configValues[input.dataset.config] = input.type === 'number' ? Number(input.value) : input.value;
+      }
+    }
     const event = $('#event', dialog)?.value || draft?.event || 'join';
     $('#editor', dialog).innerHTML = `
       <div class="field">
         <label for="name">${escapeHtml(tr('common.name'))}</label>
-        <input id="name" value="${escapeHtml(draft?.name || (template ? tr(template.nameKey) : ''))}">
+        <input id="name" value="${escapeHtml(values.name)}">
       </div>
 
       <div class="field">
@@ -3050,20 +3069,14 @@ async function editMacro(profile, macro, template = null) {
         .map((field) => configField(field, configValues[field.key]))
         .join('')}
 
-      <div class="field">
-        <label for="accounts">${escapeHtml(tr('ov.col.account'))}</label>
-        <select id="accounts">
-          <option value="">${escapeHtml(tr('common.all'))}</option>
-          ${profile.accounts
-            .map(
-              (member) =>
-                `<option value="${member.account_id}" ${
-                  draft?.accounts?.length === 1 && draft.accounts[0] === member.account_id ? 'selected' : ''
-                }>${escapeHtml(accountLabel(member))}</option>`
-            )
-            .join('')}
-        </select>
-      </div>
+      <fieldset class="field">
+        <legend>${escapeHtml(tr('srv.pickAccounts'))}</legend>
+        <p class="hint">${escapeHtml(tr('srv.automationAccountsHint'))}</p>
+        ${automationAccounts(profile.accounts, values.accounts).map(({ id, label }) =>
+          `<label class="check"><input type="checkbox" data-macro-account value="${id}" ${values.accounts.includes(id) ? 'checked' : ''}>
+            <span>${escapeHtml(label)}</span></label>`
+        ).join('')}
+      </fieldset>
 
       <!-- Sperrzeit und Wahrscheinlichkeit gelten für jeden Auslöser, deshalb stehen sie
            außerhalb seiner Einstellungen. Der Grund für beide steht in server/macros.js: Ein
@@ -3072,12 +3085,12 @@ async function editMacro(profile, macro, template = null) {
       <div class="row wrap" style="gap:1rem;align-items:flex-end">
         <div class="field" style="max-width:11rem">
           <label for="cooldown">${escapeHtml(tr('srv.cooldown'))}</label>
-          <input id="cooldown" type="number" min="0" max="86400" value="${draft?.cooldown_sec ?? 0}">
+          <input id="cooldown" type="number" min="0" max="86400" value="${escapeHtml(values.cooldown)}">
           <span class="hint">${escapeHtml(tr('srv.cooldownHint'))}</span>
         </div>
         <div class="field" style="max-width:11rem">
           <label for="chance">${escapeHtml(tr('srv.chance'))}</label>
-          <input id="chance" type="number" min="1" max="100" value="${draft?.chance ?? 100}">
+          <input id="chance" type="number" min="1" max="100" value="${escapeHtml(values.chance)}">
           <span class="hint">${escapeHtml(tr('srv.chanceHint'))}</span>
         </div>
       </div>
@@ -3095,12 +3108,7 @@ async function editMacro(profile, macro, template = null) {
         }</div>
       </div>`;
 
-    $('#event', dialog).addEventListener('change', () => {
-      for (const input of $$('[data-config]', dialog)) {
-        configValues[input.dataset.config] = input.type === 'number' ? Number(input.value) : input.value;
-      }
-      paint();
-    });
+    $('#event', dialog).addEventListener('change', paint);
     $('#add-step', dialog).addEventListener('click', () => {
       if (actions.length >= 40) return;
       actions.push({ type: 'chat', text: '' });
@@ -3230,7 +3238,10 @@ async function editMacro(profile, macro, template = null) {
   // ebenfalls dort, statt dass der Fokus zufällig auf dem Dialograhmen landet.
   requestAnimationFrame(() => $('#name', dialog)?.focus());
 
-  $('#save', dialog).addEventListener('click', async () => {
+  const save = $('#save', dialog);
+  save.addEventListener('click', async () => {
+    if (save.disabled) return;
+    save.disabled = true;
     const event = $('#event', dialog).value;
     // Jedes Feld des Auslösers, das gerade im Formular steht – **alle**, auch die leeren. Ein
     // Feld wegzulassen hieße "nicht angefasst", und dann bliebe beim Speichern stehen, was der
@@ -3239,7 +3250,7 @@ async function editMacro(profile, macro, template = null) {
     for (const input of $$('[data-config]', dialog)) {
       config[input.dataset.config] = input.type === 'number' ? Number(input.value) : input.value.trim();
     }
-    const accountValue = $('#accounts', dialog).value;
+    const accounts = $$('[data-macro-account]', dialog).filter((input) => input.checked).map((input) => Number(input.value));
 
     const body = {
       name: $('#name', dialog).value,
@@ -3247,7 +3258,7 @@ async function editMacro(profile, macro, template = null) {
       config,
       cooldown_sec: Number($('#cooldown', dialog).value),
       chance: Number($('#chance', dialog).value),
-      accounts: accountValue ? [Number(accountValue)] : [],
+      accounts,
       actions: actions.map((action) => {
         const clean = { type: action.type };
         if (action.delay) clean.delay = Number(action.delay);
@@ -3267,6 +3278,8 @@ async function editMacro(profile, macro, template = null) {
       draw();
     } catch (error) {
       fail(error);
+    } finally {
+      save.disabled = false;
     }
   });
 }

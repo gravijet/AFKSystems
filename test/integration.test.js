@@ -1,4 +1,5 @@
 import test, { after } from 'node:test';
+import { EventEmitter } from 'node:events';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -1661,6 +1662,269 @@ test('every browser file parses', async () => {
  * Bot auf sich selbst antwortet; die Sperrzeit verhindert den Sekundentakt; und die Kette hat
  * einen Boden, damit ein Macro, das sich selbst aufruft, den Dienst nicht anhält.
  */
+
+test('macro placeholders are expanded per account and inserted text stays literal', async () => {
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const accounts = [createAccount(user, { name: 'Alpha' }), createAccount(user, { name: 'Bravo' })];
+  const sent = [];
+  const bots = accounts.map((account) => ({
+    key: `${profile.id}:${account.id}`, profile, account, running: true, online: true,
+    caps: { macros: true }, push: () => {}, send: (text) => sent.push([account.id, text]),
+  }));
+  const id = db.prepare(`INSERT INTO macros (profile_id,name,event,config,actions,accounts,created_at)
+    VALUES (?,'Personal','chat',?,?,?,?)`).run(profile.id, JSON.stringify({ contains: 'hello' }),
+    JSON.stringify([{ type: 'chat', text: '{player}: {line}' }]), JSON.stringify([accounts[0].id]), Date.now()).lastInsertRowid;
+  const row = db.prepare('SELECT * FROM macros WHERE id = ?').get(id);
+  assert.deepEqual(supervisor.clientMacros(profile.id, accounts[0].id), []);
+  assert.equal(macroEngine.handledByClient(bots[0], row), false);
+  for (const bot of bots) macroEngine.onChat(bot, 'hello $& {server} {player}');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, [[accounts[0].id, 'Alpha: hello $& {server} {player}']]);
+  sent.length = 0;
+  db.prepare("UPDATE macros SET accounts = '[]' WHERE id = ?").run(id);
+  for (const bot of bots) macroEngine.onChat(bot, 'hello');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, [[accounts[0].id, 'Alpha: hello'], [accounts[1].id, 'Bravo: hello']]);
+});
+
+test('canceling delayed macros only cancels that account, including nested steps', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const accounts = [createAccount(user), createAccount(user)];
+  const sent = [], reconnected = [];
+  t.mock.method(supervisor, 'reconnect', (profileId, accountId) => reconnected.push(accountId));
+  const bots = accounts.map((account) => ({ key: `${profile.id}:${account.id}`, profile, account,
+    running: true, online: true, push: () => {}, send: (text) => sent.push([account.id, text]) }));
+  const macro = { id: 90001, name: 'Delayed', actions: JSON.stringify([{ type: 'chat', text: '/afk', delay: 1 }]) };
+  const runs = bots.map((bot) => macroEngine.run(bot, macro));
+  await macroEngine.step(bots[0], { type: 'stop_macros' }, {});
+  t.mock.timers.tick(1000);
+  await Promise.all(runs);
+  assert.deepEqual(sent, [[accounts[1].id, '/afk']]);
+  assert.equal(macroEngine.slot(bots[0]).running.size, 0);
+
+  const child = db.prepare(`INSERT INTO macros (profile_id,name,event,actions,created_at)
+    VALUES (?,'Child','death',?,?)`).run(profile.id, macro.actions, Date.now());
+  const nested = macroEngine.run(bots[0], { ...macro, actions: JSON.stringify([{ type: 'run', name: 'Child' }]) });
+  macroEngine.detach(bots[0]);
+  t.mock.timers.tick(1000);
+  await nested;
+  assert.equal(sent.length, 1, 'a delayed child must stop with its parent');
+  const reconnect = macroEngine.run(bots[0], { ...macro, actions: JSON.stringify([{ type: 'reconnect', seconds: 1 }]) });
+  macroEngine.detach(bots[0]);
+  t.mock.timers.tick(1000);
+  await reconnect;
+  assert.deepEqual(reconnected, [accounts[0].id], 'reconnect is handed to the supervisor immediately');
+  db.prepare('DELETE FROM macros WHERE id = ?').run(child.lastInsertRowid);
+});
+
+test('an old macro cannot resume after restart or unlock the new run', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const sent = [];
+  const bot = { key: 'restart-regression', running: true, push: () => {}, send: (text) => sent.push(text) };
+  const macro = { id: 90002, name: 'Restart', actions: JSON.stringify([{ type: 'chat', text: 'old', delay: 1 }]) };
+  const old = macroEngine.run(bot, macro);
+  macroEngine.detach(bot);
+  const current = macroEngine.run(bot, { ...macro, actions: JSON.stringify([{ type: 'chat', text: 'new', delay: 2 }]) });
+  t.mock.timers.tick(1000);
+  await old;
+  assert.deepEqual(sent, []);
+  assert.equal(macroEngine.slot(bot).running.has(String(macro.id)), true);
+  t.mock.timers.tick(1000);
+  await current;
+  assert.deepEqual(sent, ['new']);
+  assert.equal(macroEngine.slot(bot).running.size, 0);
+});
+
+test('bot stop and cleanup cancel automation timers', (t) => {
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user);
+  const detached = [];
+  const bot = new Bot({ cancelRestart: () => {}, emit: () => {}, macros: { detach: (bot) => detached.push(bot.key) } },
+    { profile, account, user, plan: billing.featuresOf(profile) });
+  bot.stop();
+  bot.cleanup();
+  assert.deepEqual(detached, [bot.key, bot.key]);
+});
+
+
+test('macro reconnect survives client exit, restarts offline bots and respects a later stop', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user);
+  db.prepare('INSERT INTO profile_accounts (profile_id,account_id,wanted) VALUES (?,?,1)').run(profile.id, account.id);
+  const bot = new Bot(supervisor, { profile, account, user, plan: billing.featuresOf(profile) });
+  supervisor.bots.set(bot.key, bot);
+  t.after(() => { supervisor.cancelRestart(bot.key); supervisor.bots.delete(bot.key); });
+  const starts = [];
+  t.mock.method(supervisor, 'start', (context) => { starts.push(context.account.id); return {}; });
+  // A disconnect event is emitted while a client process still exists.
+  bot.proc = { kill: () => {} };
+  await macroEngine.run(bot, { id: 90200, name: 'Reconnect', actions: JSON.stringify([{ type: 'reconnect', seconds: 5 }]) });
+  bot.cleanup();
+  assert.equal(supervisor.planRestart(bot), true, 'the explicit restart survives natural client exit');
+  t.mock.timers.tick(5000);
+  assert.deepEqual(starts, [account.id]);
+
+  supervisor.cancelRestart(bot.key);
+  assert.equal(supervisor.reconnect(profile.id, account.id), true, 'an offline bot can be restarted explicitly');
+  t.mock.timers.tick(1);
+  assert.equal(starts.length, 2);
+
+  supervisor.reconnect(profile.id, account.id, { delaySeconds: 5 });
+  supervisor.stop(profile.id, account.id);
+  t.mock.timers.tick(5000);
+  assert.equal(starts.length, 2, 'Stop cancels the pending explicit restart');
+});
+
+test('explicit reconnect waits for exit, keeps one request and stays cancelable after exit', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user);
+  db.prepare('INSERT INTO profile_accounts (profile_id,account_id,wanted) VALUES (?,?,1)').run(profile.id, account.id);
+  const bot = new Bot(supervisor, { profile, account, user, plan: billing.featuresOf(profile) });
+  supervisor.bots.set(bot.key, bot);
+  t.after(() => { supervisor.cancelRestart(bot.key); supervisor.bots.delete(bot.key); });
+  let starts = 0, stops = 0;
+  t.mock.method(supervisor, 'start', () => { starts++; });
+  const attachProcess = () => {
+    const proc = new EventEmitter();
+    proc.kill = () => { stops++; };
+    proc.once('exit', () => bot.cleanup());
+    bot.proc = proc;
+    return proc;
+  };
+  const first = attachProcess();
+  supervisor.reconnect(profile.id, account.id, { delaySeconds: 5 });
+  const entry = supervisor.retry.get(bot.key);
+  supervisor.reconnect(profile.id, account.id, { delaySeconds: 5 });
+  assert.equal(supervisor.retry.get(bot.key), entry, 'repeated disconnect macros must not reset the attempt');
+  t.mock.timers.tick(5000);
+  assert.equal(stops, 1);
+  assert.equal(starts, 0);
+  first.emit('exit');
+  t.mock.timers.tick(1000);
+  assert.equal(starts, 1);
+  supervisor.cancelRestart(bot.key);
+  const second = attachProcess();
+  supervisor.reconnect(profile.id, account.id);
+  t.mock.timers.tick(1);
+  second.emit('exit');
+  supervisor.stop(profile.id, account.id);
+  t.mock.timers.tick(1000);
+  assert.equal(starts, 1, 'a stop during the post-exit pause must still cancel the restart');
+});
+
+test('transient initial errors retry with backoff while expired authentication does not', (t) => {
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user);
+  const bot = new Bot(supervisor, { profile, account, user, plan: billing.featuresOf(profile) });
+  supervisor.bots.set(bot.key, bot);
+  t.after(() => { supervisor.cancelRestart(bot.key); supervisor.bots.delete(bot.key); });
+  for (const reason of ['Connection refused', 'Connection timed out', 'Client beendet (Code 1)', 'Bitte warte etwas, bevor du dich erneut verbindest.', 'You are not logged into your Minecraft account.']) {
+    bot.lastError = reason;
+    assert.equal(supervisor.planRestart(bot), true, reason);
+    assert.equal(bot.retry.tries, 1);
+    supervisor.cancelRestart(bot.key);
+  }
+  bot.markAccountBroken('Microsoft sign-in has expired');
+  assert.equal(supervisor.planRestart(bot, { wasOnline: 1000 }), false);
+});
+
+test('bot incidents suppress short outages, survive restarts, isolate accounts and report recovery once', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const event = (id, state, extra = {}) => ({ userId: user.id, key: `${profile.id}:${id}`,
+    state: { state, profile_id: profile.id, account: 'SameName', detail: 'Connection reset', ...extra } });
+  const notices = () => notify.notificationsFor(user.id, 'en');
+  notify.botState(event(1, 'error'));
+  notify.botState(event(1, 'online'));
+  t.mock.timers.tick(60_000);
+  assert.equal(notices().length, 0, 'brief outages and ordinary online events stay quiet');
+  notify.botState(event(1, 'error'));
+  t.mock.timers.tick(60_000);
+  assert.equal(notices().length, 1);
+  assert.match(notices()[0].body, /Connection reset/);
+  notify.botState(event(1, 'reconnecting'));
+  notify.botState(event(1, 'error'));
+  t.mock.timers.tick(600_000);
+  assert.equal(notices().length, 1, 'one incident is not a new problem every ten minutes');
+  notify.botState(event(2, 'error'));
+  t.mock.timers.tick(60_000);
+  assert.equal(notices().length, 2, 'same names on different account or server keys stay independent');
+  notify.botState(event(1, 'online'));
+  t.mock.timers.tick(30_000);
+  assert.equal(notices().filter((entry) => entry.tone === 'ok').length, 1);
+  notify.botState(event(1, 'online'));
+  t.mock.timers.tick(30_000);
+  assert.equal(notices().length, 3);
+  const freshNotify = await import(`../server/notify.js?incident-test=${Date.now()}`);
+  freshNotify.botState(event(2, 'error'));
+  t.mock.timers.tick(60_000);
+  assert.equal(notices().length, 3);
+  freshNotify.botState(event(2, 'online'));
+  t.mock.timers.tick(30_000);
+  assert.equal(notices().filter((entry) => entry.tone === 'ok').length, 2);
+});
+
+test('location failures are reported once until recovery, including across module reloads', async (t) => {
+  const sent = [];
+  const previous = db.prepare("SELECT value FROM settings WHERE key = 'discord_system_webhook'").get()?.value || '';
+  setSetting('discord_system_webhook', 'https://discord.com/api/webhooks/123/incident-test');
+  t.after(() => setSetting('discord_system_webhook', previous));
+  t.mock.method(globalThis, 'fetch', async (_url, options) => { sent.push(JSON.parse(options.body).embeds[0]); return { ok: true }; });
+  const failure = { nodeName: 'Incident test node', error: 'Connection lost' };
+  assert.equal(await systemreport.locationRecovered(failure), false);
+  assert.equal(await systemreport.locationFailure(failure), true);
+  assert.equal(await systemreport.locationFailure(failure), false);
+  const reloaded = await import(`../server/systemreport.js?incident-test=${Date.now()}`);
+  assert.equal(await reloaded.locationFailure(failure), false);
+  assert.equal(await reloaded.locationRecovered(failure), true);
+  assert.equal(await reloaded.locationRecovered(failure), false);
+  assert.equal(sent.length, 2);
+  assert.equal(sent[1].color, notify.COLORS.ok);
+  assert.match(sent[1].title, /reachable again/);
+  assert.equal(await systemreport.locationFailure(failure), true, 'a new outage must not be swallowed by a daily cooldown');
+  await systemreport.locationRecovered(failure);
+});
+
+
+test('timer macro edits immediately change the targeted accounts without restarting clients', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const accounts = [createAccount(user), createAccount(user)];
+  const sent = [];
+  const bots = accounts.map((account) => ({ key: `${profile.id}:${account.id}`, profile, account,
+    running: true, online: true, caps: {}, push() {}, send: (text) => sent.push([account.id, text]) }));
+  for (const bot of bots) supervisor.bots.set(bot.key, bot);
+  t.after(() => { for (const bot of bots) { macroEngine.detach(bot); supervisor.bots.delete(bot.key); } });
+  const id = db.prepare(`INSERT INTO macros (profile_id,name,event,config,actions,accounts,created_at)
+    VALUES (?,'Timer','timer','{"interval_sec":5}',?,?,?)`).run(profile.id,
+      JSON.stringify([{ type: 'chat', text: 'old' }]), JSON.stringify([accounts[0].id]), Date.now()).lastInsertRowid;
+  assert.deepEqual(supervisor.joinCommands(profile.id, accounts[0].id), [], 'mutable timers must not be frozen in client arguments');
+  macroEngine.reload(profile.id);
+  t.mock.timers.tick(5000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, [[accounts[0].id, 'old']]);
+  db.prepare('UPDATE macros SET accounts = ?, actions = ? WHERE id = ?').run(JSON.stringify([accounts[1].id]), JSON.stringify([{ type: 'chat', text: 'new' }]), id);
+  macroEngine.reload(profile.id);
+  t.mock.timers.tick(5000);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(sent, [[accounts[0].id, 'old'], [accounts[1].id, 'new']]);
+  db.prepare('UPDATE macros SET enabled = 0 WHERE id = ?').run(id);
+  macroEngine.reload(profile.id);
+  t.mock.timers.tick(5000);
+  assert.equal(sent.length, 2);
+});
+
 test('a macro fills in its placeholders, honours its exclusion, its cooldown and the chain limit', async () => {
   const user = createUser();
   const account = createAccount(user, { name: 'Steve' });
@@ -1736,8 +2000,8 @@ test('a macro fills in its placeholders, honours its exclusion, its cooldown and
   assert.equal(macroEngine.handledByClient(bot, row), false);
   assert.equal(
     macroEngine.handledByClient(bot, { ...row, cooldown_sec: 0 }),
-    true,
-    'ohne Sperrzeit ist es wieder eine reine Chatkette für den Client'
+    false,
+    'Chat-Auslöser bleiben auch ohne Sperrzeit im Panel und übernehmen Änderungen sofort'
   );
 
   // **Dieselbe Antwort auf beiden Seiten.** Gäbe der Supervisor das Macro trotzdem als `--cmd`
@@ -1766,7 +2030,7 @@ test('a macro fills in its placeholders, honours its exclusion, its cooldown and
  * falsche Version, Bann –, und die wiederholt sich nicht von selbst. Ohne diesen Unterschied wäre
  * der Wiederanlauf eine Neustartschleife im Minutentakt gegen einen Server, der ohnehin nein sagt.
  */
-test('a bot that was in game comes back on its own – one that never got in does not', () => {
+test('automatic retries distinguish recoverable failures from rejected initial logins', () => {
   const user = createUser();
   const account = createAccount(user);
   const profile = createProfile(user, billing.planBySlug('premium'));
@@ -1797,7 +2061,9 @@ test('a bot that was in game comes back on its own – one that never got in doe
   after(() => supervisor.bots.delete(`${profile.id}:${account.id}`));
 
   // Nie im Spiel gewesen: keine Kette. Der Aufrufer löscht daraufhin den Startwunsch.
-  assert.equal(supervisor.planRestart(fake(), { wasOnline: 0 }), false);
+  const rejected = fake();
+  rejected.lastError = 'You are banned from this server';
+  assert.equal(supervisor.planRestart(rejected, { wasOnline: 0 }), false);
   assert.equal(supervisor.waitingForRestart(`${profile.id}:${account.id}`), false);
 
   // Im Spiel gewesen: ein Versuch wartet, und der Bot sagt auch, der wievielte es ist.
@@ -3560,8 +3826,12 @@ test('display names and selectable avatar providers replace the login name witho
   assert.equal(profile.displayNameOf(unnamed), `Konto #${unnamed.id}`);
 });
 
-test('going online is deliberately not a notification event', () => {
-  assert.equal('botOnline' in notify, false);
+test('an ordinary successful start remains quiet', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  notify.botState({ userId: user.id, key: 'ordinary-start', state: { state: 'online' } });
+  t.mock.timers.tick(60_000);
+  assert.deepEqual(notify.notificationsFor(user.id, 'en'), []);
 });
 
 // ---------------------------------------------------------------- Tempo

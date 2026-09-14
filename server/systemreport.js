@@ -13,7 +13,7 @@
 //     Aufgaben. Das ist der Blick, den man sonst nur bekommt, wenn man hinsieht.
 //   * **Die Warnung.** Wenn etwas kippt: Platte fast voll, Speicher fast voll, ein Standort weg,
 //     eine Aufgabe scheitert wiederholt, der Client fehlt. Sie kommt **sofort** und höchstens
-//     einmal je Zustand und Tag – eine Warnung, die stündlich wiederkommt, ist keine Warnung mehr.
+//     einmal je Störung, gefolgt von einer Entwarnung – eine Warnung, die stündlich wiederkommt, ist keine Warnung mehr.
 //
 // **Nichts davon betrifft einen einzelnen Kunden.** Wer wie viel bezahlt hat und wer was
 // geschrieben hat, gehört ins Panel und nicht in einen Chat. Hier stehen Zahlen über die Anlage,
@@ -23,6 +23,7 @@ import os from 'node:os';
 import { db, getSetting } from './db.js';
 import { config } from './config.js';
 import * as notify from './notify.js';
+import * as incidents from './incidents.js';
 import * as mail from './mail.js';
 import * as metrics from './metrics.js';
 import * as nodes from './nodes.js';
@@ -33,20 +34,6 @@ import { supervisor } from './supervisor.js';
 
 /** Ab wann eine Auslastung eine Warnung wert ist. */
 const WARN = { disk: 85, memory: 90, cpu: 95 };
-
-/** Höchstens eine gleiche Warnung je Tag – siehe oben. */
-const DAY_MS = 20 * 60 * 60 * 1000;
-const lastAlert = new Map();
-
-function once(key) {
-  const now = Date.now();
-  if (now - (lastAlert.get(key) || 0) < DAY_MS) return false;
-  lastAlert.set(key, now);
-  if (lastAlert.size > 500) {
-    for (const [entry, at] of lastAlert) if (now - at > DAY_MS) lastAlert.delete(entry);
-  }
-  return true;
-}
 
 const bytes = (value) => {
   const number = Number(value) || 0;
@@ -363,7 +350,7 @@ async function deliverAlert(alert) {
 }
 
 /**
- * Dasselbe, aber mit Post: Jede Warnung geht einmal am Tag hinaus, nicht öfter.
+ * Offene Störungen einmal melden und nach ihrer Behebung eine Entwarnung senden.
  *
  * Eine Warnung, die stündlich wiederkommt, ist keine Warnung mehr – sie ist der Grund, warum
  * niemand mehr in den Kanal sieht. Zurück kommt trotzdem die vollständige Liste; der Takt
@@ -371,15 +358,41 @@ async function deliverAlert(alert) {
  */
 export async function sendAlerts() {
   const found = await findAlerts();
-  for (const alert of found) {
-    if (!once(alert.key)) continue;
-    // Nacheinander und ohne Abbruch: Externe Dienste nehmen nur eine begrenzte Zahl Nachrichten
-    // je Sekunde, und eine Warnung, die nicht durchkommt, darf die nächste nicht verschlucken.
-    // eslint-disable-next-line no-await-in-loop
-    await deliverAlert(alert);
+  for (const alert of found) await reportIncident(alert);
+  const active = new Set(found.map((alert) => `system:${alert.key}`));
+  for (const incident of incidents.list('system:')) {
+    if (!active.has(incident.key)) await recoverIncident(incident.key);
   }
   return found;
 }
+
+async function reportIncident(alert) {
+  const key = `system:${alert.key}`;
+  incidents.open(key, alert);
+  if (!incidents.markNotified(key)) return false;
+  await deliverAlert(alert);
+  return true;
+}
+
+async function recoverIncident(key) {
+  const incident = incidents.close(key);
+  if (!incident?.notified_at) return false;
+  const old = incident.data;
+  const nodeName = old.nodeName || (old.key.startsWith('node:') ? old.key.slice(5) : null);
+  await deliverAlert({
+    title: nodeName
+      ? { de: `Standort "${nodeName}" ist wieder erreichbar`, en: `Location "${nodeName}" is reachable again` }
+      : { de: `Entwarnung: ${alertText(old.title, 'de')}`, en: `Resolved: ${alertText(old.title, 'en')}` },
+    text: nodeName
+      ? { de: 'Der Standort meldet sich wieder. Gestoppte Bots mit aktivem Startwunsch werden automatisch gestartet.',
+          en: 'The location is reporting again. Stopped bots that are still requested will restart automatically.' }
+      : { de: 'Das zuvor gemeldete Problem besteht nicht mehr.', en: 'The previously reported problem has cleared.' },
+    color: notify.COLORS.ok,
+  });
+  return true;
+}
+
+export const locationRecovered = ({ nodeName }) => recoverIncident(`system:node:${nodeName}`);
 
 /** Einen konkreten Standortfehler sofort melden; der normale Takt bleibt als Sicherheitsnetz. */
 export async function locationFailure({ nodeName, error = '', fallbackName = null }) {
@@ -399,9 +412,7 @@ export async function locationFailure({ nodeName, error = '', fallbackName = nul
     },
     color: notify.COLORS.bad,
   };
-  if (!once(alert.key)) return false;
-  await deliverAlert(alert);
-  return true;
+  return reportIncident(alert);
 }
 
 /**
