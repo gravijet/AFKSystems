@@ -35,6 +35,11 @@ export const SERIES = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'va
 
 const NS = 'http://www.w3.org/2000/svg';
 
+/** Eindeutige Kennung je Diagramm – eine Seite wie die Statistik zeigt viele Verläufe gleichzeitig,
+ *  und ein Verlaufsverlauf (`<linearGradient>`) braucht eine eigene `id`, sonst träfe der erste
+ *  im Dokument für alle. */
+let gradientSeq = 0;
+
 /** Eine Zahl, die in ein SVG-Attribut darf. */
 const num = (value) => (Number.isFinite(value) ? Math.round(value * 100) / 100 : 0);
 
@@ -125,11 +130,19 @@ export function line(points, { format = String, height = 160, color = SERIES[0],
     : '';
 
   const labels = tickLabels(points, at, box, height);
+  // Die Fläche verblasst nach unten, statt in einer festen Deckkraft zu stehen: Das ist die
+  // Form, die eine Verlaufslinie heute überall zeigt, und sie lässt das Gitter darunter durch,
+  // ohne dass die Linie selbst an Kontrast verliert.
+  const gradientId = `chart-fade-${++gradientSeq}`;
   return wrap(
     width,
     height,
-    `${grid(box, max, format, width)}
-     <path d="${area}" class="c-area" style="--c:${color}"/>
+    `<defs><linearGradient id="${gradientId}" x1="0" y1="0" x2="0" y2="1">
+       <stop offset="0%" style="stop-color:${color};stop-opacity:0.32"/>
+       <stop offset="100%" style="stop-color:${color};stop-opacity:0"/>
+     </linearGradient></defs>
+     ${grid(box, max, format, width)}
+     <path d="${area}" class="c-area" style="fill:url(#${gradientId})"/>
      <path d="${path}" class="c-line" style="--c:${color}"/>
      ${thresholdLine}${dots}${labels}`
   );
