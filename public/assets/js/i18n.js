@@ -1047,18 +1047,18 @@ export const S = {
   // Versuch nur derselbe erste noch einmal.
   'srv.reconnect': { en: 'Automatic restart', de: 'Wiederanlauf' },
   'srv.reconnectHint': {
-    en: 'Applies when the bot was in game and then dropped out — a kick, a server restart, a broken line, or a reboot of the whole machine. If it never got in (wrong address, wrong version, ban, whitelist), it stays off: a second attempt would fail the same way.',
-    de: 'Gilt, wenn der Bot im Spiel war und dann rausflog – ein Kick, ein Serverneustart, eine abgerissene Leitung, oder ein Neustart der ganzen Maschine. Kam er nie hinein (falsche Adresse, falsche Version, Bann, Whitelist), bleibt er aus: Ein zweiter Versuch scheiterte genauso.',
+    en: 'Restarts the bot automatically when a running connection drops. If it never got in (wrong address, wrong version, ban, whitelist), it stays off — a second attempt would fail the same way.',
+    de: 'Startet den Bot automatisch neu, wenn eine laufende Verbindung abbricht. Kam er nie hinein (falsche Adresse, falsche Version, Bann, Whitelist), bleibt er aus – ein zweiter Versuch scheiterte genauso.',
   },
   'srv.reconnectOffHint': {
-    en: 'The wait doubles with every failed attempt up to that ceiling. After eight attempts in a row the bot stays off and you get a message. Switched off, a kick or a broken connection ends the session and you start it again yourself.',
-    de: 'Die Wartezeit verdoppelt sich mit jedem Fehlversuch bis zu dieser Grenze. Nach acht Versuchen hintereinander bleibt der Bot aus, und du bekommst Bescheid. Ausgeschaltet beendet ein Kick oder Verbindungsabbruch die Sitzung, und du startest sie selbst wieder.',
+    en: 'The wait doubles with every failed attempt up to that ceiling; after eight attempts in a row the bot stays off and you get a message. Switched off, a kick or broken connection ends the session right away, and you start it again yourself.',
+    de: 'Die Wartezeit verdoppelt sich mit jedem Fehlversuch bis zu dieser Grenze; nach acht Versuchen hintereinander bleibt der Bot aus, und du bekommst Bescheid. Ausgeschaltet beendet ein Kick oder Verbindungsabbruch die Sitzung sofort, und du startest sie selbst wieder.',
   },
   'srv.retryOf': { en: 'Attempt {n}/{max}', de: 'Versuch {n}/{max}' },
   'srv.povSkipResources': { en: 'Skip texture download for the live view', de: 'Live-Ansicht ohne Texturen laden' },
   'srv.povSkipResourcesHint': {
-    en: 'The live view runs without real block textures instead of fetching the ~30 MB Minecraft file (once per account without a file deposited under Administration). Needs a booked live view with a client build from 2.6.0 on.',
-    de: 'Die Live-Ansicht läuft ohne echte Blocktexturen, statt sich die rund 30 MB große Minecraft-Datei zu holen (einmal je Konto, wenn unter Administration keine hinterlegt ist). Braucht eine gebuchte Live-Ansicht mit einer Client-Bauform ab 2.6.0.',
+    en: 'Skips the ~30 MB texture download per account. Needs a booked live view with a client build from 2.6.0 on.',
+    de: 'Spart den Download der rund 30 MB großen Texturdatei je Konto. Braucht eine gebuchte Live-Ansicht mit einer Client-Bauform ab 2.6.0.',
   },
   'srv.onlineSince': { en: 'In this state since {at}', de: 'In diesem Zustand seit {at}' },
   'srv.reconnectCount': { en: '{n} reconnect(s)', de: '{n} Neuverbindung(en)' },
@@ -1321,6 +1321,17 @@ export const S = {
     en: 'Small, restrained movements against plugins that look for real activity. 0 turns it off.',
     de: 'Kleine, zurückhaltende Bewegungen gegen Plugins, die auf echte Aktivität prüfen. 0 schaltet es aus.',
   },
+  // ---- Vorgabe beim Verbinden ------------------------------------------------------------------
+  //
+  // Steht auf demselben Tab wie die Live-Befehle oben, ist aber etwas anderes: kein Befehl an
+  // einen laufenden Bot, sondern der gespeicherte Startwert für die nächste Verbindung. Titel und
+  // Hinweis sagen das ausdrücklich, sonst sieht es wie ein zweites "Anti-AFK-Bewegung" aus.
+  'srv.movementDefaults': { en: 'Default on connect', de: 'Vorgabe beim Verbinden' },
+  'srv.movementDefaultsHint': {
+    en: 'Applies automatically the next time the bot connects – independent of the commands above, which act on it right now.',
+    de: 'Gilt automatisch, sobald sich der Bot das nächste Mal verbindet – unabhängig von den Befehlen oben, die sofort auf den laufenden Bot wirken.',
+  },
+  'srv.antiafkDefault': { en: 'Anti-AFK interval', de: 'Anti-AFK-Intervall' },
   'srv.boardHint': {
     en: 'The client asks the server for its current sidebar and shows it below.',
     de: 'Der Client fragt die aktuelle Seitenleiste ab und zeigt sie unten an.',
@@ -1389,8 +1400,8 @@ export const S = {
   },
   'srv.viewDistance': { en: 'View distance (chunks)', de: 'Sichtweite (Chunks)' },
   'srv.viewDistanceHint': {
-    en: '0 keeps the client’s default. A standing bot needs nothing here – the live view does: what the server never sent cannot be drawn. More chunks cost memory on the machine.',
-    de: '0 lässt die Vorgabe des Clients. Ein stehender Bot braucht hier nichts – die Live-Ansicht schon: Was der Server nie geschickt hat, lässt sich nicht zeichnen. Mehr Chunks kosten Arbeitsspeicher auf der Maschine.',
+    en: 'Only matters for the live view – a standing bot needs nothing here. More chunks cost memory.',
+    de: 'Wirkt nur auf die Live-Ansicht – ein stehender Bot braucht hier nichts. Mehr Chunks kosten Arbeitsspeicher.',
   },
   'srv.danger': { en: 'Danger zone', de: 'Gefährlicher Bereich' },
   'srv.deleteHint': {
@@ -1950,6 +1961,7 @@ export const S = {
 
   // Die To-do-Liste des Teams und die Diagramme darunter.
   'adm.todo': { en: 'What the team has to do', de: 'Was das Team zu tun hat' },
+  'adm.overview.numbers': { en: 'At a glance', de: 'Auf einen Blick' },
   'adm.stats.title': { en: 'How it is going', de: 'Wie es läuft' },
   'adm.stats.revenue': { en: 'Money coming in', de: 'Was hereinkommt' },
   'adm.stats.revenueFoot': {
