@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { userDir, userPath } from './config.js';
 import { db, audit } from './db.js';
+import { accountId, parseAccount, writeAtomic } from './account-files.js';
 import * as binaries from './binaries.js';
 import { token, HttpError, codeUrl } from './util.js';
 
@@ -39,7 +40,13 @@ const openFor = (userId) => {
   return count;
 };
 
-export function begin(user) {
+export function begin(user, targetId = null) {
+  const target = targetId == null ? null : db.prepare(
+    "SELECT * FROM mc_accounts WHERE id = ? AND user_id = ? AND kind = 'microsoft' AND suspended = 0"
+  ).get(Number(targetId) || 0, user.id);
+  if (targetId != null && !target) throw new HttpError(404, 'Dieses Minecraft-Konto ist nicht verfügbar.', {
+    en: 'This Minecraft account is not available.',
+  });
   if (openFor(user.id) >= MAX_PENDING_PER_USER) {
     throw new HttpError(
       429,
@@ -47,13 +54,13 @@ export function begin(user) {
       { en: 'A sign-in is already running. Finish it or cancel it.' }
     );
   }
-  if (pending.size >= MAX_PENDING_TOTAL) {
+  if ([...pending.values()].filter((entry) => ['starting', 'code'].includes(entry.status)).length >= MAX_PENDING_TOTAL) {
     throw new HttpError(503, 'Gerade laufen zu viele Anmeldungen. Bitte kurz warten.', {
       en: 'Too many sign-ins are running right now. Please wait a moment.',
     });
   }
   const { command } = binaries.anyCommand();
-  const home = userDir(user.id);
+  const home = fs.mkdtempSync(path.join(userDir(user.id), '.login-'));
   const id = token(12);
 
   const entry = {
@@ -88,6 +95,7 @@ export function begin(user) {
   });
 
   proc.stderr.on('data', (chunk) => {
+    if (!['starting', 'code'].includes(entry.status)) return;
     err += decodeErr.write(chunk);
     const lines = err.split('\n');
     err = lines.pop();
@@ -95,7 +103,8 @@ export function begin(user) {
       const line = raw.replace(ANSI, '').trim();
       if (!line) continue;
       entry.lines.push(line);
-      const uri = /Öffne im Browser:\s*(\S+)/.exec(line);
+      if (entry.lines.length > 100) entry.lines.shift();
+      const uri = /(?:Öffne|Oeffne) im Browser:\s*(\S+)/.exec(line);
       if (uri) entry.verification_uri = uri[1];
       const code = /Gib diesen Code ein:\s*(\S+)/.exec(line);
       if (code) {
@@ -115,26 +124,29 @@ export function begin(user) {
     entry.error = error.message;
   });
 
-  proc.on('exit', (code) => {
+  proc.on('close', (code) => {
+    clearTimeout(entry.timer);
+    out += decodeOut.end();
     // Auf der Standardausgabe steht bei Erfolg genau eine Zeile: der Kontoname.
     const name = out.replace(ANSI, '').trim().split('\n').pop()?.trim();
-    if (code === 0 && name) {
+    if (code === 0 && name && ['starting', 'code'].includes(entry.status)) {
       try {
-        entry.account = saveAccount(user.id, name);
+        entry.account = saveAccount(user.id, name, { home, target });
         entry.status = 'done';
       } catch (error) {
         entry.status = 'error';
         entry.error = error.message;
       }
-    } else if (entry.status !== 'error') {
+    } else if (entry.status !== 'error' && entry.status !== 'cancelled') {
       entry.status = 'error';
       entry.error = entry.error || `Anmeldung abgebrochen (Code ${code}).`;
     }
+    fs.rmSync(home, { recursive: true, force: true });
     // Ergebnis noch kurz vorhalten, damit das Panel es abholen kann.
     setTimeout(() => pending.delete(id), 60_000).unref();
   });
 
-  setTimeout(() => {
+  entry.timer = setTimeout(() => {
     if (entry.status === 'starting' || entry.status === 'code') {
       entry.status = 'error';
       entry.error = 'Zeit abgelaufen – bitte neu starten.';
@@ -150,36 +162,39 @@ export function begin(user) {
 }
 
 /** Kontoeintrag anlegen oder auffrischen, nachdem der Client die Datei geschrieben hat. */
-function saveAccount(userId, name) {
-  const file = path.join(userDir(userId), 'afksystems', 'accounts', `${name}.json`);
+function saveAccount(userId, name, { home = userDir(userId), target = null } = {}) {
+  if (!/^[A-Za-z0-9_]{1,16}$/.test(name)) throw new Error('Ungültiger Minecraft-Kontoname.');
+  const file = path.join(home, 'afksystems', 'accounts', `${name}.json`);
   if (!fs.existsSync(file)) throw new Error(`Der Client hat keine Kontodatei für "${name}" abgelegt.`);
-
-  let uuid = null;
-  try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    uuid = data?.minecraftProfile?.id || null;
-  } catch {
-    /* Kontodatei bleibt trotzdem gültig, nur ohne UUID im Panel */
+  const content = fs.readFileSync(file, 'utf8');
+  const data = parseAccount(content);
+  if (data.minecraftProfile.name !== name) throw new Error('Die Anmeldung gehört zu einem anderen Minecraft-Konto.');
+  const uuid = data.minecraftProfile.id;
+  const rows = db.prepare('SELECT * FROM mc_accounts WHERE user_id = ?').all(userId);
+  const identity = (row) => row.uuid ? accountId(row.uuid) === accountId(uuid) : row.name.toLowerCase() === name.toLowerCase();
+  if (target && (!rows.some((row) => row.id === target.id) || !identity(target))) {
+    throw new Error(`Bitte mit dem Microsoft-Konto für "${target.name}" anmelden.`);
   }
-
-  const existing = db
-    .prepare('SELECT * FROM mc_accounts WHERE user_id = ? AND name = ?')
-    .get(userId, name);
+  const existing = target || rows.find((row) => row.kind === 'microsoft' && identity(row)) ||
+    rows.find((row) => row.name.toLowerCase() === name.toLowerCase());
+  if (existing && (existing.kind !== 'microsoft' || !identity(existing)) ||
+      rows.some((row) => row.id !== existing?.id && row.name.toLowerCase() === name.toLowerCase())) {
+    throw new Error('Dieser Name gehört bereits zu einem anderen gespeicherten Konto.');
+  }
+  const destination = path.join(userDir(userId), 'afksystems', 'accounts', `${name}.json`);
+  if (file !== destination) writeAtomic(destination, content);
   if (existing) {
-    db.prepare("UPDATE mc_accounts SET status = 'ok', last_error = NULL, uuid = ? WHERE id = ?").run(
-      uuid,
-      existing.id
+    db.prepare("UPDATE mc_accounts SET name = ?, status = 'ok', last_error = NULL, uuid = ? WHERE id = ?").run(
+      name, uuid, existing.id
     );
+    if (existing.name !== name) fs.rmSync(path.join(userDir(userId), 'afksystems', 'accounts', `${existing.name}.json`), { force: true });
     audit(userId, 'account-refresh', { name });
     return db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(existing.id);
   }
-
-  const info = db
-    .prepare(
-      `INSERT INTO mc_accounts (user_id, name, kind, uuid, status, created_at)
-       VALUES (?, ?, 'microsoft', ?, 'ok', ?)`
-    )
-    .run(userId, name, uuid, Date.now());
+  const info = db.prepare(
+    `INSERT INTO mc_accounts (user_id, name, kind, uuid, status, created_at)
+     VALUES (?, ?, 'microsoft', ?, 'ok', ?)`
+  ).run(userId, name, uuid, Date.now());
   audit(userId, 'account-add', { name });
   return db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(info.lastInsertRowid);
 }
@@ -194,6 +209,8 @@ export function status(id, user) {
 export function cancel(id, user) {
   const entry = pending.get(id);
   if (!entry || entry.userId !== user.id) return;
+  entry.status = 'cancelled';
+  clearTimeout(entry.timer);
   try {
     entry.proc?.kill('SIGKILL');
   } catch {
@@ -298,9 +315,14 @@ export function reconcile(userId) {
   const rows = db.prepare('SELECT * FROM mc_accounts WHERE user_id = ?').all(userId);
 
   for (const name of files) {
-    if (!rows.some((row) => row.name === name)) saveAccount(userId, name);
+    if (!rows.some((row) => row.name === name)) {
+      try { saveAccount(userId, name); } catch { /* A partial or invalid file is not a signed-in account. */ }
+    }
   }
-  for (const row of rows) {
+  for (const row of db.prepare('SELECT * FROM mc_accounts WHERE user_id = ?').all(userId)) {
+    if (row.kind === 'microsoft' && files.includes(row.name) && row.last_error === 'Anmeldung fehlt – bitte neu verbinden.') {
+      try { saveAccount(userId, row.name); } catch { /* Still incomplete; keep the error visible. */ }
+    }
     if (row.kind === 'microsoft' && !files.includes(row.name)) {
       db.prepare("UPDATE mc_accounts SET status = 'error', last_error = ? WHERE id = ?").run(
         'Anmeldung fehlt – bitte neu verbinden.',

@@ -327,6 +327,13 @@ const TRANSIENT_START_ERRORS = [
   /already (?:connected|logged in)|not logged into your minecraft account|invalid session/i,
 ];
 
+// Transport and service failures say nothing about whether a refresh token is valid.
+const TRANSIENT_AUTH_ERRORS = [
+  ...TRANSIENT_START_ERRORS,
+  /\b(?:429|500|502|503|504)\b|too many requests|temporarily unavailable|service unavailable/i,
+  /EOF while parsing|error decoding response|unexpected end of (?:JSON|input)|dns|name resolution|error sending request/i,
+];
+
 /** So lange muss ein Bot im Spiel gestanden haben, damit die Versuchskette wieder bei null steht. */
 const RESTART_STABLE_MS = 5 * 60 * 1000;
 
@@ -603,6 +610,7 @@ class Bot extends EventEmitter {
     this.web = null;
     this.webNote = '';
     this.stopping = false;
+    this.transientAuthFailure = false;
     // Seit wann dieser Lauf im Spiel steht – die eine Auskunft, an der der Wiederanlauf hängt.
     // `null` heißt "noch nie", und das ist etwas anderes als "gerade nicht": Wer nie drin war,
     // wird nicht neu gestartet (siehe die Erklärung bei RESTART_MAX_TRIES).
@@ -898,6 +906,7 @@ class Bot extends EventEmitter {
     const home = userDir(this.userId);
 
     this.stopping = false;
+    this.transientAuthFailure = false;
     this.lastReason = null;
     this.onlineSince = null;
     // Das Warten ist vorbei – dieser Start **ist** der Versuch, auf den gewartet wurde. Die
@@ -1467,20 +1476,19 @@ class Bot extends EventEmitter {
         this.supervisor.macros.onWorldChange(this);
         break;
       case 'authfail':
-        this.lastError = hit.match[1];
-        this.markAccountBroken(hit.match[1]);
-        this.setState('error', hit.match[1]);
+        this.authenticationFailed(hit.match[1]);
         break;
       case 'authstale':
-        this.lastError = hit.match[2];
-        this.markAccountBroken(hit.match[2]);
+        this.authenticationFailed(hit.match[2]);
         break;
       case 'authuri':
+        if (this.transientAuthFailure) return;
         this.auth = { ...(this.auth || {}), uri: hit.match[1] };
         // Steht der Code schon fest, gleich die fertige Adresse mitgeben.
         if (this.auth.code) this.auth.uri_complete = codeUrl(hit.match[1], this.auth.code);
         break;
       case 'authcode':
+        if (this.transientAuthFailure) return;
         this.auth = {
           ...(this.auth || {}),
           code: hit.match[1],
@@ -1589,6 +1597,19 @@ class Bot extends EventEmitter {
     );
   }
 
+  authenticationFailed(reason) {
+    if (this.transientAuthFailure) return;
+    this.lastError = reason;
+    this.lastReason = reason;
+    if (TRANSIENT_AUTH_ERRORS.some((pattern) => pattern.test(reason))) {
+      this.transientAuthFailure = true;
+      // The client falls back to a device login even for an HTTP outage. End that attempt
+      // without clearing wanted; its exit schedules a normal retry using the saved token.
+      this.stop({ intended: false });
+    } else this.markAccountBroken(reason);
+    this.setState('error', reason);
+  }
+
   /**
    * Die Datei umlegen, bevor sie zu groß wird.
    *
@@ -1670,6 +1691,13 @@ class Bot extends EventEmitter {
 
   markOnline(name) {
     const first = this.state !== 'online';
+    this.account.status = 'ok';
+    this.account.last_error = null;
+    this.lastError = null;
+    this.lastReason = null;
+    this.auth = null;
+    clearTimeout(this.authTimer);
+    db.prepare("UPDATE mc_accounts SET status = 'ok', last_error = NULL WHERE id = ?").run(this.account.id);
     this.setState('online', name || this.account.name);
     if (!this.onlineSince) this.onlineSince = Date.now();
     clearTimeout(this.stableTimer);
@@ -2021,7 +2049,7 @@ class Supervisor extends EventEmitter {
     if (chain?.explicit && chain.timer) return true;
     // Auch beim ersten Join können Netzwerkfehler oder kurze Serversperren auftreten.
     // Echte Anmeldefehler kennzeichnet der Client am Konto; sie brauchen einen Menschen.
-    if (!chain && !wasOnline && !TRANSIENT_START_ERRORS.some((pattern) => pattern.test(bot.lastError || ''))) return false;
+    if (!chain && !wasOnline && !bot.transientAuthFailure && !TRANSIENT_START_ERRORS.some((pattern) => pattern.test(bot.lastError || ''))) return false;
     // Eine abgelaufene Microsoft-Anmeldung wiederholt sich nicht von selbst. Sie braucht einen
     // Menschen mit einem Browser, und bis dahin wäre jeder Versuch nur ein weiterer Gerätecode.
     if (bot.state === 'auth' || bot.account.status === 'error') return false;

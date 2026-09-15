@@ -372,6 +372,7 @@ async function startLogin({ account = null } = {}) {
   let done = false;
   let closed = false;
   let polling = false;
+  let pollFailures = 0;
 
   const stop = () => {
     clearInterval(timer);
@@ -385,7 +386,7 @@ async function startLogin({ account = null } = {}) {
   $('#login-close', dialog).addEventListener('click', () => dialog.close());
 
   try {
-    session = await api('/accounts/login', { method: 'POST' });
+    session = await api('/accounts/login', { method: 'POST', body: account ? { account_id: account.id } : {} });
   } catch (error) {
     if (closed) return;
     $('#login-body', dialog).innerHTML = `<p style="color:var(--bad-text)">${escapeHtml(error.message)}</p>`;
@@ -448,6 +449,7 @@ async function startLogin({ account = null } = {}) {
     try {
       const data = await api(`/accounts/login/${session.id}`);
       if (closed) return;
+      pollFailures = 0;
       paint(data);
       if (data.status === 'done') {
         clearInterval(timer);
@@ -458,6 +460,9 @@ async function startLogin({ account = null } = {}) {
       if (data.status === 'error') clearInterval(timer);
     } catch (error) {
       if (closed) return;
+      // A brief network outage must not abandon an already confirmed Microsoft login.
+      if (!done && (error.status === 0 || error.status >= 500) && ++pollFailures < 15) return;
+      if (done) return; // A failed panel refresh does not undo the successful sign-in.
       clearInterval(timer);
       $('#login-body', dialog).innerHTML = `<div class="note bad">${icon('alert')}<div>${escapeHtml(
         error.message

@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from './db.js';
 import { userDir } from './config.js';
+import { accountId, parseAccount, writeAtomic, fileHash, olderAccount } from './account-files.js';
 
 /** Wie lange ein Standort ohne Lebenszeichen noch als erreichbar gilt. */
 const OFFLINE_AFTER_MS = 90_000;
@@ -147,7 +148,7 @@ class NodeLink {
         // ein Standort mit einem Bot eines beliebigen Kunden die Anmeldedatei *jedes* Kunden neu.
         // Ein übernommener oder schlicht fehlerhafter Standort hätte damit alle Minecraft-Konten
         // des Panels überschreiben können.
-        if (this.servesUser(message.user_id)) writeBackFiles(message.user_id, message.files);
+        if (this.servesUser(message.user_id)) writeBackFiles(this, message.user_id, message.files);
         break;
 
       case 'exit': {
@@ -302,6 +303,22 @@ export function spawn(nodeId, { file, args, userId, env = {}, pov = null }) {
   }
   const job = crypto.randomUUID();
   const proc = new RemoteProcess(link, job, userId);
+  const accountIndex = args.indexOf('--account');
+  const name = accountIndex >= 0 ? args[accountIndex + 1] : null;
+  const files = readUserFiles(userId, name);
+  proc.fileVersions = new Map(Object.entries(files).map(([name, content]) => [name, fileHash(content)]));
+  if (!proc.fileVersions.has('movement.json')) proc.fileVersions.set('movement.json', null);
+  // A second bot must not overwrite credentials that the first client just refreshed locally.
+  for (const existing of link.jobs.values()) {
+    if (existing.userId !== Number(userId)) continue;
+    for (const [name, revision] of existing.fileVersions || []) {
+      if (!proc.fileVersions.has(name)) continue;
+      // A browser renewal since the earlier spawn must still reach the location.
+      if (proc.fileVersions.get(name) !== revision) continue;
+      delete files[name];
+      proc.fileVersions.set(name, revision);
+    }
+  }
   link.jobs.set(job, proc);
   link.send({
     type: 'spawn',
@@ -310,7 +327,7 @@ export function spawn(nodeId, { file, args, userId, env = {}, pov = null }) {
     args,
     env,
     user_id: userId,
-    files: readUserFiles(userId),
+    files,
     // `{ port, mc }`, wenn der texturierte Viewer laufen soll. Die zwei Argumente dafür setzt der
     // Standort selbst ein: Der Pfad zur Minecraft-JAR gilt nur auf seiner Maschine, und ob sie
     // dort überhaupt liegt, weiß auch nur er.
@@ -369,7 +386,7 @@ export function heartbeat() {
 /** Nur das, was der Client wirklich liest: Konten und die gemerkten Bewegungspunkte. */
 const WANTED = /^(accounts\/[A-Za-z0-9._-]{1,64}\.json|movement\.json)$/;
 
-function readUserFiles(userId) {
+function readUserFiles(userId, accountName) {
   const base = path.join(userDir(userId), 'afksystems');
   const out = {};
   const walk = (dir, prefix) => {
@@ -386,8 +403,12 @@ function readUserFiles(userId) {
         continue;
       }
       if (!WANTED.test(relative)) continue;
+      if (relative.startsWith('accounts/') && relative !== `accounts/${accountName}.json`) continue;
       try {
-        out[relative] = fs.readFileSync(path.join(dir, entry.name), 'utf8');
+        const content = fs.readFileSync(path.join(dir, entry.name), 'utf8');
+        if (relative.startsWith('accounts/')) parseAccount(content);
+        else JSON.parse(content);
+        out[relative] = content;
       } catch {
         /* gerade gelöscht */
       }
@@ -404,7 +425,7 @@ function readUserFiles(userId) {
  * geprüft und nicht bloß zusammengesetzt. Ein Standort, der `../../etc/passwd` schickt, schreibt
  * damit nichts; er schreibt gar nichts.
  */
-function writeBackFiles(userId, files) {
+function writeBackFiles(link, userId, files) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id <= 0 || !files || typeof files !== 'object') return;
   const base = path.join(userDir(id), 'afksystems');
@@ -412,9 +433,27 @@ function writeBackFiles(userId, files) {
     if (!WANTED.test(name) || typeof content !== 'string' || content.length > 256 * 1024) continue;
     const target = path.join(base, name);
     if (!target.startsWith(base + path.sep)) continue;
+    const owners = [...link.jobs.values()].filter((job) => job.userId === id && job.fileVersions?.has(name));
+    if (!owners.length) continue;
     try {
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, content, { mode: 0o600 });
+      let current = null;
+      try { current = fs.readFileSync(target, 'utf8'); } catch (error) {
+        if (error.code !== 'ENOENT' || name !== 'movement.json') continue;
+      }
+      const before = current === null ? null : fileHash(current), after = fileHash(content);
+      if (before === after) continue;
+      // A new browser sign-in or another location wins over this client's old snapshot.
+      if (!owners.some((job) => job.fileVersions.get(name) === before)) continue;
+      if (name.startsWith('accounts/')) {
+        const next = parseAccount(content), previous = parseAccount(current);
+        if (accountId(next.minecraftProfile.id) !== accountId(previous.minecraftProfile.id) ||
+            olderAccount(next, previous)) continue;
+        const account = db.prepare('SELECT id FROM mc_accounts WHERE user_id = ? AND name = ? AND kind = ?')
+          .get(id, name.slice(9, -5), 'microsoft');
+        if (!account) continue;
+      } else JSON.parse(content);
+      writeAtomic(target, content);
+      for (const job of owners) job.fileVersions.set(name, after);
     } catch {
       /* Platte voll oder Rechte falsch – der Bot läuft trotzdem weiter */
     }
