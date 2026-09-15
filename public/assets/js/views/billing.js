@@ -179,7 +179,7 @@ export async function render(root) {
             <div class="body stack">
               <div class="field">
                 <label for="referral-link">${escapeHtml(tr('bill.referralLink'))}</label>
-                <div class="row" style="gap:.5rem">
+                <div class="row copy-row" style="gap:.5rem">
                   <input id="referral-link" class="grow mono" readonly value="${escapeHtml(data.referral.url)}">
                   <button class="btn btn-sm" type="button" id="referral-copy">${escapeHtml(
                     tr('common.copy')

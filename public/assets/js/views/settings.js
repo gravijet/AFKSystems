@@ -1079,7 +1079,7 @@ function totpSetupDialog(setup) {
         <div class="totp-qr">${setup.qr}</div>
         <div class="field">
           <label for="totp-secret">${escapeHtml(tr('set.totpSecret'))}</label>
-          <div class="row" style="gap:.5rem">
+          <div class="row copy-row" style="gap:.5rem">
             <input id="totp-secret" class="grow mono" readonly value="${escapeHtml(setup.secret)}">
             <button class="btn btn-sm" type="button" id="totp-copy">${escapeHtml(tr('common.copy'))}</button>
           </div>
@@ -1230,7 +1230,7 @@ function tokenCreatedDialog(raw) {
         <div class="note warn">${icon('alert')}<div>${escapeHtml(tr('set.tokenShownOnce'))}</div></div>
         <div class="field">
           <label for="token-value">${escapeHtml(tr('set.tokenValue'))}</label>
-          <div class="row" style="gap:.5rem">
+          <div class="row copy-row" style="gap:.5rem">
             <input id="token-value" class="grow mono" readonly value="${escapeHtml(raw)}">
             <button class="btn btn-sm" type="button" id="token-copy">${escapeHtml(tr('common.copy'))}</button>
           </div>

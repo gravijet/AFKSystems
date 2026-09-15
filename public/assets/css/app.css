@@ -567,7 +567,17 @@ textarea {
   font-size: 0.75rem;
   font-weight: 400;
 }
+/* Ein Kopierfeld (Referral-Link, TOTP-Geheimnis, API-Token) ist eine einzelne Zeile – auf einer
+ * breiten Karte zog sie sich sonst über die volle Breite, obwohl der Inhalt nur ein paar Zeichen
+ * lang ist. */
+.field .copy-row {
+  max-width: 34rem;
+}
 
+/* `:not([type])` fängt Eingaben ohne `type`-Attribut ab (z. B. die schreibgeschützten Kopierfelder
+ * für Referral-Link, TOTP-Geheimnis und API-Token) – ohne explizites `type='text'` griff keine der
+ * folgenden Regeln, und das Feld erschien mit der weißen Browser-Vorgabe statt im Kartendesign. */
+input:not([type]),
 input[type='text'],
 input[type='email'],
 input[type='password'],
@@ -2696,9 +2706,22 @@ body.site > main {
   min-width: 0;
   padding: 1.25rem;
 }
+/* Der Inhalt füllte bisher die volle verbleibende Breite neben der Seitenleiste – auf einem breiten
+ * Bildschirm zog sich jede Karte über mehr als anderthalb Meter Text und die Diagramme (fester
+ * `viewBox` 320×160, siehe charts.js) skalierten ihre Beschriftung mit der Kartenbreite mit hoch,
+ * bis sie unlesbar groß wurde. Dieselbe Höchstbreite wie auf den öffentlichen Seiten (`--page`)
+ * hält den Inhalt lesbar und die Diagrammschrift in einem vernünftigen Maß; unterhalb davon (Laptop-
+ * und Tablet-Breiten) greift die Grenze ohnehin nicht, da der verfügbare Platz kleiner ist. */
 @media (min-width: 1000px) {
   .main {
+    /* `.main` ist ein Grid-Kind von `.app` (`grid-template-columns: 17rem 1fr`) – ein Kind mit
+       `margin-inline: auto` streckt sich dort NICHT mehr automatisch auf die Spurbreite (Auto-
+       Ränder schalten das Standard-`stretch` ab, wie bei einer zentrierten Blockbox), sondern
+       schrumpft ohne `width: 100%` auf seinen Inhalt. */
+    width: 100%;
     padding: 1.75rem 2rem 4rem;
+    max-width: var(--page);
+    margin-inline: auto;
   }
 }
 
