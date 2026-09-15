@@ -329,6 +329,7 @@ async function overview(root) {
   root.innerHTML = `
     ${todoList(data.todos || [], { title: tr("adm.todo") })}
 
+    <h2 class="section-title">${escapeHtml(tr('adm.overview.numbers'))}</h2>
     <div class="grid four" style="margin-bottom:1.5rem">
       ${stat(tr('adm.users'), data.users, tr('adm.usersLine', { new: data.users_new_30d, active: data.users_active_24h }))}
       ${stat(tr('adm.bots'), data.bots_running, `${data.bots_online} × ${tr('state.online')}`)}
@@ -458,6 +459,8 @@ function statsPanels(stats) {
             back: asEuro(stats.totals.refunded_cent),
           })
         ),
+        // Die Kennzahl, die zuerst zählt: nicht mehr gleich groß wie die anderen vierzehn.
+        featured: true,
       })}
       ${chart.card({
         title: tr('adm.stats.signups'),
@@ -471,6 +474,7 @@ function statsPanels(stats) {
           { format: count, color: chart.SERIES[2] }
         ),
         foot: escapeHtml(tr('adm.stats.signupsFoot', { total: count(stats.totals.users) })),
+        featured: true,
       })}
       ${chart.card({
         title: tr('adm.stats.spent'),
@@ -983,8 +987,6 @@ async function staffTickets(root) {
     </a>`;
 
   root.innerHTML = `
-    ${appbar(tr('adm.allTickets'), '', tr('adm.allTicketsSub'))}
-
     <div class="tk-tiles">
       ${tile('tk.tileWaiting', counts.waiting, ticketHash({ ...query, status: 'open', stale: false, unanswered: false, assignment: 'all' }), 'primary')}
       ${tile('tk.tileUnanswered', counts.unanswered, ticketHash({ ...query, status: 'open', unanswered: true, stale: false }), 'bad')}

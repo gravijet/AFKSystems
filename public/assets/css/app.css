@@ -2158,6 +2158,15 @@ body.site > main {
     height: 100vh;
     height: 100svh;
   }
+  /* Ab hier ist die Seitenleiste eine dauerhaft sichtbare Spalte, und deren
+     .side-sub listet dieselben Reiter eines Serverplatzes schon auf (siehe
+     serverTabs() in app.js) – die Leiste im Inhalt wäre hier eine zweite
+     Beschriftung derselben Sache. Unter 1000px ist die Seitenleiste ein
+     Drawer, der nicht von selbst offen ist; dort bleibt sie die einzige
+     sofort sichtbare Navigation. */
+  .tabs.server-tabs {
+    display: none;
+  }
 }
 @media (max-width: 999px) {
   .side {
@@ -6606,6 +6615,18 @@ body.dash .main > .grid > .panel {
   line-height: 1.1;
   letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
+}
+
+/* Eine hervorgehobene Kachel unter gleich großen: größere Zahl, ein dezenter Rahmen – dasselbe
+   Mittel wie beim aktuellen Tarif (.card.is-current), nur für Kennzahlen. Bewusst ohne eigene
+   Spaltenbreite: ein "span 2" in einem auto-fit-Raster reißt bei ungerader Kachelzahl eine Lücke
+   auf; Größe und Rahmen reichen, um das Auge zuerst dorthin zu ziehen. */
+.chart-card.featured {
+  box-shadow: inset 0 0 0 2px var(--primary);
+}
+.chart-card.featured .chart-value {
+  font-size: 2.25rem;
+  color: var(--primary-text);
 }
 
 /* Waagerechte Balken: Name links, Balken in der Mitte, Zahl rechts. Der Name steht als Text da

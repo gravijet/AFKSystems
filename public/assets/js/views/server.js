@@ -353,7 +353,7 @@ async function renderProfile(root, route) {
          Einstellungen – wer beitreten musste, fand dort trotzdem keinen Server, sondern nur die
          Verknüpfung. Der Weg dorthin gehört an die Stelle, an der das Problem steht. -->
     ${joinBox(profile)}
-    <nav class="tabs wrap">${tabs
+    <nav class="tabs wrap server-tabs">${tabs
       .map(
         (tab) =>
           `<a class="${current === tab.key ? 'active' : ''}" href="#/servers/${profile.id}/${tab.key}">${escapeHtml(
@@ -1725,7 +1725,57 @@ async function editSpam(profile, members, entry) {
 
 async function tabMovement(root, profile) {
   const members = profile.accounts;
-  if (!members.length) return noAccounts(root, profile);
+  const plan = profile.plan;
+
+  // Gespeicherte Vorgabe fürs nächste Verbinden – anders als die Live-Befehle unten braucht sie
+  // kein verbundenes Konto, deshalb steht sie auch dann, wenn `noAccounts` sonst alles ersetzt.
+  const defaultsSection = `<section class="panel" style="margin-top:1.5rem">
+    <header><h3>${escapeHtml(tr('srv.movementDefaults'))}</h3>
+      ${plan.premium ? '' : `<span class="pill missing">${escapeHtml(tr('common.paidSlot'))}</span>`}
+    </header>
+    <div class="body stack">
+      <p class="small muted" style="margin:0">${escapeHtml(tr('srv.movementDefaultsHint'))}</p>
+      <label class="check"><input type="checkbox" id="movement" ${profile.movement ? 'checked' : ''}
+        ${plan.movement ? '' : 'disabled'}> ${escapeHtml(tr('srv.useMovement'))}</label>
+      <div class="field"><label for="antiafk_sec">${escapeHtml(tr('srv.antiafkDefault'))} (s)</label>
+        <input id="antiafk_sec" type="number" min="0" max="3600" value="${profile.antiafk_sec || 0}"
+          ${plan.premium ? '' : 'disabled'}></div>
+      <label class="check"><input type="checkbox" id="sneak-default" ${profile.sneak ? 'checked' : ''}
+        ${plan.premium ? '' : 'disabled'}> ${escapeHtml(tr('srv.sneakAlways'))}</label>
+      ${plan.premium ? '' : `<p class="small muted">${escapeHtml(tr('srv.premiumOnly'))}</p>`}
+      <div class="row" style="margin-top:.25rem">
+        <button class="btn btn-sm btn-primary" id="save-movement-defaults">${escapeHtml(tr('common.save'))}</button>
+        <span class="small muted" id="movement-defaults-hint"></span>
+      </div>
+    </div>
+  </section>`;
+
+  const wireDefaultsSave = () => {
+    $('#save-movement-defaults')?.addEventListener('click', async () => {
+      const body = {};
+      if (plan.movement) body.movement = $('#movement').checked;
+      if (plan.premium) {
+        body.antiafk_sec = Number($('#antiafk_sec').value);
+        body.sneak = $('#sneak-default').checked;
+      }
+      try {
+        const result = await api(`/profiles/${profile.id}`, { method: 'PATCH', body });
+        await refresh({ accounts: false });
+        ok(tr('srv.saved'));
+        const hint = $('#movement-defaults-hint');
+        if (hint) hint.textContent = result.restart_needed ? tr('srv.restartNeeded') : '';
+      } catch (error) {
+        fail(error);
+      }
+    });
+  };
+
+  if (!members.length) {
+    noAccounts(root, profile);
+    root.insertAdjacentHTML('beforeend', defaultsSection);
+    wireDefaultsSave();
+    return;
+  }
 
   /** Ein Knopf des Steuerkreuzes: Pfeil groß, Wort klein darunter. */
   const pad = (dir, arrow, label) =>
@@ -1894,7 +1944,9 @@ async function tabMovement(root, profile) {
             }
           </div>`
         : ''
-    }`;
+    }
+
+    ${defaultsSection}`;
 
   const run = commandRunner(profile);
 
@@ -1969,6 +2021,7 @@ async function tabMovement(root, profile) {
     if (!success) throw new Error(tr('srv.commandFailed'));
   });
   $('#hand')?.addEventListener('click', () => run('hand', $('#slot').value));
+  wireDefaultsSave();
 
   paintPositions();
   paintAnswer();
@@ -3711,23 +3764,6 @@ async function tabSettings(root, profile) {
         </div>
       </section>
 
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('tab.movement'))}</h3>
-          ${plan.premium ? '' : `<span class="pill missing">${escapeHtml(tr('common.paidSlot'))}</span>`}
-        </header>
-        <div class="body stack">
-          <label class="check"><input type="checkbox" id="movement" ${profile.movement ? 'checked' : ''}
-            ${plan.movement ? '' : 'disabled'}> ${escapeHtml(tr('srv.useMovement'))}</label>
-          <div class="field"><label for="antiafk_sec">${escapeHtml(tr('srv.antiafk'))} (s)</label>
-            <input id="antiafk_sec" type="number" min="0" max="3600" value="${profile.antiafk_sec || 0}"
-              ${plan.premium ? '' : 'disabled'}>
-            <span class="hint">${escapeHtml(tr('srv.antiafkHint'))}</span></div>
-          <label class="check"><input type="checkbox" id="sneak" ${profile.sneak ? 'checked' : ''}
-            ${plan.premium ? '' : 'disabled'}> ${escapeHtml(tr('srv.sneakAlways'))}</label>
-          ${plan.premium ? '' : `<p class="small muted">${escapeHtml(tr('srv.premiumOnly'))}</p>`}
-        </div>
-      </section>
-
       <!-- Der Wiederanlauf. Er steht in einem eigenen Kasten und nicht als Häkchen zwischen
            Wartezeiten, weil er als Einziger etwas tut, wenn niemand zusieht: Was hier steht,
            entscheidet, ob ein Bot, der nachts um drei rausfliegt, am Morgen läuft oder aus ist. -->
@@ -3790,12 +3826,7 @@ async function tabSettings(root, profile) {
       note: $('#note').value,
     };
     if (plan.chat_limit_editable) body.chat_limit = Number($('#chat_limit').value);
-    if (plan.movement) body.movement = $('#movement').checked;
-    if (plan.premium) {
-      body.antiafk_sec = Number($('#antiafk_sec').value);
-      body.sneak = $('#sneak').checked;
-      body.view_distance = Number($('#view_distance').value);
-    }
+    if (plan.premium) body.view_distance = Number($('#view_distance').value);
     if (profile.caps.povresourcesauto) body.pov_skip_resources = $('#pov_skip_resources').checked;
 
     try {

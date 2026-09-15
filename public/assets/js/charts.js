@@ -257,8 +257,8 @@ const empty = (width, height) =>
  * Die große Zahl steht **über** dem Diagramm und nicht darin. Ein Diagramm beantwortet "wie hat es
  * sich entwickelt"; die Frage "wie ist es jetzt" beantwortet eine Zahl, und zwar schneller.
  */
-export const card = ({ title, value = '', note = '', chart = '', foot = '' }) => `
-  <section class="panel chart-card">
+export const card = ({ title, value = '', note = '', chart = '', foot = '', featured = false }) => `
+  <section class="panel chart-card${featured ? ' featured' : ''}">
     <header><h3>${escapeHtml(title)}</h3>${
       note ? `<span class="small muted">${escapeHtml(note)}</span>` : ''
     }</header>
