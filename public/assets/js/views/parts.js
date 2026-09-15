@@ -114,17 +114,17 @@ export function itemGlyph(item) {
  * lässt sich beim Client ein Bild abholen. Der Textweg (`:menu`, `:inv`) nennt sie als
  * `minecraft:diamond_sword` – dort gibt es kein Bild, und dann steht das Zeichen im Feld.
  *
- * Das ist keine Notlösung mit zwei Gesichtern, sondern genau die Auskunft, die vorliegt: Wer die
- * Live-Ansicht gebucht hat und dessen Betreiber die Ressourcen hinterlegt hat, sieht das Spiel;
- * alle anderen sehen, was der Client ihnen sagen kann.
+ * Seit 2.8.0 liefert auch die reine Browser-Menü-Bauform numerische Kennungen. Solange der
+ * Client seine Ressourcen noch lädt, bleibt ein Textsymbol stehen; nach `textures: true`
+ * werden die Bilder angefordert. Die Minecraft-Version gehört in den Cache-Schlüssel.
  */
-export function itemSlot({ item, index, accountId, profileId, extra = '', tag = 'button' }) {
+export function itemSlot({ item, index, accountId, profileId, textures = true, version = '', extra = '', tag = 'button' }) {
   const count = Number(item?.count) || 0;
   const numeric = typeof item?.id === 'number' && item.id >= 0;
   const face = item
-    ? numeric
+    ? numeric && textures
       ? `<img class="slot-art" alt="" loading="lazy" decoding="async"
-           src="/api/profiles/${profileId}/pov/${accountId}/item.png?id=${item.id}">`
+           src="/api/profiles/${profileId}/pov/${accountId}/item.png?id=${item.id}&amp;v=${escapeHtml(encodeURIComponent(version))}">`
       : `<span class="slot-item">${escapeHtml(itemGlyph(item))}</span>`
     : `<span class="slot-index">${index}</span>`;
   const open = tag === 'button' ? '<button' : '<div';

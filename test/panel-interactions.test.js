@@ -28,16 +28,16 @@ async function compile(source, context, minify) {
   return context;
 }
 
-async function inventoryUI(minify) {
+async function inventoryUI(minify, online = true) {
   const root = node(), list = node(), refresh = node();
   const state = { route: { name: 'server', id: 1, tab: 'inventory' }, bots: new Map([
-    ['1:1', { online: true, pov: { web: true } }],
+    ['1:1', { online, pov: { web: true } }],
   ]) };
   const pending = deferred(), timers = new Map(), events = {};
   let requests = 0, serial = 0;
   const context = await compile(`${inventory}\nglobalThis.render = tabInventory;`, {
     state, icon: () => '', escapeHtml: String, tr: String, accountLabel: () => 'Bot',
-    anyOnline: () => true, itemSlot: () => '<slot>',
+    anyOnline: () => online, itemSlot: () => '<slot>',
     $: (selector) => selector === '#inv-views' ? list : refresh, $$: () => [],
     api: () => { requests++; return pending.promise; }, fail: (error) => { throw error; },
     setTimeout: (handler) => { const id = ++serial; timers.set(id, handler); return id; },
@@ -103,6 +103,21 @@ for (const minify of [false, true]) {
     assert.equal(ui.timers.size, 1, 'manual refresh replaces the scheduled refresh');
     ui.events.hashchange();
     assert.equal(ui.timers.size, 0);
+  });
+
+  test(`inventory starts updating after an initially offline bot joins (${variant})`, async () => {
+    const ui = await inventoryUI(minify, false);
+    assert.equal(ui.requests(), 0);
+    ui.state.bots.get('1:1').online = true;
+    ui.state.onLive({ type: 'state', key: '1:1' });
+    assert.equal(ui.requests(), 1);
+    ui.pending.resolve({ ok: true, json: async () => ({ menu: { inventory: [{}] } }) });
+    await settle();
+    assert.match(ui.list.innerHTML, /inv-card/);
+    ui.state.bots.get('1:1').online = false;
+    ui.state.onLive({ type: 'state', key: '1:1' });
+    assert.doesNotMatch(ui.list.innerHTML, /inv-card/);
+    ui.events.hashchange();
   });
 
   test(`TOTP activation preserves recovery codes when cancellation is attempted (${variant})`, async () => {

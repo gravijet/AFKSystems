@@ -2081,34 +2081,52 @@ async function tabMenu(root, profile) {
    */
   const live = new Map();
   let timer = null;
+  let loading = false;
+  let stopped = false;
+  const alive = () => !stopped && root.isConnected && state.route.name === 'server' &&
+    state.route.tab === 'menu' && state.route.id === profile.id;
 
   async function pullLive() {
+    if (!alive() || loading) return;
     clearTimeout(timer);
-    if (state.route.tab !== 'menu' || state.route.id !== profile.id) return;
-    let any = false;
-    for (const member of members) {
-      const bot = state.bots.get(`${profile.id}:${member.account_id}`);
-      if (!bot?.online || !bot?.pov?.web) continue;
-      any = true;
-      try {
-        const response = await api(`/profiles/${profile.id}/pov/${member.account_id}/state.json`, {
-          raw: true,
-        });
-        if (response.ok) live.set(member.account_id, (await response.json()).menu || null);
-      } catch {
-        /* der Bot ist gerade gegangen – dann bleibt der letzte Stand stehen */
+    timer = null;
+    loading = true;
+    try {
+      for (const member of members) {
+        if (!alive()) return;
+        const bot = state.bots.get(`${profile.id}:${member.account_id}`);
+        if (!bot?.online || !bot?.pov?.web) {
+          live.delete(member.account_id);
+          continue;
+        }
+        try {
+          const response = await api(`/profiles/${profile.id}/pov/${member.account_id}/state.json`, {
+            raw: true,
+          });
+          if (response.ok) {
+            const world = await response.json();
+            if (!alive()) return;
+            if (state.bots.get(`${profile.id}:${member.account_id}`)?.online) {
+              live.set(member.account_id, { ...world.menu, textures: world.textures });
+            }
+          }
+        } catch {
+          /* der Bot ist gerade gegangen – dann bleibt der letzte Stand stehen */
+        }
       }
+      if (alive()) paint();
+    } finally {
+      loading = false;
+      if (alive()) timer = setTimeout(pullLive, 1500);
     }
-    if (!any) return;
-    paint();
-    timer = setTimeout(pullLive, 1500);
   }
 
   const paint = () => {
+    if (!alive()) return;
     const cards = [];
     for (const member of members) {
       const bot = state.bots.get(`${profile.id}:${member.account_id}`);
-      if (!bot) continue;
+      if (!bot?.online) continue;
       const fresh = live.get(member.account_id);
       const view = fresh
         ? fresh.open
@@ -2116,6 +2134,7 @@ async function tabMenu(root, profile) {
               empty: false,
               title: fresh.title,
               slots: fresh.slots,
+              textures: fresh.textures !== false,
               // Der Viewer schickt eine Liste, der Textweg ein Verzeichnis nach Feldnummer. Hier
               // wird daraus dasselbe, damit die Karte darunter nur eine Form kennen muss.
               items: Object.fromEntries((fresh.items || []).map((item, index) => [index, item]).filter(([, item]) => item)),
@@ -2124,7 +2143,7 @@ async function tabMenu(root, profile) {
         : bot.views?.menu || (bot.menu ? { empty: false, ...bot.menu } : null);
       if (view) cards.push(menuCard(member, view));
     }
-    $('#views').innerHTML =
+    $('#views', root).innerHTML =
       cards.join('') ||
       `<div class="empty" style="grid-column:1/-1"><h3>${escapeHtml(tr('vw.emptyMenu'))}</h3></div>`;
     bindSlots();
@@ -2151,6 +2170,8 @@ async function tabMenu(root, profile) {
             index,
             accountId: member.account_id,
             profileId: profile.id,
+            textures: view.textures !== false,
+            version: profile.mc_version,
           })
         ).join('')}
       </div>
@@ -2161,10 +2182,11 @@ async function tabMenu(root, profile) {
   }
 
   function bindSlots() {
-    $$('[data-slot]').forEach((button) => {
-      button.addEventListener('click', async (event) => {
+    $$('[data-slot]', root).forEach((button) => {
+      const click = async (event) => {
+        if (event.type === 'contextmenu') event.preventDefault();
         const target = event.currentTarget;
-        const which = event.shiftKey ? 'shift' : event.ctrlKey || event.metaKey ? 'rechts' : '';
+        const which = event.shiftKey ? 'shift' : event.type === 'contextmenu' || event.ctrlKey || event.metaKey ? 'rechts' : '';
         try {
           await api(`/profiles/${profile.id}/command`, {
             method: 'POST',
@@ -2177,7 +2199,9 @@ async function tabMenu(root, profile) {
         } catch (error) {
           fail(error);
         }
-      });
+      };
+      button.addEventListener('click', click);
+      button.addEventListener('contextmenu', click);
 
       // Namen kommen schon mit `:menu`; Lore liefert der Rust-Client gezielt mit `:slot`.
       // Beim ersten Hover oder Tastaturfokus wird sie nachgeladen, ohne das Menü anzuklicken.
@@ -2208,14 +2232,18 @@ async function tabMenu(root, profile) {
   paint();
   // Wie bei der Anzeigetafel: ohne laufenden Bot gibt es nichts abzufragen, und die Absage
   // darauf wäre eine Fehlermeldung ohne Anlass.
-  if (anyOnline(profile, members)) {
-    run('menu');
-    pullLive();
-  }
-  window.addEventListener('hashchange', () => clearTimeout(timer), { once: true });
+  if (anyOnline(profile, members)) run('menu');
+  pullLive();
+  window.addEventListener('hashchange', () => { stopped = true; clearTimeout(timer); }, { once: true });
 
   state.onLive = (event) => {
-    if ((event.type === 'view' || event.type === 'state') && event.key.startsWith(`${profile.id}:`)) paint();
+    if (!alive() || !String(event.key || '').startsWith(`${profile.id}:`)) return;
+    if (event.type === 'state') {
+      if (!state.bots.get(event.key)?.online) live.delete(Number(String(event.key).split(':')[1]));
+      pullLive();
+    }
+    if (event.type === 'view' && event.kind === 'menu') inspected.clear();
+    if (event.type === 'view' || event.type === 'state') paint();
   };
 }
 

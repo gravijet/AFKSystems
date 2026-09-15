@@ -178,6 +178,7 @@ const CAP_GATES = {
   board: 'board',
   menu: 'menus',
   items: 'menus',
+  webmenu: 'menus',
   proxy: 'proxy',
   fakehost: 'fakehost',
   offline: 'offline_accounts',

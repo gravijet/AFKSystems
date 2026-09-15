@@ -10,7 +10,7 @@ jeweiligen Anleitungen schneller (siehe [docs/README.md](README.md)).
 
 1. [Das Ganze in einem Bild](#ueberblick)
 2. [Ein Bot von Anfang bis Ende](#botleben)
-3. [Der Client und seine sieben Bauformen](#client)
+3. [Der Client und seine acht Bauformen](#client)
 4. [Chat: von der Serverfarbe bis in den Browser](#chat)
 5. [Ansichten: Scoreboard, Menüs, Live-Ansicht](#ansichten)
 6. [Standorte: wo ein Bot wirklich läuft](#standorte)
@@ -154,7 +154,7 @@ hat, fragte ihn sonst zehnmal in derselben Sekunde.
 
 <a id="client"></a>
 
-## 3. Der Client und seine sieben Bauformen
+## 3. Der Client und seine acht Bauformen
 
 Die Bots sind Prozesse des [AFKSystems-Clients](https://github.com/gravijet/HugoAFKClient). Er ist
 bewusst pipe-fähig gebaut, deshalb braucht es zwischen Panel und Client kein eigenes Protokoll.
@@ -164,6 +164,7 @@ bewusst pipe-fähig gebaut, deshalb braucht es zwischen Panel und Client kein ei
 | Basis | `afk-linux` | Verbindung, Chat, Befehle, Macros |
 | Bewegung | `afk-linux-move` | dazu `:go`, `:look`, `:home`, `:route` |
 | Items | `items-afk-linux` | dazu Menüs und Gegenstandsdaten |
+| Items + Browser-Menü | `items-web-afk-linux` | texturierte Menüs und Inventare ohne Kamera und Weltspeicher (2.8.0) |
 | Premium | `premium-afk-linux` | Bewegung, Scoreboard, Menü-Klicks, Schleichen, Anti-AFK |
 | Premium + Items | `premium-items-afk-linux` | Premium plus Gegenstände mit Namen, Farben, Lore |
 | POV | `pov-afk-linux` | Live-Ansicht (das Panel startet sie erst, wenn jemand zusieht) |
@@ -172,6 +173,12 @@ bewusst pipe-fähig gebaut, deshalb braucht es zwischen Panel und Client kein ei
 Ab Client 2.5.0 bringen die beiden POV-Bauformen zusätzlich einen **texturierten Browser-Viewer**
 mit (`--pov-web`), der aus der Original-Client-JAR von Minecraft zeichnet (`--pov-resources`). Ab
 2.6.0 findet der Client diese JAR selbst, wenn keine hinterlegt ist.
+
+Ab 2.8.0 benutzt auch `items-web-afk-linux` diese Viewer-Schnittstelle. Die Fähigkeit `webmenu`
+ist an gebuchte Menüs gebunden; `pov` bleibt die Freigabe für Kamerabilder. Deshalb startet die
+Menü-Bauform nur mit `--pov-web` und gegebenenfalls `--pov-resources`, ohne die dort unbekannten
+Optionen `--pov`, `--pov-size` und `--pov-fps`. Premium- und POV-Tarife behalten ihre jeweils
+passende Bauform. Der vorhandene Standort-Agent überträgt die neue Datei über dasselbe Manifest.
 
 ### Zwei Optionen aus 2.6.0, die das Panel angehen
 

@@ -1,12 +1,13 @@
 // Die Client-Dateien. Sie kommen aus dem Release "latest" von gravijet/HugoAFKClient – dort liegt
 // nach jedem Push der frische Stand.
 //
-// Der Release enthält sieben Rust-Bauformen. Optionen wie Proxy, Events und Offline-Modus werden
+// Der Release enthält acht Rust-Bauformen. Optionen wie Proxy, Events und Offline-Modus werden
 // aus `--help` erkannt; einkompilierte Module stehen zusätzlich am stabilen Release-Dateinamen,
 // weil die knappe Hilfe nicht jeden lokalen Befehl einzeln auflistet.
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { config, paths } from './config.js';
@@ -37,6 +38,12 @@ export const BUILDS = {
     label_de: 'Gegenstände',
     label_en: 'Items',
     features: { local: true, menu: true, items: true },
+  },
+  itemsWeb: {
+    file: 'items-web-afk-linux',
+    label_de: 'Gegenstände + Browser-Menü',
+    label_en: 'Items + browser menu',
+    features: { local: true, menu: true, items: true, webmenu: true },
   },
   premium: {
     file: 'premium-afk-linux',
@@ -73,7 +80,7 @@ export const BUILDS = {
     file: 'pov-afk-linux',
     label_de: 'POV',
     label_en: 'POV',
-    features: { local: true, pov: true },
+    features: { local: true, pov: true, menu: true, items: true, webmenu: true },
   },
   ultra: {
     file: 'ultra-afk-linux',
@@ -90,6 +97,7 @@ export const BUILDS = {
       sneak: true,
       antiafk: true,
       pov: true,
+      webmenu: true,
     },
   },
 };
@@ -205,25 +213,40 @@ const writeManifest = (data) => fs.writeFileSync(MANIFEST, JSON.stringify(data, 
 async function github(url) {
   const headers = { accept: 'application/vnd.github+json', 'user-agent': 'afksystems-panel' };
   if (config.githubToken) headers.authorization = `Bearer ${config.githubToken}`;
-  const response = await fetch(url, { headers });
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(30_000) });
   if (!response.ok) throw new Error(`GitHub ${response.status} für ${url}`);
   return response.json();
 }
 
-async function download(url, target) {
+async function download(asset, target) {
   const headers = { 'user-agent': 'afksystems-panel', accept: 'application/octet-stream' };
   if (config.githubToken) headers.authorization = `Bearer ${config.githubToken}`;
-  const response = await fetch(url, { headers, redirect: 'follow' });
-  if (!response.ok) throw new Error(`Download ${response.status}: ${url}`);
+  const response = await fetch(asset.url, { headers, redirect: 'follow', signal: AbortSignal.timeout(120_000) });
+  if (!response.ok) throw new Error(`Download ${response.status}`);
   const buffer = Buffer.from(await response.arrayBuffer());
-  const temp = `${target}.neu`;
-  fs.writeFileSync(temp, buffer);
-  fs.renameSync(temp, target);
+  if (buffer.length !== asset.size) throw new Error('Die Dateigröße stimmt nicht mit dem Release überein.');
+  if (asset.digest && asset.digest !== `sha256:${crypto.createHash('sha256').update(buffer).digest('hex')}`) {
+    throw new Error('Die SHA-256-Prüfsumme stimmt nicht mit dem Release überein.');
+  }
+  const temp = `${target}.${crypto.randomUUID()}.neu`;
+  try {
+    fs.writeFileSync(temp, buffer, { mode: Object.values(BUILDS).some(b => b.file === asset.name) ? 0o755 : 0o600, flag: 'wx' });
+    fs.renameSync(temp, target);
+  } finally {
+    fs.rmSync(temp, { force: true });
+  }
   return buffer.length;
 }
 
 /** Release abrufen und alles holen, was sich geändert hat. */
-export async function sync({ force = false } = {}) {
+let syncing = null;
+export function sync(options = {}) {
+  if (syncing) return syncing;
+  syncing = syncRelease(options).finally(() => { syncing = null; });
+  return syncing;
+}
+
+async function syncRelease({ force = false } = {}) {
   const manifest = readManifest();
   try {
     const release = await github(
@@ -244,13 +267,19 @@ export async function sync({ force = false } = {}) {
     // Premium-Kunden mit Live-Ansicht. Sichtbar war davon nur ein Satz in `state.error`.
     const failed = [];
     for (const asset of release.assets) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(asset.name)) {
+        failed.push('Ungültiger Release-Dateiname');
+        continue;
+      }
       const target = path.join(paths.bin, asset.name);
       const known = manifest[asset.name];
-      if (!force && fs.existsSync(target) && known && known.updated_at === asset.updated_at) continue;
+      if (!force && fs.existsSync(target) && known && known.updated_at === asset.updated_at &&
+          fs.statSync(target).size === asset.size && (!asset.digest ||
+          asset.digest === `sha256:${crypto.createHash('sha256').update(fs.readFileSync(target)).digest('hex')}`)) continue;
       try {
         // Über die API-Adresse, nicht über browser_download_url: nur so klappt der Download auch
         // bei einem privaten Repository (mit Token im Kopf).
-        await download(asset.url, target);
+        await download(asset, target);
         manifest[asset.name] = { updated_at: asset.updated_at, size: asset.size };
         if (Object.values(BUILDS).some((build) => build.file === asset.name)) fs.chmodSync(target, 0o755);
       } catch (error) {
@@ -324,7 +353,8 @@ export async function detect() {
   state.defaultVersion = any?.defaultVersion || state.defaultVersion;
   if (!state.ready && !state.error) state.error = 'Es liegt keine Client-Datei in data/bin.';
   if (state.ready && !slim?.present) {
-    state.error = 'Die schlanke Bauform (afk-linux) fehlt – Gratis-Plätze können nicht starten.';
+    const missing = 'Die schlanke Bauform (afk-linux) fehlt – Gratis-Plätze können nicht starten.';
+    if (!state.error?.includes(missing)) state.error = [state.error, missing].filter(Boolean).join(' ');
   }
   return state;
 }
@@ -371,7 +401,7 @@ export function buildFor(profile, plan) {
   if (plan?.pov) want = plan?.premium ? 'ultra' : 'pov';
   else if (plan?.premium && plan?.menus) want = 'premiumItems';
   else if (plan?.premium) want = 'premium';
-  else if (plan?.menus) want = 'items';
+  else if (plan?.menus) want = 'itemsWeb';
   else if (profile?.movement && plan?.movement) want = 'move';
 
   const order = {
@@ -380,6 +410,7 @@ export function buildFor(profile, plan) {
     premiumItems: ['premiumItems', 'ultra', 'premium', 'move', 'slim'],
     premium: ['premium', 'premiumItems', 'ultra', 'move', 'slim'],
     items: ['items', 'premiumItems', 'ultra', 'slim'],
+    itemsWeb: ['itemsWeb', 'items', 'premiumItems', 'ultra', 'slim'],
     move: ['move', 'premium', 'premiumItems', 'ultra', 'slim'],
     slim: ['slim'],
   };
@@ -405,7 +436,7 @@ export function command(profile, plan) {
 
 /** Der Weg für Aufgaben ohne Profil (Anmeldung, Kontenliste). Nimmt, was da ist. */
 export function anyCommand() {
-  for (const key of ['slim', 'move', 'premium', 'premiumItems', 'items', 'ultra', 'pov']) {
+  for (const key of ['slim', 'move', 'premium', 'premiumItems', 'items', 'itemsWeb', 'ultra', 'pov']) {
     if (state.builds[key]?.present) {
       return { command: path.join(paths.bin, BUILDS[key].file), build: key, caps: caps(key) };
     }
