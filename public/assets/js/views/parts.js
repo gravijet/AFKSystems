@@ -45,8 +45,11 @@ export function commandRunner(profile) {
         body: { verb, arg, accounts },
       });
       const failures = result.results.filter((entry) => !entry.ok);
-      if (failures.length === result.results.length) toast(failures[0].error, 'bad');
-      return failures.length !== result.results.length;
+      for (const entry of failures) {
+        const member = profile.accounts.find((account) => account.account_id === entry.account_id);
+        toast(`${member?.name || entry.account_id}: ${entry.error}`, 'bad');
+      }
+      return result.results.some((entry) => entry.ok);
     } catch (error) {
       fail(error);
       return false;

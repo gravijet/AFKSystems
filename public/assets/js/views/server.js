@@ -1031,17 +1031,17 @@ async function tabConnect(root, profile) {
   // Der lokale Speicher darf fehlen (privater Modus) und darf Unsinn enthalten (eine ältere
   // Fassung, ein halb geschriebener Wert). Beides warf hier ungefangen – und mit der Ausnahme war
   // der ganze Reiter weg: kein Chat, keine Bots, keine Knöpfe.
-  let receivers = [];
+  let receivers = members.map((member) => member.account_id);
   try {
-    const stored = JSON.parse(localStorage.getItem(receiverKey) || '[]');
+    const stored = JSON.parse(localStorage.getItem(receiverKey) || 'null');
     if (Array.isArray(stored)) receivers = stored.map(Number).filter(Number.isInteger);
   } catch {
-    receivers = [];
+    // Ohne lesbare Einstellung gilt die anfängliche Auswahl aller vorhandenen Konten.
   }
   // Und nur, was es auf diesem Platz wirklich gibt: ein abgezogenes Konto stand sonst für immer
   // in der Auswahl und filterte den Chat gegen eine Nummer, die niemandem mehr gehört.
   receivers = receivers.filter((id) => members.some((member) => member.account_id === id));
-  if (!receivers.length) receivers = members.map((member) => member.account_id);
+  for (const box of $$('[data-recv]')) box.checked = receivers.includes(Number(box.dataset.recv));
 
   const nameOf = (id) => members.find((member) => member.account_id === id)?.name || '?';
   // Markierungen sind persönliche Lesezeichen. Sie bleiben bewusst auf diesem Gerät: Ein
@@ -1367,23 +1367,32 @@ async function tabConnect(root, profile) {
     link.remove();
   }
 
+  let sending = false;
   const send = async () => {
+    if (sending) return;
     const input = messageInput;
-    const text = input.value.trim();
+    const draft = input.value;
+    const text = draft.trim();
     if (!text) return;
     const sender = $('#sender')?.value || '';
     const accounts = sender ? [Number(sender)] : receivers;
-    input.value = '';
-    writeLocal(draftKey, '');
+    if (!accounts.length) return toast(tr('srv.chatChooseAccount'), 'warn');
+    sending = true;
+    const button = $('#send');
+    button.disabled = true;
     try {
       const result = await api(`/profiles/${profile.id}/chat`, { method: 'POST', body: { text, accounts } });
       const failures = result.results.filter((entry) => !entry.ok);
       const delivered = result.results.length - failures.length;
       if (!delivered) {
-        input.value = text;
-        writeLocal(draftKey, input.value);
         toast(failures[0]?.error || tr('common.error'), 'bad');
         return;
+      }
+      // Während die Antwort unterwegs ist, darf der nächste Entwurf schon entstehen.
+      // Nur den tatsächlich gesendeten, unveränderten Text nach Erfolg entfernen.
+      if (input.value === draft) {
+        input.value = '';
+        writeLocal(draftKey, '');
       }
       rememberSent(text);
       for (const failure of failures) {
@@ -1391,8 +1400,9 @@ async function tabConnect(root, profile) {
       }
     } catch (error) {
       fail(error);
-      input.value = text;
-      writeLocal(draftKey, input.value);
+    } finally {
+      sending = false;
+      button.disabled = false;
     }
   };
   $('#send').addEventListener('click', send);
@@ -2554,12 +2564,12 @@ async function tabSchedule(root, profile) {
               <label for="sch-account">${escapeHtml(tr('sch.account'))}</label>
               <select id="sch-account">
                 <option value="">${escapeHtml(tr('sch.allAccounts'))}</option>
-                ${profile.accounts
+                ${automationAccounts(profile.accounts, current.account_id ? [current.account_id] : [])
                   .map(
-                    (member) =>
-                      `<option value="${member.account_id}" ${
-                        current.account_id === member.account_id ? 'selected' : ''
-                      }>${escapeHtml(accountLabel(member))}</option>`
+                    (option) =>
+                      `<option value="${option.id}" ${
+                        current.account_id === option.id ? 'selected' : ''
+                      }>${escapeHtml(option.label)}</option>`
                   )
                   .join('')}
               </select>
@@ -2631,10 +2641,14 @@ async function tabSchedule(root, profile) {
     }
     updatePreflight();
 
-    let result = null;
-    dialog.querySelector('form').addEventListener('submit', (event) => {
+    let saving = false;
+    dialog.addEventListener('cancel', (event) => { if (saving) event.preventDefault(); });
+    dialog.addEventListener('close', () => dialog.remove());
+    dialog.querySelector('form').addEventListener('submit', async (event) => {
+      if (saving) { event.preventDefault(); return; }
       if (event.submitter?.value !== 'ok') return;
-      result = {
+      event.preventDefault();
+      const answer = {
         action: dialog.querySelector('#sch-action').value,
         minutes:
           Number(dialog.querySelector('#sch-hour').value) * 60 +
@@ -2643,30 +2657,31 @@ async function tabSchedule(root, profile) {
         days: [...chosen].sort((a, b) => a - b),
         note: dialog.querySelector('#sch-note').value,
       };
-    });
-    const answer = await new Promise((resolve) => {
-      dialog.addEventListener('close', () => {
-        dialog.remove();
-        resolve(result);
-      });
-      dialog.showModal();
-    });
-    if (!answer) return;
-    if (!Number.isInteger(answer.minutes) || answer.minutes < 0 || answer.minutes > 1439) {
-      return toast(tr('sch.timeBad'), 'bad');
-    }
-    if (!answer.days.length) return toast(tr('sch.daysBad'), 'bad');
+      if (!Number.isInteger(answer.minutes) || answer.minutes < 0 || answer.minutes > 1439) {
+        return toast(tr('sch.timeBad'), 'bad');
+      }
+      if (!answer.days.length) return toast(tr('sch.daysBad'), 'bad');
 
-    try {
-      const body = { ...answer, days: answer.days.join(',') };
-      if (entry) await api(`/profiles/${profile.id}/schedules/${entry.id}`, { method: 'PATCH', body });
-      else await api(`/profiles/${profile.id}/schedules`, { method: 'POST', body });
-      data.schedules = (await api(`/profiles/${profile.id}/schedules`)).schedules;
-      ok(tr('srv.saved'));
-      paint();
-    } catch (error) {
-      fail(error);
-    }
+      saving = true;
+      event.submitter.disabled = true;
+      try {
+        const body = { ...answer, days: answer.days.join(',') };
+        const { schedule } = await api(`/profiles/${profile.id}/schedules${entry ? `/${entry.id}` : ''}`, {
+          method: entry ? 'PATCH' : 'POST', body,
+        });
+        data.schedules = [...data.schedules.filter((row) => row.id !== schedule.id), schedule]
+          .sort((a, b) => a.minutes - b.minutes || a.id - b.id);
+        dialog.close();
+        ok(tr('srv.saved'));
+        paint();
+      } catch (error) {
+        fail(error);
+      } finally {
+        saving = false;
+        event.submitter.disabled = false;
+      }
+    });
+    dialog.showModal();
   }
 
   function bind() {
@@ -2691,21 +2706,28 @@ async function tabSchedule(root, profile) {
       })
     );
     $$('[data-sch-toggle]').forEach((node) => {
+      let busy = false;
       const toggle = async () => {
+        if (busy) return;
         const entry = data.schedules.find((item) => item.id === Number(node.dataset.schToggle));
         if (!entry) return;
+        busy = true;
+        node.setAttribute('aria-busy', 'true');
         const next = !entry.active;
         node.setAttribute('aria-checked', String(next));
         try {
-          await api(`/profiles/${profile.id}/schedules/${entry.id}`, {
+          const { schedule } = await api(`/profiles/${profile.id}/schedules/${entry.id}`, {
             method: 'PATCH',
             body: { active: next },
           });
-          entry.active = next;
+          Object.assign(entry, schedule);
           paint();
         } catch (error) {
           node.setAttribute('aria-checked', String(!next));
           fail(error);
+        } finally {
+          busy = false;
+          node.removeAttribute('aria-busy');
         }
       };
       node.addEventListener('click', toggle);
@@ -3844,7 +3866,11 @@ async function tabSettings(root, profile) {
 function bindSwitches(selector, save) {
   $$(selector).forEach((node) => {
     const key = Object.values(node.dataset)[0];
+    let busy = false;
     const toggle = async () => {
+      if (busy) return;
+      busy = true;
+      node.setAttribute('aria-busy', 'true');
       const enabled = node.getAttribute('aria-checked') !== 'true';
       node.setAttribute('aria-checked', String(enabled));
       try {
@@ -3852,6 +3878,9 @@ function bindSwitches(selector, save) {
       } catch (error) {
         node.setAttribute('aria-checked', String(!enabled));
         fail(error);
+      } finally {
+        busy = false;
+        node.removeAttribute('aria-busy');
       }
     };
     node.addEventListener('click', toggle);

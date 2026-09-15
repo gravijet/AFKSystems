@@ -857,7 +857,8 @@ router.patch(
         .filter((entry) => notify.EVENTS.includes(entry));
       const unique = [...new Set(wanted)];
       fields.push('discord_events = ?');
-      values.push(unique.length === notify.EVENTS.length ? '' : unique.join(','));
+      values.push(String(body.discord_events).trim() === 'none' ? 'none'
+        : unique.length === notify.EVENTS.length ? '' : unique.join(','));
     }
     if (body.login_code !== undefined) {
       fields.push('login_code = ?');

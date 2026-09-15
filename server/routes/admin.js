@@ -35,7 +35,7 @@ import { botState, MIN_SECRET } from './bot.js';
 import { bridge } from '../bridge.js';
 import { SETTINGS, byKey as settingSchema, schemaFor } from '../settings-schema.js';
 import { mergeLines } from '../../public/assets/js/chatlog.js';
-import { wrap, requireInt, requireString, bad, notFound, hashPassword, parseAddress, formatCredits, langOf, safeUrl } from '../util.js';
+import { wrap, requireInt, requireString, bad, notFound, hashPassword, parseAddress, formatCredits, langOf, safeUrl, HttpError } from '../util.js';
 
 export const admin = express.Router();
 admin.use(auth.requireUser, auth.requireAdmin);
@@ -3628,27 +3628,25 @@ admin.post(
     const id = requireInt(req.params.id, 'Server');
     const action = req.params.action;
     const rows = db.prepare('SELECT account_id FROM profile_accounts WHERE profile_id = ?').all(id);
+    const results = [];
     if (action === 'stop') {
       supervisor.stopProfile(id, `Von ${profile.displayNameOf(req.user)} gestoppt.`, { keepWanted: false });
     } else {
       for (const row of rows) {
-        if (action === 'restart') supervisor.stop(id, row.account_id, { keepWanted: true });
         const context = supervisor.context(id, row.account_id);
         if (!context) continue;
-        setTimeout(
-          () => {
-            try {
-              supervisor.start(context);
-            } catch {
-              /* der Zustand des Bots sagt, warum */
-            }
-          },
-          action === 'restart' ? 1500 : 0
-        ).unref();
+        try {
+          if (action === 'restart') supervisor.restart(id, row.account_id);
+          else supervisor.start(context);
+          results.push({ account_id: row.account_id, ok: true });
+        } catch (error) {
+          results.push({ account_id: row.account_id, ok: false,
+            error: error instanceof HttpError ? error.text(langOf(req)) : error.message });
+        }
       }
     }
     audit(req.user.id, `admin-server-${action}`, { profile: id }, req.ip);
-    res.json({ ok: true });
+    res.json({ ok: results.every((entry) => entry.ok), results });
   })
 );
 
@@ -3678,18 +3676,10 @@ admin.post(
       // jemand ausdrücklich abgeschaltet hat.
       supervisor.stop(id, accountId, { keepWanted: false });
     } else {
-      if (action === 'restart') supervisor.stop(id, accountId, { keepWanted: true });
       const context = supervisor.context(id, accountId);
       if (!context) throw bad('Für dieses Konto lässt sich gerade nichts starten.', { en: 'Nothing to start for that account.' });
-      const go = () => {
-        try {
-          supervisor.start(context);
-        } catch {
-          /* warum es nicht ging, steht danach im Zustand des Bots */
-        }
-      };
-      if (action === 'restart') setTimeout(go, 1500).unref();
-      else go();
+      if (action === 'restart') supervisor.restart(id, accountId);
+      else supervisor.start(context);
     }
     audit(req.user.id, `admin-bot-${action}`, { profile: id, account: accountId }, req.ip);
     res.json({ ok: true });

@@ -1110,13 +1110,16 @@ async function one(root, id, { staff, backHash }) {
     addFiles(files);
   });
 
+  let sending = false;
   const send = async (internal = false) => {
-    const body = input.value.trim();
-    const chosen = pending;
+    if (sending) return;
+    const draft = input.value;
+    const body = draft.trim();
+    const chosen = [...pending];
     if (!body && !chosen.length) return;
-    input.value = '';
-    pending = [];
-    paintPending();
+    sending = true;
+    const buttons = [$('#send'), $('#internal')].filter(Boolean);
+    for (const button of buttons) button.disabled = true;
     try {
       const files = await uploadFiles(chosen, {
         onProgress: (index, total) => total > 1 && toast(tr('tk.uploading', { i: index, n: total })),
@@ -1130,20 +1133,22 @@ async function one(root, id, { staff, backHash }) {
       mergeMessages(result.messages);
       Object.assign(ticket, result.ticket);
       if (result.reads) reads = result.reads;
-      setStoredDraft('');
+      if (input.value === draft) input.value = '';
+      pending = pending.filter((file) => !chosen.includes(file));
+      setStoredDraft(input.value);
       paintDraft();
+      paintPending();
       paint();
       paintReads();
       paintStatus(result.ticket.status);
       await refresh({ profiles: false, accounts: false });
     } catch (error) {
       fail(error);
-      // Nichts geht verloren: Text und Auswahl stehen wieder da, wo sie waren.
-      input.value = body;
-      pending = chosen;
-      setStoredDraft(input.value);
-      paintDraft();
-      paintPending();
+      // Text und Dateien bleiben bis zum bestätigten Versand in der Eingabe. Ein Fehler
+      // beim anschließenden Nachladen darf eine bereits gesendete Antwort nicht zurücklegen.
+    } finally {
+      sending = false;
+      for (const button of buttons) button.disabled = false;
     }
   };
 

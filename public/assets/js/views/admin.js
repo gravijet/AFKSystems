@@ -85,7 +85,9 @@ function bindRows(selector, open, root = document) {
 async function send(path, options, { done = true } = {}) {
   try {
     const result = await api(path, options);
-    if (done) ok(tr('adm.saved'));
+    const failures = (result?.results || []).filter((entry) => !entry.ok);
+    for (const entry of failures) toast(`${entry.account_id}: ${entry.error}`, 'bad');
+    if (done && !failures.length) ok(tr('adm.saved'));
     return result ?? true;
   } catch (error) {
     fail(error);

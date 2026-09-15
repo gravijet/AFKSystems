@@ -1318,23 +1318,18 @@ router.post(
   '/:id/restart',
   wrap((req, res) => {
     const profile = notLocked(ownedProfile(req));
-    const plan = billing.featuresOf(profile);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-    const list = targets(req, profile);
-    for (const accountId of list) supervisor.stop(profile.id, accountId, { keepWanted: true });
-    // Kurz warten, damit der alte Prozess wirklich weg ist, bevor der neue startet.
-    setTimeout(() => {
-      for (const accountId of list) {
-        const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(accountId);
-        try {
-          supervisor.start({ profile, account, user, plan });
-          supervisor.resetReconnectCount(profile.id, accountId);
-        } catch {
-          /* Fehler steht im Bot-Zustand */
-        }
+    const lang = langOf(req);
+    const results = [];
+    for (const accountId of targets(req, profile)) {
+      try {
+        const bot = supervisor.restart(profile.id, accountId);
+        supervisor.resetReconnectCount(profile.id, accountId);
+        results.push({ account_id: accountId, ok: true, bot });
+      } catch (error) {
+        results.push({ account_id: accountId, ok: false, error: errorText(error, lang) });
       }
-    }, 1500).unref();
-    res.json({ ok: true });
+    }
+    res.json({ ok: results.every((entry) => entry.ok), results });
   })
 );
 
@@ -1616,6 +1611,11 @@ router.post(
   '/:id/chat',
   wrap((req, res) => {
     const profile = notLocked(ownedProfile(req));
+    if (Array.isArray(req.body?.accounts) && !req.body.accounts.length) {
+      throw bad('Wähle mindestens ein Konto zum Senden aus.', {
+        en: 'Select at least one account to send to.',
+      });
+    }
     const text = requireString(req.body?.text, 'Nachricht', { max: 256 });
     let local = null;
     if (text.startsWith(':')) {
