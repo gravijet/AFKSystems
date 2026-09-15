@@ -634,9 +634,7 @@ function webhookBody(me) {
       )}</button>
     </div>
 
-    <!-- Was der Webhook meldet. Nichts angehakt heißt **alles** – wer einen Webhook einträgt,
-         will Bescheid wissen, und eine Voreinstellung, die nichts schickt, sähe aus wie ein
-         kaputter Webhook. -->
+    <!-- Standardmäßig sind alle Ereignisse an; jedes lässt sich einzeln abbestellen. -->
     <ul class="switch-list" style="margin-top:1rem" id="hook-events">
       ${WEBHOOK_EVENTS.map(
         (key) => `<li>
@@ -708,13 +706,10 @@ function bindMessages(me, mails) {
     }
   });
 
-  // Welche Ereignisse der Webhook meldet. Gespeichert wird die Liste dessen, was **an** ist –
-  // alles an heißt: leere Liste, und leer heißt beim Server "alles" (siehe notify.js).
+  // Leer bleibt die Voreinstellung „alles“; „none“ bewahrt bewusstes Abbestellen aller Arten.
   switchList('[data-hook]', async (node, next) => {
-    const on = $$('[data-hook]')
-      .filter((entry) => entry.getAttribute('aria-checked') === 'true')
-      .map((entry) => entry.dataset.hook);
-    const value = on.length === WEBHOOK_EVENTS.length ? '' : on.join(',');
+    const on = WEBHOOK_EVENTS.filter((key) => key === node.dataset.hook ? next : wantsEvent(me, key));
+    const value = on.length === WEBHOOK_EVENTS.length ? '' : on.length ? on.join(',') : 'none';
     await api('/me', { method: 'PATCH', body: { discord_events: value } });
     me.discord_events = value;
     return next;
@@ -756,20 +751,32 @@ function bindMessages(me, mails) {
  * hat, ist schlimmer als gar keiner.
  */
 function switchList(selector, save) {
+  // Mail-/Webhook-Schalter schreiben jeweils eine gemeinsame Einstellung. Nacheinander
+  // speichern, damit jede Änderung auf dem zuletzt bestätigten Stand aufbaut.
+  let queue = Promise.resolve();
   $$(selector).forEach((node) => {
+    let busy = false;
     const toggle = async () => {
+      if (busy) return;
+      busy = true;
+      node.setAttribute('aria-busy', 'true');
       const before = node.getAttribute('aria-checked') === 'true';
       node.setAttribute('aria-checked', String(!before));
+      const work = queue.then(() => save(node, !before));
+      queue = work.catch(() => {});
       try {
         // Der Schalter springt sofort um – das ist richtig, denn er soll sich anfühlen wie ein
         // Schalter und nicht wie ein Formular. Gibt `save` ein Ja/Nein zurück, gilt aber das:
         // Manche Schalter fragen nach ("den Anmeldecode wirklich abschalten?"), und ein Abbruch
         // dort ist kein Fehler, den man werfen könnte – er ist eine Antwort.
-        const answer = await save(node, !before);
+        const answer = await work;
         if (typeof answer === 'boolean') node.setAttribute('aria-checked', String(answer));
       } catch (error) {
         node.setAttribute('aria-checked', String(before));
         fail(error);
+      } finally {
+        busy = false;
+        node.removeAttribute('aria-busy');
       }
     };
     node.addEventListener('click', toggle);

@@ -1820,6 +1820,160 @@ test('explicit reconnect waits for exit, keeps one request and stays cancelable 
   assert.equal(starts, 1, 'a stop during the post-exit pause must still cancel the restart');
 });
 
+test('panel and admin restart requests wait for slow exits, refresh context and obey Stop', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { router } = await import('../server/routes/profiles.js');
+  const { admin } = await import('../server/routes/admin.js');
+  const user = createUser({ role: 'admin' });
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user);
+  db.prepare('INSERT INTO profile_accounts (profile_id,account_id,wanted) VALUES (?,?,1)').run(profile.id, account.id);
+  const bot = new Bot(supervisor, { profile, account, user, plan: billing.featuresOf(profile) });
+  supervisor.bots.set(bot.key, bot);
+  t.after(() => { supervisor.cancelRestart(bot.key); supervisor.bots.delete(bot.key); });
+  const starts = [];
+  t.mock.method(supervisor, 'start', (context) => { starts.push(context); });
+  const invoke = (routes, routePath, action = 'restart') => new Promise((resolve, reject) => {
+    const route = routes.stack.find((layer) => layer.route?.path === routePath).route;
+    route.stack.at(-1).handle({
+      user, params: { id: String(profile.id), accountId: String(account.id), action },
+      body: { accounts: [account.id] }, headers: {},
+    }, { json: resolve }, reject);
+  });
+  for (const [routes, routePath] of [
+    [router, '/:id/restart'], [admin, '/servers/:id/:action(start|stop|restart)'],
+    [admin, '/servers/:id/accounts/:accountId/:action(start|stop|restart)'],
+  ]) {
+    for (const cancel of [false, true]) {
+      const before = starts.length;
+      const proc = new EventEmitter();
+      proc.kill = () => {};
+      proc.once('exit', () => bot.cleanup());
+      bot.proc = proc;
+      bot.stopping = false;
+      const result = await invoke(routes, routePath);
+      assert.equal(result.ok, true);
+      t.mock.timers.tick(3000);
+      assert.equal(starts.length, before, 'must not try starting while the old process exists');
+      db.prepare("UPDATE profiles SET host = 'changed.example.test' WHERE id = ?").run(profile.id);
+      proc.emit('exit');
+      if (cancel) supervisor.stop(profile.id, account.id);
+      t.mock.timers.tick(1000);
+      assert.equal(starts.length, before + (cancel ? 0 : 1));
+      if (!cancel) assert.equal(starts.at(-1).profile.host, 'changed.example.test');
+      supervisor.cancelRestart(bot.key);
+    }
+  }
+});
+
+test('restart endpoints return failed account starts instead of silent success', async () => {
+  const { router } = await import('../server/routes/profiles.js');
+  const { admin } = await import('../server/routes/admin.js');
+  const user = createUser({ role: 'admin' });
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user);
+  db.prepare("UPDATE mc_accounts SET status = 'error', last_error = 'Sign in again' WHERE id = ?").run(account.id);
+  db.prepare('INSERT INTO profile_accounts (profile_id,account_id) VALUES (?,?)').run(profile.id, account.id);
+  const invoke = (routes, routePath) => new Promise((resolve, reject) => {
+    routes.stack.find((layer) => layer.route?.path === routePath).route.stack.at(-1).handle({
+      user, params: { id: String(profile.id), accountId: String(account.id), action: 'restart' },
+      body: { accounts: [account.id] }, headers: {},
+    }, { json: resolve }, reject);
+  });
+  for (const [routes, routePath] of [[router, '/:id/restart'], [admin, '/servers/:id/:action(start|stop|restart)']]) {
+    const result = await invoke(routes, routePath);
+    assert.equal(result.ok, false);
+    assert.equal(result.results[0].account_id, account.id);
+    assert.equal(result.results[0].ok, false);
+    assert.match(result.results[0].error, /not signed in/);
+  }
+  await assert.rejects(invoke(admin, '/servers/:id/accounts/:accountId/:action(start|stop|restart)'), { status: 409 });
+});
+
+test('Start during Stop waits for the old client and starts exactly once', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user);
+  db.prepare('INSERT INTO profile_accounts (profile_id,account_id,wanted) VALUES (?,?,1)').run(profile.id, account.id);
+  const context = { profile, account, user, plan: billing.featuresOf(profile) };
+  const bot = new Bot(supervisor, context);
+  supervisor.bots.set(bot.key, bot);
+  t.after(() => { supervisor.cancelRestart(bot.key); supervisor.bots.delete(bot.key); });
+  let starts = 0;
+  t.mock.method(bot, 'start', () => { if (!bot.proc) { starts++; bot.stopping = false; } });
+  t.mock.method(macroEngine, 'attach', () => {});
+  const proc = new EventEmitter();
+  proc.kill = () => {};
+  proc.once('exit', () => bot.cleanup());
+  bot.proc = proc;
+  supervisor.stop(profile.id, account.id);
+  supervisor.start(context);
+  t.mock.timers.tick(2000);
+  assert.equal(starts, 0);
+  proc.emit('exit');
+  t.mock.timers.tick(1000);
+  assert.equal(starts, 1);
+});
+
+test('stopping profiles or users cancels offline retries without touching other users', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const fixtures = Array.from({ length: 3 }, () => {
+    const user = createUser();
+    const profile = createProfile(user, billing.planBySlug('premium'));
+    const account = createAccount(user);
+    db.prepare('INSERT INTO profile_accounts (profile_id,account_id,wanted) VALUES (?,?,1)').run(profile.id, account.id);
+    const bot = new Bot(supervisor, { profile, account, user, plan: billing.featuresOf(profile) });
+    supervisor.bots.set(bot.key, bot);
+    t.after(() => { supervisor.cancelRestart(bot.key); supervisor.bots.delete(bot.key); });
+    supervisor.reconnect(profile.id, account.id, { delaySeconds: 5 });
+    return { user, profile, account, bot };
+  });
+  const starts = [];
+  t.mock.method(supervisor, 'start', (context) => starts.push(context.account.id));
+  const extra = createAccount(fixtures[1].user);
+  db.prepare('INSERT INTO profile_accounts (profile_id,account_id,wanted) VALUES (?,?,1)').run(fixtures[1].profile.id, extra.id);
+  supervisor.stopProfile(fixtures[0].profile.id, '', { keepWanted: false });
+  supervisor.stopUser(fixtures[1].user.id);
+  t.mock.timers.tick(5000);
+  assert.deepEqual(starts, [fixtures[2].account.id]);
+  assert.equal(supervisor.retry.has(fixtures[0].bot.key), false);
+  assert.equal(supervisor.retry.has(fixtures[1].bot.key), false);
+  assert.equal(db.prepare('SELECT wanted FROM profile_accounts WHERE account_id = ?').get(extra.id).wanted, 0);
+});
+
+test('scheduled restarts wait for exit and detached accounts are never started', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const user = createUser();
+  db.prepare("UPDATE users SET timezone = 'UTC' WHERE id = ?").run(user.id);
+  const profile = createProfile(user, billing.planBySlug('premium'));
+  const account = createAccount(user), detached = createAccount(user);
+  db.prepare('INSERT INTO profile_accounts (profile_id,account_id,wanted) VALUES (?,?,1)').run(profile.id, account.id);
+  const bot = new Bot(supervisor, { profile, account, user, plan: billing.featuresOf(profile) });
+  supervisor.bots.set(bot.key, bot);
+  t.after(() => {
+    supervisor.cancelRestart(bot.key); supervisor.bots.delete(bot.key);
+    db.prepare('DELETE FROM profile_schedules WHERE profile_id = ?').run(profile.id);
+  });
+  const starts = [];
+  t.mock.method(supervisor, 'start', (context) => starts.push(context.account.id));
+  const proc = new EventEmitter();
+  proc.kill = () => {};
+  proc.once('exit', () => bot.cleanup());
+  bot.proc = proc;
+  const add = (id, action) => db.prepare(`INSERT INTO profile_schedules
+    (profile_id,account_id,action,minutes,days,active,created_at) VALUES (?,?,?,960,'2',1,?)`)
+    .run(profile.id, id, action, Date.now());
+  add(account.id, 'restart');
+  add(detached.id, 'start');
+  schedules.tick(Date.parse('2026-09-01T16:00:30Z'));
+  t.mock.timers.tick(3000);
+  assert.deepEqual(starts, []);
+  proc.emit('exit');
+  t.mock.timers.tick(1000);
+  assert.deepEqual(starts, [account.id]);
+});
+
 test('transient initial errors retry with backoff while expired authentication does not', (t) => {
   const user = createUser();
   const profile = createProfile(user, billing.planBySlug('premium'));
@@ -2325,6 +2479,10 @@ test('a customer webhook sends what the customer asked for, and everything by de
     await notify.ticketReply(user.id, ticket, 'Support', 'Erste');
     await notify.ticketReply(user.id, ticket, 'Support', 'Zweite');
     assert.equal(sent.length, 4);
+    db.prepare("UPDATE users SET discord_events = 'none' WHERE id = ?").run(user.id);
+    await notify.ticketReply(user.id, ticket, 'Support', 'Disabled');
+    await notify.topupPaid(user.id, 2000, 3000);
+    assert.equal(sent.length, 4, 'explicitly disabling all categories stays silent');
   } finally {
     globalThis.fetch = original;
   }
@@ -5282,6 +5440,17 @@ test('HTTP permissions, suspensions, plan fields and the Discord WebSocket work 
   // Örtliche Client-Befehle dürfen nicht als Chatzeile hineinrutschen: Was mit ':' anfängt, geht
   // durch dieselbe Prüfung wie der Befehlsendpunkt, und was dort nicht steht, gibt es nicht.
   // (':pov' steht dort inzwischen – deshalb hier ein Verb, das es wirklich nicht gibt.)
+  const emptyChat = await api(base, `/api/profiles/${profile.id}/chat`, {
+    token: USER_TOKEN, method: 'POST', body: { text: '/afk', accounts: [] },
+  });
+  assert.equal(emptyChat.response.status, 400);
+  assert.equal(emptyChat.data.error, 'Select at least one account to send to.');
+  const noWebhooks = await api(base, '/api/me', {
+    token: USER_TOKEN, method: 'PATCH', body: { discord_events: 'none' },
+  });
+  assert.equal(noWebhooks.response.status, 200);
+  assert.equal(db.prepare('SELECT discord_events FROM users WHERE id = ?').get(user.id).discord_events, 'none');
+
   const blockedLocalBypass = await api(base, `/api/profiles/${profile.id}/chat`, {
     token: USER_TOKEN,
     method: 'POST',

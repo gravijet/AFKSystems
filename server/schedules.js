@@ -254,12 +254,10 @@ export function remove(profile, id, byUserId) {
  * Welche Konten dieser Zeitplan meint: eines oder alle des Serverplatzes.
  */
 const accountsOf = (schedule) =>
-  schedule.account_id
-    ? [schedule.account_id]
-    : db
-        .prepare('SELECT account_id FROM profile_accounts WHERE profile_id = ?')
-        .all(schedule.profile_id)
-        .map((row) => row.account_id);
+  db.prepare(`SELECT account_id FROM profile_accounts
+    WHERE profile_id = ? AND (? IS NULL OR account_id = ?)`).all(
+      schedule.profile_id, schedule.account_id, schedule.account_id
+    ).map((row) => row.account_id);
 
 /**
  * Ein Zeitplan ausführen.
@@ -286,17 +284,14 @@ function run(schedule) {
   }
 
   const plan = billing.featuresOf(profile);
-  if (schedule.action === 'restart') {
-    for (const accountId of ids) supervisor.stop(profile.id, accountId, { keepWanted: true });
-  }
-
   let started = 0;
   const problems = [];
   for (const accountId of ids) {
     const account = db.prepare('SELECT * FROM mc_accounts WHERE id = ?').get(accountId);
     if (!account) continue;
     try {
-      supervisor.start({ profile, account, user, plan });
+      if (schedule.action === 'restart') supervisor.restart(profile.id, accountId);
+      else supervisor.start({ profile, account, user, plan });
       started += 1;
     } catch (error) {
       // Der erste Grund genügt. Zwanzig Konten mit derselben Absage ("Guthaben reicht nicht")

@@ -1,3 +1,41 @@
+# Änderungen vom 15. September 2026
+
+Diese Runde behebt 19 weitere Fehlerfälle in direkt bedienbaren Abläufen:
+
+1. Neustarts aus Panel und Verwaltung warten auf das tatsächliche Ende des alten Clients.
+   Ein anschließendes Stop bricht auch den bereits angeforderten Neustart ab.
+2. Zeitgesteuerte Neustarts gehen nicht mehr durch einen Startversuch während des
+   noch beendenden Clients verloren.
+3. Ein manueller Start unmittelbar nach Stop wartet auf den alten Prozess.
+4. „Alle stoppen“ erfasst auch offline befindliche Bots mit ausstehendem Wiederanlauf;
+   ein Nutzerstopp entfernt auch noch nicht wiederhergestellte Startwünsche.
+5. Startfehler in der Verwaltung werden je Konto angezeigt, statt als erfolgreich
+   gespeichert bestätigt oder im Hintergrund verschluckt zu werden.
+6. Chatnachrichten mit leerer Kontoauswahl werden nicht mehr an alle Bots geschickt.
+7. Gespeicherte Chat-Auswahlen – einschließlich „keine“ – bleiben nach erneutem Öffnen
+   erhalten; die sichtbaren Kästchen stimmen mit den tatsächlichen Empfängern überein.
+8. Verspätete Chatfehler überschreiben keinen inzwischen neu geschriebenen Entwurf.
+9. Bewegungs- und Clientbefehle zeigen auch einzelne Fehler bei mehreren Konten an.
+10. Alle Webhook-Kategorien lassen sich wirklich abschalten, ohne dadurch wieder alle
+    Meldungen einzuschalten.
+11. Kurz nacheinander geänderte Mail-Präferenzen überschreiben einander nicht mehr.
+12. Schnelle Mehrfachklicks auf Makro-, Laufzeit- und Einstellungsschalter erzeugen
+    keine überlappenden Speichervorgänge mit widersprüchlicher Anzeige.
+13. Zeitpläne starten keine Konten mehr, die inzwischen vom Serverplatz entfernt wurden.
+14. Beim Bearbeiten eines solchen Zeitplans bleibt das bisherige Ziel sichtbar, statt
+    die Auswahl still auf alle Konten zu erweitern.
+15. Ungültige Wochentage oder fehlgeschlagene Speichervorgänge schließen den Zeitplan-
+    Dialog nicht mehr und verwerfen keine Eingaben. Nach bestätigtem Speichern wird
+    die Antwort direkt übernommen, ohne einen zusätzlichen fehleranfälligen Lesezugriff.
+16. Nach Ein- oder Ausschalten eines Zeitplans entspricht der angezeigte nächste Lauf
+    dem frisch berechneten Serverstand.
+17. Fehlgeschlagene Ticket-Uploads oder Antworten überschreiben keine neuen Texte
+    oder zwischenzeitlich ergänzten Dateianhänge.
+18. Eine verspätet bestätigte Ticketantwort löscht keinen inzwischen gespeicherten
+    neuen Entwurf; nur die tatsächlich gesendeten Anhänge werden entfernt.
+19. Fehler beim Nachladen nach einer bereits gesendeten Ticketantwort legen die
+    Antwort nicht erneut zum Versand ins Eingabefeld.
+
 # Änderungen vom 14. September 2026
 
 - Makros: Mehrere ausgewählte Konten bleiben beim Bearbeiten erhalten; Namen, Auslöserwerte,

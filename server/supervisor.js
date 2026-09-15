@@ -2457,6 +2457,13 @@ class Supervisor extends EventEmitter {
       });
     }
 
+    // Start direkt nach Stop: Der alte Prozess kann noch mehrere Sekunden leben.
+    // Der Startwunsch bleibt abbrechbar und wartet auf dessen tatsächliches Ende.
+    if (already?.proc && already.stopping) {
+      this.reconnect(profile.id, account.id);
+      return already.snapshot();
+    }
+
     db.prepare(
       `INSERT INTO bots (profile_id, account_id, state) VALUES (?, ?, 'starting')
        ON CONFLICT(profile_id, account_id) DO UPDATE SET state = 'starting'`
@@ -2478,6 +2485,20 @@ class Supervisor extends EventEmitter {
     }
     bot.start();
     this.macros.attach(bot);
+    return bot.snapshot();
+  }
+
+  /** Benutzer und Zeitpläne warten auf das Prozessende wie ein Makro-Reconnect. */
+  restart(profileId, accountId) {
+    const context = this.context(profileId, accountId);
+    if (!context || !db.prepare('SELECT 1 FROM profile_accounts WHERE profile_id = ? AND account_id = ?').get(profileId, accountId)) {
+      throw new HttpError(404, 'Dieses Konto liegt nicht auf diesem Serverplatz.', {
+        en: 'This account is not assigned to this server slot.',
+      });
+    }
+    const bot = this.get(profileId, accountId);
+    if (!bot) return this.start(context);
+    this.reconnect(profileId, accountId);
     return bot.snapshot();
   }
 
@@ -2546,20 +2567,18 @@ class Supervisor extends EventEmitter {
       db.prepare('UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ?').run(profileId);
     }
     for (const bot of this.bots.values()) {
-      if (bot.profile.id !== profileId || !bot.running) continue;
+      if (bot.profile.id !== profileId) continue;
       if (reason) bot.push('system', reason);
       bot.stop();
     }
   }
 
   stopUser(userId, reason = '') {
+    db.prepare(`UPDATE profile_accounts SET wanted = 0
+      WHERE profile_id IN (SELECT id FROM profiles WHERE user_id = ?)`).run(userId);
     for (const bot of this.bots.values()) {
-      if (bot.userId !== userId || !bot.running) continue;
+      if (bot.userId !== userId) continue;
       if (reason) bot.push('system', reason);
-      db.prepare('UPDATE profile_accounts SET wanted = 0 WHERE profile_id = ? AND account_id = ?').run(
-        bot.profile.id,
-        bot.account.id
-      );
       bot.stop();
     }
   }
