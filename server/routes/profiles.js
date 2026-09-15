@@ -1747,10 +1747,11 @@ router.post('/:id/move', runLocal);
 //     fremden Weltdatei kommt, soll im Browser ein Bild sein und nichts anderes.
 
 /** Der Bot hinter `:accountId`, samt Prüfung, dass seine Live-Ansicht überhaupt läuft. */
-function povBot(req) {
+function povBot(req, camera = false) {
   const profile = ownedProfile(req);
   const account = ownedAccount(req, req.params.accountId);
-  if (!capsOf(profile).pov) {
+  const caps = capsOf(profile);
+  if (camera ? !caps.pov : !caps.pov && !caps.webmenu) {
     throw new HttpError(402, 'Die Live-Ansicht ist für diesen Serverplatz nicht gebucht.', {
       en: 'The live view is not booked for this server slot.',
     });
@@ -1788,7 +1789,7 @@ function sendUpstream(res, answer, { cache = 'no-store' } = {}) {
  * davon ist ein 503 mit dem Satz, den der Client oder die Leitung dazu gesagt hat.
  */
 async function through(req, res, target, options = {}) {
-  const bot = povBot(req);
+  const bot = povBot(req, Boolean(options.camera));
   let answer;
   try {
     answer = await bot.webFetch(target, { method: options.method || 'GET' });
@@ -1812,7 +1813,7 @@ router.get(
   wrap(async (req, res) => {
     const width = clampFrame(req.query.w, 160, 640, 426);
     const height = clampFrame(req.query.h, 90, 360, 240);
-    await through(req, res, `/api/frame.png?w=${width}&h=${height}`);
+    await through(req, res, `/api/frame.png?w=${width}&h=${height}`, { camera: true });
   })
 );
 

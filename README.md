@@ -151,13 +151,14 @@ Stelle: `billing.featuresOf()` mischt Tarif und Zusätze, `billing.gateCaps()` s
 zu, was die Client-Datei hergibt. Alles andere – Reiter im Panel, erlaubte Befehle, Startargumente –
 fragt dort nach.
 
-## Sieben Rust-Bauformen, ein Tarif entscheidet
+## Acht Rust-Bauformen, ein Tarif entscheidet
 
 | Bauform | Datei | Wer sie bekommt |
 | --- | --- | --- |
 | Basis | `afk-linux` | Verbindung, Chat, Befehle und Macros |
 | Bewegung | `afk-linux-move` | Basis plus Bewegung, Blickrichtung, Routen und Sprung |
 | Items | `items-afk-linux` | Basis plus Menüs und formatierte Gegenstandsdaten |
+| Items + Browser-Menü | `items-web-afk-linux` | Menüs, Inventar und Hotbar mit echten Item-Icons, ohne Weltspeicher oder Kamerabild |
 | Premium | `premium-afk-linux` | Bewegung, formatiertes Scoreboard, Menü-Klicks, Tastenzustand und Anti-AFK |
 | Premium + Items | `premium-items-afk-linux` | Premium plus sichtbare Gegenstände mit Namen, Farbe und Lore |
 | POV | `pov-afk-linux` | automatisch gestartete Terminal-POV |
@@ -169,6 +170,17 @@ sie fehlt – ein vergessener Download legt damit keine Bots still. Was **POV** 
 bekommt sie nur, wer die Ansicht gebucht hat. Ein Ultra-Platz ohne Live-Ansicht läuft auf
 `premium-items-afk-linux` – dieselben sichtbaren Fähigkeiten, ohne die Arbeit für ein Bild, das
 niemand ansieht.
+
+Ab [AFKClient 2.8.0](https://github.com/gravijet/HugoAFKClient/releases/tag/latest) bekommen
+Menü-Tarife ohne Premium-Funktionen bevorzugt `items-web-afk-linux`. Die Reiter **Menüs** und
+**Inventar** verwenden dessen Browser-Daten auch ohne gebuchte Live-Ansicht. Kamera-Anfragen
+bleiben an die Live-Ansicht gebunden. Premium-Plätze behalten ihre Bewegungs- und
+Scoreboard-Funktionen über die passende Premium-Bauform.
+
+Die neue Datei wird auch an Standorte verteilt. Sie verwendet deren vorhandene Viewer-Brücke
+und braucht kein neues Agent-Protokoll. GitHub-Downloads werden vor dem Ersetzen anhand der
+Dateigröße und, sofern im Release angegeben, SHA-256 geprüft. Beschädigte lokale Dateien werden
+auch bei unverändertem Release-Zeitstempel erneut geladen; parallele Abgleiche teilen einen Lauf.
 
 Ab AFKClient 2.7.0 sprechen alle Bauformen über `--mc` Minecraft 1.8.9, 1.21.1, 1.21.11, 26.1 und
 26.2. Im Panel ist zusätzlich **Minecraft 1.8.8** auswählbar, sobald der Client 1.8.9 unterstützt:

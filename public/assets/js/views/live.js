@@ -411,7 +411,7 @@ export async function tabPov(root, profile) {
       return;
     }
     const selected = Number(stage.world.selected_hotbar) || 0;
-    const key = JSON.stringify([selected, inventory.slice(36, 45)]);
+    const key = JSON.stringify([stage.world?.textures, selected, inventory.slice(36, 45)]);
     if (stage.hotbarKey === key) return;
     stage.hotbarKey = key;
     stage.hotbar.hidden = false;
@@ -422,6 +422,8 @@ export async function tabPov(root, profile) {
         index: 36 + index,
         accountId: stage.accountId,
         profileId: profile.id,
+        textures: stage.world?.textures !== false,
+        version: profile.mc_version,
         extra: `data-hand="${index}" ${index === selected ? 'data-active="1"' : ''}`,
       })
     ).join('');
@@ -444,7 +446,7 @@ export async function tabPov(root, profile) {
     // die Schnellleiste und nicht ins Fenster. Mit ihm im Schlüssel würde das offene Menü jedes
     // Mal neu gebaut, wenn sich irgendwo ein Feld ändert – samt Verlust des Aufklappers, den
     // gerade jemand liest.
-    const key = menu?.open ? JSON.stringify([menu.title, menu.slots, menu.items]) : 'zu';
+    const key = menu?.open ? JSON.stringify([stage.world?.textures, menu.title, menu.slots, menu.items]) : 'zu';
     if (stage.menuKey === key) return;
     stage.menuKey = key;
     if (!menu?.open) {
@@ -466,6 +468,8 @@ export async function tabPov(root, profile) {
         index,
         accountId: stage.accountId,
         profileId: profile.id,
+        textures: stage.world?.textures !== false,
+        version: profile.mc_version,
         extra: 'data-click="1"',
       });
 
@@ -1134,7 +1138,10 @@ export async function tabInventory(root, profile) {
       for (const member of members) {
         if (!alive()) return;
         const bot = state.bots.get(`${profile.id}:${member.account_id}`);
-        if (!bot?.online || !bot?.pov?.web) continue;
+        if (!bot?.online || !bot?.pov?.web) {
+          worlds.delete(member.account_id);
+          continue;
+        }
         try {
           const response = await api(`/profiles/${profile.id}/pov/${member.account_id}/state.json`, {
             raw: true,
@@ -1142,7 +1149,7 @@ export async function tabInventory(root, profile) {
           if (response.ok) {
             const world = await response.json();
             if (!alive()) return;
-            worlds.set(member.account_id, world);
+            if (state.bots.get(`${profile.id}:${member.account_id}`)?.online) worlds.set(member.account_id, world);
           }
         } catch {
           /* der Bot ist gerade gegangen – dann steht eben der letzte Stand da */
@@ -1175,6 +1182,7 @@ export async function tabInventory(root, profile) {
   }
 
   function itemsOf(accountId) {
+    if (!state.bots.get(`${profile.id}:${accountId}`)?.online) return { items: null, live: false, selected: -1 };
     const world = worlds.get(accountId);
     if (world?.menu?.inventory?.length) {
       const out = {};
@@ -1213,6 +1221,8 @@ export async function tabInventory(root, profile) {
         index,
         accountId: member.account_id,
         profileId: profile.id,
+        textures: worlds.get(member.account_id)?.textures !== false,
+        version: profile.mc_version,
         extra,
         tag: 'div',
       });
@@ -1222,6 +1232,8 @@ export async function tabInventory(root, profile) {
         index: 36 + index,
         accountId: member.account_id,
         profileId: profile.id,
+        textures: worlds.get(member.account_id)?.textures !== false,
+        version: profile.mc_version,
         extra: `data-hand="${index}" data-owner="${member.account_id}" ${
           selected === index ? 'data-active="1"' : ''
         }`,
@@ -1278,10 +1290,8 @@ export async function tabInventory(root, profile) {
   });
 
   paint();
-  if (anyOnline(profile, members)) {
-    askText();
-    pullState();
-  }
+  if (anyOnline(profile, members)) askText();
+  pullState();
 
   window.addEventListener(
     'hashchange',
@@ -1295,6 +1305,12 @@ export async function tabInventory(root, profile) {
   state.onLive = (event) => {
     if (!String(event.key || '').startsWith(`${profile.id}:`)) return;
     if (event.type === 'view' && event.kind === 'inv') paint();
-    if (event.type === 'state') paint();
+    if (event.type === 'state') {
+      const accountId = Number(String(event.key).split(':')[1]);
+      if (!state.bots.get(event.key)?.online) worlds.delete(accountId);
+      paint();
+      pullState();
+      if (state.bots.get(event.key)?.online && !state.bots.get(event.key)?.pov?.web) askText();
+    }
   };
 }

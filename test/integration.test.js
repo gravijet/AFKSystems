@@ -867,6 +867,8 @@ test('new Rust build selection covers all released feature combinations', () => 
     // Fähigkeiten, ohne den Weltspeicher, den nur die Live-Ansicht braucht.
     assert.equal(binaries.buildFor({}, { slug: 'ultra', premium: 1, menus: 1, pov: 0 }), 'premiumItems');
     assert.equal(binaries.buildFor({}, { slug: 'ultra', premium: 1, menus: 1, pov: 1 }), 'ultra');
+    assert.equal(binaries.buildFor({}, { premium: 0, menus: 1 }), 'itemsWeb');
+    binaries.state.builds.itemsWeb.present = false;
     assert.equal(binaries.buildFor({}, { premium: 0, menus: 1 }), 'items');
     assert.equal(binaries.buildFor({}, { premium: 0, pov: 1 }), 'pov');
   } finally {
@@ -2382,6 +2384,7 @@ test('a bot pulls its own snapshot when it dies or disconnects, and cleanup take
   // Ein laufender Viewer: `captureSnapshot` holt sich sein Bild über `webFetch` – hier gestellt,
   // damit der Test nicht wirklich auf 127.0.0.1 klopft.
   bot.web = { port: 1, token: 'x', since: Date.now() };
+  Object.defineProperty(bot, 'caps', { value: { pov: true } });
   const png = Buffer.from('ich bin ein bild');
   bot.webFetch = async () => ({ status: 200, type: 'image/png', body: png });
 

@@ -1,3 +1,30 @@
+# AFKClient 2.8.0, Menüs und Inventare – 15. September 2026
+
+- Die achte Release-Bauform `items-web-afk-linux` ist in Erkennung, Auswahl, Login-Fallback
+  und Standort-Verteilung enthalten. Menü-Tarife ohne Premium-Funktionen verwenden sie bevorzugt.
+- Texturierte Menüs, Inventare und Hotbar funktionieren damit ohne gebuchte Kamera.
+  Startargumente, Berechtigungen und automatische Schnappschüsse unterscheiden beide Funktionen.
+- Die vorhandenen Menü- und Item-Fähigkeiten der POV-Bauform werden korrekt erkannt.
+- Menü- und Inventar-Reiter aktualisieren sich auch, wenn Bots erst später online kommen.
+- Gleichzeitiges manuelles und automatisches Menü-Aktualisieren erzeugt nur eine Abfragekette.
+- Späte Menü-Antworten verändern nach Navigation oder Austausch des Reiters keine fremde Ansicht.
+- Offline-Konten zeigen keine weiterhin bedienbaren alten Menüs oder Inventare.
+- Rechtsklicks auf Menüfelder werden als Rechtsklick an genau das betroffene Konto geschickt.
+- Texturen werden erst angefordert, wenn die Minecraft-Ressourcen bereitstehen. Auch bei
+  unverändertem Inventar werden die Icons nach dem Laden der Ressourcen neu aufgebaut.
+- Item-Bilder verschiedener Minecraft-Versionen verwenden getrennte Browser-Cache-Schlüssel.
+- Fehlgeschlagene Lore-Abfragen bleiben wiederholbar; neue Menü-Schnappschüsse erlauben
+  das erneute Nachladen inzwischen veränderter Feldbeschreibungen.
+- GitHub-Downloads erhalten Zeitlimits sowie Größen- und SHA-256-Prüfungen. Ein beschädigter
+  Download ersetzt keine funktionierende Client-Datei. Beschädigte lokale Dateien werden
+  trotz unverändertem Release-Zeitstempel repariert.
+- Überlappende Client-Abgleiche teilen einen Lauf; temporäre Dateien sind eindeutig und
+  werden aufgeräumt. Downloadfehler bleiben neben Hinweisen auf fehlende Bauformen sichtbar.
+
+Geprüft mit 246 automatisierten Tests, 53 Browser-Seitenprüfungen und allen acht echten
+Linux-Release-Dateien. Die reine Menü-Bauform wurde zusätzlich mit lokalem Test-Socket und
+Token-geschützter HTTP-Schnittstelle gestartet; dafür wurde kein Microsoft-Konto verwendet.
+
 # Minecraft-Anmeldungen und Mehraccount-Betrieb – 15. September 2026
 
 - Temporäre Fehler beim Microsoft-Refresh (unter anderem leere Antworten, Zeitüberschreitungen,

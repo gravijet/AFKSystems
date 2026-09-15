@@ -684,9 +684,9 @@ class Bot extends EventEmitter {
   /**
    * Soll dieser Bot den texturierten Viewer mitbringen?
    *
-   * Drei Bedingungen, und jede einzelne ist ein Nein: Die Live-Ansicht muss gebucht sein (`pov`
-   * kommt schon durch `gateCaps` gefiltert), und die Bauform muss `--pov-web` samt
-   * `--pov-resources` kennen – also mindestens Client 2.5.0.
+   * Live-Ansicht oder Browser-Menü müssen freigeschaltet sein (`pov` und `webmenu`
+   * kommen schon durch `gateCaps` gefiltert). Die Bauform muss `--pov-web` samt
+   * `--pov-resources` kennen; die reine Menü-Bauform gibt es seit 2.8.0.
    *
    * **Die vierte Bedingung ist mit 2.6.0 weggefallen.** Bis dahin musste für die Protokollversion
    * dieses Serverplatzes eine Original-JAR von Minecraft bereitliegen, sonst gab es keine
@@ -695,7 +695,7 @@ class Bot extends EventEmitter {
    * Weg – siehe `args()` –, sie ist nur keine Voraussetzung mehr.
    */
   wantsWebView(caps) {
-    if (!caps.pov || !caps.povweb || !caps.povresources) return false;
+    if ((!caps.pov && !caps.webmenu) || !caps.povweb || !caps.povresources) return false;
     return resources.has(this.profile.mc_version) || Boolean(caps.povresourcesauto);
   }
 
@@ -787,7 +787,9 @@ class Bot extends EventEmitter {
       if (caps.povstart) args.push('--pov', 'aus');
       if (caps.povsize) args.push('--pov-size', `${POV_SIZE.width}x${POV_SIZE.height}`);
       if (caps.povfps) args.push('--pov-fps', String(POV_FPS));
+    }
 
+    if (caps.pov || caps.webmenu) {
       // Der texturierte Viewer. Er kommt **zusätzlich** zu den Zeilen oben, nicht statt ihrer:
       // Kommt keine Textur zustande, bleibt die Voxelansicht, und dafür müssen die Einstellungen
       // dieser Ansicht schon in der Befehlszeile stehen.
@@ -1892,7 +1894,7 @@ class Bot extends EventEmitter {
       token,
       since: Date.now(),
     };
-    this.push('status', 'Live-Ansicht mit Texturen bereit.');
+    this.push('status', this.caps.pov ? 'Live-Ansicht mit Texturen bereit.' : 'Browser-Menü mit Texturen bereit.');
     this.supervisor.emit('bot-state', { userId: this.userId, key: this.key, state: this.snapshot() });
   }
 
@@ -1936,7 +1938,7 @@ class Bot extends EventEmitter {
    * gerade kein texturierter Viewer, kostet der Aufruf nichts als eine geprüfte Bedingung.
    */
   async captureSnapshot() {
-    if (!this.web) return;
+    if (!this.web || !this.caps.pov) return;
     try {
       const answer = await this.webFetch('/api/frame.png?w=426&h=240');
       if (answer.status !== 200 || !answer.body?.length) return;
