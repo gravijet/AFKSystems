@@ -90,4 +90,38 @@ for (const minify of [false, true]) {
     ui.dialog.close();
     assert.equal(ui.calls.some((call) => call.method === 'DELETE'), false);
   });
+  test(`renewal sends the selected account id (${variant})`, async () => {
+    let body;
+    const ui = await setup(minify, (_path, options) => { body = options?.body; return Promise.resolve({ id: 'selected', status: 'starting' }); });
+    await ui.start({ account: { id: 42, name: 'Player' } });
+    assert.equal(body.account_id, 42);
+    ui.dialog.close();
+  });
+
+  test(`temporary polling failures keep a Microsoft login alive (${variant})`, async () => {
+    let polls = 0;
+    const ui = await setup(minify, (_path, options) => {
+      if (options?.method === 'POST') return Promise.resolve({ id: 'retry', status: 'starting' });
+      if (++polls === 1) return Promise.reject(Object.assign(new Error('offline'), { status: 0 }));
+      return Promise.resolve({ status: 'done', account: { id: 1, name: 'Player' } });
+    });
+    await ui.start();
+    await [...ui.timers.values()][0]();
+    assert.equal(ui.timers.size, 1);
+    await [...ui.timers.values()][0]();
+    assert.equal(ui.refreshed(), 1);
+    assert.equal(ui.timers.size, 0);
+    ui.dialog.close();
+  });
+
+  test(`expired polling sessions show the error and stop polling (${variant})`, async () => {
+    const ui = await setup(minify, (_path, options) => options?.method === 'POST'
+      ? Promise.resolve({ id: 'expired', status: 'starting' })
+      : Promise.reject(Object.assign(new Error('expired'), { status: 404 })));
+    await ui.start();
+    await [...ui.timers.values()][0]();
+    assert.equal(ui.timers.size, 0);
+    assert.match(ui.body.innerHTML, /expired/);
+  });
+
 }

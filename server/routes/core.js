@@ -1488,7 +1488,7 @@ router.post(
         en: 'The client has not been downloaded yet. One moment.',
       });
     }
-    res.json(mslogin.begin(req.user));
+    res.json(mslogin.begin(req.user, req.body?.account_id));
   })
 );
 

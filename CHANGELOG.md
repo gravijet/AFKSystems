@@ -1,3 +1,36 @@
+# Minecraft-Anmeldungen und Mehraccount-Betrieb – 15. September 2026
+
+- Temporäre Fehler beim Microsoft-Refresh (unter anderem leere Antworten, Zeitüberschreitungen,
+  HTTP 429 und 5xx) werden mit dem gespeicherten Konto erneut versucht. Der automatische
+  Gerätecode-Fallback des Clients wird dabei beendet, ohne das Konto als abgelaufen zu sperren.
+- Ein erfolgreicher Beitritt entfernt alte Anmeldefehler am Konto und im laufenden Bot.
+- Standorte erhalten beim Start nur die Anmeldung des tatsächlich verwendeten Kontos.
+  Andere Konten desselben Nutzers können dessen Token dadurch nicht zurücksetzen.
+- Zurückkommende Dateien dürfen nur den ihnen bekannten Stand ersetzen. Eine neue
+  Browser-Anmeldung oder die Erneuerung auf einem anderen Standort bleibt erhalten.
+- Weitere Bots auf demselben Standort überschreiben keine dort bereits erneuerten Dateien;
+  eine inzwischen im Panel bestätigte neue Anmeldung wird weiterhin übertragen.
+- Unvollständige Kontodateien, fremde Minecraft-Identitäten, ältere Token und Rückmeldungen
+  für gelöschte Konten werden nicht übernommen. Ersetzungen erfolgen atomar.
+- Gerätecode-Anmeldungen schreiben zunächst in ein eigenes temporäres Verzeichnis.
+  Abbruch, Zeitablauf oder fehlgeschlagene Bestätigung ändern keine bestehende Anmeldung.
+- „Anmeldung erneuern“ prüft serverseitig das ausgewählte Konto. Eine Anmeldung mit dem
+  falschen Microsoft-Konto wird nicht als erfolgreiche Erneuerung ausgegeben.
+- Minecraft-Namensänderungen werden anhand der UUID dem bestehenden Konto zugeordnet;
+  Konto-ID, Serverzuweisungen und Makroauswahl bleiben erhalten.
+- Unvollständige Login-Ergebnisse und Namenskollisionen mit Offline-Konten werden abgewiesen,
+  statt ein nicht nutzbares Konto als angemeldet anzuzeigen.
+- Login-Ergebnisse werden erst nach dem Schließen der Prozessausgabe ausgewertet.
+  Abgeschlossene Sitzungen blockieren keine freien Plätze für neue Anmeldungen.
+- Kurze Netzfehler beim Abfragen des Logins beenden den Browser-Ablauf nicht sofort.
+  Ein Fehler beim anschließenden Neuladen macht eine bestätigte Anmeldung nicht zum Fehler.
+- Der Kontodatei-Abgleich überspringt beschädigte Dateien, erkennt wiederhergestellte
+  fehlende Anmeldungen und setzt umbenannte Konten nicht erneut auf „Anmeldung fehlt“.
+
+Eine von Microsoft tatsächlich widerrufene Anmeldung benötigt weiterhin eine Bestätigung.
+Die Gültigkeitsdauer wird nicht künstlich verlängert; korrigiert werden verlorene oder
+überschriebene Anmeldungen und unnötige Aufforderungen zum erneuten Login.
+
 # Änderungen vom 15. September 2026
 
 Diese Runde behebt 19 weitere Fehlerfälle in direkt bedienbaren Abläufen:
