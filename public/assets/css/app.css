@@ -6565,10 +6565,16 @@ body.dash .main > .grid > .panel {
   --chart-4: #c98500;
 }
 
+/* `aspect-ratio` statt einer festen Höhe: Die Breite ist immer die der Karte (100%), und die
+   Karten sind je nach Spaltenzahl unterschiedlich breit. Mit fester Höhe UND `preserveAspectRatio
+   ="none"` im SVG (das Zeichenfeld ist 320×160) stauchte oder streckte das jede Beschriftung in
+   der Karte horizontal – 75.00 € wurde zu einer verzerrten Ziffernreihe, sobald eine Karte nicht
+   zufällig genau 320px breit war. Mit `aspect-ratio: 2 / 1` (320:160) bleibt die Höhe immer im
+   selben Verhältnis zur tatsächlichen Breite, also skaliert das SVG in beide Richtungen gleich. */
 .chart {
   display: block;
   width: 100%;
-  height: 10rem;
+  aspect-ratio: 2 / 1;
   overflow: visible;
 }
 .c-grid {

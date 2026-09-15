@@ -811,7 +811,7 @@ async function systemWebhook(root) {
 
   root.innerHTML = panel(
     tr('adm.systemHook'),
-    `<div class="stack">
+    `<div class="stack" style="padding:1.1rem">
       <p class="small muted" style="margin:0">${escapeHtml(tr('adm.systemHookWhat'))}</p>
       ${
         data.webhook
@@ -1614,7 +1614,7 @@ async function userDetail(root, id) {
       Object.values(user.profile || {}).some(Boolean)
         ? panel(
             tr('set.personal'),
-            `<dl class="facts">${Object.entries(user.profile)
+            `<dl class="facts" style="padding:1.1rem">${Object.entries(user.profile)
               .filter(([, value]) => value)
               .map(
                 ([key, value]) => `<div><dt>${escapeHtml(tr(PROFILE_LABELS[key] || 'common.name'))}</dt>
@@ -2718,7 +2718,8 @@ async function accounts(root) {
   );
   root.innerHTML = panel(
     `${data.accounts.length} ${tr('adm.accounts')}`,
-    `${
+    `<div style="padding:1.1rem 1.1rem 0">
+    ${
       needsLogin.length
         ? `<section class="note warn" style="margin-bottom:1rem"><div>${icon('alert')}</div><div class="grow">
             <strong>${escapeHtml(tr('adm.accountQueue', { n: needsLogin.length }))}</strong>
@@ -2743,6 +2744,7 @@ async function accounts(root) {
         <option value="suspended">${escapeHtml(tr('acc.suspended'))}</option>
       </select>
       <span class="small muted" id="account-result-count"></span>
+    </div>
     </div>
     ${table(
       [tr('adm.users'), tr('ov.col.account'), tr('adm.servers'), tr('common.status'), tr('common.created'), ''],
@@ -4474,7 +4476,7 @@ async function client(root) {
       rolloutPreview.bots.length
         ? panel(
             tr('adm.clientRolloutPlan'),
-            `<p class="small muted" style="margin:0 0 .8rem">${escapeHtml(
+            `<p class="small muted" style="margin:0 0 .8rem;padding:1.1rem 1.1rem 0">${escapeHtml(
               tr('adm.clientRolloutPlanHint', { seconds: Math.ceil(rolloutPreview.estimated_ms / 1000) })
             )}</p>
              ${table(
@@ -5159,7 +5161,7 @@ async function ops(root) {
               .map((group) =>
                 panel(
                   groupTitle(group),
-                  `<div class="stack">${grouped
+                  `<div class="stack" style="padding:1.1rem">${grouped
                     .get(group)
                     .map(alertRow)
                     .join('')}</div>`
