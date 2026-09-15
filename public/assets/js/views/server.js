@@ -376,6 +376,7 @@ async function renderProfile(root, route) {
     pov: async (...args) => (await import('./live.js')).tabPov(...args),
     macros: tabMacros,
     schedule: tabSchedule,
+    spam: tabSpam,
     proxies: tabProxies,
     plan: tabPlan,
     addons: tabAddons,
@@ -518,9 +519,7 @@ async function tabConnect(root, profile) {
           </div>
         </div>
       </section>
-    </div>
-
-    ${spamPanel()}`;
+    </div>`;
 
   // ------------------------------------------------------------ Konten
 
@@ -1563,8 +1562,6 @@ async function tabConnect(root, profile) {
     }
   }
 
-  await bindSpam(profile, members);
-
   // ------------------------------------------------------------ Live
 
   const refreshBots = debounce(async () => {
@@ -1591,9 +1588,16 @@ async function tabConnect(root, profile) {
   };
 }
 
-/** Der Kasten mit den wiederholten Nachrichten – er hängt am Chat, nicht am Serverplatz. */
+// ---------------------------------------------------------------- Automatischer Chat
+
+async function tabSpam(root, profile) {
+  root.innerHTML = spamPanel();
+  await bindSpam(profile, profile.accounts);
+}
+
+/** Der Kasten mit den wiederholten Nachrichten. */
 const spamPanel = () => `
-  <section class="panel" style="margin-top:1.25rem">
+  <section class="panel">
     <header><h3>${escapeHtml(tr('srv.spam'))}</h3>
       <button class="btn btn-sm btn-primary" id="add-spam">${icon('plus')}</button></header>
     <div class="body" style="padding:0" id="spam-body"></div>

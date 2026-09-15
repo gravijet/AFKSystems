@@ -438,13 +438,20 @@ function navLabel(item) {
  */
 export const ADMIN_GROUPS = [
   {
-    key: 'work',
-    label: 'adm.group.work',
+    key: 'support',
+    label: 'adm.group.support',
     items: [
       { key: 'overview', label: 'adm.overview', icon: 'chart' },
+      { key: 'stats', label: 'adm.stats', icon: 'chart' },
       { key: 'ops', label: 'adm.ops', icon: 'activity' },
       { key: 'tickets', label: 'adm.allTickets', icon: 'ticket' },
       { key: 'templates', label: 'adm.templates', icon: 'message' },
+    ],
+  },
+  {
+    key: 'customers',
+    label: 'adm.group.customers',
+    items: [
       { key: 'users', label: 'adm.users', icon: 'users' },
       { key: 'servers', label: 'adm.servers', icon: 'server' },
       { key: 'accounts', label: 'adm.accounts', icon: 'users' },
@@ -462,20 +469,14 @@ export const ADMIN_GROUPS = [
     ],
   },
   {
-    key: 'platform',
-    label: 'adm.group.platform',
+    key: 'system',
+    label: 'adm.group.system',
     items: [
       { key: 'settings', label: 'adm.settings', icon: 'settings' },
       { key: 'nodes', label: 'adm.nodes', icon: 'pin' },
       { key: 'proxies', label: 'adm.proxies', icon: 'globe' },
       { key: 'announcements', label: 'adm.announce', icon: 'alert' },
       { key: 'client', label: 'adm.client', icon: 'download' },
-    ],
-  },
-  {
-    key: 'logs',
-    label: 'adm.group.logs',
-    items: [
       { key: 'system', label: 'adm.system', icon: 'cpu' },
       { key: 'security', label: 'adm.security', icon: 'lock' },
       { key: 'mails', label: 'adm.mails', icon: 'mail' },
@@ -563,6 +564,9 @@ export const TABS = [
   // abends laufen lassen will, braucht dafür keinen Tarif – im Gegenteil, er nimmt damit
   // weniger in Anspruch als jemand, der ihn durchlaufen lässt.
   { key: 'schedule', label: 'tab.schedule', group: 'automation' },
+  // War früher Teil von "Verbinden" (`${spamPanel()}` am Ende des Reiters) – gehört inhaltlich
+  // aber zur Automatisierung, nicht zur Verbindungsdiagnose.
+  { key: 'spam', label: 'tab.spam', group: 'automation' },
   { key: 'board', label: 'tab.board', group: 'views', need: 'board' },
   { key: 'menu', label: 'tab.menu', group: 'views', need: 'menu' },
   // Das eigene Inventar liest nur eine Bauform mit Gegenstandslesung – dieselbe Fähigkeit, die

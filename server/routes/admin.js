@@ -27,6 +27,7 @@ import * as account from '../account.js';
 import * as totp from '../totp.js';
 import * as notify from '../notify.js';
 import * as systemreport from '../systemreport.js';
+import * as traffic from '../traffic.js';
 import * as jobs from '../jobs.js';
 import { supervisor, disconnectText } from '../supervisor.js';
 import { staffTodos } from '../todos.js';
@@ -258,6 +259,20 @@ admin.get(
         uptime_sec: db.prepare('SELECT COALESCE(SUM(uptime_sec), 0) AS n FROM bots').get().n,
       },
     });
+  })
+);
+
+/**
+ * Die Besucher-Statistik: Aufrufe, Herkunft, Bot-Anteil.
+ *
+ * Eigener Aufruf statt Teil von `/stats` – aus demselben Grund, aus dem `/overview` und `/stats`
+ * schon getrennt sind: verschiedene Dinge, nicht bei jedem Öffnen mehr laden als der Bildschirm
+ * gerade braucht.
+ */
+admin.get(
+  '/stats/traffic',
+  wrap((req, res) => {
+    res.json(traffic.summary({ days: Number(req.query.days) || 30 }));
   })
 );
 

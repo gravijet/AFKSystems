@@ -162,6 +162,7 @@ export async function render(root, route) {
   const body = $('#admin-body');
   const views = {
     overview,
+    stats,
     system,
     tickets: route.id ? (node) => staffTicket(node, route.id) : staffTickets,
     users: route.id ? (node) => userDetail(node, route.id) : users,
@@ -323,13 +324,7 @@ function numbers(answer, extra = []) {
 // ---------------------------------------------------------------- Überblick
 
 async function overview(root) {
-  // Zwei Aufrufe, weil es zwei verschiedene Dinge sind: `/overview` zählt den Zustand von jetzt,
-  // `/stats` rechnet Reihen über Wochen. Zusammen wären sie eine Abfrage, die bei jedem Öffnen
-  // die halbe Datenbank durchgeht.
-  const [data, stats] = await Promise.all([
-    api('/admin/overview'),
-    api('/admin/stats').catch(() => null),
-  ]);
+  const data = await api('/admin/overview');
 
   root.innerHTML = `
     ${todoList(data.todos || [], { title: tr("adm.todo") })}
@@ -359,64 +354,12 @@ async function overview(root) {
 
     ${attentionPanel(data.attention || {})}
 
-    <div class="grid two">
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('adm.client'))}</h3>
-          <button class="btn btn-sm" id="sync">${icon('refresh')}</button></header>
-        <div class="body stack">
-          <div class="row spread"><span class="muted small">Release</span>
-            <span class="mono">${escapeHtml(data.client.tag || '–')}</span></div>
-          <div class="row spread"><span class="muted small">Version</span>
-            <span class="mono">${escapeHtml(data.client.version || '–')}</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('ov.clientVersions'))}</span>
-            <span class="mono small">${(data.client.versions || []).map(escapeHtml).join(', ') || '–'}</span></div>
-          <div class="row spread"><span class="muted small">${escapeHtml(tr('ov.builds'))}</span>
-            <span class="row" style="gap:.35rem">${Object.entries(data.client.builds || {})
-              .map(
-                ([name, entry]) =>
-                  `<span class="pill ${entry.present ? 'primary' : 'missing'}">${escapeHtml(name)}</span>`
-              )
-              .join('')}</span></div>
-          ${
-            data.client.error
-              ? `<div class="note warn">${icon('alert')}<div>${escapeHtml(data.client.error)}</div></div>`
-              : ''
-          }
-        </div>
-      </section>
-
-      <section class="panel">
-        <header><h3>${escapeHtml(tr('adm.settings'))}</h3>
-          <a class="btn btn-sm" href="#/admin/settings">${escapeHtml(tr('common.edit'))}</a></header>
-        <div class="body stack">
-          ${health('SMTP', data.mail.configured, data.mail.configured ? tr('adm.mailsFailed', { n: data.mail.failed_24h }) : '')}
-          ${health(tr('auth.verify.title'), data.mail.verify)}
-          ${health('Discord', data.oauth?.discord?.available, data.oauth?.discord?.login ? tr('set.link') : '')}
-          ${health('Google', data.oauth?.google?.available, data.oauth?.google?.login ? tr('set.link') : '')}
-          ${health(
-            tr('adm.botStatus'),
-            data.bot?.connected > 0,
-            data.bot?.connected > 0 ? tr('adm.botConnected') : tr('adm.botAway')
-          )}
-          ${health(tr('error.maintenance.title'), !Number(data.settings.maintenance), '', true)}
-          ${health(tr('auth.register.title'), Number(data.settings.registration_open))}
-        </div>
-      </section>
-    </div>
-
-    ${statsPanels(stats)}`;
-
-  $('#sync').addEventListener('click', async (event) => {
-    event.target.disabled = true;
-    try {
-      await api('/admin/client/sync', { method: 'POST', body: { force: false } });
-      ok(tr('adm.saved'));
-      draw();
-    } catch (error) {
-      fail(error);
-      event.target.disabled = false;
-    }
-  });
+    <a class="row spread note" href="#/admin/stats" style="margin-top:1.5rem">
+      ${icon('chart')}
+      <span class="grow"><strong>${escapeHtml(tr('adm.stats'))}</strong>
+        <span class="small muted" style="display:block">${escapeHtml(tr('adm.statsSub'))}</span></span>
+      ${icon('arrow')}
+    </a>`;
 }
 
 /** Arbeitsfähige Hinweise: jede Zahl führt direkt zu der Liste, in der sie behoben wird. */
@@ -633,12 +576,98 @@ function statsPanels(stats) {
     </div>`;
 }
 
-const health = (label, good, note = '') => `<div class="row spread">
-  <span class="muted small">${escapeHtml(label)}</span>
-  <span class="row" style="gap:.5rem">
-    ${note ? `<span class="small muted">${escapeHtml(note)}</span>` : ''}
-    <span class="pill ${good ? 'primary' : 'missing'}">${good ? 'ok' : '–'}</span>
-  </span></div>`;
+/**
+ * Die Statistik-Seite: dieselben Geschäfts-Diagramme, die früher die Übersicht zustopften, plus
+ * neu die Besucher-Statistik der Webseite (Aufrufe, Herkunft, Bot-Anteil). Beides beantwortet
+ * "wie läuft es", nur eine Ebene tiefer als die Übersicht – deshalb ein eigener Punkt und nicht
+ * eine weitere Kachel dort.
+ */
+async function stats(root) {
+  const [businessStats, visitors] = await Promise.all([
+    api('/admin/stats').catch(() => null),
+    api('/admin/stats/traffic').catch(() => null),
+  ]);
+
+  root.innerHTML = `${visitorPanels(visitors)}${statsPanels(businessStats)}`;
+}
+
+/** Aufrufe, eindeutige Besucher, Bot-Anteil, Top-Quellen/-Seiten/-Länder. */
+function visitorPanels(visitors) {
+  if (!visitors) return '';
+  const numbers = new Intl.NumberFormat(lang === 'de' ? 'de-DE' : 'en-GB');
+  const count = (value) => numbers.format(Number(value || 0));
+  const dayShort = (key) => key.slice(8);
+  const { totals } = visitors;
+
+  return `
+    <h2 class="section-title">${escapeHtml(tr('adm.stats.visitorsTitle'))}</h2>
+
+    <div class="grid three" style="margin-bottom:1.5rem">
+      ${chart.card({
+        title: tr('adm.stats.views'),
+        value: count(totals.views),
+        note: tr('bill.chart.days', { n: visitors.days }),
+        chart: chart.line(
+          visitors.views_days.map((entry) => ({ label: entry.day, short: dayShort(entry.day), value: entry.value })),
+          { format: count }
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.uniqueVisitors'),
+        value: count(totals.visitors),
+        note: tr('bill.chart.days', { n: visitors.days }),
+        chart: chart.line(
+          visitors.visitor_days.map((entry) => ({ label: entry.day, short: dayShort(entry.day), value: entry.value })),
+          { format: count, color: chart.SERIES[1] }
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.botShare'),
+        value: count(totals.humans + totals.bots),
+        note: tr('bill.chart.days', { n: visitors.days }),
+        chart: chart.stacked(
+          [
+            { label: tr('adm.stats.human'), value: totals.humans },
+            { label: tr('adm.stats.bot'), value: totals.bots },
+          ],
+          { format: count }
+        ),
+      })}
+    </div>
+
+    <div class="grid three" style="margin-bottom:1.5rem">
+      ${chart.card({
+        title: tr('adm.stats.referrers'),
+        value: count(totals.humans),
+        note: tr('adm.stats.human'),
+        chart: chart.hbars(
+          visitors.top_referrers.map((row) => ({
+            label: row.label === 'direkt' ? tr('adm.stats.referrerDirect') : row.label,
+            value: row.value,
+          })),
+          { format: count }
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.pages'),
+        value: count(visitors.top_paths.length),
+        note: tr('adm.stats.human'),
+        chart: chart.hbars(
+          visitors.top_paths.map((row) => ({ label: row.label, value: row.value })),
+          { format: count, color: chart.SERIES[2] }
+        ),
+      })}
+      ${chart.card({
+        title: tr('adm.stats.countries'),
+        value: count(visitors.top_countries.length),
+        note: tr('adm.stats.human'),
+        chart: chart.hbars(
+          visitors.top_countries.map((row) => ({ label: countryName(row.label, lang), value: row.value })),
+          { format: count, color: chart.SERIES[3] }
+        ),
+      })}
+    </div>`;
+}
 
 // ---------------------------------------------------------------- System
 //
@@ -1484,9 +1513,20 @@ const PROFILE_LABELS = {
   timezone: 'set.timezone',
 };
 
+/** Die Reiter der Nutzer-Detailseite: einzige Quelle für Tab-Leiste und Inhalt. */
+const USER_DETAIL_TABS = [
+  { key: 'overview', label: 'adm.overview' },
+  { key: 'accounts', label: 'adm.tabAccounts' },
+  { key: 'security', label: 'adm.tabSecurity' },
+  { key: 'billing', label: 'adm.tabBilling' },
+  { key: 'discord', label: 'adm.discordRoles' },
+];
+
 async function userDetail(root, id) {
   const data = await api(`/admin/users/${id}`);
   const user = data.user;
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const tab = USER_DETAIL_TABS.some((entry) => entry.key === params.get('tab')) ? params.get('tab') : 'overview';
   const discordRoles = new Set(user.discord_roles || []);
   const discordRoleRows = [
     ['customer', null],
@@ -1583,297 +1623,314 @@ async function userDetail(root, id) {
         : ''
     }
 
-    <section class="panel" style="margin-bottom:1.5rem">
-      <header><h3>${escapeHtml(tr('adm.discordRoles'))}</h3>
-        <span class="small muted">${escapeHtml(user.discord ? tr('adm.rolesSynced') : tr('adm.rolesNeedLink'))}</span></header>
-      <div class="body">
-        <ul class="switch-list">
-          ${discordRoleRows
-            .map(([role, editable]) => `<li>
-              <div class="grow">
-                <span class="strong">${escapeHtml(tr(`role.${role}`))}</span>
-                <p class="small muted">${escapeHtml(tr(`role.${role}.hint`))}</p>
+    <nav class="tabs wrap" style="margin-bottom:1.25rem">
+      ${USER_DETAIL_TABS.map(
+        (entry) =>
+          `<a class="${entry.key === tab ? 'active' : ''}" href="#/admin/users/${id}?tab=${entry.key}">${escapeHtml(
+            tr(entry.label)
+          )}</a>`
+      ).join('')}
+    </nav>
+
+    ${
+      {
+        overview: `
+          <section class="panel">
+            <header><h3>${escapeHtml(tr('adm.detail'))}</h3></header>
+            <div class="body stack">
+              <div class="field"><label for="notes">${escapeHtml(tr('adm.notes'))}</label>
+                <textarea id="notes" rows="4" placeholder="${escapeHtml(tr('adm.everything'))}">${escapeHtml(
+                  user.notes || ''
+                )}</textarea></div>
+              <div class="row">
+                <div class="field" style="max-width:10rem"><label for="allowance">${escapeHtml(tr('adm.allowance'))}</label>
+                  <input id="allowance" type="number" min="0" max="100" value="${user.proxy_allowance || 0}"></div>
+                <button class="btn btn-primary" id="save-notes" style="align-self:flex-end">${escapeHtml(
+                  tr('common.save')
+                )}</button>
               </div>
               ${
-                editable
-                  ? `<span class="switch" role="switch" tabindex="0" aria-checked="${Boolean(user[editable])}"
-                       aria-label="${escapeHtml(tr(`role.${role}`))}" data-discord-role="${editable}"></span>`
-                  : `<span class="pill ${discordRoles.has(role) ? 'primary' : ''}">${escapeHtml(
-                      discordRoles.has(role) ? tr('adm.assigned') : tr('adm.notAssigned')
-                    )}</span>`
+                user.premium_until
+                  ? `<p class="small muted">${escapeHtml(tr('adm.premium'))}: ${date(user.premium_until)}</p>`
+                  : ''
               }
-            </li>`)
-            .join('')}
-        </ul>
-      </div>
-    </section>
+            </div>
+          </section>`,
 
-    ${panel(
-      tr('adm.accounts'),
-      table(
-        [tr('common.name'), tr('common.status'), tr('common.created'), ''],
-        data.accounts.map(
-          (account) => `<tr>
-            <td><span class="strong">${escapeHtml(account.name)}</span>
-              <span class="small muted"> · ${escapeHtml(accountKindLabel(account.kind))}</span></td>
-            <td>${
-              account.suspended
-                ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>
-                   ${account.suspend_reason ? `<span class="small muted">${escapeHtml(account.suspend_reason)}</span>` : ''}`
-                : `<span class="pill ${account.status === 'error' ? 'missing' : 'primary'}">${escapeHtml(
-                    accountStatusLabel(account.status)
-                  )}</span>`
-            }</td>
-            <td class="small muted mono">${datetime(account.created_at)}</td>
-            <td style="text-align:right"><button class="btn btn-sm ${account.suspended ? '' : 'btn-danger'}"
-              data-account-suspend="${account.id}">${escapeHtml(
-                account.suspended ? tr('adm.resumeAccount') : tr('adm.suspendAccount')
-              )}</button></td>
-          </tr>`
-        )
-      )
-    )}
+        accounts: `
+          ${panel(
+            tr('adm.accounts'),
+            table(
+              [tr('common.name'), tr('common.status'), tr('common.created'), ''],
+              data.accounts.map(
+                (account) => `<tr>
+                  <td><span class="strong">${escapeHtml(account.name)}</span>
+                    <span class="small muted"> · ${escapeHtml(accountKindLabel(account.kind))}</span></td>
+                  <td>${
+                    account.suspended
+                      ? `<span class="pill missing">${escapeHtml(tr('acc.suspended'))}</span>
+                         ${account.suspend_reason ? `<span class="small muted">${escapeHtml(account.suspend_reason)}</span>` : ''}`
+                      : `<span class="pill ${account.status === 'error' ? 'missing' : 'primary'}">${escapeHtml(
+                          accountStatusLabel(account.status)
+                        )}</span>`
+                  }</td>
+                  <td class="small muted mono">${datetime(account.created_at)}</td>
+                  <td style="text-align:right"><button class="btn btn-sm ${account.suspended ? '' : 'btn-danger'}"
+                    data-account-suspend="${account.id}">${escapeHtml(
+                      account.suspended ? tr('adm.resumeAccount') : tr('adm.suspendAccount')
+                    )}</button></td>
+                </tr>`
+              )
+            )
+          )}
 
-    ${panel(
-      tr('adm.profiles'),
-      table(
-        [tr('common.name'), tr('srv.address'), tr('srv.plan'), tr('common.month'), tr('common.status'), ''],
-        data.profiles.map(
-          (profile) => `<tr data-server="${profile.id}" style="cursor:pointer">
-            <td>${escapeHtml(profile.name)}</td>
-            <td class="mono small">${escapeHtml(profile.address)}</td>
-            <td class="small">${escapeHtml(profile.plan || '–')}</td>
-            <td class="small muted">${profile.paid_until ? date(profile.paid_until) : '–'}</td>
-            <td>${
-              profile.locked
-                ? `<span class="pill missing">${escapeHtml(tr('adm.serverSuspended'))}</span>`
-                : profile.suspended
-                  ? `<span class="pill missing">${escapeHtml(tr('adm.billingSuspended'))}</span>`
-                  : `<span class="pill ${profile.online ? 'primary' : ''}">${profile.online}</span>`
-            }</td>
-            <td style="text-align:right"><button class="btn btn-sm" data-extend="${profile.id}">+30 d</button></td>
-          </tr>`
-        )
-      )
-    )}
+          ${panel(
+            tr('adm.profiles'),
+            table(
+              [tr('common.name'), tr('srv.address'), tr('srv.plan'), tr('common.month'), tr('common.status'), ''],
+              data.profiles.map(
+                (profile) => `<tr data-server="${profile.id}" style="cursor:pointer">
+                  <td>${escapeHtml(profile.name)}</td>
+                  <td class="mono small">${escapeHtml(profile.address)}</td>
+                  <td class="small">${escapeHtml(profile.plan || '–')}</td>
+                  <td class="small muted">${profile.paid_until ? date(profile.paid_until) : '–'}</td>
+                  <td>${
+                    profile.locked
+                      ? `<span class="pill missing">${escapeHtml(tr('adm.serverSuspended'))}</span>`
+                      : profile.suspended
+                        ? `<span class="pill missing">${escapeHtml(tr('adm.billingSuspended'))}</span>`
+                        : `<span class="pill ${profile.online ? 'primary' : ''}">${profile.online}</span>`
+                  }</td>
+                  <td style="text-align:right"><button class="btn btn-sm" data-extend="${profile.id}">+30 d</button></td>
+                </tr>`
+              )
+            )
+          )}`,
 
-    <!-- **Der Block für „ich komme nicht mehr hinein“.** Zweiter Faktor, offene Geräte und die
-         letzten Versuche stehen nebeneinander, weil erst der Vergleich die Frage beantwortet:
-         Kommt überhaupt etwas an? Von welcher Adresse? Und scheitert es am Passwort oder am
-         Code danach? Getrennt wären das drei Bildschirme, zwischen denen niemand hin und her
-         sieht. -->
-    <section class="panel" style="margin-bottom:1.5rem">
-      <header><h3>${escapeHtml(tr('adm.access'))}</h3>
-        <span class="small muted">${escapeHtml(tr('adm.accessSub'))}</span></header>
-      <div class="body stack">
-        <div class="row wrap spread">
-          <div style="min-width:0">
-            <p class="small strong">${escapeHtml(tr('adm.totp'))}</p>
-            ${
-              data.totp?.enabled
-                ? `<span class="pill ok">${escapeHtml(tr('common.on'))}</span>
-                   <span class="small muted">${escapeHtml(
-                     tr('adm.totpSince', { when: data.totp.since ? date(data.totp.since) : '–' })
-                   )} · ${escapeHtml(
-                     tr('adm.totpRecovery', {
-                       left: data.totp.recovery_left,
-                       total: data.totp.recovery_total,
-                     })
-                   )}</span>`
-                : `<span class="small muted">${escapeHtml(tr('adm.totpOff'))}</span>`
-            }
-          </div>
+        // **Der Block für „ich komme nicht mehr hinein“.** Zweiter Faktor, offene Geräte und die
+        // letzten Versuche stehen nebeneinander, weil erst der Vergleich die Frage beantwortet:
+        // Kommt überhaupt etwas an? Von welcher Adresse? Und scheitert es am Passwort oder am
+        // Code danach? Getrennt wären das drei Bildschirme, zwischen denen niemand hin und her sieht.
+        security: `
+          <section class="panel">
+            <header><h3>${escapeHtml(tr('adm.access'))}</h3>
+              <span class="small muted">${escapeHtml(tr('adm.accessSub'))}</span></header>
+            <div class="body stack">
+              <div class="row wrap spread">
+                <div style="min-width:0">
+                  <p class="small strong">${escapeHtml(tr('adm.totp'))}</p>
+                  ${
+                    data.totp?.enabled
+                      ? `<span class="pill ok">${escapeHtml(tr('common.on'))}</span>
+                         <span class="small muted">${escapeHtml(
+                           tr('adm.totpSince', { when: data.totp.since ? date(data.totp.since) : '–' })
+                         )} · ${escapeHtml(
+                           tr('adm.totpRecovery', {
+                             left: data.totp.recovery_left,
+                             total: data.totp.recovery_total,
+                           })
+                         )}</span>`
+                      : `<span class="small muted">${escapeHtml(tr('adm.totpOff'))}</span>`
+                  }
+                </div>
+                ${
+                  data.totp?.enabled
+                    ? `<button class="btn btn-sm btn-danger" id="totp-reset">${escapeHtml(tr('adm.totpReset'))}</button>`
+                    : ''
+                }
+              </div>
+              <hr class="rule">
+              <div>
+                <p class="small strong" style="margin-bottom:.25rem">${escapeHtml(tr('adm.sessions'))}</p>
+                <p class="small muted" style="margin-bottom:.5rem">${escapeHtml(tr('adm.sessionsSub'))}</p>
+                ${
+                  (data.sessions || []).length
+                    ? `<ul class="device-list">${data.sessions
+                        .map(
+                          (session) => `<li class="device">
+                            <span class="device-icon">${icon(deviceIcon(session.agent))}</span>
+                            <div class="grow" style="min-width:0">
+                              <div class="strong truncate">${escapeHtml(session.device || tr('set.deviceUnknown'))}</div>
+                              <p class="small muted truncate" title="${escapeHtml(session.agent || '')}">
+                                ${escapeHtml(session.ip || '–')} · ${escapeHtml(
+                                  tr('set.sessionSince', { when: since(session.created_at) })
+                                )}</p>
+                            </div>
+                            <button class="btn btn-sm btn-danger" data-drop-session="${escapeHtml(session.ref)}">${escapeHtml(
+                              tr('adm.sessionEnd')
+                            )}</button>
+                          </li>`
+                        )
+                        .join('')}</ul>`
+                    : `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`
+                }
+              </div>
+              <hr class="rule">
+              <div>
+                <p class="small strong" style="margin-bottom:.5rem">${escapeHtml(tr('adm.signIns'))}</p>
+                <p class="small muted" style="margin-bottom:.5rem">${escapeHtml(tr('adm.signInsSub'))}</p>
+                ${
+                  (data.signins || []).length
+                    ? `<ul class="plain-list">${data.signins
+                        .map(
+                          (entry) => `<li class="row spread small">
+                            <span class="row" style="gap:.5rem;min-width:0">
+                              <span class="signin-dot ${entry.ok ? 'ok' : 'bad'}"></span>
+                              <span class="mono truncate">${escapeHtml(entry.ip || '–')}</span>
+                              <span class="muted truncate">${escapeHtml(signInLabel(entry))}</span>
+                            </span>
+                            <span class="muted mono">${datetime(entry.created_at)}</span>
+                          </li>`
+                        )
+                        .join('')}</ul>`
+                    : `<p class="small muted">${escapeHtml(tr('set.signInsNone'))}</p>`
+                }
+              </div>
+            </div>
+          </section>`,
+
+        billing: `
           ${
-            data.totp?.enabled
-              ? `<button class="btn btn-sm btn-danger" id="totp-reset">${escapeHtml(tr('adm.totpReset'))}</button>`
+            data.proxies.length
+              ? panel(
+                  tr('px.title'),
+                  table(
+                    [tr('common.name'), tr('srv.address'), tr('common.created')],
+                    data.proxies.map(
+                      (proxy) => `<tr>
+                        <td>${escapeHtml(proxy.label || `#${proxy.id}`)}</td>
+                        <td class="mono small">${escapeHtml(
+                          `${proxy.kind === 'http' ? 'http' : 'socks5'}://${proxy.host}:${proxy.port}`
+                        )}</td>
+                        <td class="small muted mono">${datetime(proxy.created_at)}</td>
+                      </tr>`
+                    )
+                  )
+                )
               : ''
           }
-        </div>
-        <hr class="rule">
-        <div>
-          <p class="small strong" style="margin-bottom:.25rem">${escapeHtml(tr('adm.sessions'))}</p>
-          <p class="small muted" style="margin-bottom:.5rem">${escapeHtml(tr('adm.sessionsSub'))}</p>
-          ${
-            (data.sessions || []).length
-              ? `<ul class="device-list">${data.sessions
-                  .map(
-                    (session) => `<li class="device">
-                      <span class="device-icon">${icon(deviceIcon(session.agent))}</span>
-                      <div class="grow" style="min-width:0">
-                        <div class="strong truncate">${escapeHtml(session.device || tr('set.deviceUnknown'))}</div>
-                        <p class="small muted truncate" title="${escapeHtml(session.agent || '')}">
-                          ${escapeHtml(session.ip || '–')} · ${escapeHtml(
-                            tr('set.sessionSince', { when: since(session.created_at) })
-                          )}</p>
-                      </div>
-                      <button class="btn btn-sm btn-danger" data-drop-session="${escapeHtml(session.ref)}">${escapeHtml(
-                        tr('adm.sessionEnd')
-                      )}</button>
-                    </li>`
-                  )
-                  .join('')}</ul>`
-              : `<p class="small muted">${escapeHtml(tr('common.none'))}</p>`
-          }
-        </div>
-        <hr class="rule">
-        <div>
-          <p class="small strong" style="margin-bottom:.5rem">${escapeHtml(tr('adm.signIns'))}</p>
-          <p class="small muted" style="margin-bottom:.5rem">${escapeHtml(tr('adm.signInsSub'))}</p>
-          ${
-            (data.signins || []).length
-              ? `<ul class="plain-list">${data.signins
-                  .map(
-                    (entry) => `<li class="row spread small">
-                      <span class="row" style="gap:.5rem;min-width:0">
-                        <span class="signin-dot ${entry.ok ? 'ok' : 'bad'}"></span>
-                        <span class="mono truncate">${escapeHtml(entry.ip || '–')}</span>
-                        <span class="muted truncate">${escapeHtml(signInLabel(entry))}</span>
-                      </span>
-                      <span class="muted mono">${datetime(entry.created_at)}</span>
-                    </li>`
-                  )
-                  .join('')}</ul>`
-              : `<p class="small muted">${escapeHtml(tr('set.signInsNone'))}</p>`
-          }
-        </div>
-      </div>
-    </section>
 
-    ${
-      data.proxies.length
-        ? panel(
-            tr('px.title'),
+          ${
+            data.topups.length
+              ? panel(
+                  tr('adm.topups'),
+                  table(
+                    ['', tr('bill.method'), tr('common.credits'), tr('bill.amount'), tr('common.status')],
+                    data.topups.map(
+                      (topup) => `<tr>
+                        <td class="small muted mono">${datetime(topup.created_at)}</td>
+                        <td class="small">${escapeHtml(topup.provider)}</td>
+                        <td class="mono">${credits(topup.credits)}</td>
+                        <td class="mono small muted">${euro(topup.amount_cent)}</td>
+                        <td><span class="pill ${topup.status === 'paid' ? 'primary' : 'missing'}">${escapeHtml(
+                          topupStatus(topup.status)
+                        )}</span></td>
+                      </tr>`
+                    )
+                  )
+                )
+              : ''
+          }
+
+          ${panel(
+            tr('adm.ledger'),
             table(
-              [tr('common.name'), tr('srv.address'), tr('common.created')],
-              data.proxies.map(
-                (proxy) => `<tr>
-                  <td>${escapeHtml(proxy.label || `#${proxy.id}`)}</td>
-                  <td class="mono small">${escapeHtml(
-                    `${proxy.kind === 'http' ? 'http' : 'socks5'}://${proxy.host}:${proxy.port}`
-                  )}</td>
-                  <td class="small muted mono">${datetime(proxy.created_at)}</td>
+              ['', tr('common.status'), tr('common.credits'), tr('bill.balance')],
+              data.ledger
+                .slice(0, 30)
+                .map(
+                  (row) => `<tr>
+                    <td class="small muted mono">${datetime(row.created_at)}</td>
+                    <td class="small">${escapeHtml(row.kind)} ${
+                      row.note ? `<span class="muted">· ${escapeHtml(row.note)}</span>` : ''
+                    }</td>
+                    <td class="mono" style="color:${row.delta >= 0 ? 'var(--ok)' : 'var(--text)'}">${
+                      row.delta >= 0 ? '+' : ''
+                    }${credits(row.delta)}</td>
+                    <td class="mono small muted">${credits(row.balance)}</td>
+                  </tr>`
+                )
+            )
+          )}
+
+          ${panel(
+            tr('adm.tickets'),
+            table(
+              [tr('tk.subject'), tr('common.status'), ''],
+              data.tickets.map(
+                (ticket) => `<tr data-ticket="${ticket.id}" style="cursor:pointer">
+                  <td>${escapeHtml(ticket.subject)}</td>
+                  <td class="small">${escapeHtml(tr(`tk.status.${ticket.status}`))}</td>
+                  <td class="small muted mono">${datetime(ticket.updated_at)}</td>
                 </tr>`
               )
             )
-          )
-        : ''
-    }
+          )}
 
-    ${
-      data.topups.length
-        ? panel(
-            tr('adm.topups'),
+          ${
+            (data.mails || []).length
+              ? panel(
+                  tr('adm.userMails'),
+                  table(
+                    ['', tr('tk.subject'), tr('common.status')],
+                    data.mails.map(
+                      (entry) => `<tr>
+                        <td class="small muted mono">${datetime(entry.created_at)}</td>
+                        <td class="small">${escapeHtml(entry.subject || entry.kind || '')}</td>
+                        <td><span class="pill ${entry.status === 'sent' ? 'primary' : 'missing'}">${escapeHtml(
+                          entry.status
+                        )}</span></td>
+                      </tr>`
+                    )
+                  )
+                )
+              : ''
+          }
+
+          ${panel(
+            tr('adm.userAudit'),
             table(
-              ['', tr('bill.method'), tr('common.credits'), tr('bill.amount'), tr('common.status')],
-              data.topups.map(
-                (topup) => `<tr>
-                  <td class="small muted mono">${datetime(topup.created_at)}</td>
-                  <td class="small">${escapeHtml(topup.provider)}</td>
-                  <td class="mono">${credits(topup.credits)}</td>
-                  <td class="mono small muted">${euro(topup.amount_cent)}</td>
-                  <td><span class="pill ${topup.status === 'paid' ? 'primary' : 'missing'}">${escapeHtml(
-                    topupStatus(topup.status)
-                  )}</span></td>
-                </tr>`
-              )
-            )
-          )
-        : ''
-    }
-
-    ${panel(
-      tr('adm.ledger'),
-      table(
-        ['', tr('common.status'), tr('common.credits'), tr('bill.balance')],
-        data.ledger
-          .slice(0, 30)
-          .map(
-            (row) => `<tr>
-              <td class="small muted mono">${datetime(row.created_at)}</td>
-              <td class="small">${escapeHtml(row.kind)} ${
-                row.note ? `<span class="muted">· ${escapeHtml(row.note)}</span>` : ''
-              }</td>
-              <td class="mono" style="color:${row.delta >= 0 ? 'var(--ok)' : 'var(--text)'}">${
-                row.delta >= 0 ? '+' : ''
-              }${credits(row.delta)}</td>
-              <td class="mono small muted">${credits(row.balance)}</td>
-            </tr>`
-          )
-      )
-    )}
-
-    ${panel(
-      tr('adm.tickets'),
-      table(
-        [tr('tk.subject'), tr('common.status'), ''],
-        data.tickets.map(
-          (ticket) => `<tr data-ticket="${ticket.id}" style="cursor:pointer">
-            <td>${escapeHtml(ticket.subject)}</td>
-            <td class="small">${escapeHtml(tr(`tk.status.${ticket.status}`))}</td>
-            <td class="small muted mono">${datetime(ticket.updated_at)}</td>
-          </tr>`
-        )
-      )
-    )}
-
-    ${
-      (data.mails || []).length
-        ? panel(
-            tr('adm.userMails'),
-            table(
-              ['', tr('tk.subject'), tr('common.status')],
-              data.mails.map(
+              ['', '', ''],
+              (data.audit || []).map(
                 (entry) => `<tr>
                   <td class="small muted mono">${datetime(entry.created_at)}</td>
-                  <td class="small">${escapeHtml(entry.subject || entry.kind || '')}</td>
-                  <td><span class="pill ${entry.status === 'sent' ? 'primary' : 'missing'}">${escapeHtml(
-                    entry.status
-                  )}</span></td>
+                  <td class="small">${escapeHtml(entry.action_label || entry.action)}</td>
+                  <td class="small muted">${escapeHtml(entry.summary || '')}</td>
                 </tr>`
               )
-            )
-          )
-        : ''
-    }
+            ),
+            `<a class="btn btn-sm" href="#/admin/audit?q=${encodeURIComponent(user.username || '')}">${escapeHtml(
+              tr('adm.auditAll')
+            )}</a>`
+          )}`,
 
-    ${panel(
-      tr('adm.userAudit'),
-      table(
-        ['', '', ''],
-        (data.audit || []).map(
-          (entry) => `<tr>
-            <td class="small muted mono">${datetime(entry.created_at)}</td>
-            <td class="small">${escapeHtml(entry.action_label || entry.action)}</td>
-            <td class="small muted">${escapeHtml(entry.summary || '')}</td>
-          </tr>`
-        )
-      ),
-      `<a class="btn btn-sm" href="#/admin/audit?q=${encodeURIComponent(user.username || '')}">${escapeHtml(
-        tr('adm.auditAll')
-      )}</a>`
-    )}
-
-    <section class="panel">
-      <header><h3>${escapeHtml(tr('adm.detail'))}</h3></header>
-      <div class="body stack">
-        <div class="field"><label for="notes">${escapeHtml(tr('adm.notes'))}</label>
-          <textarea id="notes" rows="4" placeholder="${escapeHtml(tr('adm.everything'))}">${escapeHtml(
-            user.notes || ''
-          )}</textarea></div>
-        <div class="row">
-          <div class="field" style="max-width:10rem"><label for="allowance">${escapeHtml(tr('adm.allowance'))}</label>
-            <input id="allowance" type="number" min="0" max="100" value="${user.proxy_allowance || 0}"></div>
-          <button class="btn btn-primary" id="save-notes" style="align-self:flex-end">${escapeHtml(
-            tr('common.save')
-          )}</button>
-        </div>
-        ${
-          user.premium_until
-            ? `<p class="small muted">${escapeHtml(tr('adm.premium'))}: ${date(user.premium_until)}</p>`
-            : ''
-        }
-      </div>
-    </section>`;
+        discord: `
+          <section class="panel">
+            <header><h3>${escapeHtml(tr('adm.discordRoles'))}</h3>
+              <span class="small muted">${escapeHtml(user.discord ? tr('adm.rolesSynced') : tr('adm.rolesNeedLink'))}</span></header>
+            <div class="body">
+              <ul class="switch-list">
+                ${discordRoleRows
+                  .map(([role, editable]) => `<li>
+                    <div class="grow">
+                      <span class="strong">${escapeHtml(tr(`role.${role}`))}</span>
+                      <p class="small muted">${escapeHtml(tr(`role.${role}.hint`))}</p>
+                    </div>
+                    ${
+                      editable
+                        ? `<span class="switch" role="switch" tabindex="0" aria-checked="${Boolean(user[editable])}"
+                             aria-label="${escapeHtml(tr(`role.${role}`))}" data-discord-role="${editable}"></span>`
+                        : `<span class="pill ${discordRoles.has(role) ? 'primary' : ''}">${escapeHtml(
+                            discordRoles.has(role) ? tr('adm.assigned') : tr('adm.notAssigned')
+                          )}</span>`
+                    }
+                  </li>`)
+                  .join('')}
+              </ul>
+            </div>
+          </section>`,
+      }[tab] || ''
+    }`;
 
   const patch = async (body) => {
     try {
@@ -2030,7 +2087,7 @@ async function userDetail(root, id) {
     }
   });
 
-  $('#save-notes').addEventListener('click', () =>
+  $('#save-notes')?.addEventListener('click', () =>
     patch({ notes: $('#notes').value, proxy_allowance: Number($('#allowance').value) })
   );
 
@@ -2320,7 +2377,8 @@ async function serverDetail(root, id) {
       </section>
     </div>
 
-    <div class="grid two" style="margin-top:1.5rem">
+    <h2 class="section-title" style="margin-top:1.5rem">${escapeHtml(tr('adm.serverManage'))}</h2>
+    <div class="grid two">
       <section class="panel">
         <header><h3>${escapeHtml(tr('nd.title'))}</h3></header>
         <div class="body stack">
