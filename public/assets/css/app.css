@@ -7440,10 +7440,30 @@ dialog.shortcuts {
 .server-card-main {
   display: block;
   height: 100%;
-  padding: 1.15rem 3.25rem 1.15rem 1.25rem;
+  padding: 1.15rem 3.5rem 1.15rem 1.25rem;
 }
 .server-card-foot {
   margin-top: 1rem;
+}
+/* Name, Adresse und Tarif-Pill sind Flex-Kinder ohne Breitenlimit – bei einem langen Servernamen
+ * oder einer langen Adresse wollte die Zeile breiter sein als die Karte und schob das Pill bis
+ * unter den absolut positionierten Stern (nur 0,25rem Puffer bis zu dessen linker Kante). Jetzt
+ * kürzt sich der Name mit „…“ ab, statt den Stern zu überdecken. */
+.server-card-head > .row {
+  min-width: 0;
+}
+.server-card-head > .row > div {
+  min-width: 0;
+}
+.server-card-head .strong,
+.server-card-head .mono {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.server-card-head > .pill,
+.server-card-foot > .pill {
+  flex-shrink: 0;
 }
 .server-open {
   display: inline-flex;
