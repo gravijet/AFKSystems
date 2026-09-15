@@ -1740,6 +1740,27 @@ const migrations = [
       notified_at INTEGER
     );`,
   },
+  {
+    // Anonyme Reichweiten-Statistik für die Administration: Aufrufe, Herkunft, Bot-Anteil. Keine
+    // rohe IP-Adresse (siehe server/traffic.js) – `visitor_hash` wechselt jede Nacht und lässt sich
+    // nicht auf eine Person zurückrechnen.
+    name: '046-seitenaufrufe',
+    sql: `
+      CREATE TABLE page_views (
+        id            INTEGER PRIMARY KEY,
+        path          TEXT NOT NULL,
+        referrer_host TEXT,
+        country       TEXT,
+        lang          TEXT,
+        is_bot        INTEGER NOT NULL DEFAULT 0,
+        visitor_hash  TEXT NOT NULL,
+        logged_in     INTEGER NOT NULL DEFAULT 0,
+        created_at    INTEGER NOT NULL
+      );
+      CREATE INDEX page_views_time ON page_views(created_at DESC);
+      CREATE INDEX page_views_path ON page_views(path, created_at DESC);
+    `,
+  },
 ];
 
 /**

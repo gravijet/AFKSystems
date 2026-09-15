@@ -21,7 +21,7 @@ export const VAT_NOTE_DE =
 export const VAT_NOTE_EN =
   'Exempt from VAT under the Austrian small-business scheme (§ 6 (1) 27 UStG).';
 
-export const PRIVACY_DE = `Stand: 1. September 2026
+export const PRIVACY_DE = `Stand: 15. September 2026
 
 ## 1. Verantwortlicher und Kontakt
 
@@ -36,6 +36,7 @@ AFKSystems ist der Verantwortliche für die Verarbeitung personenbezogener Daten
 - Kommunikationsdaten: Ticketinhalte, Beteiligte, Status, Discord-Zuordnung, Chat- und Supportnachrichten sowie vom Dienst versandte E-Mails.
 - Abrechnungsdaten: Guthabenbewegungen, gebuchte Tarife und Zusätze, Zahlungsbetrag, Zahlungsart, Referenz und Status. Zu jeder verbuchten Zahlung entsteht ein Beleg mit fortlaufender Nummer; die darauf gedruckten Angaben (Anschrift, Firmierung, Umsatzsteuerhinweis) werden im Moment der Buchung festgehalten und bleiben danach unverändert, weil ein Beleg ein Nachweis über einen bestimmten Zeitpunkt ist. Kartenzahlungen und die übrigen elektronischen Zahlarten werden von Stripe (Stripe Payments Europe, Limited) als Zahlungsdienstleister abgewickelt. Kartennummern und Sicherheitsmerkmale werden ausschließlich bei Stripe eingegeben und verarbeitet; AFKSystems erhält sie nicht. An AFKSystems zurück gemeldet werden die Kennung des Zahlungsvorgangs, der Betrag, die Währung, der Zahlungsstatus, die E-Mail-Adresse des Zahlenden und die Zuordnung zur jeweiligen Aufladung. Verkäufer der Leistung ist AFKSystems selbst und nicht Stripe.
 - Sicherheits- und Betriebsdaten: Audit-Ereignisse, Fehlermeldungen, Missbrauchsindikatoren sowie Server- und Prozessmetriken.
+- Reichweitenstatistik: Aufrufe der öffentlichen Seiten mit Adresse, Land, verweisender Seite und ob es sich erkennbar um einen automatisierten Abruf (Suchmaschine, Werkzeug) statt einen Menschen handelt. Dafür wird kein Cookie gesetzt und keine IP-Adresse gespeichert; ein "eindeutiger Besucher" ergibt sich aus einem Kennwert, der jede Nacht neu gebildet wird und sich nicht auf eine Person oder ein Gerät zurückführen lässt.
 
 ## 3. Zwecke und Rechtsgrundlagen
 
@@ -53,7 +54,7 @@ AFKSystems verwendet keine Werbe- oder Tracking-Cookies. Erforderlich sind ein H
 
 ## 6. Speicherdauer
 
-Kontodaten werden grundsätzlich während der Nutzung des Dienstes gespeichert. Wird das Konto im Panel zur Löschung angemeldet, ruhen die Dienste sofort; die vollständige Löschung erfolgt nach einer Frist von vierzehn Tagen und kann bis dahin jederzeit im Panel widerrufen werden. Sitzungen enden nach Ablauf, Abmeldung oder Widerruf. Technische Protokolle und Sicherheitsdaten werden nur so lange aufbewahrt, wie dies für Fehleranalyse, Sicherheit und Missbrauchsprävention erforderlich ist. Ticket- und Vertragsdaten bleiben für die Bearbeitung und mögliche Nachweise gespeichert. Zahlungs- und Buchungsdaten werden nach den anwendbaren handels-, steuer- oder verbraucherrechtlichen Fristen aufbewahrt. Danach werden Daten gelöscht oder anonymisiert, sofern keine offenen Ansprüche, Sicherheitsvorfälle oder gesetzlichen Pflichten entgegenstehen.
+Kontodaten werden grundsätzlich während der Nutzung des Dienstes gespeichert. Wird das Konto im Panel zur Löschung angemeldet, ruhen die Dienste sofort; die vollständige Löschung erfolgt nach einer Frist von vierzehn Tagen und kann bis dahin jederzeit im Panel widerrufen werden. Sitzungen enden nach Ablauf, Abmeldung oder Widerruf. Technische Protokolle und Sicherheitsdaten werden nur so lange aufbewahrt, wie dies für Fehleranalyse, Sicherheit und Missbrauchsprävention erforderlich ist. Zeilen der Reichweitenstatistik werden nach sechs Monaten gelöscht. Ticket- und Vertragsdaten bleiben für die Bearbeitung und mögliche Nachweise gespeichert. Zahlungs- und Buchungsdaten werden nach den anwendbaren handels-, steuer- oder verbraucherrechtlichen Fristen aufbewahrt. Danach werden Daten gelöscht oder anonymisiert, sofern keine offenen Ansprüche, Sicherheitsvorfälle oder gesetzlichen Pflichten entgegenstehen.
 
 ## 7. Rechte
 
@@ -67,7 +68,7 @@ AFKSystems verwendet unter anderem verschlüsselte HTTPS-Verbindungen, gehashte 
 
 Diese Erklärung wird angepasst, wenn sich Funktionen, Anbieter oder rechtliche Anforderungen ändern. Die jeweils aktuelle Fassung und ihr Stand werden auf dieser Seite veröffentlicht.`;
 
-export const PRIVACY_EN = `Last updated: 1 September 2026
+export const PRIVACY_EN = `Last updated: 15 September 2026
 
 ## 1. Controller and contact
 
@@ -82,6 +83,7 @@ AFKSystems is the controller for personal data processed by this service. AFKSys
 - Communications: ticket contents, participants, status, Discord mapping, chat and support messages, and emails sent by the service.
 - Billing data: credit movements, plans and add-ons, payment amount, method, reference and status. Every settled payment produces a receipt with a sequential number; what is printed on it (address, company, VAT note) is recorded at the moment of settlement and stays unchanged afterwards, because a receipt is evidence about a particular point in time. Card payments and the other electronic payment methods are processed by Stripe (Stripe Payments Europe, Limited) as payment service provider. Card numbers and security details are entered and processed at Stripe only; AFKSystems does not receive them. What is reported back to AFKSystems is the payment identifier, amount, currency, payment status, the payer's email address and which top-up it belongs to. AFKSystems, not Stripe, is the seller of the service.
 - Security and operations: audit events, errors, abuse signals, and server or process metrics.
+- Reach statistics: page views on the public pages, with the address, country, referring site and whether the request is recognisably automated (a search engine or tool) rather than a human. No cookie is set for this and no IP address is stored; a "unique visitor" is derived from a value recalculated every night that cannot be traced back to a person or device.
 
 ## 3. Purposes and legal bases
 
@@ -99,7 +101,7 @@ AFKSystems uses no advertising or tracking cookies. An HttpOnly session cookie i
 
 ## 6. Retention
 
-Account data is generally held while the service is used. If the account is scheduled for deletion in the panel, the services stop immediately; full deletion follows after a grace period of fourteen days and can be cancelled in the panel at any time until then. Sessions end when they expire, the user signs out or they are revoked. Technical logs and security information are kept only as long as reasonably needed for diagnostics, security and abuse prevention. Ticket and contract data is retained for handling and possible evidence. Payment and accounting records are kept for the periods required by applicable commercial, tax or consumer law. Data is then deleted or anonymised unless an unresolved claim, security incident or legal obligation requires continued retention.
+Account data is generally held while the service is used. If the account is scheduled for deletion in the panel, the services stop immediately; full deletion follows after a grace period of fourteen days and can be cancelled in the panel at any time until then. Sessions end when they expire, the user signs out or they are revoked. Technical logs and security information are kept only as long as reasonably needed for diagnostics, security and abuse prevention. Reach statistics rows are deleted after six months. Ticket and contract data is retained for handling and possible evidence. Payment and accounting records are kept for the periods required by applicable commercial, tax or consumer law. Data is then deleted or anonymised unless an unresolved claim, security incident or legal obligation requires continued retention.
 
 ## 7. Rights
 

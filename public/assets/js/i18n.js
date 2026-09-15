@@ -579,6 +579,7 @@ export const S = {
   'tab.proxies': { en: 'Proxies', de: 'Proxys' },
   'tab.macros': { en: 'Macros', de: 'Macros' },
   'tab.schedule': { en: 'Schedule', de: 'Zeitplan' },
+  'tab.spam': { en: 'Repeating messages', de: 'Wiederholte Nachrichten' },
 
   // ---------------------------------------------------------------- Zeitpläne
   'sch.what': {
@@ -1800,13 +1801,28 @@ export const S = {
   // ---------------------------------------------------------------- Administration
   'adm.title': { en: 'Administration', de: 'Administration' },
   // Die Gruppen der Seitenleiste im Admin-Bereich.
-  'adm.group.work': { en: 'Day-to-day', de: 'Tagesgeschäft' },
+  'adm.group.support': { en: 'Day-to-day', de: 'Tagesgeschäft' },
+  'adm.group.customers': { en: 'Customers', de: 'Kunden' },
   'adm.group.money': { en: 'Plans and money', de: 'Tarife und Geld' },
-  'adm.group.platform': { en: 'Platform', de: 'Plattform' },
-  'adm.group.logs': { en: 'Logs and health', de: 'Protokolle und Zustand' },
+  'adm.group.system': { en: 'System', de: 'System' },
   'adm.packCent': { en: 'Amount in cents', de: 'Betrag in Cent' },
   'adm.packLabel': { en: 'Label', de: 'Beschriftung' },
   'adm.overview': { en: 'Overview', de: 'Übersicht' },
+  'adm.stats': { en: 'Statistics', de: 'Statistik' },
+  'adm.statsSub': {
+    en: 'Money, customers and site traffic over time.',
+    de: 'Umsatz, Kunden und Besucher über die Zeit.',
+  },
+  'adm.stats.visitorsTitle': { en: 'Visitors', de: 'Besucher' },
+  'adm.stats.views': { en: 'Page views', de: 'Seitenaufrufe' },
+  'adm.stats.uniqueVisitors': { en: 'Unique visitors', de: 'Eindeutige Besucher' },
+  'adm.stats.botShare': { en: 'Bot / crawler traffic', de: 'Bot-/Crawler-Traffic' },
+  'adm.stats.human': { en: 'Human', de: 'Menschlich' },
+  'adm.stats.bot': { en: 'Bot / crawler', de: 'Bot/Crawler' },
+  'adm.stats.referrers': { en: 'Top sources', de: 'Top-Quellen' },
+  'adm.stats.referrerDirect': { en: 'Direct', de: 'Direkt' },
+  'adm.stats.pages': { en: 'Top pages', de: 'Top-Seiten' },
+  'adm.stats.countries': { en: 'Top countries', de: 'Top-Länder' },
   'adm.users': { en: 'Users', de: 'Nutzer' },
   'adm.plans': { en: 'Plans', de: 'Tarife' },
   'adm.vouchers': { en: 'Vouchers', de: 'Gutscheine' },
@@ -3053,6 +3069,9 @@ export const S = {
   'adm.suspendBilling': { en: 'Suspend billing', de: 'Abrechnung aussetzen' },
   'adm.resumeBilling': { en: 'Resume billing', de: 'Abrechnung fortsetzen' },
   'adm.discordRoles': { en: 'Discord roles', de: 'Discord-Rollen' },
+  'adm.tabAccounts': { en: 'Accounts & servers', de: 'Konten & Serverplätze' },
+  'adm.tabSecurity': { en: 'Security & sessions', de: 'Sicherheit & Sitzungen' },
+  'adm.tabBilling': { en: 'Billing & tickets', de: 'Abrechnung & Tickets' },
   'adm.rolesSynced': {
     en: 'Calculated for the linked Discord account',
     de: 'Für das verknüpfte Discord-Konto berechnet',
@@ -3302,6 +3321,7 @@ export const S = {
   'adm.rolloutDone': { en: '{n} bot(s) are restarting.', de: '{n} Bot(s) starten neu.' },
   'adm.sendTo': { en: 'To', de: 'An' },
   'adm.sendAll': { en: 'every account', de: 'alle Konten' },
+  'adm.serverManage': { en: 'Management', de: 'Verwaltung' },
   'adm.connection': { en: 'Connection', de: 'Verbindung' },
   'adm.connectionSub': { en: 'also while suspended', de: 'auch im gesperrten Zustand' },
   'adm.connectionRestart': {

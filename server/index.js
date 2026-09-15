@@ -37,6 +37,7 @@ import * as logincode from './logincode.js';
 import * as totp from './totp.js';
 import * as heads from './heads.js';
 import * as backup from './backup.js';
+import * as traffic from './traffic.js';
 import * as account from './account.js';
 import * as schedules from './schedules.js';
 import * as systemreport from './systemreport.js';
@@ -799,11 +800,15 @@ app.get(/^\/app(\/.*)?$/, (req, res) =>
 app.get(/^\/(en|de)\/app(\/.*)?$/, protect.panelGuard, maintenanceGuard, (req, res) => {
   const lang = req.path.slice(1, 3);
   pages.setLangCookie(res, lang);
+  // Nicht die vollständige Unteradresse (`/de/app/servers/7`): Für die Statistik ist "das
+  // Dashboard geöffnet" ein Ereignis, keins je Reiter, den der Browser-Router danach anzeigt.
+  traffic.track(req, `/${lang}/app`);
   res.type('html').send(renderApp(lang));
 });
 
 app.get('/:lang(en|de)', maintenanceGuard, (req, res) => {
   pages.setLangCookie(res, req.params.lang);
+  traffic.track(req, `/${req.params.lang}`);
   res.type('html').send(renderPage('', req.params.lang));
 });
 
@@ -813,6 +818,7 @@ app.get('/:lang(en|de)/:page', maintenanceGuard, (req, res, next) => {
   // Fehlerseite auf Deutsch sehen und danach auf Deutsch weitersurfen.
   pages.setLangCookie(res, lang);
   if (!PAGES[page]) return next();
+  traffic.track(req, `/${lang}/${page}`);
   res.type('html').send(renderPage(page, lang));
 });
 
@@ -1463,6 +1469,8 @@ jobs.every(
     // Und genauso der Standort-Verlauf: 30 Tage reichen für jede sinnvolle Rückschau, danach
     // wächst die Tabelle ohne Nutzen weiter.
     nodes.cleanupHistory();
+    // Und die Besucher-Statistik: sechs Monate Rückschau, danach weg.
+    traffic.cleanup();
     // Höchstens eine Sicherung am Tag, und nur wenn sie eingeschaltet ist. Die Entscheidung
     // fällt an der jüngsten Datei – ein Neustart um drei Uhr nachts vergisst so keinen Tag.
     const made = backup.dailyTick();
