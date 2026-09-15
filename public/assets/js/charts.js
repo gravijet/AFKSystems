@@ -76,7 +76,7 @@ function grid(box, max, format, width) {
 }
 
 const wrap = (width, height, inner, klass = '') =>
-  `<svg class="chart ${klass}" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none"
+  `<svg class="chart ${klass}" viewBox="0 0 ${width} ${height}"
     role="img" xmlns="${NS}">${inner}</svg>`;
 
 /**
