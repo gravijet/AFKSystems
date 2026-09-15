@@ -801,20 +801,10 @@ export function switchLang(next) {
   location.href = `/${next}${rest}${location.search}${location.hash}`;
 }
 
-// Die Sprachwahl in der Kopfleiste sind gewöhnliche Links (/en…, /de…) – damit sie auch dann
-// funktionieren, wenn kein JavaScript läuft, und für Suchmaschinen echte Adressen sind. Klickt
-// jemand darauf, während JavaScript läuft, merken wir die Wahl vorher.
-document.addEventListener('click', (event) => {
-  const button = event.target.closest('[data-lang]');
-  if (button && LANGS.includes(button.dataset.lang)) {
-    event.preventDefault();
-    switchLang(button.dataset.lang);
-    return;
-  }
-  const link = event.target.closest('.langs a[href^="/"]');
-  if (!link) return;
-  const wanted = link.getAttribute('href').slice(1, 3);
-  if (LANGS.includes(wanted)) writeStore(wanted);
-});
+// Innerhalb des Dashboards steht die Sprachwahl als Auswahlfeld unter Einstellungen (siehe
+// views/settings.js) und ruft `switchLang()` direkt auf. Die Sprachlinks der öffentlichen Seiten
+// (`_nav.html`, `.language-picker [data-language]`) bedient stattdessen `landing.js` – ui.js wird
+// dort gar nicht geladen. Ein früherer Klick-Handler hier zielte auf `[data-lang]`/`.langs`,
+// Attribute und Klassen, die es in keiner Vorlage je gab, und griff deshalb nie.
 
 applyTheme();
