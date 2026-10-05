@@ -5,3 +5,20 @@ data/
 # Vorgepackte Assets entstehen beim Ausrollen aus den Quelldateien daneben (scripts/protect-assets.mjs).
 public/assets/**/*.br
 public/assets/**/*.gz
+
+**/node_modules/
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!**/.env.example
+!**/.env.sample
+!**/.env.template
+.claude/
+.codex/
+*.jks
+*.keystore
+key.properties
+google-services.json
+firebase-service-account.json
+auth_cache/

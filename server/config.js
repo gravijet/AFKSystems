@@ -43,7 +43,7 @@ const bool = (key, fallback) => {
 export const config = {
   port: num('PORT', 3010),
   host: process.env.HOST || '127.0.0.1',
-  publicUrl: (process.env.PUBLIC_URL || 'https://example.invalid').replace(/\/+$/, ''),
+  publicUrl: (process.env.PUBLIC_URL || 'http://localhost:3010').replace(/\/+$/, ''),
   brand: process.env.BRAND || 'AFKSystems',
 
   // Nur bekannte Reverse-Proxies dürfen die Client-IP über X-Forwarded-For bestimmen. Die
