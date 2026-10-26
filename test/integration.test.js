@@ -1993,7 +1993,7 @@ test('transient initial errors retry with backoff while expired authentication d
   assert.equal(supervisor.planRestart(bot, { wasOnline: 1000 }), false);
 });
 
-test('bot incidents suppress short outages, survive restarts, isolate accounts and report recovery once', async (t) => {
+test('bot incidents suppress short outages, survive restarts, isolate accounts and stay quiet on recovery', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const user = createUser();
   const profile = createProfile(user, billing.planBySlug('premium'));
@@ -2002,10 +2002,10 @@ test('bot incidents suppress short outages, survive restarts, isolate accounts a
   const notices = () => notify.notificationsFor(user.id, 'en');
   notify.botState(event(1, 'error'));
   notify.botState(event(1, 'online'));
-  t.mock.timers.tick(60_000);
+  t.mock.timers.tick(300_000);
   assert.equal(notices().length, 0, 'brief outages and ordinary online events stay quiet');
   notify.botState(event(1, 'error'));
-  t.mock.timers.tick(60_000);
+  t.mock.timers.tick(300_000);
   assert.equal(notices().length, 1);
   assert.match(notices()[0].body, /Connection reset/);
   notify.botState(event(1, 'reconnecting'));
@@ -2013,21 +2013,18 @@ test('bot incidents suppress short outages, survive restarts, isolate accounts a
   t.mock.timers.tick(600_000);
   assert.equal(notices().length, 1, 'one incident is not a new problem every ten minutes');
   notify.botState(event(2, 'error'));
-  t.mock.timers.tick(60_000);
+  t.mock.timers.tick(300_000);
   assert.equal(notices().length, 2, 'same names on different account or server keys stay independent');
   notify.botState(event(1, 'online'));
   t.mock.timers.tick(30_000);
-  assert.equal(notices().filter((entry) => entry.tone === 'ok').length, 1);
-  notify.botState(event(1, 'online'));
-  t.mock.timers.tick(30_000);
-  assert.equal(notices().length, 3);
+  assert.equal(notices().filter((entry) => entry.tone === 'ok').length, 0, 'recovery adds no extra notification');
   const freshNotify = await import(`../server/notify.js?incident-test=${Date.now()}`);
   freshNotify.botState(event(2, 'error'));
-  t.mock.timers.tick(60_000);
-  assert.equal(notices().length, 3);
+  t.mock.timers.tick(300_000);
+  assert.equal(notices().length, 2, 'an incident that was already reported is not reported again after a reload');
   freshNotify.botState(event(2, 'online'));
   t.mock.timers.tick(30_000);
-  assert.equal(notices().filter((entry) => entry.tone === 'ok').length, 2);
+  assert.equal(notices().length, 2);
 });
 
 test('location failures are reported once until recovery, including across module reloads', async (t) => {

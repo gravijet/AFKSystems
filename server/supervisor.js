@@ -321,10 +321,20 @@ const AUTH_WAIT_MS = 10 * 60 * 1000;
 const RESTART_MAX_TRIES = 8;
 
 const TRANSIENT_START_ERRORS = [
+  // os error 11 = EAGAIN ("Resource temporarily unavailable"): vorübergehend, einfach neu verbinden.
+  /os error 11\b|eagain|resource temporarily unavailable|would block|broken pipe|epipe|os error (?:104|110|111|113)\b/i,
   /timed?\s*out|timeout|zeitüberschreitung|econnreset|econnrefused|etimedout|eai_again/i,
   /connection (?:refused|reset|closed)|network|netzwerk|standort|client beendet/i,
   /server (?:restarting|startet neu)|bitte warte|please wait|too (?:many connections|fast)/i,
   /already (?:connected|logged in)|not logged into your minecraft account|invalid session/i,
+];
+
+/**
+ * Gründe, bei denen ein weiterer Versuch nichts ändert (Bann, Whitelist, falsche Version).
+ * Alles andere – auch Unbekanntes – wird beim ersten Join neu versucht, statt sofort "Error" zu melden.
+ */
+const PERMANENT_START_ERRORS = [
+  /banned|gebannt|\bban\b|whitelist|unsupported|outdated (?:client|server)|incompatible|version mismatch|falsche version|unknown host|ungültige adresse/i,
 ];
 
 // Transport and service failures say nothing about whether a refresh token is valid.
@@ -2051,7 +2061,15 @@ class Supervisor extends EventEmitter {
     if (chain?.explicit && chain.timer) return true;
     // Auch beim ersten Join können Netzwerkfehler oder kurze Serversperren auftreten.
     // Echte Anmeldefehler kennzeichnet der Client am Konto; sie brauchen einen Menschen.
-    if (!chain && !wasOnline && !bot.transientAuthFailure && !TRANSIENT_START_ERRORS.some((pattern) => pattern.test(bot.lastError || ''))) return false;
+    if (
+      !chain &&
+      !wasOnline &&
+      !bot.transientAuthFailure &&
+      !TRANSIENT_START_ERRORS.some((pattern) => pattern.test(bot.lastError || '')) &&
+      PERMANENT_START_ERRORS.some((pattern) => pattern.test(bot.lastError || ''))
+    ) {
+      return false;
+    }
     // Eine abgelaufene Microsoft-Anmeldung wiederholt sich nicht von selbst. Sie braucht einen
     // Menschen mit einem Browser, und bis dahin wäre jeder Versuch nur ein weiterer Gerätecode.
     if (bot.state === 'auth' || bot.account.status === 'error') return false;

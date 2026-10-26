@@ -451,9 +451,9 @@ export const macroSaid = (userId, profileName, text) => {
     { de: `Macro auf "${profileName}"`, en: `Macro on "${profileName}"` },
     { de: body, en: body },
     {
-      key: `macro-${profileName}-${body.slice(0, 80)}`,
+      key: `macro-${profileName}`,
       color: COLORS.info,
-      quiet: QUIET.state,
+      quiet: 30 * 60 * 1000,
       event: 'bot',
       url: `${config.publicUrl}/en/app#/servers`,
     }
@@ -634,7 +634,7 @@ export const botTrouble = (userId, name, reason) =>
   );
 
 
-// Ein Aussetzer darf sich 60 Sekunden lang selbst erholen. Entwarnung erst nach 30
+// Ein Aussetzer darf sich 5 Minuten lang selbst erholen. Entwarnung erst nach 30
 // Sekunden im Spiel, damit eine flackernde Verbindung keine Folge von Meldungen erzeugt.
 const botNoticeTimers = new Map();
 export function botState({ userId, key, state }) {
@@ -665,16 +665,8 @@ export function botState({ userId, key, state }) {
   }
   if (state.state === 'online') {
     if (!existing) return clear();
-    later('recovery', 30_000, () => {
-      const recovered = incidents.close(incidentKey);
-      if (!recovered?.notified_at) return;
-      const { name, profileName, profileId } = recovered.data;
-      void notify(userId,
-        { de: `Bot "${name}" läuft wieder`, en: `Bot "${name}" is back online` },
-        { de: `Auf "${profileName}" ist die Verbindung wieder stabil.`, en: `The connection on "${profileName}" is stable again.` },
-        { key: `${incidentKey}:recovered`, quiet: QUIET.event, color: COLORS.ok, event: 'bot',
-          url: `${config.publicUrl}/en/app#/servers/${profileId}/connect` });
-    });
+    // Entwarnung ohne eigene Meldung: Die Störungsmeldung reicht, jede weitere ist Rauschen.
+    later('recovery', 30_000, () => { incidents.close(incidentKey); });
     return;
   }
   const problem = ['error', 'disconnected', 'reconnecting', 'auth'].includes(state.state);
@@ -690,14 +682,14 @@ export function botState({ userId, key, state }) {
     if (incidents.markNotified(incidentKey)) void accountBroken(userId, state.account || 'Minecraft', reason);
     return;
   }
-  later('problem', Math.max(0, 60_000 - (Date.now() - incident.created_at)), () => {
+  later('problem', Math.max(0, 5 * 60_000 - (Date.now() - incident.created_at)), () => {
     const current = incidents.get(incidentKey);
     if (!current || !incidents.markNotified(incidentKey)) return;
     const { name, profileName, profileId, reason } = current.data;
     void notify(userId,
       { de: `Bot "${name}" hat ein Problem`, en: `Bot "${name}" has a problem` },
-      { de: `Auf "${profileName}" ist die Verbindung seit mindestens einer Minute unterbrochen.\n${reason}`,
-        en: `The connection on "${profileName}" has been interrupted for at least one minute.\n${reason}` },
+      { de: `Auf "${profileName}" ist die Verbindung seit mindestens fünf Minuten unterbrochen.\n${reason}`,
+        en: `The connection on "${profileName}" has been interrupted for at least five minutes.\n${reason}` },
       { key: incidentKey, quiet: QUIET.event, color: COLORS.bad, event: 'bot',
         url: `${config.publicUrl}/en/app#/servers/${profileId}/connect` });
   });
