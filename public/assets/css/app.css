@@ -3598,6 +3598,21 @@ hr.rule {
   flex-direction: column;
   min-height: 26rem;
   max-height: min(70vh, 44rem);
+  min-width: 0;
+}
+.connection-layout {
+  container-type: inline-size;
+}
+.connection-split {
+  grid-template-columns: minmax(0, 1fr);
+}
+@container (min-width: 60rem) {
+  .connection-split {
+    grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+  }
+}
+.connection-split > .panel {
+  min-width: 0;
 }
 .console-panel > .body {
   flex: 1;
@@ -3606,11 +3621,33 @@ hr.rule {
 .console-panel .console {
   border-radius: 0;
   box-shadow: none;
-  min-height: 0;
+  min-height: 8rem;
+}
+.console-panel > header,
+.console-panel .chat-tools,
+.console-panel .sender-row,
+.console-panel .send-row {
+  flex-shrink: 0;
+}
+.console-panel > header {
+  flex-wrap: wrap;
 }
 .recv-row {
   padding: 0.6rem 1.1rem;
   box-shadow: inset 0 -1px 0 var(--line-soft);
+  max-height: 7rem;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.recv-row .check {
+  min-width: 0;
+  max-width: 100%;
+}
+.recv-row .check span {
+  overflow-wrap: anywhere;
+}
+.recv-row input {
+  flex-shrink: 0;
 }
 .console-panel #export[aria-disabled='true'] {
   opacity: 0.45;
@@ -3645,13 +3682,29 @@ hr.rule {
   padding: 0 0.6rem 0 1.9rem;
   font-size: 0.8125rem;
 }
-.send-row {
-  gap: 0.5rem;
-  padding: 0.7rem 1.1rem;
+.sender-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
+  padding: 0.6rem 1.1rem 0;
   box-shadow: inset 0 1px 0 var(--line-soft);
 }
+.sender-row select {
+  flex: 1 1 12rem;
+  min-width: 0;
+  width: 0;
+  max-width: 100%;
+  padding-right: 2rem;
+  text-overflow: ellipsis;
+}
+.send-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.5rem;
+  padding: 0.7rem 1.1rem;
+}
 .send-row input[type='text'] {
-  flex: 1;
   min-width: 0;
 }
 

@@ -954,6 +954,8 @@ export const S = {
   'srv.chatSend': { en: 'Send', de: 'Senden' },
   'srv.chatPlaceholder': { en: 'Message or /command …', de: 'Nachricht oder /Befehl …' },
   'srv.chatAll': { en: 'to every selected account', de: 'an alle ausgewählten Konten' },
+  'srv.chatFrom': { en: 'Chat from', de: 'Chat von' },
+  'srv.chatSender': { en: 'Send with', de: 'Senden mit' },
   'srv.chatChooseAccount': { en: 'Select at least one account to send to.', de: 'Wähle mindestens ein Konto zum Senden aus.' },
   'srv.chatEmpty': { en: 'No messages yet.', de: 'Noch keine Nachrichten.' },
   'srv.chatLimit': { en: 'Chat history per bot', de: 'Chatverlauf je Bot' },

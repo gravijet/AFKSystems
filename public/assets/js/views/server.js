@@ -445,7 +445,7 @@ async function tabConnect(root, profile) {
       <div class="body connection-diagnosis-grid" id="connection-diagnosis" aria-live="polite"></div>
     </section>
 
-    <div class="split">
+    <div class="connection-layout"><div class="split connection-split">
       <section class="panel" id="bots-panel">
         <header>
           <h3>${escapeHtml(tr('ov.col.account'))}</h3>
@@ -487,39 +487,43 @@ async function tabConnect(root, profile) {
           </div>
           ${
             members.length > 1
-              ? `<div class="row wrap recv-row">
+              ? `<div class="row wrap recv-row" role="group" aria-label="${escapeHtml(tr('srv.chatFrom'))}">
+                  <span class="small muted">${escapeHtml(tr('srv.chatFrom'))}</span>
                   ${members
                     .map(
                       (member) => `<label class="check small">
                         <input type="checkbox" data-recv="${member.account_id}" checked>
-                        ${escapeHtml(accountLabel(member))}</label>`
+                        <span>${escapeHtml(accountLabel(member))}</span></label>`
                     )
                     .join('')}
                 </div>`
               : ''
           }
           <div class="console grow" id="chat" data-empty="${escapeHtml(tr('srv.chatEmpty'))}"></div>
-          <div class="row send-row">
+          ${
+            members.length > 1
+              ? `<div class="sender-row">
+                  <label class="small muted" for="sender">${escapeHtml(tr('srv.chatSender'))}</label>
+                  <select id="sender" class="mini">
+                    <option value="">${escapeHtml(tr('srv.chatAll'))}</option>
+                    ${members.map((member) => `<option value="${member.account_id}">${escapeHtml(accountLabel(member))}</option>`).join('')}
+                  </select>
+                </div>`
+              : ''
+          }
+          <div class="send-row">
             <input type="text" id="msg" placeholder="${escapeHtml(tr('srv.chatPlaceholder'))}"
               autocomplete="off" aria-label="${escapeHtml(tr('tab.chat'))}"
               aria-keyshortcuts="Enter ArrowUp ArrowDown" title="${escapeHtml(tr('ch.historyHint'))}">
-            ${
-              members.length > 1
-                ? `<select id="sender" class="mini" style="min-width:8rem">
-                    <option value="">${escapeHtml(tr('srv.chatAll'))}</option>
-                    ${members
-                      .map(
-                        (member) => `<option value="${member.account_id}">${escapeHtml(accountLabel(member))}</option>`
-                      )
-                      .join('')}
-                  </select>`
-                : ''
-            }
-            <button class="btn btn-primary" id="send">${icon('send')}</button>
+            <button class="btn btn-primary" id="send" aria-label="${escapeHtml(tr('srv.chatSend'))}">${icon('send')}</button>
           </div>
         </div>
       </section>
-    </div>`;
+    </div></div>`;
+
+  const view = root.querySelector('.connection-layout');
+  const currentView = () => view.isConnected && state.route.name === 'server' &&
+    state.route.id === profile.id && ['connect', 'chat'].includes(state.route.tab);
 
   // ------------------------------------------------------------ Konten
 
@@ -959,7 +963,7 @@ async function tabConnect(root, profile) {
     } finally {
       if (request === statusRequest) {
         targetLoading = false;
-        if (state.route.name === 'server' && state.route.id === profile.id) paintDiagnosis();
+        if (currentView()) paintDiagnosis();
       }
     }
   }
@@ -1180,7 +1184,7 @@ async function tabConnect(root, profile) {
     if (chatFrame !== null) return;
     chatFrame = requestAnimationFrame(() => {
       chatFrame = null;
-      paintChat();
+      if (currentView()) paintChat();
     });
   };
 
@@ -1244,12 +1248,18 @@ async function tabConnect(root, profile) {
   try {
     const data = await api(`/profiles/${profile.id}/chat`);
     for (const line of data.lines) {
-      const key = `${profile.id}:${line.account_id}`;
-      const list = state.lines.get(key) || [];
-      if (!list.some((entry) => entry.t === line.t && entry.text === line.text)) {
-        list.push({ t: line.t, type: line.type, text: line.text });
+      // The API merges shared chat. Keep a copy for every account that heard it so filtering
+      // after a reload agrees with live chat, which arrives in separate account buffers.
+      const accounts = line.type === 'chat' && line.accounts?.length ? line.accounts : [line.account_id];
+      for (const accountId of accounts) {
+        if (!members.some((member) => member.account_id === accountId)) continue;
+        const key = `${profile.id}:${accountId}`;
+        const list = state.lines.get(key) || [];
+        if (!list.some((entry) => entry.t === line.t && entry.type === line.type && entry.text === line.text)) {
+          list.push({ t: line.t, type: line.type, text: line.text });
+        }
+        state.lines.set(key, list);
       }
-      state.lines.set(key, list);
     }
     for (const [key, list] of state.lines) {
       list.sort((a, b) => a.t - b.t);
@@ -1258,6 +1268,7 @@ async function tabConnect(root, profile) {
   } catch {
     /* Verlauf ist nur Beiwerk */
   }
+  if (!currentView()) return;
 
   paintAuth();
   paintBots();
@@ -1565,20 +1576,26 @@ async function tabConnect(root, profile) {
   // ------------------------------------------------------------ Live
 
   const refreshBots = debounce(async () => {
-    if (state.route.name !== 'server' || state.route.id !== profile.id) return;
-    await refresh({ accounts: false });
+    if (!currentView()) return;
+    try {
+      await refresh({ accounts: false });
+    } catch (error) {
+      if (currentView()) fail(error);
+      return;
+    }
+    if (!currentView()) return;
     const fresh = profileById(profile.id);
     if (!fresh) return;
     profile.accounts = fresh.accounts;
     profile.online = fresh.online;
-    members.length = 0;
-    members.push(...fresh.accounts);
+    members.splice(0, members.length, ...fresh.accounts);
     paintBots();
     paintAuth();
     paintDiagnosis();
   }, 400);
 
   state.onLive = (event) => {
+    if (!currentView()) return;
     if (event.type === 'line' && event.key.startsWith(`${profile.id}:`)) scheduleChat();
     if (event.type === 'state' && event.key.startsWith(`${profile.id}:`)) {
       paintAuth();
