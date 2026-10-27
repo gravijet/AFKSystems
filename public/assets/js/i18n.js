@@ -2221,6 +2221,10 @@ export const S = {
     en: 'The scoreboard is read once when you ask for it – it is not a live feed.',
     de: 'Das Scoreboard wird bei jeder Abfrage einmal gelesen – es läuft nicht live mit.',
   },
+  'vw.liveHint': {
+    en: 'All connected accounts refresh every 5 seconds while this tab is visible.',
+    de: 'Alle verbundenen Accounts werden alle 5 Sekunden aktualisiert, solange dieser Reiter sichtbar ist.',
+  },
   'vw.slots': { en: '{n} slots', de: '{n} Felder' },
   'vw.clickSlot': { en: 'Click a slot to use it.', de: 'Klick ein Feld an, um es zu benutzen.' },
   'vw.menuBlind': {

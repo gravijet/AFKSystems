@@ -1,6 +1,6 @@
 {
   "name": "afksystems-agent",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "private": true,
   "description": "Standort-Agent: führt AFKSystems-Bots auf einer eigenen Maschine aus.",
   "type": "module",

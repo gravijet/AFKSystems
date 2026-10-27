@@ -16,6 +16,8 @@ const binaries = await import('../server/binaries.js');
 const billing = await import('../server/billing.js');
 const { supervisor } = await import('../server/supervisor.js');
 const { macros } = await import('../server/macros.js');
+const { userDir } = await import('../server/config.js');
+const { botScope, clientHome } = await import('../agent/client-home.js');
 after(() => { supervisor.shutdown(); db.close(); fs.rmSync(root, { recursive: true, force: true }); });
 
 function vi(value) {
@@ -95,11 +97,14 @@ async function minecraft(t) {
 
 test('four real clients deliver commands despite destination login limits', { skip: !client }, async t => {
   const mc = await minecraft(t);
-  fs.symlinkSync(path.resolve(client), path.join(root, 'bin', 'afk-linux'));
+  fs.symlinkSync(path.resolve(client), path.join(root, 'bin', 'premium-items-afk-linux'));
   await binaries.detect();
   const now = Date.now();
   const uid = db.prepare("INSERT INTO users(email,username,password_hash,created_at) VALUES('multi@example.test','multi','test',?)").run(now).lastInsertRowid;
   const user = db.prepare('SELECT * FROM users WHERE id=?').get(uid);
+  const legacyMovement = path.join(userDir(uid), 'afksystems/movement.json');
+  const legacy = JSON.stringify({ homeEnabled: true, home: { x: 200, y: 16, z: 200 } });
+  fs.writeFileSync(legacyMovement, legacy);
   const plan = billing.planBySlug('ultra');
   db.prepare('UPDATE plans SET max_accounts=10 WHERE id=?').run(plan.id);
   const pid = db.prepare(`INSERT INTO profiles(user_id,name,slug,host,port,mc_version,plan_id,paid_until,join_delay,chat_delay,created_at)
@@ -129,6 +134,13 @@ test('four real clients deliver commands despite destination login limits', { sk
   await until(() => mc.received.filter(r => r.text.startsWith('manual-') || r.text.startsWith('chat-')).length === 8, 'manual commands');
   for (const bot of bots) assert.deepEqual(mc.received.filter(r => r.name === bot.account.name).map(r => r.text),
     ['join-test', `manual-${bot.account.name}`, `chat-${bot.account.name}`]);
+  await Promise.all(bots.map(bot => bot.local('home', 'set', 'movement', { confirm: true })));
+  const movementFiles = bots.map(bot => path.join(clientHome(userDir(uid), botScope(pid, bot.account.id)), 'afksystems/movement.json'));
+  await until(() => movementFiles.every(file => fs.existsSync(file)), 'each real client stores its own Home');
+  await bots[0].local('home', 'on', 'movement', { confirm: true });
+  await until(() => JSON.parse(fs.readFileSync(movementFiles[0], 'utf8')).homeEnabled, 'first account enables Home');
+  assert.deepEqual(movementFiles.map(file => JSON.parse(fs.readFileSync(file, 'utf8')).homeEnabled), [true, false, false, false]);
+  assert.equal(fs.readFileSync(legacyMovement, 'utf8'), legacy, 'legacy movement cannot be overwritten by any of the four clients');
   const timer = db.prepare(`INSERT INTO macros(profile_id,name,event,config,actions,accounts,created_at)
     VALUES(?,'Timer','timer','{"interval_sec":5}',?,?,?)`).run(pid,
       JSON.stringify([{ type: 'chat', text: '/timer-one' }]), JSON.stringify([bots[0].account.id]), now).lastInsertRowid;

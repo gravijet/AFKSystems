@@ -27,6 +27,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { db } from './db.js';
 import { userDir } from './config.js';
+import { clientHome } from '../agent/client-home.js';
 import { accountId, parseAccount, writeAtomic, fileHash, olderAccount } from './account-files.js';
 
 /** Wie lange ein Standort ohne Lebenszeichen noch als erreichbar gilt. */
@@ -110,6 +111,7 @@ class NodeLink {
           // Welche Minecraft-Versionen dieser Standort texturiert zeichnen kann. Ohne die JAR
           // bekommt ein Bot dort keinen `--pov-web`-Viewer, egal was im Panel gebucht ist.
           mc: Array.isArray(message.mc) ? message.mc : [],
+          scopedState: message.scoped_state === true,
         };
         db.prepare('UPDATE nodes SET agent_version = ?, last_seen = ? WHERE id = ?').run(
           this.info.version,
@@ -148,7 +150,7 @@ class NodeLink {
         // ein Standort mit einem Bot eines beliebigen Kunden die Anmeldedatei *jedes* Kunden neu.
         // Ein übernommener oder schlicht fehlerhafter Standort hätte damit alle Minecraft-Konten
         // des Panels überschreiben können.
-        if (this.servesUser(message.user_id)) writeBackFiles(this, message.user_id, message.files);
+        if (this.servesUser(message.user_id)) writeBackFiles(this, message.user_id, message.files, message.job);
         break;
 
       case 'exit': {
@@ -302,23 +304,29 @@ export function jobCount(nodeId) {
  * gemerkten Bewegungspunkte. Sie reisen mit, weil der Client sie zum Anmelden braucht und der
  * andere Rechner keine Datenbank hat.
  */
-export function spawn(nodeId, { file, args, userId, env = {}, pov = null }) {
+export function spawn(nodeId, { file, args, userId, env = {}, pov = null, scope = null }) {
   const link = linkOf(nodeId);
   if (!link) {
     const node = db.prepare('SELECT name FROM nodes WHERE id = ?').get(nodeId);
     throw new Error(`Der Standort "${node?.name || nodeId}" ist gerade nicht erreichbar.`);
   }
+  if (scope !== null && !link.info?.scopedState) {
+    throw new Error('Der Standort-Agent muss für getrennte Account-Einstellungen aktualisiert werden.');
+  }
+  clientHome(userDir(userId), scope); // Validate the scope before registering a job.
   const job = crypto.randomUUID();
   const proc = new RemoteProcess(link, job, userId);
+  proc.scope = scope;
   const accountIndex = args.indexOf('--account');
   const name = accountIndex >= 0 ? args[accountIndex + 1] : null;
-  const files = readUserFiles(userId, name);
+  const files = readUserFiles(userId, name, scope);
   proc.fileVersions = new Map(Object.entries(files).map(([name, content]) => [name, fileHash(content)]));
   if (!proc.fileVersions.has('movement.json')) proc.fileVersions.set('movement.json', null);
   // A second bot must not overwrite credentials that the first client just refreshed locally.
   for (const existing of link.jobs.values()) {
     if (existing.userId !== Number(userId)) continue;
     for (const [name, revision] of existing.fileVersions || []) {
+      if (name === 'movement.json' && existing.scope !== scope) continue;
       if (!proc.fileVersions.has(name)) continue;
       // A browser renewal since the earlier spawn must still reach the location.
       if (proc.fileVersions.get(name) !== revision) continue;
@@ -334,6 +342,7 @@ export function spawn(nodeId, { file, args, userId, env = {}, pov = null }) {
     args,
     env,
     user_id: userId,
+    scope,
     files,
     // `{ port, mc }`, wenn der texturierte Viewer laufen soll. Die zwei Argumente dafür setzt der
     // Standort selbst ein: Der Pfad zur Minecraft-JAR gilt nur auf seiner Maschine, und ob sie
@@ -393,7 +402,7 @@ export function heartbeat() {
 /** Nur das, was der Client wirklich liest: Konten und die gemerkten Bewegungspunkte. */
 const WANTED = /^(accounts\/[A-Za-z0-9._-]{1,64}\.json|movement\.json)$/;
 
-function readUserFiles(userId, accountName) {
+function readUserFiles(userId, accountName, scope) {
   const base = path.join(userDir(userId), 'afksystems');
   const out = {};
   const walk = (dir, prefix) => {
@@ -410,6 +419,7 @@ function readUserFiles(userId, accountName) {
         continue;
       }
       if (!WANTED.test(relative)) continue;
+      if (relative === 'movement.json' && scope !== null) continue;
       if (relative.startsWith('accounts/') && relative !== `accounts/${accountName}.json`) continue;
       try {
         const content = fs.readFileSync(path.join(dir, entry.name), 'utf8');
@@ -422,6 +432,13 @@ function readUserFiles(userId, accountName) {
     }
   };
   walk(base, '');
+  if (scope !== null) {
+    try {
+      const content = fs.readFileSync(path.join(clientHome(userDir(userId), scope), 'afksystems', 'movement.json'), 'utf8');
+      JSON.parse(content);
+      out['movement.json'] = content;
+    } catch { /* No Home or route configured for this bot yet. */ }
+  }
   return out;
 }
 
@@ -432,15 +449,20 @@ function readUserFiles(userId, accountName) {
  * geprüft und nicht bloß zusammengesetzt. Ein Standort, der `../../etc/passwd` schickt, schreibt
  * damit nichts; er schreibt gar nichts.
  */
-function writeBackFiles(link, userId, files) {
+function writeBackFiles(link, userId, files, jobId) {
   const id = Number(userId);
   if (!Number.isInteger(id) || id <= 0 || !files || typeof files !== 'object') return;
-  const base = path.join(userDir(id), 'afksystems');
   for (const [name, content] of Object.entries(files)) {
     if (!WANTED.test(name) || typeof content !== 'string' || content.length > 256 * 1024) continue;
-    const target = path.join(base, name);
-    if (!target.startsWith(base + path.sep)) continue;
-    const owners = [...link.jobs.values()].filter((job) => job.userId === id && job.fileVersions?.has(name));
+    const sourceJob = link.jobs.get(jobId);
+    if (sourceJob && sourceJob.userId !== id) continue;
+    if (name === 'movement.json' && !sourceJob && [...link.jobs.values()].some(job => job.userId === id && job.scope)) continue;
+    const scope = name === 'movement.json' ? sourceJob?.scope || null : null;
+    const targetBase = path.join(clientHome(userDir(id), scope), 'afksystems');
+    const target = path.join(targetBase, name);
+    if (!target.startsWith(targetBase + path.sep)) continue;
+    const owners = [...link.jobs.values()].filter((job) => job.userId === id && job.fileVersions?.has(name)
+      && (name !== 'movement.json' || job.scope === scope));
     if (!owners.length) continue;
     try {
       let current = null;

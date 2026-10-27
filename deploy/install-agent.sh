@@ -44,6 +44,7 @@ echo "== Dateien nach $ZIEL =="
 mkdir -p "$ZIEL"
 # Nur der Agent gehört auf einen Standort. Panel, Datenbank und Discord-Bot bleiben, wo sie sind.
 install -m 0644 "$QUELLE/agent/index.js" "$ZIEL/index.js"
+install -m 0644 "$QUELLE/agent/client-home.js" "$ZIEL/client-home.js"
 install -m 0644 "$QUELLE/agent/package.json" "$ZIEL/package.json"
 mkdir -p "$ZIEL/data"
 

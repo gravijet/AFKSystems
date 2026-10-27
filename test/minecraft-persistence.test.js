@@ -17,6 +17,7 @@ const binaries = await import('../server/binaries.js');
 const { Bot, supervisor } = await import('../server/supervisor.js');
 const billing = await import('../server/billing.js');
 const { writeAtomic } = await import('../server/account-files.js');
+const { botScope, clientHome, prepareClientHome } = await import('../agent/client-home.js');
 after(() => { db.close(); fs.rmSync(root, { recursive: true, force: true }); });
 let serial = 0;
 const credentials = (name, revision = 1, uuid = '123456781234123412341234567890ab') => JSON.stringify({
@@ -51,6 +52,57 @@ function node(t) {
 function start(location, owner, acc) {
   return agents.spawn(location.id, { file: 'afk-linux', userId: owner.id, args: ['--account', acc.name] });
 }
+
+test('Home and routes belong to one server/account while refreshed logins stay shared', () => {
+  const owner = user(), a = account(owner), b = account(owner);
+  const base = userDir(owner.id);
+  const legacy = path.join(base, 'afksystems/movement.json');
+  writeAtomic(legacy, '{"homeEnabled":true,"home":{"x":100}}');
+  const first = prepareClientHome(base, botScope(11, a.id));
+  const otherAccount = prepareClientHome(base, botScope(11, b.id));
+  const otherServer = prepareClientHome(base, botScope(16, a.id));
+  assert.equal(new Set([first, otherAccount, otherServer]).size, 3);
+  for (const home of [first, otherAccount, otherServer]) {
+    assert.equal(fs.existsSync(path.join(home, 'afksystems/movement.json')), false, 'unowned legacy Home must not move other accounts');
+    assert.equal(fs.readFileSync(path.join(home, `afksystems/accounts/${a.name}.json`), 'utf8'), a.text);
+  }
+  const file = path.join(first, 'afksystems/movement.json');
+  writeAtomic(file, '{"homeEnabled":true,"home":{"x":3}}');
+  assert.equal(prepareClientHome(base, botScope(11, a.id)), first);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{"homeEnabled":true,"home":{"x":3}}');
+  writeAtomic(path.join(otherServer, `afksystems/accounts/${a.name}.json`), credentials(a.name, 2));
+  assert.equal(fs.readFileSync(a.file, 'utf8'), credentials(a.name, 2), 'client refresh still reaches the canonical login');
+  assert.equal(fs.readFileSync(legacy, 'utf8'), '{"homeEnabled":true,"home":{"x":100}}');
+  assert.throws(() => clientHome(base, '../escape'));
+});
+
+test('remote movement snapshots cannot overwrite another account or server', t => {
+  const owner = user(), a = account(owner), b = account(owner), location = node(t);
+  assert.throws(() => agents.spawn(location.id, { file: 'afk-linux', userId: owner.id,
+    args: ['--account', a.name], scope: botScope(11, a.id) }), /aktualisiert/);
+  location.socket.emit('message', JSON.stringify({ type: 'hello', scoped_state: true }));
+  const spawn = (acc, pid) => agents.spawn(location.id, { file: 'afk-linux', userId: owner.id,
+    args: ['--account', acc.name], scope: botScope(pid, acc.id) });
+  const first = spawn(a, 11), second = spawn(b, 11), third = spawn(a, 16);
+  const send = (job, text) => location.socket.emit('message', JSON.stringify({ type: 'files', job,
+    user_id: owner.id, files: { 'movement.json': text } }));
+  send(first.job, '{"home":{"x":1}}');
+  send(second.job, '{"home":{"x":2}}');
+  send(third.job, '{"home":{"x":3}}');
+  for (const [proc, x] of [[first, 1], [second, 2], [third, 3]]) {
+    const target = path.join(clientHome(userDir(owner.id), proc.scope), 'afksystems/movement.json');
+    assert.equal(fs.readFileSync(target, 'utf8'), `{"home":{"x":${x}}}`);
+  }
+  send('unknown-job', '{"home":{"x":99}}');
+  location.send({ 'movement.json': '{"home":{"x":99}}' }, owner.id);
+  assert.equal(fs.existsSync(path.join(userDir(owner.id), 'afksystems/movement.json')), false);
+  spawn(a, 11);
+  assert.equal(location.socket.messages.at(-1).files['movement.json'], undefined, 'a running job already has this scope');
+  const fresh = node(t);
+  fresh.socket.emit('message', JSON.stringify({ type: 'hello', scoped_state: true }));
+  agents.spawn(fresh.id, { file: 'afk-linux', userId: owner.id, args: ['--account', a.name], scope: first.scope });
+  assert.equal(fresh.socket.messages.at(-1).files['movement.json'], '{"home":{"x":1}}');
+});
 
 test('remote command callbacks keep concurrent jobs separate and reject a closed location', t => {
   const owner = user(), first = account(owner, 'RemoteAlpha'), second = account(owner, 'RemoteBeta');

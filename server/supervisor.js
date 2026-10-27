@@ -14,6 +14,7 @@ import { StringDecoder } from 'node:string_decoder';
 import fs from 'node:fs';
 import path from 'node:path';
 import { config, paths, userDir } from './config.js';
+import { botScope, prepareClientHome } from '../agent/client-home.js';
 import { db, getSetting } from './db.js';
 import * as binaries from './binaries.js';
 import * as agents from './agents.js';
@@ -939,7 +940,8 @@ class Bot extends EventEmitter {
 
     const args = this.args(caps);
     this.usesEvents = Boolean(caps.events);
-    const home = userDir(this.userId);
+    const scope = botScope(this.profile.id, this.account.id);
+    const home = this.remote ? null : prepareClientHome(userDir(this.userId), scope);
 
     this.stopping = false;
     this.transientAuthFailure = false;
@@ -966,6 +968,7 @@ class Bot extends EventEmitter {
           file,
           args,
           userId: this.userId,
+          scope,
           // Die zwei Argumente für den texturierten Viewer setzt der Standort selbst ein – er
           // allein weiß, ob und wo seine Kopie der Minecraft-JAR liegt.
           //

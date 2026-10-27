@@ -30,6 +30,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import WebSocket from 'ws';
+import { prepareClientHome } from './client-home.js';
 
 const run = promisify(execFile);
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
@@ -56,7 +57,7 @@ loadEnvFile();
 
 const config = {
   // 1.1.0: holt die Minecraft-Ressourcen mit und reicht den Viewer des Clients durch (`http`).
-  version: '1.1.0',
+  version: '1.2.0',
   panel: (process.env.PANEL_URL || 'https://example.invalid').replace(/\/+$/, ''),
   token: process.env.NODE_TOKEN || '',
   dataDir: process.env.AGENT_DATA_DIR || path.join(ROOT, 'data'),
@@ -442,7 +443,7 @@ function writeFiles(home, files) {
 }
 
 /** Und der Rückweg: was der Client dort geändert hat (aufgefrischte Microsoft-Token). */
-function readFiles(home) {
+function readFiles(home, accountName) {
   const base = path.join(home, 'afksystems');
   const out = {};
   const add = (relative) => {
@@ -453,13 +454,7 @@ function readFiles(home) {
     }
   };
   add('movement.json');
-  try {
-    for (const name of fs.readdirSync(path.join(base, 'accounts'))) {
-      if (WANTED.test(`accounts/${name}`)) add(`accounts/${name}`);
-    }
-  } catch {
-    /* noch kein Konto */
-  }
+  if (accountName && WANTED.test(`accounts/${accountName}.json`)) add(`accounts/${accountName}.json`);
   return out;
 }
 
@@ -476,8 +471,9 @@ function startJob(link, message) {
     return;
   }
 
-  const home = userHome(userId);
+  let home;
   try {
+    home = prepareClientHome(userHome(userId), message.scope || null);
     writeFiles(home, message.files);
     fs.chmodSync(binary, 0o755);
   } catch (error) {
@@ -523,7 +519,9 @@ function startJob(link, message) {
     env: { ...process.env, ...(message.env || {}), XDG_CONFIG_HOME: home, HOME: home, TERM: 'dumb' },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  jobs.set(job, { proc, userId, home, povPort });
+  const accountIndex = full.indexOf('--account');
+  const accountName = accountIndex >= 0 ? full[accountIndex + 1] : null;
+  jobs.set(job, { proc, userId, home, povPort, accountName });
 
   // **Je Kanal ein Decoder, kein `chunk.toString('utf8')`.**
   //
@@ -545,7 +543,7 @@ function startJob(link, message) {
     lastProcCpu.delete(proc.pid);
     // Erst die Dateien, dann das Ende: sonst wäre der aufgefrischte Token unterwegs, während das
     // Panel den Bot schon abgeräumt hat.
-    link.send({ type: 'files', job, user_id: userId, files: readFiles(home) });
+    link.send({ type: 'files', job, user_id: userId, files: readFiles(home, accountName) });
     link.send({ type: 'exit', job, code, signal });
   });
   log(`Bot gestartet: ${path.basename(binary)} (Auftrag ${job.slice(0, 8)})`);
@@ -559,11 +557,8 @@ function startJob(link, message) {
  * das Konto müsste neu verbunden werden.
  */
 function pushAccountFiles(link) {
-  const seen = new Set();
-  for (const job of jobs.values()) {
-    if (seen.has(job.userId)) continue;
-    seen.add(job.userId);
-    link.send({ type: 'files', user_id: job.userId, files: readFiles(job.home) });
+  for (const [id, job] of jobs) {
+    link.send({ type: 'files', job: id, user_id: job.userId, files: readFiles(job.home, job.accountName) });
   }
 }
 
@@ -648,6 +643,7 @@ function connect() {
     link.send({
       type: 'hello',
       version: config.version,
+      scoped_state: true,
       hostname: os.hostname(),
       platform: `${os.type()} ${os.release()}`,
       cores: os.cpus().length || 1,

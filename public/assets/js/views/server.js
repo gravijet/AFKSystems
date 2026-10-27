@@ -2069,40 +2069,68 @@ async function tabBoard(root, profile) {
   if (!members.length) return noAccounts(root, profile);
 
   root.innerHTML = `
-    ${accountPicker(members)}
     <div class="row wrap" style="margin-bottom:1rem">
       <button class="btn btn-primary btn-sm" id="get-board">${icon('refresh')} ${escapeHtml(tr('vw.board'))}</button>
-      <span class="small muted" style="align-self:center">${escapeHtml(tr('vw.hint'))}</span>
+      <span class="small muted" style="align-self:center">${escapeHtml(tr('vw.liveHint'))}</span>
     </div>
     <div class="views" id="views"></div>`;
 
-  const run = commandRunner(profile);
-  $('#get-board').addEventListener('click', () => run('board'));
+  const container = $('#views', root);
+  let reading = false;
+  const active = () => container.isConnected && state.onLive === onLive;
+  const read = async (manual = false) => {
+    if (reading || !active() || document.hidden) return;
+    const accounts = members.filter(member => state.bots.get(`${profile.id}:${member.account_id}`)?.online)
+      .map(member => member.account_id);
+    if (!accounts.length) return;
+    reading = true;
+    try {
+      const result = await api(`/profiles/${profile.id}/command`, {
+        method: 'POST', body: { verb: 'board', accounts },
+      });
+      if (manual && active()) {
+        for (const entry of result.results.filter(entry => !entry.ok)) {
+          const member = members.find(member => member.account_id === entry.account_id);
+          toast(`${member?.name || entry.account_id}: ${entry.error}`, 'bad');
+        }
+      }
+    } catch (error) {
+      if (manual && active()) fail(error);
+    } finally {
+      reading = false;
+    }
+  };
+  $('#get-board', root).addEventListener('click', () => read(true));
 
   const paint = () => {
     const boards = [];
     for (const member of members) {
       const bot = state.bots.get(`${profile.id}:${member.account_id}`);
       if (!bot?.views?.board) continue;
-      boards.push(boardCard(member, bot.views.board));
+      boards.push(boardCard(member, { ...bot.views.board, offline: !bot.online }));
     }
-    $('#views').innerHTML =
+    container.innerHTML =
       boards.join('') ||
       `<div class="empty" style="grid-column:1/-1"><h3>${escapeHtml(tr('vw.empty'))}</h3>
         <p>${escapeHtml(tr('vw.hint'))}</p></div>`;
   };
 
-  // Beim Öffnen einmal von selbst abrufen – wer den Reiter anklickt, will die Tafel sehen.
-  //
-  // Aber nur, wenn überhaupt ein Bot im Spiel ist: Sonst antwortete der Server mit "der Bot läuft
-  // gerade nicht", und das Erste, was jemand beim Öffnen des Reiters sah, war eine rote
-  // Fehlermeldung für etwas, das er gar nicht angestoßen hat.
-  paint();
-  if (anyOnline(profile, members)) run('board');
-
-  state.onLive = (event) => {
-    if (event.type === 'view' && event.key.startsWith(`${profile.id}:`)) paint();
+  const onLive = (event) => {
+    if (event.type === 'hello' || (event.type === 'state' && event.key?.startsWith(`${profile.id}:`))) {
+      paint();
+      void read();
+    } else if (event.type === 'view' && event.kind === 'board' && event.key.startsWith(`${profile.id}:`)) paint();
   };
+  state.onLive = onLive;
+  paint();
+  void read();
+  // Only this mounted tab polls. A pending response cannot restart polling after navigation.
+  const poll = async () => {
+    if (!active()) return;
+    await read();
+    if (active()) setTimeout(poll, 5000);
+  };
+  setTimeout(poll, 5000);
 }
 
 /** Eine Anzeigetafel, wie Minecraft sie zeichnet: Titel oben, Zeile links, Punktzahl rechts. */
@@ -2127,7 +2155,8 @@ function boardCard(member, view) {
         )
         .join('')}
     </ol>
-    <footer>${escapeHtml(member.name)}</footer>
+    <footer>${escapeHtml(member.name)}${view.offline ? ` · ${escapeHtml(tr('state.offline'))}` : ''}
+      ${view.at ? ` · ${escapeHtml(tr('vw.stale', { time: clock(view.at) }))}` : ''}</footer>
   </article>`;
 }
 
