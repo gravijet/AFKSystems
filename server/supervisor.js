@@ -587,6 +587,7 @@ class Bot extends EventEmitter {
     this.lastReason = null;
     this.chat = [];
     this.proc = null;
+    this.pendingStart = null;
     this.build = null;
     /**
      * Welche Client-Datei dieser Lauf benutzt – die Fassung und der Abdruck vom Startzeitpunkt.
@@ -672,7 +673,7 @@ class Bot extends EventEmitter {
   }
 
   get running() {
-    return Boolean(this.proc) && !this.stopping;
+    return Boolean(this.proc || this.pendingStart) && !this.stopping;
   }
 
   /** Wie viele Zeilen Chatverlauf dieser Platz vorhält – der Tarif setzt die Obergrenze. */
@@ -881,8 +882,8 @@ class Bot extends EventEmitter {
     return db.prepare('SELECT * FROM nodes WHERE id = ?').get(this.profile.node_id) || null;
   }
 
-  start({ excludeNodeIds = [] } = {}) {
-    if (this.proc) return this;
+  start({ excludeNodeIds = [], joinPermit = false } = {}) {
+    if (this.proc || this.pendingStart) return this;
     const { command, file, build } = binaries.command(this.profile, this.plan);
     this.build = build;
     this.clientVersion = binaries.versionOf(build);
@@ -911,6 +912,29 @@ class Bot extends EventEmitter {
     }
     this.nodeId = node?.id || null;
     this.remote = node?.kind === 'agent';
+    if (!joinPermit) {
+      const delay = this.supervisor.joinDelay?.(this.profile) || 0;
+      if (delay > 0) {
+        this.stopping = false;
+        this.pendingStart = setTimeout(() => {
+          this.pendingStart = null;
+          if (!this.wanted()) return;
+          try {
+            const context = this.supervisor.context(this.profile.id, this.account.id);
+            if (!context) return;
+            this.supervisor.start({ ...context, joinPermit: true });
+          } catch (error) {
+            this.lastError = error.message;
+            this.push('error', error.message);
+            this.setState('error', error.message);
+            this.supervisor.planRestart(this);
+          }
+        }, delay);
+        this.pendingStart.unref?.();
+        this.setState('starting', `Beitritt in ${Math.ceil(delay / 1000)} s`);
+        return this;
+      }
+    }
     this.webPort = this.wantsWebView(caps) ? takeWebPort() : null;
 
     const args = this.args(caps);
@@ -999,6 +1023,11 @@ class Bot extends EventEmitter {
     }
 
     this.startedAt = Date.now();
+    // Pipe errors belong to this account; an unhandled EPIPE must not stop the panel.
+    this.proc.stdin.on?.('error', (error) => {
+      this.lastError = error.message;
+      this.push('error', `Senden fehlgeschlagen: ${error.message}`);
+    });
     this.proc.stdout.on('data', (chunk) => this.feed('out', chunk));
     this.proc.stderr.on('data', (chunk) => this.feed('err', chunk));
     this.proc.on('error', (error) => {
@@ -1074,6 +1103,8 @@ class Bot extends EventEmitter {
   }
 
   stop({ intended = true, keepReconnect = false } = {}) {
+    clearTimeout(this.pendingStart);
+    this.pendingStart = null;
     this.stopping = intended;
     this.supervisor.macros?.detach?.(this);
     // Wer stoppt, meint es. Eine noch laufende Versuchskette würde den Bot Sekunden später wieder
@@ -1112,6 +1143,8 @@ class Bot extends EventEmitter {
   }
 
   cleanup() {
+    clearTimeout(this.pendingStart);
+    this.pendingStart = null;
     this.supervisor.macros?.detach?.(this);
     if (this.startedAt) {
       const seconds = Math.round((Date.now() - this.startedAt) / 1000);
@@ -1754,8 +1787,8 @@ class Bot extends EventEmitter {
   }
 
   /** Eine Zeile an den Client schicken. Mit '/' vorn ist es ein Serverbefehl. */
-  send(text, { local = false } = {}) {
-    if (!this.proc || !this.proc.stdin.writable) {
+  send(text, { local = false, confirm = false } = {}) {
+    if (this.stopping || !this.proc || !this.proc.stdin.writable || this.proc.stdin.destroyed) {
       throw new HttpError(409, 'Der Bot läuft gerade nicht.', { en: 'That bot is not running.' });
     }
     const line = String(text).replace(/[\r\n]+/g, ' ').trim();
@@ -1763,6 +1796,32 @@ class Bot extends EventEmitter {
     if (line.startsWith(':') && !local) {
       throw new HttpError(400, 'Örtliche Client-Befehle müssen über die geprüfte Befehlsfunktion laufen.', {
         en: 'Local client commands must use the checked command endpoint.',
+      });
+    }
+    if (confirm) {
+      const input = this.proc.stdin;
+      return new Promise((resolve, reject) => {
+        let done = false;
+        const finish = (error) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          input.off?.('error', finish);
+          input.off?.('close', closed);
+          if (error) reject(new HttpError(409, `Senden fehlgeschlagen: ${error.message}`, {
+            en: `Sending failed: ${error.message}`,
+          }));
+          else {
+            if (!line.startsWith(':')) this.push('sent', line);
+            resolve(true);
+          }
+        };
+        const closed = () => finish(new Error('Die Verbindung zum Client wurde geschlossen.'));
+        const timer = setTimeout(() => finish(new Error('Der Client bestätigt den Versand nicht.')), 8000);
+        timer.unref?.();
+        input.once?.('error', finish);
+        input.once?.('close', closed);
+        try { input.write(`${line}\n`, finish); } catch (error) { finish(error); }
       });
     }
     this.proc.stdin.write(`${line}\n`);
@@ -1777,7 +1836,7 @@ class Bot extends EventEmitter {
    * Örtlicher Befehl (`:go vor 5`, `:board`, `:click 13`). Er geht nie an den Server.
    * `need` sagt, welche Fähigkeit die Bauform dafür mitbringen muss.
    */
-  local(verb, arg = '', need = 'movement') {
+  local(verb, arg = '', need = 'movement', options = {}) {
     if (!this.caps[need]) {
       const messages = {
         movement: [
@@ -1807,7 +1866,7 @@ class Bot extends EventEmitter {
       if (arg === 'live' || arg === 'frame') this.applyPovSize();
       this.setPov(arg);
     }
-    return this.send(`:${verb}${arg ? ` ${arg}` : ''}`, { local: true });
+    return this.send(`:${verb}${arg ? ` ${arg}` : ''}`, { ...options, local: true });
   }
 
   /**
@@ -2044,6 +2103,17 @@ class Supervisor extends EventEmitter {
      * keine – da soll alles sofort hochfahren, und genau das tut `restoreAll()`.
      */
     this.retry = new Map();
+    this.joins = new Map();
+  }
+
+  /** Space logins to the same destination across profiles and reconnects. */
+  joinDelay(profile) {
+    const now = Date.now();
+    for (const [key, at] of this.joins) if (at <= now) this.joins.delete(key);
+    const key = `${String(profile.host).trim().toLowerCase().replace(/\.$/, '')}:${profile.port || 25565}`;
+    const at = Math.max(now, this.joins.get(key) || 0);
+    this.joins.set(key, at + config.joinSpacingMs);
+    return at - now;
   }
 
   // ------------------------------------------------------------ Wiederanlauf
@@ -2395,7 +2465,7 @@ class Supervisor extends EventEmitter {
   }
 
   /** Bot anlegen (falls nötig) und starten. */
-  start({ profile, account, user, plan }) {
+  start({ profile, account, user, plan, joinPermit = false }) {
     const tariff = plan || featuresOf(profile);
     const maxPerUser = Number(getSetting('max_bots_per_user')) || config.maxBotsPerUser;
     const already = this.get(profile.id, account.id);
@@ -2531,7 +2601,7 @@ class Supervisor extends EventEmitter {
       bot.account = account;
       bot.plan = tariff;
     }
-    bot.start();
+    bot.start({ joinPermit });
     this.macros.attach(bot);
     return bot.snapshot();
   }
@@ -2836,7 +2906,7 @@ class Supervisor extends EventEmitter {
     // Versuch, der beim Herunterfahren nichts mehr zu suchen hat.
     for (const key of [...this.retry.keys()]) this.cancelRestart(key);
     for (const bot of this.bots.values()) {
-      if (bot.proc) bot.stop({ intended: true });
+      if (bot.proc || bot.pendingStart) bot.stop({ intended: true });
     }
   }
 

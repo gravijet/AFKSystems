@@ -3610,7 +3610,7 @@ admin.get(
  */
 admin.post(
   '/servers/:id/send',
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const id = requireInt(req.params.id, 'Server');
     const text = requireString(req.body?.text, 'Nachricht', { max: 256 });
     const only = Array.isArray(req.body?.accounts) ? req.body.accounts.map(Number) : null;
@@ -3623,9 +3623,9 @@ admin.post(
         // Örtliche Befehle laufen über `local`, damit Abfragen wie `:board` als Ansicht ankommen.
         if (text.startsWith(':')) {
           const [verb, ...rest] = text.slice(1).split(' ');
-          bot.local(verb.toLowerCase(), rest.join(' '), 'events');
+          await bot.local(verb.toLowerCase(), rest.join(' '), 'events', { confirm: true });
         } else {
-          bot.send(text);
+          await bot.send(text, { confirm: true });
         }
         results.push({ account_id: row.account_id, ok: true });
       } catch (error) {

@@ -22,7 +22,10 @@ async function chat(minify, receivers = [1, 2], sender = '') {
   const context = await compile(`${sendCode}\nglobalThis.send = send;`, {
     messageInput: input, receivers, profile: { id: 7 }, draftKey: 'draft',
     $: (selector) => selector === '#sender' ? { value: sender } : button,
-    api: (path, options) => { requests.push({ path, ...options }); return pending; },
+    api: (path, options) => {
+      requests.push({ path, ...options });
+      return requests.length === 1 ? pending : Promise.resolve({ results: options.body.accounts.map(account_id => ({ account_id, ok: true })) });
+    },
     writeLocal: (...args) => writes.push(args), rememberSent: (text) => history.push(text),
     toast: (text) => errors.push(text), fail: (error) => errors.push(error.message),
     tr: String, nameOf: (id) => `Player ${id}`,
@@ -60,7 +63,7 @@ for (const minify of [false, true]) {
     }
   });
 
-  test(`chat serializes clicks and clears a delivered unchanged draft (${variant})`, async () => {
+  test(`chat serializes clicks and retries only failed accounts after partial delivery (${variant})`, async () => {
     const ui = await chat(minify);
     const work = ui.send();
     await ui.send();
@@ -68,10 +71,13 @@ for (const minify of [false, true]) {
     assert.equal(ui.button.disabled, true);
     ui.resolve({ results: [{ account_id: 1, ok: true }, { account_id: 2, ok: false, error: 'Offline' }] });
     await work;
-    assert.equal(ui.input.value, '');
+    assert.equal(ui.input.value, 'first message');
     assert.deepEqual(ui.history, ['first message']);
     assert.deepEqual(ui.errors, ['Player 2: Offline']);
     assert.equal(ui.button.disabled, false);
+    await ui.send();
+    assert.deepEqual(Array.from(ui.requests[1].body.accounts), [2]);
+    assert.equal(ui.input.value, '');
   });
 
   test(`late chat success or failure preserves the next draft (${variant})`, async () => {

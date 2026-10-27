@@ -237,7 +237,14 @@ class RemoteProcess extends EventEmitter {
     this.stderr = new EventEmitter();
     this.stdin = {
       writable: true,
-      write: (text) => link.send({ type: 'stdin', job, data: String(text) }),
+      write: (text, callback) => {
+        if (!link.online || !link.jobs.has(job)) {
+          if (callback) callback(new Error('Die Verbindung zum Standort ist abgerissen.'));
+          return false;
+        }
+        link.socket.send(JSON.stringify({ type: 'stdin', job, data: String(text) }), callback);
+        return true;
+      },
     };
   }
 

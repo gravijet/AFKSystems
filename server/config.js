@@ -81,6 +81,7 @@ export const config = {
   // Obergrenzen, damit ein einzelnes Konto den Server nicht auffrisst.
   maxBotsPerUser: num('MAX_BOTS_PER_USER', 25),
   maxBotsTotal: num('MAX_BOTS_TOTAL', 200),
+  joinSpacingMs: Math.max(0, num('JOIN_SPACING_MS', 3000)),
   chatHistoryMax: num('CHAT_HISTORY_MAX', 50000),
 };
 

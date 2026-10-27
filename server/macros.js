@@ -464,12 +464,12 @@ class MacroEngine {
 
     for (const entry of this.spamFor(bot)) {
       const seconds = Math.max(5, entry.interval_sec);
-      const timer = setInterval(() => {
+      const timer = setInterval(async () => {
         if (bot.online) {
           try {
-            bot.send(entry.message);
-          } catch {
-            /* Bot gerade weg */
+            await bot.send(entry.message, { confirm: true });
+          } catch (error) {
+            bot.push('error', `Wiederholung: ${error.message}`);
           }
         }
       }, seconds * 1000);
@@ -522,12 +522,12 @@ class MacroEngine {
     }
     if (!settings.command || !settings.command_text) return;
     const seconds = Math.min(3600, Math.max(30, Number(settings.interval_sec) || 240));
-    const timer = setInterval(() => {
+    const timer = setInterval(async () => {
       if (!bot.online) return;
       try {
-        bot.send(String(settings.command_text));
-      } catch {
-        /* Bot gerade weg */
+        await bot.send(String(settings.command_text), { confirm: true });
+      } catch (error) {
+        bot.push('error', `Anti-AFK: ${error.message}`);
       }
     }, seconds * 1000);
     timer.unref();
@@ -717,7 +717,7 @@ class MacroEngine {
     switch (action.type) {
       case 'chat': {
         const text = fill(action.text, bot, context);
-        if (text) bot.send(text);
+        if (text) await bot.send(text, { confirm: true });
         break;
       }
       case 'chat_random': {
@@ -727,7 +727,7 @@ class MacroEngine {
           .filter(Boolean);
         if (!lines.length) break;
         const text = fill(lines[between(0, lines.length - 1)], bot, context);
-        if (text) bot.send(text);
+        if (text) await bot.send(text, { confirm: true });
         break;
       }
       case 'wait':

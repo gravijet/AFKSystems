@@ -299,8 +299,8 @@ export function reconcile(userId) {
   const dir = path.join(userPath(userId), 'afksystems', 'accounts');
   let stamp = null;
   try {
-    const stats = fs.statSync(dir);
-    stamp = `${stats.mtimeMs}:${stats.size}`;
+    const stats = fs.statSync(dir, { bigint: true });
+    stamp = `${stats.mtimeNs}:${stats.ctimeNs}:${stats.size}`;
   } catch {
     // Kein Verzeichnis heißt: keine Dateien. Das ist ein Zustand wie jeder andere und muss sich
     // merken lassen, sonst sähe jeder Aufruf für ein Konto ohne Anmeldungen wieder nach.
@@ -313,22 +313,30 @@ export function reconcile(userId) {
       ? []
       : fs.readdirSync(dir).filter((name) => name.endsWith('.json')).map((name) => name.slice(0, -5));
   const rows = db.prepare('SELECT * FROM mc_accounts WHERE user_id = ?').all(userId);
-
+  let unsettled = false;
   for (const name of files) {
     if (!rows.some((row) => row.name === name)) {
-      try { saveAccount(userId, name); } catch { /* A partial or invalid file is not a signed-in account. */ }
+      try { saveAccount(userId, name); } catch { unsettled = true; }
     }
   }
   for (const row of db.prepare('SELECT * FROM mc_accounts WHERE user_id = ?').all(userId)) {
     if (row.kind === 'microsoft' && files.includes(row.name) && row.last_error === 'Anmeldung fehlt – bitte neu verbinden.') {
-      try { saveAccount(userId, row.name); } catch { /* Still incomplete; keep the error visible. */ }
+      try { saveAccount(userId, row.name); } catch { unsettled = true; }
     }
     if (row.kind === 'microsoft' && !files.includes(row.name)) {
+      unsettled = true;
       db.prepare("UPDATE mc_accounts SET status = 'error', last_error = ? WHERE id = ?").run(
         'Anmeldung fehlt – bitte neu verbinden.',
         row.id
       );
     }
+  }
+
+  // Partial files may be repaired in place without changing the directory's
+  // timestamp. Missing logins must also be checked again after a restoration.
+  if (unsettled) {
+    lastSeen.delete(userId);
+    return;
   }
 
   // Erst am Ende merken. Wirft der Abgleich dazwischen, wird beim nächsten Aufruf noch einmal
@@ -337,8 +345,12 @@ export function reconcile(userId) {
   // `saveAccount` legt oben womöglich selbst etwas ab; die Zeitmarke wird deshalb hier neu gelesen
   // und nicht die von vorhin übernommen.
   try {
-    const stats = fs.statSync(dir);
-    lastSeen.set(userId, `${stats.mtimeMs}:${stats.size}`);
+    const stats = fs.statSync(dir, { bigint: true });
+    // Cache the directory we actually inspected. A rename during reconciliation
+    // must trigger another pass, rather than caching an unseen directory state.
+    const current = `${stats.mtimeNs}:${stats.ctimeNs}:${stats.size}`;
+    if (current === stamp) lastSeen.set(userId, stamp);
+    else lastSeen.delete(userId);
   } catch {
     lastSeen.set(userId, 'fehlt');
   }

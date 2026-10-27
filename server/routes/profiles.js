@@ -1609,7 +1609,7 @@ router.get(
 
 router.post(
   '/:id/chat',
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const profile = notLocked(ownedProfile(req));
     if (Array.isArray(req.body?.accounts) && !req.body.accounts.length) {
       throw bad('Wähle mindestens ein Konto zum Senden aus.', {
@@ -1628,18 +1628,17 @@ router.post(
       local = { verb, arg: localArg(verb, rest.join(' ')), need };
     }
     const lang = langOf(req);
-    const results = [];
-    for (const accountId of targets(req, profile)) {
+    const results = await Promise.all(targets(req, profile).map(async (accountId) => {
       const bot = supervisor.get(profile.id, accountId);
       try {
         if (!bot) throw new HttpError(409, 'Der Bot läuft gerade nicht.', { en: 'That bot is not running.' });
-        if (local) bot.local(local.verb, local.arg, local.need);
-        else bot.send(text);
-        results.push({ account_id: accountId, ok: true });
+        if (local) await bot.local(local.verb, local.arg, local.need, { confirm: true });
+        else await bot.send(text, { confirm: true });
+        return { account_id: accountId, ok: true };
       } catch (error) {
-        results.push({ account_id: accountId, ok: false, error: errorText(error, lang) });
+        return { account_id: accountId, ok: false, error: errorText(error, lang) };
       }
-    }
+    }));
     res.json({ results });
   })
 );
@@ -1697,7 +1696,7 @@ function localArg(verb, raw) {
   return mode;
 }
 
-const runLocal = wrap((req, res) => {
+const runLocal = wrap(async (req, res) => {
   const profile = notLocked(ownedProfile(req));
   const lang = langOf(req);
   const verb = String(req.body?.verb || '').toLowerCase();
@@ -1712,7 +1711,7 @@ const runLocal = wrap((req, res) => {
     const bot = supervisor.get(profile.id, accountId);
     try {
       if (!bot) throw new HttpError(409, 'Der Bot läuft gerade nicht.', { en: 'That bot is not running.' });
-      bot.local(verb, arg, need);
+      await bot.local(verb, arg, need, { confirm: true });
       results.push({ account_id: accountId, ok: true });
     } catch (error) {
       if (!first) first = error;
@@ -2296,7 +2295,7 @@ router.delete(
 /** Eine Spam-Nachricht sofort einmal senden. */
 router.post(
   '/:id/spam/:spamId/test',
-  wrap((req, res) => {
+  wrap(async (req, res) => {
     const profile = notLocked(ownedProfile(req));
     const row = db
       .prepare('SELECT * FROM spam WHERE id = ? AND profile_id = ?')
@@ -2308,7 +2307,7 @@ router.post(
       if (only.length && !only.includes(member.account_id)) continue;
       const bot = supervisor.get(profile.id, member.account_id);
       if (bot?.online) {
-        bot.send(row.message);
+        await bot.send(row.message, { confirm: true });
         sent += 1;
       }
     }

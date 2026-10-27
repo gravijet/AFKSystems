@@ -16,6 +16,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const TEST_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'afksystems-test-'));
 process.env.DATA_DIR = TEST_DIR;
 process.env.NODE_ENV = 'test';
+process.env.JOIN_SPACING_MS = '0';
 process.env.SECRET = 'test-session-secret';
 process.env.PUBLIC_URL = 'http://127.0.0.1';
 

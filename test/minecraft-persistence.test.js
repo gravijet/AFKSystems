@@ -42,7 +42,7 @@ function node(t) {
   const id = db.prepare("INSERT INTO nodes(name,kind,created_at) VALUES(?,'agent',?)").run(`Node${++serial}`, Date.now()).lastInsertRowid;
   const socket = new EventEmitter();
   socket.OPEN = 1; socket.readyState = 1; socket.messages = [];
-  socket.send = (message) => socket.messages.push(JSON.parse(message));
+  socket.send = (message, callback) => { socket.messages.push(JSON.parse(message)); callback?.(); };
   socket.close = () => { socket.readyState = 3; socket.emit('close'); };
   agents.attach({ id, name: `Node${id}` }, socket);
   t.after(() => socket.close());
@@ -51,6 +51,21 @@ function node(t) {
 function start(location, owner, acc) {
   return agents.spawn(location.id, { file: 'afk-linux', userId: owner.id, args: ['--account', acc.name] });
 }
+
+test('remote command callbacks keep concurrent jobs separate and reject a closed location', t => {
+  const owner = user(), first = account(owner, 'RemoteAlpha'), second = account(owner, 'RemoteBeta');
+  const location = node(t), a = start(location, owner, first), b = start(location, owner, second);
+  const confirmations = [];
+  a.stdin.write('/first\n', error => confirmations.push(error || 'first'));
+  b.stdin.write('/second\n', error => confirmations.push(error || 'second'));
+  assert.deepEqual(confirmations, ['first', 'second']);
+  assert.deepEqual(location.socket.messages.filter(message => message.type === 'stdin').map(({ job, data }) => ({ job, data })),
+    [{ job: a.job, data: '/first\n' }, { job: b.job, data: '/second\n' }]);
+  location.socket.readyState = 3;
+  let failed;
+  assert.equal(a.stdin.write('/third\n', error => { failed = error; }), false);
+  assert.match(failed.message, /Standort/);
+});
 
 test('locations only receive the selected account; other accounts cannot overwrite refreshed credentials', (t) => {
   const owner = user(), a = account(owner, 'Alpha'), b = account(owner, 'Beta');
@@ -281,6 +296,18 @@ test('reconciliation keeps a renamed account’s id and does not reapply its old
   mslogin.reconcile(owner.id);
   const saved = db.prepare('SELECT id,name,status FROM mc_accounts WHERE id=?').get(a.id);
   assert.deepEqual(saved,{ id:a.id,name:'ChangedName',status:'ok' });
+});
+
+test('reconciliation retries a partial account file repaired in place', () => {
+  const owner = user(), name = 'PartialPlayer';
+  const file = path.join(userDir(owner.id), 'afksystems', 'accounts', `${name}.json`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, '{');
+  mslogin.reconcile(owner.id);
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM mc_accounts WHERE user_id=?').get(owner.id).n, 0);
+  fs.writeFileSync(file, credentials(name));
+  mslogin.reconcile(owner.id);
+  assert.equal(db.prepare('SELECT name,status FROM mc_accounts WHERE user_id=?').get(owner.id).status, 'ok');
 });
 
 test('a fresh browser renewal reaches another bot on a location that still has an older session', (t) => {

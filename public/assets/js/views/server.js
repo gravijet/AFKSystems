@@ -1378,6 +1378,7 @@ async function tabConnect(root, profile) {
   }
 
   let sending = false;
+  let retrySend = null;
   const send = async () => {
     if (sending) return;
     const input = messageInput;
@@ -1385,8 +1386,11 @@ async function tabConnect(root, profile) {
     const text = draft.trim();
     if (!text) return;
     const sender = $('#sender')?.value || '';
-    const accounts = sender ? [Number(sender)] : receivers;
-    if (!accounts.length) return toast(tr('srv.chatChooseAccount'), 'warn');
+    const selected = sender ? [Number(sender)] : [...receivers];
+    if (!selected.length) return toast(tr('srv.chatChooseAccount'), 'warn');
+    const selection = [...selected].sort((a, b) => a - b).join(',');
+    const accounts = retrySend?.text === text && retrySend.selection === selection
+      ? retrySend.accounts : selected;
     sending = true;
     const button = $('#send');
     button.disabled = true;
@@ -1394,13 +1398,17 @@ async function tabConnect(root, profile) {
       const result = await api(`/profiles/${profile.id}/chat`, { method: 'POST', body: { text, accounts } });
       const failures = result.results.filter((entry) => !entry.ok);
       const delivered = result.results.length - failures.length;
+      if (input.value === draft) {
+        retrySend = failures.length ? { text, selection, accounts: failures.map(entry => entry.account_id) } : null;
+      }
       if (!delivered) {
-        toast(failures[0]?.error || tr('common.error'), 'bad');
+        for (const failure of failures) toast(`${nameOf(failure.account_id)}: ${failure.error}`, 'bad');
+        if (!failures.length) toast(tr('common.error'), 'bad');
         return;
       }
       // Während die Antwort unterwegs ist, darf der nächste Entwurf schon entstehen.
       // Nur den tatsächlich gesendeten, unveränderten Text nach Erfolg entfernen.
-      if (input.value === draft) {
+      if (input.value === draft && !failures.length) {
         input.value = '';
         writeLocal(draftKey, '');
       }
