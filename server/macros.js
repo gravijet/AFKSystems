@@ -3,11 +3,9 @@
 // Ein Macro besteht aus einem Auslöser (Beitritt, Wiederkehr, Zeittakt, Chatzeile, Weltwechsel,
 // Tod, Menü, Verbindungsabbruch) und einer Kette von Schritten, die der Reihe nach laufen.
 //
-// Wer taktet, hängt davon ab, wer es besser kann:
-//   * Der **Client** bekommt beim Start alles, was er selbst im Protokoll sieht und ohne Zutun
-//     abarbeiten kann – feste Beitrittsbefehle. Platzhalter ersetzt das Panel je Konto.
-//   * Das **Panel** taktet alles, was sich zur Laufzeit ändern soll oder mehr als eine Chatzeile
-//     ist: Zeittakte, Chat-Treffer, Wartezeiten, Bewegung, Sperrzeiten, Zufall und Spam.
+// Das Panel verwaltet sämtliche Macros in einer eigenen Warteschlange je Bot. Dadurch gelten
+// Accountauswahl, Änderungen und Abbrüche auch beim nächsten Beitritt desselben Prozesses.
+// Der Client übernimmt weiterhin Spielbereitschaft und den Mindestabstand der Chatpakete.
 //
 // Welche Schritte es gibt, richtet sich danach, was die Bauform des Bots kann. Schritte, die kein
 // Client beherrscht (Blöcke abbauen, schlagen), gibt es hier bewusst nicht: Ein Knopf, der eine
@@ -442,6 +440,10 @@ class MacroEngine {
         // Beginn und hört auf, sobald er nicht mehr stimmt – das ist ein Abbruch, der keine
         // halbe Aktion mitten im Schritt abschneidet.
         generation: 0,
+        queue: [],
+        runner: null,
+        readyAt: 0,
+        abort: new AbortController(),
       });
     }
     return this.state.get(bot.key);
@@ -464,14 +466,11 @@ class MacroEngine {
 
     for (const entry of this.spamFor(bot)) {
       const seconds = Math.max(5, entry.interval_sec);
-      const timer = setInterval(async () => {
-        if (bot.online) {
-          try {
-            await bot.send(entry.message, { confirm: true });
-          } catch (error) {
-            bot.push('error', `Wiederholung: ${error.message}`);
-          }
-        }
+      const timer = setInterval(() => {
+        if (bot.online) this.run(bot, {
+          id: `spam:${entry.id}`, name: 'Wiederholung',
+          actions: JSON.stringify([{ type: 'chat', text: entry.message }]),
+        }, { quiet: true });
       }, seconds * 1000);
       timer.unref();
       slot.timers.add(timer);
@@ -522,13 +521,11 @@ class MacroEngine {
     }
     if (!settings.command || !settings.command_text) return;
     const seconds = Math.min(3600, Math.max(30, Number(settings.interval_sec) || 240));
-    const timer = setInterval(async () => {
-      if (!bot.online) return;
-      try {
-        await bot.send(String(settings.command_text), { confirm: true });
-      } catch (error) {
-        bot.push('error', `Anti-AFK: ${error.message}`);
-      }
+    const timer = setInterval(() => {
+      if (bot.online) this.run(bot, {
+        id: 'anti-afk', name: 'Anti-AFK',
+        actions: JSON.stringify([{ type: 'chat', text: String(settings.command_text) }]),
+      }, { quiet: true });
     }, seconds * 1000);
     timer.unref();
     slot.timers.add(timer);
@@ -541,26 +538,39 @@ class MacroEngine {
     // (Spam und Anti-AFK takten fest, ein Zeitmacro mit Streuung legt sich selbst neu).
     for (const timer of slot.timers) clearTimeout(timer);
     slot.timers.clear();
+    this.cancel(slot);
+  }
+
+  cancel(slot) {
     slot.generation += 1;
+    slot.abort.abort();
+    slot.abort = new AbortController();
+    for (const entry of slot.queue.splice(0)) entry.resolve();
     slot.running.clear();
+    slot.runner = null;
+    slot.readyAt = 0;
+    slot.joinContext = null;
   }
 
   /** Nach dem Ändern von Macros/Spam die Takte eines Serverplatzes neu aufziehen. */
   reload(profileId) {
     for (const bot of supervisor.bots.values()) {
       if (bot.profile.id !== profileId) continue;
-      if (bot.running) this.attach(bot);
+      if (!bot.running) continue;
+      const joining = this.slot(bot).joinContext;
+      if (joining) this.onJoin(bot, { again: joining.again, completed: new Set([...joining.completed, ...joining.started]) });
+      else this.attach(bot);
     }
   }
 
-  /** Nur feste Beitrittsbefehle liegen im Client; laufende Regeln bleiben änderbar. */
+  /** Alle Macros werden vom Panel verwaltet, auch feste Beitrittsbefehle. */
   handledByClient(bot, macro) {
     return clientCanTake(macro);
   }
 
   macrosFor(bot, event) {
     return db
-      .prepare('SELECT * FROM macros WHERE profile_id = ? AND event = ? AND enabled = 1')
+      .prepare('SELECT * FROM macros WHERE profile_id = ? AND event = ? AND enabled = 1 ORDER BY id')
       .all(bot.profile.id, event)
       .filter((macro) => {
         const accounts = JSON.parse(macro.accounts || '[]');
@@ -587,14 +597,24 @@ class MacroEngine {
    * den Beitrittsmacros. Zusätzlich und nicht statt: Was beim ersten Beitritt nötig war (sich beim
    * AFK-Plugin abmelden, in den richtigen Unterserver wechseln), ist es nach einem Kick genauso.
    */
-  onJoin(bot, { again = false } = {}) {
+  onJoin(bot, { again = false, completed = new Set() } = {}) {
     this.attach(bot);
-    for (const macro of this.macrosFor(bot, 'join')) {
-      if (this.handledByClient(bot, macro)) continue;
-      this.run(bot, macro);
+    const slot = this.slot(bot);
+    slot.readyAt = Date.now() + Math.max(0, Number(bot.profile.join_delay) || 0) * 1000;
+    const list = [...this.macrosFor(bot, 'join'), ...(again ? this.macrosFor(bot, 'rejoin') : [])]
+      .filter(macro => !completed.has(String(macro.id)));
+    // Änderungen während der Startpause dürfen die Initialisierung nicht ersatzlos abbrechen.
+    // Bereits abgeschlossene Beitrittsmacros werden dabei nicht wiederholt.
+    const joining = {
+      again, completed: new Set(completed), started: new Set(),
+      pending: new Set(list.map(macro => String(macro.id))),
+    };
+    slot.joinContext = list.length ? joining : null;
+    const generation = slot.generation;
+    for (const macro of list) {
+      if (slot.generation !== generation) break;
+      this.run(bot, macro, { joining });
     }
-    if (!again) return;
-    for (const macro of this.macrosFor(bot, 'rejoin')) this.run(bot, macro);
   }
 
   onChat(bot, line) {
@@ -652,6 +672,9 @@ class MacroEngine {
   }
 
   onDisconnect(bot) {
+    // Eine echte Trennung beendet auch wartende Aktionen. Die Abbruch-Auslöser dürfen nicht
+    // hinter einer langen Pause der alten Sitzung warten. Transfers melden diesen Auslöser nicht.
+    this.detach(bot);
     // Den Abbruch sieht der Client zwar auch, aber `--on` kennt ihn nicht – also immer hier.
     for (const macro of this.macrosFor(bot, 'disconnect')) this.run(bot, macro);
   }
@@ -685,35 +708,75 @@ class MacroEngine {
    * schon lief, sieht aus wie ein kaputtes Macro. Die beiden Zahlen gehören zum **Auslöser**, und
    * ein Klick ist keiner.
    */
-  async run(bot, macro, context = {}, { force = false } = {}) {
+  run(bot, macro, context = {}, { force = false } = {}) {
     const slot = this.slot(bot);
-    // Ein Macro läuft nie zweimal gleichzeitig – sonst überholen sich Wartezeiten.
-    if (slot.running.has(String(macro.id))) return;
-    if (!force && !this.allowed(slot, macro)) return;
-    slot.running.add(String(macro.id));
-    const generation = slot.generation;
-    const active = () => bot.running && slot.generation === generation;
-    context = { ...context, active };
-    bot.push('system', `Macro "${macro.name}" läuft.`);
+    const id = String(macro.id);
+    // Steuer-Macros müssen eine laufende Pause sofort beenden können. Innerhalb einer
+    // Beitrittsgruppe bleiben sie dagegen an ihrer konfigurierten Position in der Folge.
+    let firstAction;
+    try { firstAction = JSON.parse(macro.actions || '[]')[0]?.type; } catch { /* execute meldet den Fehler */ }
+    if (!context.joining && ['stop_macros', 'disconnect', 'reconnect'].includes(firstAction)) this.cancel(slot);
+    // Auch wartende Läufe zählen: ein Chat-/Zeit-Auslöser darf die Queue nicht auffüllen.
+    if (slot.running.has(id) || (!force && !this.allowed(slot, macro))) {
+      context.joining?.pending.delete(id);
+      if (context.joining && !context.joining.pending.size) slot.joinContext = null;
+      return Promise.resolve();
+    }
+    slot.running.add(id);
+    const done = new Promise(resolve => slot.queue.push({ macro, context, resolve, generation: slot.generation }));
+    this.drain(bot, slot);
+    return done;
+  }
 
+  async drain(bot, slot) {
+    if (slot.runner) return;
+    const runner = { generation: slot.generation };
+    slot.runner = runner;
     try {
+      while (slot.runner === runner && slot.queue.length) {
+        const entry = slot.queue.shift();
+        try {
+          await this.execute(bot, slot, entry);
+        } finally {
+          if (slot.generation === entry.generation) slot.running.delete(String(entry.macro.id));
+          entry.resolve();
+        }
+      }
+    } finally {
+      // Ein alter, abgebrochener Ablauf darf den Runner des neuen Prozesslaufs nicht löschen.
+      if (slot.runner === runner) slot.runner = null;
+    }
+  }
+
+  async execute(bot, slot, { macro, context, generation }) {
+    const active = () => bot.running && slot.generation === generation;
+    context = { ...context, active, signal: slot.abort.signal };
+    try {
+      const delay = slot.readyAt - Date.now();
+      if (delay > 0) await wait(delay, context.signal);
+      if (!active()) return;
+      context.joining?.started.add(String(macro.id));
+      if (!context.quiet) bot.push('system', `Macro "${macro.name}" läuft.`);
       const actions = JSON.parse(macro.actions || '[]');
       for (const action of actions) {
-        if (!bot.running) break;
-        // Abgebrochen (`stop_macros`) – und zwar zwischen zwei Schritten, nicht mittendrin.
-        if (slot.generation !== generation) break;
-        if (action.delay) await wait(Number(action.delay) * 1000);
+        if (!active()) break;
+        if (action.delay) await wait(Number(action.delay) * 1000, context.signal);
         if (!active()) break;
         await this.step(bot, action, context);
       }
     } catch (error) {
-      bot.push('error', `Macro "${macro.name}": ${error.message}`);
+      if (active()) bot.push('error', `Macro "${macro.name}": ${error.message}`);
     } finally {
-      if (slot.generation === generation) slot.running.delete(String(macro.id));
+      if (active() && context.joining && slot.joinContext === context.joining) {
+        context.joining.completed.add(String(macro.id));
+        context.joining.pending.delete(String(macro.id));
+        if (!context.joining.pending.size) slot.joinContext = null;
+      }
     }
   }
 
   async step(bot, action, context) {
+    const local = (verb, arg = '', need = 'movement') => bot.local(verb, arg, need, { confirm: true });
     switch (action.type) {
       case 'chat': {
         const text = fill(action.text, bot, context);
@@ -731,78 +794,78 @@ class MacroEngine {
         break;
       }
       case 'wait':
-        await wait(Math.min(3600, Math.max(1, Number(action.seconds) || 1)) * 1000);
+        await wait(Math.min(3600, Math.max(1, Number(action.seconds) || 1)) * 1000, context.signal);
         break;
       case 'wait_random': {
         const low = Math.min(3600, Math.max(1, Number(action.min_seconds) || 1));
         // Eine obere Grenze unter der unteren ist kein Bereich – dann ist es eben eine feste Pause.
         const high = Math.min(3600, Math.max(low, Number(action.max_seconds) || low));
-        await wait(between(low, high) * 1000);
+        await wait(between(low, high) * 1000, context.signal);
         break;
       }
       case 'move':
-        bot.local('go', `${action.direction || 'vor'} ${Number(action.blocks) || 1}`);
+        await local('go', `${action.direction || 'vor'} ${Number(action.blocks) || 1}`);
         break;
       case 'look':
-        bot.local('look', `${Number(action.yaw) || 0} ${Number(action.pitch) || 0}`);
+        await local('look', `${Number(action.yaw) || 0} ${Number(action.pitch) || 0}`);
         break;
       case 'face':
-        bot.local('look', String(action.direction || 'nord'));
+        await local('look', String(action.direction || 'nord'));
         break;
       case 'jump':
         // Ohne Richtung springt der Client auf der Stelle – dann darf auch kein Wort dahinterstehen.
-        bot.local('jump', WALK.options.includes(action.direction) ? action.direction : '');
+        await local('jump', WALK.options.includes(action.direction) ? action.direction : '');
         break;
       case 'fall':
-        bot.local('fall');
+        await local('fall');
         break;
       case 'home':
-        bot.local('home', HOME_MODES.includes(action.mode) ? action.mode : 'go');
+        await local('home', HOME_MODES.includes(action.mode) ? action.mode : 'go');
         break;
       case 'route':
-        bot.local('route', ROUTE_MODES.includes(action.mode) ? action.mode : 'go');
+        await local('route', ROUTE_MODES.includes(action.mode) ? action.mode : 'go');
         break;
       case 'stop':
-        bot.local('stop');
+        await local('stop');
         break;
       case 'sneak':
-        bot.local('sneak', switchArg(action.mode), 'sneak');
+        await local('sneak', switchArg(action.mode), 'sneak');
         break;
       case 'sprint':
-        bot.local('sprint', switchArg(action.mode), 'sneak');
+        await local('sprint', switchArg(action.mode), 'sneak');
         break;
       case 'swing':
-        bot.local('swing', '', 'sneak');
+        await local('swing', '', 'sneak');
         break;
       case 'use':
-        bot.local('use', '', 'sneak');
+        await local('use', '', 'sneak');
         break;
       case 'hand':
-        bot.local('hand', String(Math.min(9, Math.max(1, Number(action.slot) || 1))), 'sneak');
+        await local('hand', String(Math.min(9, Math.max(1, Number(action.slot) || 1))), 'sneak');
         break;
       case 'click':
-        bot.local('click', `${Number(action.slot) || 0}${action.button ? ` ${action.button}` : ''}`, 'menu');
+        await local('click', `${Number(action.slot) || 0}${action.button ? ` ${action.button}` : ''}`, 'menu');
         break;
       case 'close':
-        bot.local('close', '', 'menu');
+        await local('close', '', 'menu');
         break;
       case 'board_read':
-        bot.local('board', '', 'board');
+        await local('board', '', 'board');
         break;
       case 'menu_read':
-        bot.local('menu', '', 'menu');
+        await local('menu', '', 'menu');
         break;
       case 'inv_read':
-        bot.local('inv', '', 'items');
+        await local('inv', '', 'items');
         break;
       case 'slot_read':
-        bot.local('slot', String(Math.min(100, Math.max(0, Number(action.slot) || 0))), 'items');
+        await local('slot', String(Math.min(100, Math.max(0, Number(action.slot) || 0))), 'items');
         break;
       case 'position':
-        bot.local('pos', '', 'movement');
+        await local('pos', '', 'movement');
         break;
       case 'antiafk':
-        bot.local(
+        await local(
           'antiafk',
           action.mode === 'seconds'
             ? String(Math.min(3600, Math.max(15, Number(action.seconds) || 60)))
@@ -813,7 +876,7 @@ class MacroEngine {
         );
         break;
       case 'pov':
-        bot.local('pov', action.mode === 'stop' ? 'stop' : 'live', 'pov');
+        await local('pov', action.mode === 'stop' ? 'stop' : 'live', 'pov');
         break;
       case 'notify':
         notify.macroSaid(bot.userId, bot.profile.name, fill(action.text, bot, context));
@@ -822,8 +885,7 @@ class MacroEngine {
         // Der Supervisor hält den Wunsch auch dann, wenn der Client in der Pause endet.
         const pause = Math.min(600, Math.max(1, Number(action.seconds) || 5));
         supervisor.reconnect(bot.profile.id, bot.account.id, { delaySeconds: pause });
-        this.slot(bot).generation += 1;
-        this.slot(bot).running.clear();
+        this.cancel(this.slot(bot));
         break;
       }
       case 'disconnect':
@@ -836,8 +898,7 @@ class MacroEngine {
         // Alle laufenden Abläufe dieses Bots hören beim nächsten Schritt auf – dieser hier
         // eingeschlossen. Das ist gewollt: „Brich alles ab“ meint auch sich selbst, und was
         // danach noch im Macro stünde, wäre eine Ausnahme, die niemand erwartet.
-        this.slot(bot).generation += 1;
-        this.slot(bot).running.clear();
+        this.cancel(this.slot(bot));
         break;
       }
       default:
@@ -870,7 +931,7 @@ class MacroEngine {
     const generation = slot.generation;
     for (const action of JSON.parse(macro.actions || '[]')) {
       if (!bot.running || slot.generation !== generation) break;
-      if (action.delay) await wait(Number(action.delay) * 1000);
+      if (action.delay) await wait(Number(action.delay) * 1000, context.signal);
       if (!bot.running || slot.generation !== generation || (context.active && !context.active())) break;
       await this.step(bot, action, { ...context, depth });
     }
@@ -884,7 +945,16 @@ const ROUTE_MODES = ['go', 'rec', 'stop', 'add', 'del', 'clear'];
 /** `:sneak` und `:sprint` nehmen `on`, `off` – oder nichts, und das heißt beim Client "umschalten". */
 const switchArg = (mode) => (mode === 'on' || mode === 'off' ? mode : '');
 
-const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const wait = (ms, signal) => new Promise(resolve => {
+  if (signal?.aborted) return resolve();
+  const finish = () => {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', finish);
+    resolve();
+  };
+  const timer = setTimeout(finish, ms);
+  signal?.addEventListener('abort', finish, { once: true });
+});
 
 /** Ein Feld in einer Sprache, so wie das Frontend es braucht. */
 const fieldFor = (field, key) => ({

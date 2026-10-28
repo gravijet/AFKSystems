@@ -43,7 +43,7 @@ async function until(check, label, timeout = 20000) {
   assert.fail(`Timed out: ${typeof label === 'function' ? JSON.stringify(label()) : label}`);
 }
 async function minecraft(t) {
-  const received = [], sockets = new Set();
+  const received = [], sockets = new Set(), knownNames = new Set();
   let lastLogin = 0;
   const server = net.createServer(socket => {
     sockets.add(socket);
@@ -51,6 +51,16 @@ async function minecraft(t) {
     socket.on('error', () => {});
     let pending = Buffer.alloc(0), stage = 'handshake', name;
     const send = (id, ...parts) => { const b = Buffer.concat([vi(id), ...parts]); socket.write(Buffer.concat([vi(b.length), b])); };
+    const world = (delay = 0) => {
+      send(49, int(42), Buffer.from([0]), vi(1), str('minecraft:overworld'), vi(20), vi(8), vi(8),
+        Buffer.from([0, 1, 0]), vi(0), str('minecraft:overworld'), Buffer.alloc(8),
+        Buffer.from([0, 255, 0, 0, 0]), vi(0), vi(63), Buffer.from([0]));
+      const position = () => {
+        if (!socket.destroyed) send(72, vi(1), double(8), double(16), double(8), Buffer.alloc(36));
+      };
+      if (delay) setTimeout(position, delay).unref();
+      else position();
+    };
     socket.on('data', chunk => {
       pending = Buffer.concat([pending, chunk]);
       while (pending.length) {
@@ -63,12 +73,13 @@ async function minecraft(t) {
         else if (stage === 'login') {
           name = readString(payload);
           const now = Date.now();
-          if (now - lastLogin < 2000) {
+          if (!knownNames.has(name) && now - lastLogin < 2000) {
             send(0, str(JSON.stringify({ text: 'You are logging in too fast, try again later.' })));
             socket.end();
             return;
           }
-          lastLogin = now;
+          if (!knownNames.has(name)) lastLogin = now;
+          knownNames.add(name);
           send(2, Buffer.alloc(16, 7), str(name), vi(0), Buffer.from([1]));
           stage = 'ack';
         } else if (stage === 'ack') {
@@ -79,13 +90,16 @@ async function minecraft(t) {
           send(3);
           stage = 'config';
         } else if (stage === 'config' && id === 3) {
-          send(49, int(42), Buffer.from([0]), vi(1), str('minecraft:overworld'), vi(20), vi(8), vi(8),
-            Buffer.from([0, 1, 0]), vi(0), str('minecraft:overworld'), Buffer.alloc(8),
-            Buffer.from([0, 255, 0, 0, 0]), vi(0), vi(63), Buffer.from([0]));
-          send(72, vi(1), double(8), double(16), double(8), Buffer.alloc(36));
+          world();
           stage = 'game';
         } else if (stage === 'game' && (id === 7 || id === 9)) {
-          received.push({ name, text: readString(payload), at: Date.now() });
+          const text = readString(payload);
+          received.push({ name, text, at: Date.now() });
+          if (text === 'switch-test') world(800);
+          if (text === 'tcp-switch-test') {
+            send(129, str('127.0.0.1'), vi(server.address().port));
+            setTimeout(() => socket.end(), 20).unref();
+          }
         }
       }
     });
@@ -134,6 +148,39 @@ test('four real clients deliver commands despite destination login limits', { sk
   await until(() => mc.received.filter(r => r.text.startsWith('manual-') || r.text.startsWith('chat-')).length === 8, 'manual commands');
   for (const bot of bots) assert.deepEqual(mc.received.filter(r => r.name === bot.account.name).map(r => r.text),
     ['join-test', `manual-${bot.account.name}`, `chat-${bot.account.name}`]);
+  // A proxy sends another Play Login on the same TCP stream. Commands already
+  // accepted by stdin must survive both this reset and the delayed new position.
+  await Promise.all(bots.map(async bot => {
+    await bot.send('/switch-test', { confirm: true });
+    await bot.send(`/after-switch-${bot.account.name}`, { confirm: true });
+    await bot.send(`/last-${bot.account.name}`, { confirm: true });
+  }));
+  await until(() => mc.received.filter(r => r.text.startsWith('after-switch-') || r.text.startsWith('last-')).length === 8,
+    () => ({ received: mc.received, bots: bots.map(b => ({ state: b.state, lines: b.chat.slice(-6) })) }), 8000);
+  for (const bot of bots) assert.deepEqual(mc.received.filter(r => r.name === bot.account.name).slice(-3).map(r => r.text),
+    ['switch-test', `after-switch-${bot.account.name}`, `last-${bot.account.name}`]);
+  await Promise.all(bots.map(async bot => {
+    await bot.send('/tcp-switch-test', { confirm: true });
+    await bot.send(`/after-transfer-${bot.account.name}`, { confirm: true });
+    await bot.send(`/last-transfer-${bot.account.name}`, { confirm: true });
+  }));
+  await until(() => mc.received.filter(r => r.text.startsWith('after-transfer-') || r.text.startsWith('last-transfer-')).length === 8,
+    () => ({ received: mc.received, bots: bots.map(b => ({ state: b.state, lines: b.chat.slice(-6) })) }));
+  for (const bot of bots) assert.deepEqual(mc.received.filter(r => r.name === bot.account.name && /^(after-transfer-|last-transfer-)/.test(r.text)).map(r => r.text),
+    [`after-transfer-${bot.account.name}`, `last-transfer-${bot.account.name}`]);
+  // The panel must retain the currently running automation across a TCP transfer,
+  // including steps which have not yet been handed to the client.
+  await Promise.all(bots.map(bot => macros.run(bot, {
+    id: 99998, name: 'Transfer flow', actions: JSON.stringify([
+      { type: 'chat', text: '/tcp-switch-test' },
+      { type: 'wait', seconds: 1 },
+      { type: 'chat', text: '/after-macro-transfer-{player}' },
+    ]),
+  })));
+  await until(() => mc.received.filter(r => r.text.startsWith('after-macro-transfer-')).length === 4,
+    'all four macro flows survive their TCP transfers');
+  assert.equal(mc.received.filter(r => r.text === 'join-test').length, 4,
+    'an intentional TCP transfer must not replay initial login/server-selection macros');
   await Promise.all(bots.map(bot => bot.local('home', 'set', 'movement', { confirm: true })));
   const movementFiles = bots.map(bot => path.join(clientHome(userDir(uid), botScope(pid, bot.account.id)), 'afksystems/movement.json'));
   await until(() => movementFiles.every(file => fs.existsSync(file)), 'each real client stores its own Home');

@@ -2162,7 +2162,7 @@ test('a macro fills in its placeholders, honours its exclusion, its cooldown and
   // mit, liefe es doppelt: einmal vom Client und einmal vom Panel, bei jedem Beitritt.
   addMacro('Ankunft', 'join', {}, [{ type: 'chat', text: '/afk' }]);
   addMacro('Ankunft langsam', 'join', {}, [{ type: 'chat', text: '/hallo' }], { cooldown_sec: 60 });
-  assert.deepEqual(supervisor.joinCommands(profile.id, account.id), ['/afk']);
+  assert.deepEqual(supervisor.joinCommands(profile.id, account.id), [], 'join macros must remain editable in the panel');
 
   // ---- Die Kette hat einen Boden. Ein Macro, das sich selbst aufruft, endet mit einer Meldung
   //      und nicht mit einem stehenden Dienst.

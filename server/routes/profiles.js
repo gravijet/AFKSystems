@@ -2081,7 +2081,7 @@ router.post(
         Date.now()
       );
     macroEngine.reload(profile.id);
-    res.json({ id: info.lastInsertRowid, restart_hint: event === 'join' });
+    res.json({ id: info.lastInsertRowid, restart_hint: false });
   })
 );
 

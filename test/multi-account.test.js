@@ -145,3 +145,146 @@ test('queued starts consume capacity, refresh account eligibility and can be can
   assert.equal(next.state, 'error');
   assert.match(next.lastError, /stillgelegt/);
 });
+
+const settle = () => new Promise(resolve => setImmediate(resolve));
+function addMacro(profile, name, event, actions, extra = {}) {
+  return db.prepare(`INSERT INTO macros(profile_id,name,event,actions,config,accounts,created_at)
+    VALUES(?,?,?,?,?,?,?)`).run(profile.id, name, event, JSON.stringify(actions),
+      JSON.stringify(extra.config || {}), JSON.stringify(extra.accounts || []), Date.now()).lastInsertRowid;
+}
+function onlineWrites(bots, output) {
+  for (const bot of bots) {
+    bot.state = 'online';
+    bot.proc = { stdin: new Writable({ write(chunk, _encoding, callback) {
+      output.push([bot.account.id, String(chunk).trim()]); callback();
+    } }) };
+  }
+}
+
+test('four accounts finish join macros in order; slow initialization only delays its own timer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { profile, bots } = fixture(t), writes = [];
+  onlineWrites(bots, writes);
+  for (const bot of bots) bot.profile = { ...profile, join_delay: 1 };
+  addMacro(profile, 'Login', 'join', [
+    { type: 'chat', text: '/login {player}' }, { type: 'wait', seconds: 2 },
+    { type: 'chat', text: '/server target' },
+  ], { accounts: [bots[0].account.id] });
+  addMacro(profile, 'AFK', 'join', [{ type: 'chat', text: '/afk {player}' }]);
+  for (const bot of bots) macros.onJoin(bot);
+  assert.deepEqual(writes, []);
+  t.mock.timers.tick(1000); await settle();
+  assert.deepEqual(writes.filter(([id]) => id === bots[0].account.id).map(([,line]) => line), [`/login ${bots[0].account.name}`]);
+  assert.equal(writes.filter(([,line]) => line.startsWith('/afk')).length, 3);
+  const timer = { id: 99901, name: 'Timer', actions: '[{"type":"chat","text":"/timer"}]' };
+  const timerRuns = bots.map(bot => macros.run(bot, timer));
+  await settle();
+  assert.equal(writes.filter(([,line]) => line === '/timer').length, 3);
+  t.mock.timers.tick(2000); await Promise.all(timerRuns);
+  assert.deepEqual(writes.filter(([id]) => id === bots[0].account.id).map(([,line]) => line),
+    [`/login ${bots[0].account.name}`, '/server target', `/afk ${bots[0].account.name}`, '/timer']);
+});
+
+test('join edits during startup use current text and account selection without frozen client rules', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { profile, bots } = fixture(t), writes = [];
+  onlineWrites(bots, writes);
+  for (const bot of bots) bot.profile = { ...profile, join_delay: 2 };
+  const id = addMacro(profile, 'Join', 'join', [{ type: 'chat', text: '/old' }]);
+  for (const bot of bots) macros.onJoin(bot);
+  db.prepare('UPDATE macros SET actions=?,accounts=? WHERE id=?').run(
+    '[{"type":"chat","text":"/new"}]', JSON.stringify(bots.slice(1).map(bot => bot.account.id)), id);
+  macros.reload(profile.id);
+  t.mock.timers.tick(2000); await settle();
+  assert.deepEqual(writes.map(([id,line]) => [id,line]), bots.slice(1).map(bot => [bot.account.id, '/new']));
+  assert.ok(bots.every(bot => !bot.args({ offline: true }).includes('--cmd')));
+  db.prepare('UPDATE macros SET enabled=0 WHERE id=?').run(id);
+  for (const bot of bots) macros.onJoin(bot, { again: true });
+  t.mock.timers.tick(2000); await settle();
+  assert.equal(writes.length, 3);
+});
+
+test('a stop macro cancels sleeping and queued actions immediately; another account continues', async t => {
+  const { bots } = fixture(t, 2), writes = [];
+  onlineWrites(bots, writes);
+  const slow = { id: 99902, name: 'Slow', actions: '[{"type":"wait","seconds":3600},{"type":"chat","text":"/old"}]' };
+  const next = { id: 99903, name: 'Next', actions: '[{"type":"chat","text":"/next"}]' };
+  const old = macros.run(bots[0], slow);
+  const queued = macros.run(bots[0], next);
+  await macros.run(bots[1], next);
+  await macros.run(bots[0], { id: 99906, name: 'Stop', actions: '[{"type":"stop_macros"}]' });
+  await Promise.all([old, queued]);
+  await macros.run(bots[0], { ...next, actions: '[{"type":"chat","text":"/new-session"}]' });
+  assert.deepEqual(writes, [[bots[1].account.id, '/next'], [bots[0].account.id, '/new-session']]);
+});
+
+test('a failed asynchronous local action stops its macro before the following server command', async t => {
+  const { bots } = fixture(t, 1), bot = bots[0], writes = [];
+  onlineWrites(bots, writes);
+  bot.local = async (_verb, _arg, _need, options) => {
+    assert.equal(options.confirm, true);
+    throw new Error('remote stdin closed');
+  };
+  await macros.run(bot, { id: 99904, name: 'Move', actions: '[{"type":"move","blocks":1},{"type":"chat","text":"/wrong-place"}]' });
+  assert.deepEqual(writes, []);
+  assert.ok(bot.chat.some(line => line.type === 'error' && /remote stdin closed/.test(line.text)));
+});
+
+test('editing during a started join macro cannot replay an already issued action', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { profile, bots } = fixture(t, 1), writes = [], bot = bots[0];
+  onlineWrites(bots, writes);
+  bot.profile = { ...profile, join_delay: 0 };
+  addMacro(profile, 'Once', 'join', [
+    { type: 'chat', text: '/once' }, { type: 'wait', seconds: 10 },
+    { type: 'chat', text: '/old-followup' },
+  ]);
+  const id = addMacro(profile, 'Next', 'join', [{ type: 'chat', text: '/old-next' }]);
+  macros.onJoin(bot); await settle();
+  db.prepare('UPDATE macros SET actions=? WHERE id=?').run('[{"type":"chat","text":"/new-next"}]', id);
+  macros.reload(profile.id); await settle();
+  t.mock.timers.tick(10000); await settle();
+  assert.deepEqual(writes.map(([,line]) => line), ['/once', '/new-next']);
+});
+
+test('intentional TCP transfer keeps the current macro generation and skips initial join commands', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { profile, bots } = fixture(t, 1), writes = [], bot = bots[0];
+  onlineWrites(bots, writes);
+  bot.profile = { ...profile, join_delay: 0 };
+  addMacro(profile, 'Login', 'join', [
+    { type: 'chat', text: '/server target' }, { type: 'wait', seconds: 2 },
+    { type: 'chat', text: '/afk' },
+  ]);
+  macros.onJoin(bot); await settle();
+  const generation = macros.slot(bot).generation;
+  bot.onEvent('@event transfer host=target.example.test port=25565');
+  bot.onEvent('@event connecting host=target.example.test port=25565');
+  bot.onEvent(`@event join name=${bot.account.name}`);
+  assert.equal(macros.slot(bot).generation, generation);
+  t.mock.timers.tick(2000); await settle();
+  assert.deepEqual(writes.map(([,line]) => line), ['/server target', '/afk']);
+  assert.equal(bot.state, 'online');
+  assert.equal(bot.transferring, false);
+});
+
+test('a real disconnect cancels old waits before running disconnect actions', async t => {
+  const { profile, bots } = fixture(t, 1), writes = [], bot = bots[0];
+  onlineWrites(bots, writes);
+  addMacro(profile, 'Lost', 'disconnect', [{ type: 'chat', text: '/disconnect-action' }]);
+  const old = macros.run(bot, { id: 99905, name: 'Old', actions: '[{"type":"wait","seconds":3600},{"type":"chat","text":"/stale"}]' });
+  macros.onDisconnect(bot);
+  await old; await settle();
+  assert.deepEqual(writes.map(([,line]) => line), ['/disconnect-action']);
+});
+
+test('a join macro that cancels macros also cancels the remaining initializers for that account', async t => {
+  const { profile, bots } = fixture(t, 2), writes = [];
+  onlineWrites(bots, writes);
+  for (const bot of bots) bot.profile = { ...profile, join_delay: 0 };
+  addMacro(profile, 'Cancel', 'join', [{ type: 'stop_macros' }], { accounts: [bots[0].account.id] });
+  addMacro(profile, 'Later', 'join', [{ type: 'chat', text: '/later' }]);
+  for (const bot of bots) macros.onJoin(bot);
+  await settle();
+  assert.deepEqual(writes, [[bots[1].account.id, '/later']]);
+});

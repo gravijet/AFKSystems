@@ -651,6 +651,7 @@ class Bot extends EventEmitter {
      */
     this.decoders = { out: new StringDecoder('utf8'), err: new StringDecoder('utf8') };
     this.usesEvents = false;
+    this.transferring = false;
     this.logFile = path.join(paths.logs, `bot-${profile.id}-${account.id}.log`);
   }
 
@@ -831,21 +832,8 @@ class Bot extends EventEmitter {
       }
     }
 
-    // Befehle, die schon der Client selbst takten kann (Beitritt + Wiederholung). Alles, was
-    // sich zur Laufzeit ändern können soll, taktet dagegen das Panel über die Standardeingabe.
-    for (const entry of this.supervisor.joinCommands(profile.id, this.account.id)) {
-      args.push('--cmd', entry);
-    }
-    // Reine "Auslöser -> eine Chatzeile"-Macros gibt der Client zuverlässiger selbst ab, weil er
-    // Beitritt, Weltwechsel und Tod im Protokoll sieht statt im Meldungstext.
-    if (caps.macros) {
-      for (const rule of this.supervisor.clientMacros(profile.id, this.account.id)) {
-        args.push('--on', rule);
-      }
-      if (caps.oncooldown && profile.on_cooldown) {
-        args.push('--on-cooldown', String(profile.on_cooldown));
-      }
-    }
+    // Sämtliche Panel-Macros laufen über die Bot-Queue, damit Änderungen und Accountauswahl
+    // auch ohne Neustart gelten. Keine eingefrorenen --cmd/--on-Regeln parallel starten.
     return args;
   }
 
@@ -945,6 +933,7 @@ class Bot extends EventEmitter {
 
     this.stopping = false;
     this.transientAuthFailure = false;
+    this.transferring = false;
     this.lastReason = null;
     this.onlineSince = null;
     // Das Warten ist vorbei – dieser Start **ist** der Versuch, auf den gewartet wurde. Die
@@ -1311,13 +1300,21 @@ class Bot extends EventEmitter {
           `${event.host || this.profile.host}${event.port ? `:${event.port}` : ''}`
         );
         break;
+      case 'transfer':
+        this.transferring = true;
+        this.setState('connecting', `Serverwechsel: ${event.host || ''}${event.port ? `:${event.port}` : ''}`);
+        break;
       case 'join': {
+        const transferred = this.transferring;
+        this.transferring = false;
         const again = this.cameBack();
         const first = this.markOnline(event.name);
         // `pov-afk-linux` beginnt gleich nach dem Beitritt von selbst zu zeichnen – erst jetzt
         // nimmt der Client örtliche Befehle an, und erst jetzt lässt sich die Größe setzen.
         if (this.povWanted) this.applyPovSize();
-        if (first) this.supervisor.macros.onJoin(this, { again });
+        // Ein Transfer setzt die laufende Sitzung fort. Ein erneutes Login-/Servermacro
+        // würde hier den noch laufenden Ablauf abbrechen oder zurück zum alten Ziel schicken.
+        if (first && !transferred) this.supervisor.macros.onJoin(this, { again });
         break;
       }
       case 'world':
@@ -1341,6 +1338,7 @@ class Bot extends EventEmitter {
         this.logEvent('dropped', event.text || '');
         break;
       case 'disconnect': {
+        this.transferring = false;
         // Der Grund ist das Wertvollste, was in dieser Sitzung noch passiert – er sagt, warum es
         // nicht ging. `lastReason` überlebt das Prozessende und ersetzt dort das nichtssagende
         // "Client beendet (Code 1)".
@@ -2416,46 +2414,9 @@ class Supervisor extends EventEmitter {
     return grouped;
   }
 
-  /** Befehle, die der Client selbst takten soll: Beitrittsbefehle und Dauer-Wiederholungen. */
-  joinCommands(profileId, accountId) {
-    const out = [];
-    for (const macro of this.enabledMacros(profileId, accountId)) {
-      if (!clientCanTake(macro)) continue;
-      const actions = JSON.parse(macro.actions || '[]');
-      const settings = JSON.parse(macro.config || '{}');
-      if (macro.event === 'join') {
-        for (const action of actions) out.push(action.text);
-      } else if (macro.event === 'timer' && settings.interval_sec) {
-        for (const action of actions) {
-          out.push(`${Math.max(5, settings.interval_sec)}:${action.text}`);
-        }
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Macros, die der Client mit `--on` selbst auslösen kann: Weltwechsel, Tod und Chat-Treffer.
-   * Der Client sieht diese Ereignisse im Protokoll, das Panel nur in Meldungstexten – deshalb
-   * bekommt er sie, sobald er sie versteht.
-   */
-  clientMacros(profileId, accountId) {
-    const out = [];
-    for (const macro of this.enabledMacros(profileId, accountId)) {
-      if (!clientCanTake(macro)) continue;
-      const actions = JSON.parse(macro.actions || '[]');
-      const settings = JSON.parse(macro.config || '{}');
-      let trigger = null;
-      if (macro.event === 'world') trigger = 'world';
-      else if (macro.event === 'death') trigger = 'death';
-      else if (macro.event === 'chat' && settings.contains && !settings.regex) {
-        trigger = `chat:${settings.contains}`;
-      }
-      if (!trigger) continue;
-      for (const action of actions) out.push(`${trigger}=${action.text}`);
-    }
-    return out;
-  }
+  // Interne Kompatibilität für ältere Integrationen; das Panel besitzt alle Macros.
+  joinCommands() { return []; }
+  clientMacros() { return []; }
 
   enabledMacros(profileId, accountId) {
     return db
@@ -2966,37 +2927,8 @@ function simpleChatMacro(actions) {
   );
 }
 
-/**
- * Darf dieses Macro dem Client mitgegeben werden (`--cmd`, `--on`)?
- *
- * **Diese Frage muss an einer Stelle beantwortet werden.** Sie wird an zwei gestellt: hier, wenn
- * die Startargumente gebaut werden, und in macros.js, wenn das Panel entscheidet, ob es selbst
- * takten muss. Wären es zwei Antworten, liefe ein Macro, das die eine für den Client hält und die
- * andere nicht, **doppelt** – einmal vom Client und einmal vom Panel, bei jedem Auslöser.
- *
- * Sperrzeit, Wahrscheinlichkeit, Streuung und Ausschluss kennt der Client nicht. Er schickte die
- * Zeile stumpf jedes Mal und exakt im Takt – also genau das, was diese vier verhindern sollen.
- * Wer eines davon gesetzt hat, hat es gemeint, und dann taktet das Panel.
- */
-function clientCanTake(macro) {
-  // Laufende Takte und Ereignisse müssen Änderungen an Text, Konten und Aktivierung
-  // sofort übernehmen. Startargumente des Clients könnten das erst nach einem Neustart.
-  if (macro.event !== 'join') return false;
-  if (Number(macro.cooldown_sec) > 0) return false;
-  if (Number(macro.chance ?? 100) < 100) return false;
-  let config;
-  try {
-    config = JSON.parse(macro.config || '{}');
-  } catch {
-    return false;
-  }
-  if (Number(config.jitter_sec) > 0 || config.exclude) return false;
-  try {
-    return simpleChatMacro(JSON.parse(macro.actions || '[]'));
-  } catch {
-    return false;
-  }
-}
+/** Alle Panel-Macros bleiben zur Laufzeit änderbar und werden je Bot geordnet ausgeführt. */
+function clientCanTake() { return false; }
 
 export const supervisor = new Supervisor();
 export { Bot, simpleChatMacro, clientCanTake, disconnectText, parseEvent, parseView };
